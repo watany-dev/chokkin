@@ -702,7 +702,7 @@ setuptools.setup(name='celery', install_requires=reqs('default.txt'),
     fn runaway_evaluation_ends_as_unknown() {
         let doubling = format!(
             "x = ['a']\n{}setup(install_requires=x)\n",
-            "x = x + x\n".repeat(40)
+            "x = x + x\n".repeat(18)
         );
         let fan_out =
             "def f():\n    return [f(), f(), f(), f(), f(), f()]\nsetup(install_requires=f())\n";

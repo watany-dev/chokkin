@@ -2503,7 +2503,7 @@ table = {'other': 'y', **opaque()}
         let source = format!(
             "base = {}\n{copies}x = ['a']\n{}{}setup(install_requires=base)\n",
             big_list(90_000),
-            "x = x + x\n".repeat(40),
+            "x = x + x\n".repeat(18),
             "base.append('y')\n".repeat(2_000),
         );
         assert_eq!(install_requires(&source), None);
