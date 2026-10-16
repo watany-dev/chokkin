@@ -292,4 +292,174 @@ mod tests {
             ]
         );
     }
+
+    /// Spec §8's Markdown scope (#861): fences open on three or more `` ` ``
+    /// or `~` and close on as many of the same, an unclosed fence runs to the
+    /// end, and outside fences only single-line `` `code` `` spans are read.
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A text line: plain parts, odd entries are code spans.
+        type TextLine = Vec<&'static str>;
+
+        #[derive(Debug, Clone)]
+        enum Block {
+            Text(Vec<TextLine>),
+            Fence {
+                ch: char,
+                len: usize,
+                indent: &'static str,
+                info: &'static str,
+                body: Vec<String>,
+                /// Extra marker length and indent of the closing line.
+                close: Option<(usize, &'static str)>,
+            },
+        }
+
+        const PLAIN: [&str; 5] = ["run ", "python outside.py", " see ", "", "uv run ~/x.py "];
+        const SPANS: [&str; 4] = ["python scripts/a.py", "uv run b.py", "x", "a b"];
+
+        fn text_line() -> impl Strategy<Value = TextLine> {
+            prop_oneof![
+                4 => spans_line(),
+                // Two markers open no fence: `` is an empty span.
+                1 => Just(vec!["", "", ""]),
+                1 => Just(vec!["~~ two"]),
+            ]
+        }
+
+        fn spans_line() -> impl Strategy<Value = TextLine> {
+            prop::collection::vec(
+                (
+                    prop::sample::select(PLAIN.to_vec()),
+                    prop::sample::select(SPANS.to_vec()),
+                ),
+                0..3,
+            )
+            .prop_flat_map(|pairs| {
+                prop::sample::select(PLAIN.to_vec()).prop_map(move |last| {
+                    let mut line: TextLine = pairs
+                        .iter()
+                        .flat_map(|(plain, span)| [*plain, *span])
+                        .collect();
+                    line.push(last);
+                    line
+                })
+            })
+        }
+
+        fn fence() -> impl Strategy<Value = Block> {
+            (prop::sample::select(vec!['`', '~']), 3usize..6)
+                .prop_flat_map(|(ch, len)| {
+                    let other = if ch == '`' { '~' } else { '`' };
+                    let body_line = prop_oneof![
+                        prop::sample::select(vec![
+                            "python inside.py",
+                            "  uv run tools/b.py",
+                            "",
+                            "echo `x`",
+                        ])
+                        .prop_map(str::to_owned),
+                        // A shorter marker or the other character stays body.
+                        (1..len).prop_map(move |n| ch.to_string().repeat(n)),
+                        (3usize..8).prop_map(move |n| other.to_string().repeat(n)),
+                    ];
+                    (
+                        Just(ch),
+                        Just(len),
+                        prop::sample::select(vec!["", " ", "   "]),
+                        prop::sample::select(vec!["", "bash", " sh {.x}"]),
+                        prop::collection::vec(body_line, 0..4),
+                        proptest::option::of((0usize..3, prop::sample::select(vec!["", "  "]))),
+                    )
+                })
+                .prop_map(|(ch, len, indent, info, body, close)| Block::Fence {
+                    ch,
+                    len,
+                    indent,
+                    info,
+                    body,
+                    close,
+                })
+        }
+
+        fn document() -> impl Strategy<Value = Vec<Block>> {
+            prop::collection::vec(
+                prop_oneof![
+                    prop::collection::vec(text_line(), 1..3).prop_map(Block::Text),
+                    fence(),
+                ],
+                0..6,
+            )
+        }
+
+        /// The document's lines and the commands spec §8 reads from them.
+        fn render(blocks: &[Block]) -> (Vec<String>, Vec<(usize, String)>) {
+            let mut lines: Vec<String> = Vec::new();
+            let mut expected = Vec::new();
+            let last = blocks.len().saturating_sub(1);
+            for (index, block) in blocks.iter().enumerate() {
+                match block {
+                    Block::Text(text) => {
+                        for line in text {
+                            expected.extend(
+                                line.iter()
+                                    .skip(1)
+                                    .step_by(2)
+                                    .map(|span| (lines.len(), (*span).to_owned())),
+                            );
+                            lines.push(line.join("`"));
+                        }
+                    },
+                    Block::Fence {
+                        ch,
+                        len,
+                        indent,
+                        info,
+                        body,
+                        close,
+                    } => {
+                        let marker = ch.to_string().repeat(*len);
+                        lines.push(format!("{indent}{marker}{info}"));
+                        let start = lines.len();
+                        lines.extend(body.iter().cloned());
+                        let text: String =
+                            body.iter().flat_map(|line| [line.as_str(), "\n"]).collect();
+                        expected.push((start, text));
+                        // Only the last fence may stay open.
+                        let close = close.or((index != last).then_some((0, "")));
+                        if let Some((extra, indent)) = close {
+                            lines.push(format!("{indent}{}", ch.to_string().repeat(len + extra)));
+                        }
+                    },
+                }
+            }
+            (lines, expected)
+        }
+
+        proptest! {
+            /// Fenced bodies and inline spans come out with their lines; the
+            /// text around them, a shorter marker and the other fence
+            /// character inside a fence do not, and an unclosed last fence
+            /// runs to the end.
+            #[test]
+            fn markdown_commands_match_the_fences(
+                blocks in document(),
+                crlf in any::<bool>(),
+            ) {
+                let (lines, expected) = render(&blocks);
+                let end = if crlf { "\r\n" } else { "\n" };
+                let contents: String = lines.iter().flat_map(|line| [line.as_str(), end]).collect();
+                prop_assert_eq!(markdown_commands(&contents), expected);
+            }
+
+            /// Any text, unbalanced backticks and fences included, reads
+            /// without a panic.
+            #[test]
+            fn markdown_commands_never_panic(contents in "([`~ a\\n\\r]|é|```|~~~){0,40}") {
+                let _ = markdown_commands(&contents);
+            }
+        }
+    }
 }

@@ -124,15 +124,9 @@ fn join_module(base: &str, suffix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sources::ProjectLayout;
 
     fn src_layout() -> LayoutInfo {
-        LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        }
+        LayoutInfo::new("src", vec!["acme".to_owned()])
     }
 
     #[test]
@@ -301,11 +295,7 @@ mod tests {
         }
 
         fn flat_layout(packages: Vec<String>) -> LayoutInfo {
-            LayoutInfo {
-                layout: ProjectLayout::Flat,
-                packages,
-                ..Default::default()
-            }
+            LayoutInfo::new("", packages)
         }
 
         proptest! {

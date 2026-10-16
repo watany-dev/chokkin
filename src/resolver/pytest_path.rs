@@ -544,7 +544,7 @@ fn normalize_dir(entry: &str) -> String {
 mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::sources::{DiscoveredFile, LayoutInfo, ProjectLayout, assign_file_context};
+    use crate::sources::{DiscoveredFile, LayoutInfo, assign_file_context};
 
     fn sources(paths: &[&str]) -> DiscoveredSources {
         DiscoveredSources {
@@ -552,12 +552,7 @@ mod tests {
                 path: std::env::temp_dir(),
                 marker: RootMarker::PyProjectToml,
             },
-            layout: LayoutInfo {
-                layout: ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: paths
                 .iter()
@@ -883,6 +878,35 @@ mod tests {
     }
 
     #[test]
+    fn sys_path_hints_resolve_to_the_first_directory_holding_the_module() {
+        let files = [
+            "tests/conftest.py",
+            "tests/test_t.py",
+            "a/lib/m.py",
+            "lib/m.py",
+            "utils/m.py",
+            "utils/n.py",
+        ];
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths = |modules: Vec<crate::parser::ParsedModule>| {
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &ParseSummary { modules }, &[])
+        };
+        let test = "tests/test_t.py";
+        // Hints come sorted from the parser, whatever their order in the
+        // file; directories ending with one hint go in path order.
+        let both = paths(vec![hinting(test, &["lib", "utils"])]);
+        assert_eq!(both.resolve_fallback(test, "m"), Some("a/lib/m.py"));
+        assert_eq!(both.resolve_fallback(test, "n"), Some("utils/n.py"));
+        // The file's own hints come before those of a conftest above it.
+        let own_first = paths(vec![
+            hinting("tests/conftest.py", &["lib"]),
+            hinting(test, &["utils"]),
+        ]);
+        assert_eq!(own_first.resolve_fallback(test, "m"), Some("utils/m.py"));
+    }
+
+    #[test]
     fn root_conftest_hints_apply_to_every_file() {
         let files = [
             "conftest.py",
@@ -997,6 +1021,369 @@ mod tests {
                 let path = join(&dir, &name);
                 prop_assert_eq!(parent_dir(&path), dir.as_str());
                 prop_assert_eq!(file_name(&path), name.as_str());
+            }
+        }
+
+        const DIRS: [&str; 4] = ["a", "lib", "utils", "Lib"];
+        const MODULES: [&str; 13] = [
+            "a",
+            "lib",
+            "Lib",
+            "utils",
+            "m",
+            "n",
+            "k",
+            "x",
+            "conftest",
+            "missing",
+            "lib.m",
+            "a.n",
+            "x.missing",
+        ];
+
+        fn rel_path(
+            dirs: std::ops::Range<usize>,
+            names: &'static [&'static str],
+        ) -> impl Strategy<Value = String> {
+            (
+                prop::collection::vec(prop::sample::select(&DIRS[..]), dirs),
+                prop::sample::select(names),
+            )
+                .prop_map(|(mut parts, name)| {
+                    parts.push(name);
+                    parts.join("/")
+                })
+        }
+
+        fn hint() -> impl Strategy<Value = String> {
+            prop_oneof![
+                1 => Just(String::new()),
+                4 => prop::collection::vec(prop::sample::select(&DIRS[..]), 1..3)
+                    .prop_map(|parts| parts.join("/")),
+            ]
+        }
+
+        /// A discovered tree, files only on disk, the hints of some files and
+        /// the `docs/conf.py`-style imports between them (#719, #779).
+        #[derive(Debug, Clone)]
+        struct HintCase {
+            files: Vec<String>,
+            on_disk: Vec<String>,
+            hints: Vec<(prop::sample::Index, Vec<String>)>,
+            imports: Vec<(prop::sample::Index, prop::sample::Index)>,
+        }
+
+        fn hint_case() -> impl Strategy<Value = HintCase> {
+            (
+                prop::collection::vec(
+                    rel_path(
+                        0..3,
+                        &[
+                            "m.py",
+                            "n.py",
+                            "k.pyi",
+                            "__init__.py",
+                            "conftest.py",
+                            "test_t.py",
+                        ],
+                    ),
+                    1..10,
+                ),
+                prop::collection::vec(rel_path(1..3, &["m.py", "k.py", "x/__init__.py"]), 0..4),
+                prop::collection::vec(
+                    (
+                        any::<prop::sample::Index>(),
+                        prop::collection::vec(hint(), 1..4),
+                    ),
+                    0..4,
+                ),
+                prop::collection::vec(
+                    (any::<prop::sample::Index>(), any::<prop::sample::Index>()),
+                    0..3,
+                ),
+            )
+                .prop_map(|(files, on_disk, hints, imports)| HintCase {
+                    files,
+                    on_disk,
+                    hints,
+                    imports,
+                })
+        }
+
+        struct Built {
+            _temp: tempfile::TempDir,
+            root: PathBuf,
+            files: Vec<String>,
+            base: PytestImportPaths,
+            parse: ParseSummary,
+            imports: Vec<SysPathImport>,
+        }
+
+        impl Built {
+            fn new(case: &HintCase) -> Self {
+                let temp = tempfile::TempDir::new().expect("tempdir");
+                let root = temp.path().to_path_buf();
+                let files: Vec<String> = case
+                    .files
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                for path in files.iter().chain(&case.on_disk) {
+                    let path = on_disk_path(&root, path);
+                    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+                    std::fs::write(path, "").expect("write");
+                }
+                let paths: Vec<&str> = files.iter().map(String::as_str).collect();
+                let base = PytestImportPaths::with_settings(
+                    &sources(&paths),
+                    &PytestImportSettings::default(),
+                );
+                // The parser hands over each file's hints sorted and once.
+                let mut hinted: std::collections::BTreeMap<
+                    &str,
+                    std::collections::BTreeSet<String>,
+                > = std::collections::BTreeMap::new();
+                for (index, hints) in &case.hints {
+                    hinted
+                        .entry(index.get(&files).as_str())
+                        .or_default()
+                        .extend(hints.iter().cloned());
+                }
+                let parse = ParseSummary {
+                    modules: hinted
+                        .into_iter()
+                        .map(|(path, hints)| crate::parser::ParsedModule {
+                            path: path.to_owned(),
+                            sys_path_hints: hints.into_iter().collect(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                };
+                // `docs/conf.py` imports one level (spec §8), so no importer
+                // is imported.
+                let importers: HashSet<&str> = case
+                    .imports
+                    .iter()
+                    .map(|(importer, _)| importer.get(&files).as_str())
+                    .collect();
+                let imports = case
+                    .imports
+                    .iter()
+                    .map(|(importer, imported)| (importer.get(&files), imported.get(&files)))
+                    .filter(|(_, imported)| !importers.contains(imported.as_str()))
+                    .map(|(importer, imported)| SysPathImport {
+                        importer: importer.clone(),
+                        imported: imported.clone(),
+                    })
+                    .collect();
+                Self {
+                    _temp: temp,
+                    root,
+                    files,
+                    base,
+                    parse,
+                    imports,
+                }
+            }
+
+            fn indexed(&self) -> PytestImportPaths {
+                self.base
+                    .clone()
+                    .with_sys_path_hints(&self.root, &self.parse, &self.imports)
+            }
+        }
+
+        /// #719's lookup without #763's indexes: every discovered directory
+        /// is compared with every hint, every candidate is checked with
+        /// `stat`, and every hinted directory is searched for every module.
+        struct Linear {
+            hinted: HashMap<String, Vec<String>>,
+            conftest: Vec<(String, Vec<String>)>,
+            on_disk: HashMap<String, HashSet<String>>,
+        }
+
+        impl Linear {
+            fn new(built: &Built) -> Self {
+                let mut dirs: Vec<&String> = built.base.dirs.iter().collect();
+                dirs.sort();
+                let mut own: HashMap<String, Vec<String>> = HashMap::new();
+                let mut conftest = Vec::new();
+                let mut on_disk = HashMap::new();
+                for module in &built.parse.modules {
+                    let holder = parent_dir(&module.path);
+                    let mut found: Vec<String> = Vec::new();
+                    for hint in &module.sys_path_hints {
+                        if hint.is_empty() {
+                            found.push(holder.to_owned());
+                            continue;
+                        }
+                        let suffix = format!("/{hint}");
+                        found.extend(
+                            dirs.iter()
+                                .filter(|dir| **dir == hint || dir.ends_with(&suffix))
+                                .map(|dir| (*dir).clone()),
+                        );
+                        let mut ancestor = Some(holder);
+                        while let Some(dir) = ancestor {
+                            let candidate = if dir.is_empty() {
+                                hint.clone()
+                            } else {
+                                format!("{dir}/{hint}")
+                            };
+                            let path = on_disk_path(&built.root, &candidate);
+                            if !built.base.dirs.contains(&candidate) && path.is_dir() {
+                                on_disk.insert(candidate.clone(), module_names(&path));
+                                found.push(candidate);
+                            }
+                            ancestor = (!dir.is_empty()).then(|| parent_dir(dir));
+                        }
+                    }
+                    let mut seen = HashSet::new();
+                    found.retain(|dir| seen.insert(dir.clone()));
+                    if found.is_empty() {
+                    } else if file_name(&module.path) == "conftest.py" {
+                        conftest.push((holder.to_owned(), found));
+                    } else {
+                        own.insert(module.path.clone(), found);
+                    }
+                }
+                let mut hinted = own.clone();
+                for import in &built.imports {
+                    if let Some(dirs) = own.get(&import.imported) {
+                        hinted
+                            .entry(import.importer.clone())
+                            .or_default()
+                            .extend(dirs.iter().cloned());
+                    }
+                }
+                Self {
+                    hinted,
+                    conftest,
+                    on_disk,
+                }
+            }
+
+            /// The file's own hinted directories, then its importees', then
+            /// those of each conftest above it, in parse order.
+            fn dirs<'s>(&'s self, file: &'s str) -> impl Iterator<Item = &'s String> {
+                let dir = parent_dir(file);
+                self.hinted.get(file).into_iter().flatten().chain(
+                    self.conftest
+                        .iter()
+                        .filter(move |(conftest, _)| {
+                            conftest.is_empty()
+                                || dir == conftest
+                                || dir.starts_with(&format!("{conftest}/"))
+                        })
+                        .flat_map(|(_, dirs)| dirs),
+                )
+            }
+
+            fn provides(&self, built: &Built, file: &str, root: &str) -> bool {
+                built.base.provides_fallback(file, root)
+                    || self.dirs(file).any(|dir| {
+                        let base = join(dir, root);
+                        built.base.dirs.contains(&base)
+                            || built.base.files.contains(&format!("{base}.py"))
+                            || built.base.files.contains(&format!("{base}.pyi"))
+                            || self
+                                .on_disk
+                                .get(dir)
+                                .is_some_and(|names| names.contains(root))
+                    })
+            }
+
+            /// First wins: the module in the earliest directory that holds it.
+            fn resolve(&self, built: &Built, file: &str, module: &str) -> Option<String> {
+                built
+                    .base
+                    .resolve_fallback(file, module)
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        self.dirs(file).find_map(|dir| {
+                            let base = join(dir, &module.replace('.', "/"));
+                            [format!("{base}.py"), format!("{base}/__init__.py")]
+                                .into_iter()
+                                .find(|path| built.base.files.contains(path))
+                        })
+                    })
+            }
+        }
+
+        /// What `file` gets for each module: whether a hinted directory
+        /// provides its root, and the file it resolves to.
+        fn lookups(
+            paths: &PytestImportPaths,
+            files: &[String],
+        ) -> Vec<(String, &'static str, bool, Option<String>)> {
+            files
+                .iter()
+                .flat_map(|file| {
+                    MODULES.iter().map(move |module| {
+                        (
+                            file.clone(),
+                            *module,
+                            paths.provides_fallback(file, import_root(module)),
+                            paths.resolve_fallback(file, module).map(str::to_owned),
+                        )
+                    })
+                })
+                .collect()
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(64)))]
+
+            /// The name indexes, directory listings and per-directory roots
+            /// that #763 added change no answer of the linear lookup.
+            #[test]
+            fn sys_path_hint_indexes_match_the_linear_lookup(case in hint_case()) {
+                let built = Built::new(&case);
+                let linear = Linear::new(&built);
+                let expected: Vec<_> = built
+                    .files
+                    .iter()
+                    .flat_map(|file| {
+                        let linear = &linear;
+                        let built = &built;
+                        MODULES.iter().map(move |module| {
+                            (
+                                file.clone(),
+                                *module,
+                                linear.provides(built, file, import_root(module)),
+                                linear.resolve(built, file, module),
+                            )
+                        })
+                    })
+                    .collect();
+                prop_assert_eq!(lookups(&built.indexed(), &built.files), expected);
+            }
+
+            /// Another hint never takes a module away: what was provided or
+            /// resolved stays so (the file may change, per first wins).
+            #[test]
+            fn another_sys_path_hint_never_unresolves(
+                case in hint_case(),
+                at in any::<prop::sample::Index>(),
+                extra in hint(),
+            ) {
+                let built = Built::new(&case);
+                let before = lookups(&built.indexed(), &built.files);
+                let mut more = case;
+                more.hints.push((at, vec![extra]));
+                let more = Built::new(&more);
+                let after = lookups(&more.indexed(), &more.files);
+                for (before, after) in before.iter().zip(&after) {
+                    prop_assert!(!before.2 || after.2, "{:?} -> {:?}", before, after);
+                    prop_assert!(
+                        before.3.is_none() || after.3.is_some(),
+                        "{:?} -> {:?}",
+                        before,
+                        after
+                    );
+                }
             }
         }
     }

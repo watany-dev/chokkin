@@ -96,7 +96,7 @@ mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::graph::{FileNode, ProjectGraph};
-    use crate::sources::{FileContext, FileKind, LayoutInfo, ProjectLayout};
+    use crate::sources::{FileContext, FileKind, LayoutInfo};
 
     #[test]
     fn module_index_resolves_registered_file() {
@@ -113,12 +113,7 @@ mod tests {
             .expect("file");
         let sources = DiscoveredSources {
             root: graph.root.clone(),
-            layout: LayoutInfo {
-                layout: ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                packages: vec!["acme".to_owned()],
-                ..Default::default()
-            },
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),

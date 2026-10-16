@@ -133,9 +133,28 @@ is implemented:
 |-----|--------|
 | `fuzz` | No parser/engine code to fuzz yet |
 | `e2e` | No end-to-end behavior to test yet |
-| `pbt-deep` | No property-based tests yet |
 
 Add `nightly.yml` with these jobs during Phase 1 implementation.
+
+## Deep property-based tests (`pbt-deep`)
+
+Per PR, the `test` job runs every proptest block at its usual case count:
+proptest's default 256, or what the block tunes with
+`ProptestConfig::with_cases(chokkin::internals::proptest_cases(n))` when its
+cases are slow (a generated project analysed end to end). The `pbt-deep` job
+in `ci.yml` runs on the daily schedule instead: `make pbt-deep` sets
+`PROPTEST_CASES=4096`, which deepens default blocks to 4096 cases and scales
+tuned ones by the same 16x (`with_cases` alone ignores `PROPTEST_CASES`, so a
+new tuned block must go through `proptest_cases`). The whole suite took about
+25 minutes on a 4-core machine; the job's timeout is 90. A nightly failure reaches
+whoever last edited the cron through GitHub's scheduled-workflow notification,
+and the `pbt-deep-seeds` artifact holds the seeds proptest saved.
+
+Seed files (`proptest-regressions/**` for in-module blocks,
+`tests/*.proptest-regressions` for integration tests) are committed and
+reviewed like tests: a seed lands in the PR that fixes the failure it
+reproduces, and a run that only probes a hypothesis (a mutation check, a
+local experiment) leaves no seed behind.
 
 ## cargo-mutants scope
 

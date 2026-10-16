@@ -153,6 +153,11 @@ Distribution は distribution 系ルールだけ、Symbol は CHK006/007 だけ�
    「否定ケース」（ignore しない、使用済みなので報告しない）のテストが薄い。
    Phase B の proptest 参照モデルは、ignore マッチングと
    CHK006/007 の参照判定を最初の対象にするのが効果的。
+   #861 で、star import の名前伝播（`src/rules/symbols/graph.rs` の素朴な
+   固定点反復との差分テスト）と、CHK010 の集約 × inline ignore の参照モデル
+   （`tests/prop_unresolved.rs`）を足した。ignore の glob には
+   `src/rules/ignore.rs` に参照モデルがあるので、残りは star import 以外の
+   CHK006/007 判定の参照モデル。
 2. **`build_summary` と CHK008 の出力を見ているテストがない**。
    どちらも P1 で、小さな unit test で kill できるため、Phase B より先に単発で埋めてよい。
 3. 等価ミュータント 7 件のうち 6 件は「subject の種類 ↔ ルール」の不変条件から来ている。

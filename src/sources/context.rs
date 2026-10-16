@@ -1,5 +1,6 @@
 //! File context assignment (§10).
 
+use super::dirs::{NESTED_TEST_DIR, in_root_test_dir};
 use super::types::{DiscoveredSources, FileContext, LayoutInfo};
 
 /// Assign a file context from a root-relative path.
@@ -60,7 +61,7 @@ fn layout_context(path: &str, context: FileContext, layout: &LayoutInfo) -> File
 
 fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
     let (_, rest) = layout.member_for(path)?;
-    if rest.starts_with("test/") {
+    if in_root_test_dir(rest) {
         Some(FileContext::Test)
     } else if rest.starts_with("docs/") {
         Some(FileContext::Docs)
@@ -76,11 +77,11 @@ fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
 /// package inside a distribution is shipped API (`django.test`), as is
 /// `testing/` (`sqlalchemy.testing`).
 fn is_test_path(path: &str) -> bool {
-    if path.starts_with("test/") {
+    if in_root_test_dir(path) {
         return true;
     }
     let (dirs, file_name) = path.rsplit_once('/').unwrap_or(("", path));
-    if dirs.split('/').any(|dir| dir == "tests") {
+    if dirs.split('/').any(|dir| dir == NESTED_TEST_DIR) {
         return true;
     }
     if file_name == "conftest.py" {
@@ -103,10 +104,10 @@ pub(crate) fn is_test_data_path(path: &str) -> bool {
         return false;
     };
     let mut dirs = dirs.split('/');
-    let in_test_tree = if path.starts_with("test/") {
+    let in_test_tree = if in_root_test_dir(path) {
         dirs.next().is_some()
     } else {
-        dirs.any(|dir| dir == "tests")
+        dirs.any(|dir| dir == NESTED_TEST_DIR)
     };
     in_test_tree && dirs.any(|dir| matches!(dir, "data" | "fixtures" | "testdata" | "test_data"))
 }
@@ -509,7 +510,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             #[test]
             fn assign_file_context_matches_reference_model((dirs, file) in path_strategy()) {

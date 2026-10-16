@@ -126,9 +126,7 @@ mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::sources::assign_file_context;
-    use crate::sources::{
-        DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo, MemberLayout, ProjectLayout,
-    };
+    use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo, MemberLayout};
 
     fn sources_with(paths: &[&str], layout: &LayoutInfo) -> DiscoveredSources {
         DiscoveredSources {
@@ -151,12 +149,7 @@ mod tests {
     }
 
     fn src_layout() -> LayoutInfo {
-        LayoutInfo {
-            layout: ProjectLayout::Src,
-            package_root: "src".to_owned(),
-            packages: vec!["acme".to_owned()],
-            ..Default::default()
-        }
+        LayoutInfo::new("src", vec!["acme".to_owned()])
     }
 
     #[test]
@@ -181,10 +174,7 @@ mod tests {
 
     #[test]
     fn detects_lib_package_asgi_py() {
-        let layout = LayoutInfo {
-            package_root: "lib".to_owned(),
-            ..src_layout()
-        };
+        let layout = LayoutInfo::new("lib", vec!["acme".to_owned()]);
         let sources = sources_with(&["lib/acme/asgi.py", "src/acme/asgi.py"], &layout);
         let paths: Vec<_> = detect_auto_entries(&sources)
             .into_iter()
@@ -335,12 +325,7 @@ mod tests {
 
     #[test]
     fn ignores_examples_package() {
-        let layout = LayoutInfo {
-            layout: ProjectLayout::Flat,
-            package_root: String::new(),
-            packages: vec!["examples".to_owned()],
-            ..src_layout()
-        };
+        let layout = LayoutInfo::new("", vec!["examples".to_owned()]);
         let sources = sources_with(&["examples/demo.py", "src/acme/examples/demo.py"], &layout);
         let paths: Vec<_> = detect_auto_entries(&sources)
             .into_iter()

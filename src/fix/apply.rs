@@ -145,7 +145,7 @@ fn perform<'a>(root: &Path, action: &'a FixAction) -> Result<(&'a str, String), 
             let description = if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("toml")) {
                 remove_by_label(&path, label, name)?
             } else if extension.is_some_and(|ext| ext.eq_ignore_ascii_case("cfg")) {
-                remove_setup_cfg_dependency(&path, name)?
+                remove_setup_cfg_dependency(&path, label, name)?
             } else {
                 remove_dependency_line(&path, name, *line)?
             };

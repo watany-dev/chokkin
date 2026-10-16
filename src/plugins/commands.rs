@@ -153,8 +153,7 @@ pub(super) fn command_binaries(command: &str, known: KnownBinary<'_>) -> Vec<Str
 /// Calls `visit` with the cleaned words of each `;` / `|` / `&` / newline
 /// separated segment, joining backslash continuations first.
 fn for_each_segment(command: &str, mut visit: impl FnMut(&[&str])) {
-    let joined = command.replace("\\\r\n", " ").replace("\\\n", " ");
-    for segment in joined.split(['\n', ';', '|', '&']) {
+    for segment in join_continuations(command).split(['\n', ';', '|', '&']) {
         let words: Vec<&str> = segment
             .split_whitespace()
             .map(clean_word)
@@ -162,6 +161,10 @@ fn for_each_segment(command: &str, mut visit: impl FnMut(&[&str])) {
             .collect();
         visit(&words);
     }
+}
+
+fn join_continuations(command: &str) -> String {
+    command.replace("\\\r\n", " ").replace("\\\n", " ")
 }
 
 /// A `.py` file a command runs by path, with the directory (`cd`, `uv run
@@ -460,7 +463,7 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
             index += 1;
         } else if !arg.starts_with('-') {
             let rest = args.get(index..).unwrap_or_default();
-            let mut run = if is_python_word(arg) {
+            let mut run = if is_python_word(arg) || is_python_variable(arg) {
                 python_target(rest)?
             } else if let Some(runner) = module_runner(arg) {
                 Run::Target(runner_target(runner, rest))
@@ -482,7 +485,8 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
 /// (`__import__`, `importlib`, `runpy`, `exec`) is opaque, and so is the
 /// command when the code is a variable.
 fn code_targets(command: &str) -> Vec<PythonTarget> {
-    let Some(code) = python_code(command) else {
+    let command = join_continuations(command);
+    let Some(code) = python_code(&command) else {
         return vec![PythonTarget::Opaque("-c".to_owned())];
     };
     if code.contains("__import__")
@@ -771,6 +775,8 @@ mod tests {
         assert_eq!(scripts("uv run pytest tests/test_a.py"), []);
         assert_eq!(scripts("uv run --with gen.py ruff check"), []);
         assert_eq!(scripts("echo python gen.py"), []);
+        // A variable interpreter after `uv run` is python too (#861).
+        assert_eq!(scripts("uv run $(PYTHON) gen.py"), [script("gen.py")]);
     }
 
     fn targets(command: &str) -> Vec<String> {
@@ -794,6 +800,8 @@ mod tests {
             ["module mypkg.modrun"]
         );
         assert_eq!(targets("python3 -mmypkg"), ["module mypkg"]);
+        // `-c` after a backslash continuation is still python's (#861).
+        assert_eq!(targets("python \\\n  -c 'import mypkg'"), ["module mypkg"]);
         assert_eq!(targets("uv run -m mypkg.cli"), ["module mypkg.cli"]);
         assert_eq!(
             targets("poetry run gunicorn -w 4 -b 0.0.0.0:80 mypkg.server:app"),
@@ -922,5 +930,319 @@ mod tests {
                 text: "gen.py".to_owned()
             }]
         );
+    }
+
+    /// The shell grammar spec §8 scopes command reading to (#861): segments
+    /// split on newlines and `;` `|` `&`, words on any run of whitespace,
+    /// prefixes skipped, and `cd` carried to the segments after it.
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// One generated segment and what it should run.
+        #[derive(Debug, Clone)]
+        enum Segment {
+            /// Runs `path` (relative to `directory`, if any).
+            Script {
+                words: Vec<String>,
+                directory: Option<String>,
+                path: String,
+            },
+            Cd(String),
+            /// Runs no script by path.
+            Other(&'static str),
+            /// A whole-line `#` comment; the line ends after it.
+            Comment,
+        }
+
+        fn component() -> impl Strategy<Value = String> {
+            prop::sample::select(vec!["scripts", "tools", "a_b", "x-y", "dev"])
+                .prop_map(str::to_owned)
+        }
+
+        fn directory() -> impl Strategy<Value = String> {
+            prop::collection::vec(component(), 1..3).prop_map(|parts| parts.join("/"))
+        }
+
+        fn script_path() -> impl Strategy<Value = String> {
+            (prop::collection::vec(component(), 0..3), "[a-z_]{1,6}").prop_map(
+                |(mut parts, stem)| {
+                    parts.push(format!("{stem}.py"));
+                    parts.join("/")
+                },
+            )
+        }
+
+        fn words(text: &str) -> Vec<String> {
+            text.split(' ')
+                .filter(|word| !word.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }
+
+        /// An interpreter word with its flags.
+        fn python() -> impl Strategy<Value = String> {
+            (
+                prop::sample::select(vec![
+                    "python",
+                    "python3",
+                    "python3.12",
+                    ".venv/bin/python",
+                    "C:\\venv\\python.exe",
+                    "py",
+                    "$(PYTHON)",
+                    "${PYTHON3}",
+                    "{{python}}",
+                ]),
+                prop::collection::vec(
+                    prop::sample::select(vec!["-u", "-B", "-O", "-X dev", "-W ignore"]),
+                    0..3,
+                ),
+            )
+                .prop_map(|(python, flags)| format!("{python} {}", flags.join(" ")))
+        }
+
+        /// What runs the path, and the `uv run --directory` it names.
+        fn launcher() -> impl Strategy<Value = (String, Option<String>)> {
+            let uv_options = prop::collection::vec(
+                prop::sample::select(vec![
+                    "--frozen",
+                    "--no-sync",
+                    "-w rich",
+                    "--group dev",
+                    "-p 3.12",
+                    "-s",
+                ]),
+                0..3,
+            );
+            prop_oneof![
+                python().prop_map(|python| (python, None)),
+                (
+                    prop::sample::select(vec!["poetry", "pdm", "hatch", "rye", "pipenv"]),
+                    python(),
+                )
+                    .prop_map(|(runner, python)| (format!("{runner} run {python}"), None)),
+                (
+                    uv_options,
+                    proptest::option::of((directory(), any::<bool>())),
+                    proptest::option::of(python()),
+                )
+                    .prop_map(|(options, directory, python)| {
+                        let at = match &directory {
+                            Some((dir, true)) => format!("--directory={dir}"),
+                            Some((dir, false)) => format!("--directory {dir}"),
+                            None => String::new(),
+                        };
+                        (
+                            format!(
+                                "uv run {} {at} {}",
+                                options.join(" "),
+                                python.unwrap_or_default()
+                            ),
+                            directory.map(|(dir, _)| dir),
+                        )
+                    }),
+            ]
+        }
+
+        /// `[env…] [wrapper…] [sh -c "] launcher path ["]`.
+        fn script_segment() -> impl Strategy<Value = Segment> {
+            let env = prop::collection::vec(
+                prop::sample::select(vec!["FOO=1", "PYTHONPATH=src", "_X=a=b"]),
+                0..3,
+            );
+            let wrappers = prop::collection::vec(
+                prop::sample::select(vec![
+                    "exec", "env", "time", "nohup", "command", "sudo -E", "env -i", "!",
+                ]),
+                0..3,
+            );
+            (
+                env,
+                wrappers,
+                launcher(),
+                script_path(),
+                prop::sample::select(vec!["", "\"", "'"]),
+                any::<bool>(),
+                prop::sample::select(vec!["", "--check", "a b"]),
+            )
+                .prop_map(
+                    |(env, wrappers, (launcher, directory), path, quote, shell, args)| {
+                        let run = format!("{launcher} {quote}{path}{quote} {args}");
+                        let text = if shell {
+                            format!("{} {} sh -c \"{run}\"", env.join(" "), wrappers.join(" "))
+                        } else {
+                            format!("{} {} {run}", env.join(" "), wrappers.join(" "))
+                        };
+                        Segment::Script {
+                            words: words(&text),
+                            directory,
+                            path,
+                        }
+                    },
+                )
+        }
+
+        fn segment() -> impl Strategy<Value = Segment> {
+            prop_oneof![
+                4 => script_segment(),
+                1 => directory().prop_map(Segment::Cd),
+                2 => prop::sample::select(vec![
+                    "echo python x.py",
+                    "python -m pkg.tool x.py",
+                    "python3 -mpkg",
+                    "uv run pytest tests/test_x.py",
+                    "uv run -m pkg.cli",
+                    "pytest tests/test_x.py",
+                    "python",
+                    "python -u",
+                    "python -",
+                    "python -c 'import pkg'",
+                    "make test",
+                    "cd",
+                    "$(COVERAGE) run x.py",
+                    "docker run x.py",
+                ])
+                .prop_map(Segment::Other),
+                1 => Just(Segment::Comment),
+            ]
+        }
+
+        /// Segments with the separator after each one.
+        fn command() -> impl Strategy<Value = Vec<(Segment, &'static str)>> {
+            prop::collection::vec(
+                (
+                    segment(),
+                    prop::sample::select(vec!["&&", ";", "|", "||", "&", "\n"]),
+                ),
+                1..6,
+            )
+        }
+
+        fn render(segments: &[(Segment, &'static str)]) -> String {
+            let mut text = String::new();
+            for (segment, separator) in segments {
+                let words = match segment {
+                    Segment::Script { words, .. } => words.join(" "),
+                    Segment::Cd(dir) => format!("cd {dir}"),
+                    Segment::Other(other) => (*other).to_owned(),
+                    Segment::Comment => "# python x.py".to_owned(),
+                };
+                let separator = if matches!(segment, Segment::Comment) {
+                    "\n"
+                } else {
+                    separator
+                };
+                text.push_str(&words);
+                text.push(' ');
+                text.push_str(separator);
+                text.push(' ');
+            }
+            text
+        }
+
+        fn reference(segments: &[(Segment, &'static str)]) -> Vec<(Option<String>, String)> {
+            let mut cwd: Option<String> = None;
+            let mut runs = Vec::new();
+            for (segment, _) in segments {
+                match segment {
+                    Segment::Script {
+                        directory, path, ..
+                    } => {
+                        let directory = match (&cwd, directory) {
+                            (Some(cwd), Some(dir)) => Some(format!("{cwd}/{dir}")),
+                            (Some(cwd), None) => Some(cwd.clone()),
+                            (None, dir) => dir.clone(),
+                        };
+                        runs.push((directory, path.clone()));
+                    },
+                    Segment::Cd(dir) => {
+                        cwd = Some(cwd.map_or_else(|| dir.clone(), |cwd| format!("{cwd}/{dir}")));
+                    },
+                    Segment::Other(_) | Segment::Comment => {},
+                }
+            }
+            runs
+        }
+
+        /// Every space becomes a run of spaces, tabs or backslash
+        /// continuations, and lines get leading and trailing blanks.
+        fn reflow(command: &str, noise: &[u8]) -> String {
+            let mut noise = noise.iter().cycle();
+            let mut gap = |out: &mut String| {
+                for _ in 0..=(noise.next().copied().unwrap_or(0) % 3) {
+                    out.push_str(match noise.next().copied().unwrap_or(0) % 4 {
+                        0 | 1 => " ",
+                        2 => "\t",
+                        _ => " \\\n ",
+                    });
+                }
+            };
+            let mut out = String::new();
+            for ch in command.chars() {
+                match ch {
+                    ' ' => gap(&mut out),
+                    '\n' => {
+                        out.push_str(" \t");
+                        out.push('\n');
+                        out.push('\t');
+                    },
+                    ch => out.push(ch),
+                }
+            }
+            out
+        }
+
+        proptest! {
+            /// Scripts come out in segment order, each relative to the `cd`s
+            /// before it and its own `uv run --directory`, whatever prefixes,
+            /// quotes and separators surround them; nothing else is one.
+            #[test]
+            fn command_scripts_match_the_generated_runs(segments in command()) {
+                prop_assert_eq!(scripts(&render(&segments)), reference(&segments));
+            }
+
+            /// Spaces, tabs, backslash continuations and blank line ends
+            /// between words change no target and no binary.
+            #[test]
+            fn command_reading_ignores_whitespace(
+                segments in command(),
+                noise in prop::collection::vec(any::<u8>(), 1..32),
+            ) {
+                let command = render(&segments);
+                let reflowed = reflow(&command, &noise);
+                prop_assert_eq!(targets(&reflowed), targets(&command));
+                prop_assert_eq!(binaries(&reflowed), binaries(&command));
+            }
+
+            /// Any word soup, cut options and unbalanced quotes included,
+            /// reads without a panic.
+            #[test]
+            fn command_reading_never_panics(
+                words in prop::collection::vec(
+                    prop_oneof![
+                        prop::sample::select(vec![
+                            "uv", "run", "--directory", "--directory=", "-m", "-c", "-X", "-",
+                            "python", "$(PYTHON)", "{{python}}", "cd", "..", "/", "\\", "x.py",
+                            "/abs/x.py", "../x.py", "celery", "-A", "--app=", "gunicorn", ":",
+                            "a:b", "sh", "bash", ";", "&&", "|", "\\\n", "\"", "'", "`", "(",
+                            ")", "import", "from", "as", ",", "__import__", "FOO=1", "é",
+                        ]).prop_map(str::to_owned),
+                        ".{0,6}",
+                    ],
+                    0..16,
+                ),
+                glue in prop::sample::select(vec!["", " ", "\t", "\n"]),
+            ) {
+                let command = words.join(glue);
+                let origin = ReferenceOrigin {
+                    file: "Makefile".to_owned(),
+                    line: Some(1),
+                    label: "make".to_owned(),
+                };
+                let _ = command_binaries(&command, &known);
+                let _ = command_target_refs(&command, &origin);
+            }
+        }
     }
 }

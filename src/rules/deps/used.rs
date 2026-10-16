@@ -419,11 +419,7 @@ mod tests {
         };
         let sources = crate::sources::DiscoveredSources {
             root: graph.root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                ..Default::default()
-            },
+            layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -684,11 +680,7 @@ mod tests {
         };
         let sources = crate::sources::DiscoveredSources {
             root: manifest.root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                package_root: "src".to_owned(),
-                ..Default::default()
-            },
+            layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
             files: members
                 .iter()
@@ -750,12 +742,7 @@ mod tests {
         };
         let sources = crate::sources::DiscoveredSources {
             root: manifest.root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Src,
-                package_root: "lib".to_owned(),
-                packages: vec!["streamlit".to_owned()],
-                ..Default::default()
-            },
+            layout: crate::sources::LayoutInfo::new("lib", vec!["streamlit".to_owned()]),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
@@ -806,10 +793,7 @@ mod tests {
         });
         let sources = crate::sources::DiscoveredSources {
             root: manifest.root.clone(),
-            layout: crate::sources::LayoutInfo {
-                layout: crate::sources::ProjectLayout::Flat,
-                ..Default::default()
-            },
+            layout: crate::sources::LayoutInfo::new("", Vec::new()),
             effective_globs: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),

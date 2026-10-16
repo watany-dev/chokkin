@@ -183,60 +183,101 @@ impl Requirements<'_> {
     }
 }
 
-fn split_requirement_lines(value: &str) -> impl Iterator<Item = &str> {
+/// One `setup.cfg` line as `configparser` reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IniLine<'a> {
+    /// Blank, a comment, or a line `configparser` would reject (no
+    /// delimiter, or a continuation with no option before it): setuptools
+    /// cannot read such a file either, so no declaration hides in it.
+    Skipped,
+    /// `[name]`, trimmed.
+    Section(&'a str),
+    /// Part of an option's value: the `key = value` line itself
+    /// (`continuation == false`) or an indented line after it.
+    Value {
+        section: &'a str,
+        /// Lowercased.
+        key: String,
+        /// Trimmed.
+        value: &'a str,
+        continuation: bool,
+    },
+}
+
+/// Classify each line of `setup.cfg`, paired with the line as written
+/// (end-of-line bytes included): an option line splits at its first `=` or
+/// `:`, and an indented line continues the previous option. Lines before any
+/// header belong to `default`.
+pub(crate) fn ini_lines(contents: &str) -> impl Iterator<Item = (&str, IniLine<'_>)> {
+    let mut current = "default";
+    let mut last_key: Option<String> = None;
+    contents.split_inclusive('\n').map(move |raw| {
+        let trimmed = raw.trim();
+        let line = if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            IniLine::Skipped
+        } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            current = trimmed[1..trimmed.len() - 1].trim();
+            last_key = None;
+            IniLine::Section(current)
+        } else if raw.starts_with([' ', '\t']) {
+            match &last_key {
+                Some(key) => IniLine::Value {
+                    section: current,
+                    key: key.clone(),
+                    value: trimmed,
+                    continuation: true,
+                },
+                None => IniLine::Skipped,
+            }
+        } else if let Some((key, value)) = trimmed.split_once(['=', ':']) {
+            let key = key.trim().to_ascii_lowercase();
+            last_key = Some(key.clone());
+            IniLine::Value {
+                section: current,
+                key,
+                value: value.trim(),
+                continuation: false,
+            }
+        } else {
+            IniLine::Skipped
+        };
+        (raw, line)
+    })
+}
+
+/// The non-empty items of an option value, in the order their
+/// declarations are indexed.
+pub(crate) fn split_requirement_lines(value: &str) -> impl Iterator<Item = &str> {
     value.lines().map(str::trim).filter(|line| !line.is_empty())
 }
 
-/// Split `setup.cfg` into sections the way `configparser` does: an option
-/// line splits at its first `=` or `:`, and an indented line continues the
-/// previous option. Lines `configparser` would reject (no delimiter, or a
-/// continuation with no option before it) are skipped: setuptools cannot
-/// read such a file either, so no declaration hides in them.
+/// Split `setup.cfg` into sections the way `configparser` does (see
+/// [`ini_lines`]); a repeated section or option appends to the first.
 fn parse_ini_sections(
     contents: &str,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> {
     use std::collections::BTreeMap;
 
     let mut sections: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
-    let mut current = String::from("default");
-    let mut last_key: Option<String> = None;
-
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            continue;
-        }
-
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            trimmed[1..trimmed.len() - 1]
-                .trim()
-                .clone_into(&mut current);
-            sections.entry(current.clone()).or_default();
-            last_key = None;
-            continue;
-        }
-
-        if line.starts_with([' ', '\t']) {
-            if let Some(ref key) = last_key {
-                append_value(
-                    sections.entry(current.clone()).or_default(),
-                    key,
-                    trimmed,
-                    true,
-                );
-            }
-        } else if let Some((key, value)) = trimmed.split_once(['=', ':']) {
-            let key = key.trim().to_ascii_lowercase();
-            append_value(
-                sections.entry(current.clone()).or_default(),
+    for (_, line) in ini_lines(contents) {
+        match line {
+            IniLine::Skipped => {},
+            IniLine::Section(name) => {
+                sections.entry(name.to_owned()).or_default();
+            },
+            IniLine::Value {
+                section,
+                key,
+                value,
+                continuation,
+            } => append_value(
+                sections.entry(section.to_owned()).or_default(),
                 &key,
-                value.trim(),
-                false,
-            );
-            last_key = Some(key);
+                value,
+                continuation,
+            ),
         }
     }
-
     sections
 }
 
@@ -321,6 +362,22 @@ install_requires =
             [ManifestWarning::FileUndecodable {
                 file: "setup.cfg".to_owned()
             }]
+        );
+    }
+
+    /// An indented comment is not part of the value, and an extra's `]` at
+    /// the end of a continuation does not open a section.
+    #[test]
+    fn continuations_skip_comments_and_keep_extras() {
+        let contents = "[options]\ninstall_requires =\n    requests[security]\n    # pinned: see #12\n    flask\n";
+        let sections = parse_ini_sections(contents);
+        let requires = sections
+            .get("options")
+            .and_then(|options| options.get("install_requires"))
+            .expect("install_requires");
+        assert_eq!(
+            split_requirement_lines(requires).collect::<Vec<_>>(),
+            ["requests[security]", "flask"]
         );
     }
 
