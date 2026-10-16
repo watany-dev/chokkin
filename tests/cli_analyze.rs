@@ -356,6 +356,37 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
     assert_eq!(skipped.len(), 5, "{stderr}");
 }
 
+/// A symlinked virtualenv answers to a directory pattern (`venv/`) in
+/// `.gitignore`, as the directory it points to would.
+#[cfg(unix)]
+#[test]
+fn binary_gitignored_directory_symlink_is_silent() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path().join("proj");
+    let outside = temp.path().join("env");
+    fs::create_dir_all(root.join(".git")).expect("mkdir");
+    fs::create_dir_all(&outside).expect("mkdir");
+    fs::write(root.join(".git/HEAD"), "").expect("write");
+    fs::write(root.join(".gitignore"), "venv/\n").expect("write");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("app.py"), "").expect("write module");
+    symlink(&outside, root.join("venv")).expect("symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("did not follow symlink"), "{stderr}");
+}
+
 #[test]
 fn binary_baseline_update_then_suppresses_existing_issue() {
     let temp = tempfile::TempDir::new().expect("tempdir");
@@ -5415,4 +5446,32 @@ fn poetry_dependency_lines_come_from_their_key() {
         [("zope-interface".to_owned(), Some(7))],
         "{issues:#?}"
     );
+}
+
+/// A suite inside a package (`core/tests`) leaves the package a guess
+/// candidate: widening it to `core` would make `core/api.py` test code.
+#[test]
+fn pytest_testpaths_inside_a_package_keeps_the_package_runtime() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"service\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.pytest.ini_options]\ntestpaths = [\"core/tests\"]\n",
+        ),
+        ("core/__init__.py", ""),
+        ("core/api.py", "def handler():\n    return 1\n"),
+        ("core/tests/__init__.py", ""),
+        (
+            "core/tests/test_api.py",
+            "from core.api import handler\n\ndef test_handler():\n    assert handler() == 1\n",
+        ),
+        ("utils/__init__.py", ""),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--probe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(stdout.contains("packages: core"), "{stdout}");
 }

@@ -498,27 +498,25 @@ pub(super) fn partial_fields(scans: &BTreeMap<String, LiteralScan>) -> Vec<Strin
 
 /// Find `settings.py` candidates under the project root (depth ≤ 4), outside
 /// `skip_dirs`. A candidate must look like settings (#979): assign
-/// `INSTALLED_APPS` or `ROOT_URLCONF` at the top level, or star-import the
-/// module that does. A `views/settings.py` does neither and is not one; a
+/// `INSTALLED_APPS` or `ROOT_URLCONF` (in a django-configurations class too),
+/// star-import the module that does, or `include(...)` it as
+/// django-split-settings does. A `views/settings.py` does neither and is not one; a
 /// file that cannot be read stays, so reading it reports the gap.
 pub(super) fn find_settings_candidates(root: &Path, skip_dirs: &[&str]) -> Vec<String> {
     let mut candidates = Vec::new();
     collect_settings_files(root, root, 0, skip_dirs, &mut candidates);
     candidates.retain(|path| {
-        read_to_string(&root.join(path)).map_or(true, |contents| looks_like_settings(&contents))
+        read_to_string(&root.join(path))
+            .map_or(true, |contents| SETTINGS_SHAPE_RE.is_match(&contents))
     });
     candidates.sort();
     candidates
 }
 
-fn looks_like_settings(contents: &str) -> bool {
-    SETTINGS_SHAPE_RE.is_match(contents)
-}
-
 #[allow(clippy::expect_used)]
 static SETTINGS_SHAPE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?m)^(?:(?:INSTALLED_APPS|ROOT_URLCONF)\s*(?::[^=\n]*)?\+?=|from\s+\S+\s+import\s+\*)",
+        r"(?m)^[ \t]*(?:(?:INSTALLED_APPS|ROOT_URLCONF)\s*(?::[^=\n]*)?\+?=|from\s+\S+\s+import\s+\*|include\()",
     )
     .expect("valid settings shape regex")
 });

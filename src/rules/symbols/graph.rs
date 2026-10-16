@@ -309,7 +309,7 @@ impl<'a> StarImports<'a> {
     }
 }
 
-/// The module of the file beside `importer_path` that a bare `name` names
+/// The module of the file or package beside `importer_path` that a bare `name` names
 /// when no module of the layout has that name: a script's own directory is
 /// first on `sys.path` (airflow's `from common_prek_utils import X`, #977).
 fn sibling_module<'n>(
@@ -323,11 +323,14 @@ fn sibling_module<'n>(
     }
     // Source paths are `/`-separated on every platform.
     let stem = name.replace('.', "/");
-    let file = match importer_path.rsplit_once('/') {
-        Some((dir, _)) => format!("{dir}/{stem}.py"),
-        None => format!("{stem}.py"),
+    let base = match importer_path.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/{stem}"),
+        None => stem,
     };
-    module_names.get(file.as_str()).map(String::as_str)
+    [format!("{base}.py"), format!("{base}/__init__.py")]
+        .iter()
+        .find_map(|file| module_names.get(file.as_str()))
+        .map(String::as_str)
 }
 
 /// Names `module` binds by definition or `from … import`: every symbol and
@@ -420,6 +423,30 @@ mod tests {
             "in_container.in_container_utils",
             "run_command"
         )));
+    }
+
+    #[test]
+    fn bare_import_of_a_sibling_package_references_its_init() {
+        let helpers = ParsedModule {
+            path: "tools/helpers/__init__.py".to_owned(),
+            ..ParsedModule::default()
+        };
+        let run = ParsedModule {
+            path: "tools/run.py".to_owned(),
+            imports: vec![import(
+                ImportKind::ImportFrom,
+                "helpers",
+                Some("load"),
+                None,
+            )],
+            ..ParsedModule::default()
+        };
+        let names = HashMap::from([
+            (helpers.path.as_str(), "tools.helpers".to_owned()),
+            (run.path.as_str(), "tools.run".to_owned()),
+        ]);
+        let index = ReferenceIndex::build(&[&helpers, &run], &names);
+        assert!(index.is_externally_referenced(&SymbolId::new("tools.helpers", "load")));
     }
 
     mod props {

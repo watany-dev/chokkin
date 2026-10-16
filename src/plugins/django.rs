@@ -633,12 +633,17 @@ fn module_path(
 }
 
 /// The directory a nested setter imports the settings module from: Django
-/// puts the directory of `manage.py` on `sys.path`, and `wsgi.py` / `asgi.py`
-/// sit in the project package beside it. A root setter needs none.
+/// puts the directory of `manage.py` on `sys.path`, as pytest does for a
+/// `conftest.py` and Python for a `runtests.py` script, and `wsgi.py` /
+/// `asgi.py` sit in the project package beside it. A root setter needs none.
 fn setter_dir(setter: &str) -> Option<String> {
     let path = Path::new(setter);
     let dir = path.parent();
-    let dir = if path.file_name().is_some_and(|name| name == "manage.py") {
+    let own_dir = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "manage.py" | "conftest.py" | "runtests.py"));
+    let dir = if own_dir {
         dir
     } else {
         dir.and_then(Path::parent)
@@ -665,5 +670,14 @@ mod tests {
         let (chosen, ambiguous) = choose_settings_path(&candidates, Some("mysite.settings"), None);
         assert_eq!(chosen.as_deref(), Some("mysite/settings.py"));
         assert!(ambiguous);
+    }
+
+    #[test]
+    fn setter_dir_is_the_script_dir_or_the_package_parent() {
+        assert_eq!(setter_dir("tests/conftest.py").as_deref(), Some("tests"));
+        assert_eq!(setter_dir("tests/runtests.py").as_deref(), Some("tests"));
+        assert_eq!(setter_dir("site/manage.py").as_deref(), Some("site"));
+        assert_eq!(setter_dir("site/proj/wsgi.py").as_deref(), Some("site"));
+        assert_eq!(setter_dir("proj/wsgi.py"), None);
     }
 }

@@ -112,11 +112,6 @@ fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &B
     });
 }
 
-/// Run pipeline steps 1–4 with optional manifest cache support.
-///
-/// # Errors
-///
-/// Returns [`ProbeError`] when a pipeline step fails fatally.
 /// Root `[tool.uv.sources]` paths that resolve outside the root: their
 /// projects are not scanned as members (#499), so say so instead of dropping
 /// them (#981). A member's path sources are not scanned either way, and its
@@ -129,6 +124,8 @@ fn outside_path_sources<'a>(
         let UvSourceKind::Path(path) = &source.kind else {
             return None;
         };
+        // An `Err` is a path that does not resolve (`..` below a missing
+        // directory); it names no file to warn about yet (#1000).
         matches!(resolve_under_root(root, &root.join(path)), Ok(None)).then(|| {
             ManifestWarning::PathOutsideRoot {
                 file: "pyproject.toml".to_owned(),
@@ -139,6 +136,11 @@ fn outside_path_sources<'a>(
     })
 }
 
+/// Run pipeline steps 1–4 with optional manifest cache support.
+///
+/// # Errors
+///
+/// Returns [`ProbeError`] when a pipeline step fails fatally.
 pub(super) fn probe_project_with_cache(
     start: &Path,
     project_root_override: Option<&Path>,

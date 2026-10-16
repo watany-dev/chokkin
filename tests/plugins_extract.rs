@@ -417,6 +417,22 @@ fn django_skips_example_and_non_settings_candidates() {
     assert_eq!(hints.warnings, []);
 }
 
+/// django-configurations sets `INSTALLED_APPS` in a class body and
+/// django-split-settings `include`s it: both files are settings candidates.
+#[test]
+fn django_finds_class_and_split_settings_candidates() {
+    for settings in [
+        "from configurations import Configuration\n\nclass Dev(Configuration):\n    INSTALLED_APPS = []\n",
+        "from split_settings.tools import include\n\ninclude(\"components/base.py\")\n",
+    ] {
+        let hints = django_project(&[("mysite/__init__.py", ""), ("mysite/settings.py", settings)]);
+        assert!(
+            entry_paths(django_contrib(&hints)).contains(&"mysite/settings.py"),
+            "{settings}"
+        );
+    }
+}
+
 /// A settings module star-imported twice is read once.
 #[test]
 fn django_reads_a_twice_star_imported_settings_module_once() {

@@ -279,7 +279,7 @@ impl SkippedSymlinks {
         root: &Path,
         entry: &DirEntry,
         exclude_matcher: &GlobSet,
-        gitignored: &dyn Fn(&Path) -> bool,
+        gitignored: &dyn Fn(&Path, bool) -> bool,
     ) {
         if entry
             .file_type()
@@ -310,7 +310,7 @@ fn skipped_symlink(
     root: &Path,
     entry: &DirEntry,
     exclude_matcher: &GlobSet,
-    gitignored: &dyn Fn(&Path) -> bool,
+    gitignored: &dyn Fn(&Path, bool) -> bool,
 ) -> Option<SourcesWarning> {
     let path = entry.path();
     if entry.depth() == 0 {
@@ -318,7 +318,11 @@ fn skipped_symlink(
     }
     let rel = path.strip_prefix(root).ok()?;
     let rel_str = normalize_rel_path(rel);
-    if should_prune_dir(&rel_str, exclude_matcher) || gitignored(rel) {
+    // A link to a directory (a symlinked `venv`) answers to `venv/` too.
+    if should_prune_dir(&rel_str, exclude_matcher)
+        || gitignored(rel, false)
+        || gitignored(rel, true)
+    {
         return None;
     }
     let named_source = source_kind(path).is_some();
@@ -395,7 +399,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
     let gitignored =
-        |rel: &Path| gitignore.is_some_and(|ignore| ignore.gitignore_ignores_file(rel));
+        |rel: &Path, is_dir| gitignore.is_some_and(|ignore| ignore.gitignore_ignores(rel, is_dir));
 
     let overrides = cache.exclude_overrides(options.exclude_patterns)?;
     let filter = options.respect_gitignore.then(|| {
@@ -441,7 +445,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        if gitignored(rel) {
+        if gitignored(rel, false) {
             continue;
         }
 

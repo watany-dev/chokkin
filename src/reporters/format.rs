@@ -22,7 +22,7 @@ pub(crate) fn escape_control(text: &str) -> Cow<'_, str> {
     let mut escaped = String::with_capacity(text.len() + 8);
     for ch in text.chars() {
         if ch.is_control() {
-            let _ = write!(escaped, "\\u{{{:x}}}", u32::from(ch));
+            escaped.extend(ch.escape_unicode());
         } else {
             escaped.push(ch);
         }

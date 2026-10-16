@@ -81,12 +81,7 @@ fn read_candidate(
     path: &Path,
 ) -> Result<Result<LockfileGraph, String>, ManifestError> {
     let bytes = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
-    // Counting the table headers first spares parsing a lock already too
-    // large; the parsed count still catches packages written another way.
-    let headers = std::fs::read_to_string(path)
-        .ok()
-        .map(|contents| package_headers(&contents));
-    if let Some(cause) = over_limit(bytes, headers) {
+    if let Some(cause) = over_limit(bytes, None) {
         return Ok(Err(cause));
     }
     let graph = match kind {
@@ -98,20 +93,14 @@ fn read_candidate(
     if let Some(cause) = over_limit(bytes, Some(graph.edges.len())) {
         return Ok(Err(cause));
     }
-    // A lock always lists the project or its dependencies, so an empty one is
-    // a placeholder, not a project without dependencies.
+    // A uv lock always lists the project, so an empty one is a placeholder.
+    // An empty Poetry or PDM lock may be a project without dependencies, but
+    // then CHK003 standing for CHK004 lowers nothing either, so it is skipped
+    // the same way.
     if graph.edges.is_empty() {
         return Ok(Err("it lists no packages".to_owned()));
     }
     Ok(Ok(graph))
-}
-
-/// `[[package]]` (uv, Poetry, PDM) and `[[packages]]` (PEP 751) headers.
-fn package_headers(contents: &str) -> usize {
-    contents
-        .lines()
-        .filter(|line| matches!(line.trim(), "[[package]]" | "[[packages]]"))
-        .count()
 }
 
 /// Why a lockfile of `bytes` and `packages` is too large.
@@ -287,10 +276,21 @@ mod tests {
     }
 
     #[test]
-    fn package_headers_count_every_lock_format() {
-        let contents =
-            "[[package]]\nname = \"a\"\n  [[package]]\n[[packages]]\n[package.metadata]\n";
-        assert_eq!(package_headers(contents), 3);
+    fn lockfile_over_the_byte_limit_is_skipped_before_parsing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        // Sparse and not TOML: parsing it would fail the run.
+        let lock = std::fs::File::create(temp.path().join("uv.lock")).expect("create");
+        lock.set_len(MAX_LOCKFILE_BYTES + 1).expect("set_len");
+        let mut warnings = Vec::new();
+        assert!(
+            extract_lockfile(temp.path(), &mut warnings)
+                .expect("ok")
+                .is_none()
+        );
+        assert!(
+            matches!(&warnings[..], [ManifestWarning::LockfileSkipped { reason, .. }] if reason.contains("byte limit")),
+            "{warnings:?}"
+        );
     }
 
     #[test]

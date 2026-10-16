@@ -254,6 +254,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("nbformat", &["nbformat"]),
     ("nest-asyncio", &["nest_asyncio"]),
     ("networkx", &["networkx"]),
+    ("ninja", &["ninja"]),
     ("nltk", &["nltk"]),
     ("nodeenv", &["nodeenv"]),
     ("numba", &["numba"]),

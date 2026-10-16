@@ -223,20 +223,18 @@ fn unused_in_script(
         // The block declares the environment `uv run` builds, which lists
         // runtime peers the script never imports (marimo's dataframe
         // backends, transformers' `torch`), so no import is not proof (#984).
-        let severity = if strict {
-            Severity::Error
-        } else {
-            Severity::Warning
-        };
-        let confidence = Confidence::Likely;
         candidates.push(IssueCandidate {
             rule: RuleId::Chk002,
             subject: IssueSubject::ScriptDistribution {
                 script: script.path.clone(),
                 name: name.clone(),
             },
-            severity,
-            confidence,
+            severity: if strict {
+                Severity::Error
+            } else {
+                Severity::Warning
+            },
+            confidence: Confidence::Likely,
             message: format!(
                 "{name} is declared in the PEP 723 block of {}, but no import in the script uses it",
                 script.path

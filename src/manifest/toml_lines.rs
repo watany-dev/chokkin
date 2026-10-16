@@ -37,17 +37,13 @@ pub(super) fn fill_declaration_lines(
 /// (`"zope.interface" = "*"`), so each step tries the keys of the current
 /// table that the rest of the label starts with, longest first.
 fn label_offset(item: &Item, label: &str) -> Option<usize> {
-    if label.is_empty() {
-        return item.span().map(|span| span.start);
-    }
     if let Some(rest) = label.strip_prefix('[') {
         let (index, rest) = rest.split_once(']')?;
         let value = item.as_array()?.get(index.parse().ok()?)?;
         // Labels end at an array element; none name a key inside one.
-        return rest
-            .is_empty()
-            .then(|| value.span())
-            .flatten()
+        return value
+            .span()
+            .filter(|_| rest.is_empty())
             .map(|span| span.start);
     }
     let table = item.as_table_like()?;

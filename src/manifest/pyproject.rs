@@ -286,6 +286,11 @@ fn poetry_metadata_fallback(table: &toml::Table, metadata: &mut ProjectMetadata)
     else {
         return;
     };
+    // `package-mode = false` builds no distribution: the name only labels
+    // the environment, so it must not make the project a library.
+    if poetry.get("package-mode").and_then(Value::as_bool) == Some(false) {
+        return;
+    }
     let string = |key: &str| poetry.get(key).and_then(Value::as_str).map(str::to_owned);
     if metadata.name.is_none() {
         metadata.name = string("name");
@@ -1052,6 +1057,15 @@ mod tests {
         assert_eq!(result.metadata.name.as_deref(), Some("textual"));
         assert_eq!(result.metadata.version.as_deref(), Some("8.2.8"));
         assert!(!result.has_project_table);
+    }
+
+    #[test]
+    fn poetry_name_is_ignored_without_package_mode() {
+        let result =
+            extract("[tool.poetry]\nname = \"svc\"\nversion = \"1\"\npackage-mode = false\n")
+                .expect("valid pyproject");
+        assert_eq!(result.metadata.name, None);
+        assert_eq!(result.metadata.version, None);
     }
 
     #[test]

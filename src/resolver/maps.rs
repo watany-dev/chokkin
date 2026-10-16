@@ -300,6 +300,8 @@ mod tests {
             ("faiss", "faiss-gpu"),
             ("phonenumbers", "phonenumbers"),
             ("phonenumbers", "phonenumberslite"),
+            ("ninja", "ninja"),
+            ("ninja", "django-ninja"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
@@ -357,7 +359,6 @@ mod tests {
             ("modelcluster", "django-modelcluster"),
             ("treebeard", "django-treebeard"),
             ("mptt", "django-mptt"),
-            ("ninja", "django-ninja"),
             ("strawberry_django", "strawberry-graphql-django"),
             ("graphql", "graphql-core"),
             ("storages", "django-storages"),

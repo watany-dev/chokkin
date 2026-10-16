@@ -51,8 +51,7 @@ pub(crate) fn infer_layout(
     // A suite package `testpaths` names (celery's `t/`) imports itself by
     // absolute name, as `tests/` does (#978).
     for path in pytest_testpaths(root, &layout) {
-        let top_level = !path.contains('/');
-        if top_level
+        if !path.contains('/')
             && root.join(&path).join("__init__.py").is_file()
             && !layout.local_packages.contains(&path)
         {
@@ -123,6 +122,20 @@ fn ships_modules(dir: &Path) -> bool {
     })
 }
 
+/// Whether `dir` holds a module besides `__init__.py` and `conftest.py`.
+fn holds_own_modules(dir: &Path) -> bool {
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            path.extension().is_some_and(|ext| ext == "py")
+                && !path
+                    .file_name()
+                    .is_some_and(|name| name == "__init__.py" || name == "conftest.py")
+                && path.is_file()
+        })
+    })
+}
+
 /// Root directories holding modules but no `__init__.py` that the layout did
 /// not take: a namespace package nothing declared, or loose scripts. Neither
 /// is scanned by the inferred globs, so `--probe` names them rather than
@@ -136,6 +149,7 @@ pub(crate) fn unpackaged_module_dirs(root: &Path, layout: &LayoutInfo) -> Vec<St
     let mut dirs: Vec<String> = entries
         .flatten()
         .filter(entry_is_dir)
+        // A non-UTF-8 name is no Python identifier, so nothing imports it.
         .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
         .filter(|name| {
             !name.starts_with('.')
@@ -266,19 +280,27 @@ fn heuristic_layout(
             return (LayoutInfo::new(base, vec![package]), None);
         }
     }
-    // A guess skips the suite `testpaths` names; a package named after the
-    // project above still wins, as pandas' `testpaths = "pandas"` does (#978).
-    let suites = testpath_tops(root, "");
-    let guessable = candidates.iter().map(|(base, packages)| {
-        let kept: Vec<String> = packages
-            .iter()
-            .filter(|package| !suites.contains(&join_rel(base, package)))
-            .cloned()
-            .collect();
-        (*base, kept)
-    });
-    let guessable: Vec<(&str, Vec<String>)> = guessable
-        .filter(|(_, packages)| !packages.is_empty())
+    // A guess skips a package `testpaths` names, or one an entry widens to
+    // that holds only subpackages (`t/` of `t/unit`); a package named after
+    // the project above still wins, as pandas' `testpaths = "pandas"` does
+    // (#978). A widened top with modules of its own (`core/api.py` beside
+    // `core/tests`) stays a candidate: it may be the runtime package.
+    let mut suites = testpath_entries(root, "");
+    suites.extend(
+        testpath_tops(root, "")
+            .into_iter()
+            .filter(|top| !holds_own_modules(&root.join(top))),
+    );
+    let guessable: Vec<(&str, Vec<String>)> = candidates
+        .iter()
+        .filter_map(|(base, packages)| {
+            let kept: Vec<String> = packages
+                .iter()
+                .filter(|package| !suites.contains(&join_rel(base, package)))
+                .cloned()
+                .collect();
+            (!kept.is_empty()).then_some((*base, kept))
+        })
         .collect();
     let candidates = if guessable.is_empty() {
         candidates
@@ -413,17 +435,24 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
     testpaths
 }
 
-/// Root-relative `testpaths` of the pytest config in `dir`, each widened to
-/// the top of its `__init__.py` chain without climbing above `dir`.
-fn testpath_tops(root: &Path, dir: &str) -> Vec<String> {
-    let floor = dir.split('/').filter(|part| !part.is_empty()).count();
+/// Root-relative `testpaths` of the pytest config in `dir`, as written.
+fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
     pytest_import_settings(&root.join(dir))
         .unwrap_or_default()
         .testpaths
         .iter()
         .filter_map(|path| in_root_dir(path))
+        .map(|path| join_rel(dir, &path))
+        .collect()
+}
+
+/// [`testpath_entries`] of `dir`, each widened to the top of its
+/// `__init__.py` chain without climbing above `dir`.
+fn testpath_tops(root: &Path, dir: &str) -> Vec<String> {
+    let floor = dir.split('/').filter(|part| !part.is_empty()).count();
+    testpath_entries(root, dir)
+        .into_iter()
         .map(|path| {
-            let path = join_rel(dir, &path);
             let parts: Vec<&str> = path.split('/').collect();
             let is_package =
                 |parts: &[&str]| root.join(parts.join("/")).join("__init__.py").is_file();

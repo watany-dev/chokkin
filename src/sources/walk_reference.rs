@@ -140,8 +140,8 @@ pub(super) fn collect_files_reference(
     let mut files = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
-    let gitignored = |rel: &Path| {
-        gitignore.is_some_and(|ignore| ignore.matched_path_or_any_parents(rel, false).is_ignore())
+    let gitignored = |rel: &Path, is_dir| {
+        gitignore.is_some_and(|ignore| ignore.matched_path_or_any_parents(rel, is_dir).is_ignore())
     };
 
     for result in builder.build() {
@@ -191,7 +191,7 @@ pub(super) fn collect_files_reference(
             continue;
         }
 
-        if gitignored(rel) {
+        if gitignored(rel, false) {
             continue;
         }
 
