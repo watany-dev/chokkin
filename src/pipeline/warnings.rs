@@ -203,6 +203,7 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::RuntimeDependenciesUnknown { file }
         | ManifestWarning::SetupPyPartiallyStatic { file, .. }
         | ManifestWarning::RequirementsUnreadable { file, .. }
+        | ManifestWarning::PathOutsideRoot { file, .. }
         | ManifestWarning::LockfileSkipped { file, .. }
         | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
@@ -426,6 +427,10 @@ fn write_manifest_warning(
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
         },
+        ManifestWarning::PathOutsideRoot { file, field, path } => write!(
+            formatter,
+            "manifest: `{path}` (`{field}` in `{file}`) resolves outside the project root and was not read"
+        ),
         ManifestWarning::RequirementsUnreadable { file, reason } => {
             write!(formatter, "manifest: stopped reading `{file}`: {reason}")
         },

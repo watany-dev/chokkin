@@ -214,7 +214,32 @@ fn ensure_relative(path: &Path, field: String, value: &str) -> Result<(), Config
             "path must be relative to the project root",
         ));
     }
+    if escapes_root(value) {
+        return Err(validation_error(
+            path,
+            field,
+            "path resolves outside the project root",
+        ));
+    }
     Ok(())
+}
+
+/// Whether `..` climbs above the start of `value` (#981): such a path or glob
+/// can never name a file chokkin walks, and dropping it silently hid the typo.
+/// Glob segments count as one directory each.
+fn escapes_root(value: &str) -> bool {
+    let mut depth = 0usize;
+    for part in value.split(['/', '\\']) {
+        match part {
+            "" | "." => {},
+            ".." => match depth.checked_sub(1) {
+                Some(up) => depth = up,
+                None => return true,
+            },
+            _ => depth += 1,
+        }
+    }
+    false
 }
 
 fn ensure_known_rules<'a>(
@@ -245,6 +270,16 @@ fn validation_error(path: &Path, field: String, message: &str) -> ConfigError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escapes_root_folds_parent_segments() {
+        for inside in ["src/**/*.py", "a/../x", "./a/./b", "a\\..\\b", "**/.."] {
+            assert!(!escapes_root(inside), "{inside}");
+        }
+        for outside in ["..", "../x", "a/../../x", "./../x", "a\\..\\..\\x"] {
+            assert!(escapes_root(outside), "{outside}");
+        }
+    }
 
     #[test]
     fn rule_code_keys_are_case_sensitive() {

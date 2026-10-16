@@ -1347,6 +1347,81 @@ fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     temp
 }
 
+/// Every path that resolves outside the root says so, instead of "not found"
+/// or nothing (#981): chokkin's own config is an error, a manifest's is a
+/// warning naming what was not read.
+#[test]
+fn paths_outside_the_root_are_reported_as_such() {
+    const PROJECT: &str =
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = [\"requests\"]\n";
+    let cases: [(&str, &str, &str, u8); 6] = [
+        (
+            "requirements.txt",
+            "-r ../x.txt\n",
+            "requirements file `../x.txt` resolves outside the project root",
+            2,
+        ),
+        (
+            "requirements.txt",
+            "-c ../x.txt\nrequests\n",
+            "manifest: `../x.txt` (`-c` in `requirements.txt`) resolves outside the project root and was not read",
+            0,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.chokkin]\nproject = [\"../x\"]\n",
+            "project[0]: path resolves outside the project root",
+            2,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.uv.sources]\nlib = { path = \"../x\" }\n",
+            "manifest: `../x` (`tool.uv.sources.lib` in `pyproject.toml`) resolves outside the project root and was not read",
+            0,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.chokkin.workspaces.w]\npath = \"../x\"\n",
+            "workspaces.w.path: path resolves outside the project root",
+            2,
+        ),
+        (
+            "pyproject.toml",
+            "[tool.chokkin]\nentry = [\"/abs/path\"]\n",
+            "entry[0]: path must be relative to the project root",
+            2,
+        ),
+    ];
+    for (file, text, expected, exit) in cases {
+        let pyproject = if file == "pyproject.toml" {
+            format!("{PROJECT}{text}")
+        } else {
+            PROJECT.to_owned()
+        };
+        let mut files = vec![
+            ("x.txt", "requests\n"),
+            ("x/pyproject.toml", PROJECT),
+            ("p/demo/__init__.py", "import requests\n"),
+            ("p/pyproject.toml", pyproject.as_str()),
+        ];
+        let requirements = format!("p/{file}");
+        if file != "pyproject.toml" {
+            files.push((requirements.as_str(), text));
+        }
+        let temp = write_project(&files);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .arg(temp.path().join("p"))
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains(expected), "{text}: {stderr}");
+        assert!(!stderr.contains("not found"), "{text}: {stderr}");
+        assert!(!stderr.contains("missing constraints"), "{text}: {stderr}");
+        assert_eq!(output.status.code(), Some(exit.into()), "{text}: {stderr}");
+    }
+}
+
 /// litellm's `tests/e2e`: a conftest without `__init__.py` puts its directory
 /// on `sys.path`, so tests below import siblings by top-level name (#360).
 fn pytest_prepend_project(pytest_options: &str) -> tempfile::TempDir {

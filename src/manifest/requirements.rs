@@ -190,9 +190,19 @@ fn parse_requirements_line(
             include_path,
             &mut ctx.result.files_missing,
         );
-        let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
-            path: include_path.to_owned(),
-        })?;
+        let resolved_path = match resolved {
+            Include::Found(path) => path,
+            Include::Missing => {
+                return Err(ManifestError::RequirementsIncludeMissing {
+                    path: include_path.to_owned(),
+                });
+            },
+            Include::OutsideRoot => {
+                return Err(ManifestError::RequirementsIncludeOutsideRoot {
+                    path: include_path.to_owned(),
+                });
+            },
+        };
         let include_context = requirements_path_context(&origin_rel(ctx.root, &resolved_path))
             .unwrap_or_else(|| ctx.default_context.clone());
         return parse_requirements_file_path(RequirementsParseContext {
@@ -208,26 +218,34 @@ fn parse_requirements_line(
     if let Some(constraint_path) =
         flag_value(trimmed, "-c", "--constraint", ShortAttachPolicy::Allow)
     {
-        if let Some(resolved) = resolve_requirements_include(
+        match resolve_requirements_include(
             ctx.root,
             ctx.path,
             constraint_path,
             &mut ctx.result.files_missing,
         ) {
-            parse_requirements_file_path(RequirementsParseContext {
+            Include::Found(resolved) => parse_requirements_file_path(RequirementsParseContext {
                 root: ctx.root,
                 path: &resolved,
                 default_context: ctx.default_context,
                 include_stack: ctx.include_stack,
                 result: ctx.result,
                 mode: RequirementsParseMode::Constraints,
-            })?;
-        } else {
-            ctx.result
-                .warnings
-                .push(ManifestWarning::RequirementsConstraintMissing {
+            })?,
+            Include::Missing => {
+                ctx.result
+                    .warnings
+                    .push(ManifestWarning::RequirementsConstraintMissing {
+                        path: constraint_path.to_owned(),
+                    });
+            },
+            Include::OutsideRoot => {
+                ctx.result.warnings.push(ManifestWarning::PathOutsideRoot {
+                    file: rel.to_owned(),
+                    field: "-c".to_owned(),
                     path: constraint_path.to_owned(),
                 });
+            },
         }
         return Ok(());
     }
@@ -719,6 +737,16 @@ fn is_local_path(spec: &str) -> bool {
     spec.starts_with('.')
 }
 
+/// Where a `-r` / `-c` reference led.
+enum Include {
+    Found(PathBuf),
+    /// No candidate exists.
+    Missing,
+    /// A candidate exists but resolves outside the root (#981), so it is not
+    /// read; "not found" would send the user hunting for a typo.
+    OutsideRoot,
+}
+
 /// Absent candidates are appended to `missing` so the manifest cache can
 /// notice when one appears later (a new `-c` file, or a nearer include that
 /// shadows the root one).
@@ -727,22 +755,28 @@ fn resolve_requirements_include(
     base: &Path,
     include: &str,
     missing: &mut Vec<String>,
-) -> Option<PathBuf> {
+) -> Include {
     let candidates = [
         base.parent().map(|parent| parent.join(include)),
         Some(root.join(include)),
     ];
 
+    let mut outside = false;
     for candidate in candidates.into_iter().flatten() {
         if !candidate.is_file() {
             missing.push(rel_to_root(root, &candidate));
             continue;
         }
         if path_is_within_root(root, &candidate) {
-            return Some(candidate);
+            return Include::Found(candidate);
         }
+        outside = true;
     }
-    None
+    if outside {
+        Include::OutsideRoot
+    } else {
+        Include::Missing
+    }
 }
 
 /// The root-relative origin of a requirements file, with `..` folded so

@@ -14,11 +14,11 @@ use crate::config::{
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
-    DeclaredDependency, InlineScript, LoadedManifest, discover_inline_scripts,
-    extract_manifest_with_cache, lockfile_candidates, normalize_distribution_name,
-    resolve_target_version,
+    DeclaredDependency, InlineScript, LoadedManifest, ManifestWarning, UvSourceKind,
+    discover_inline_scripts, extract_manifest_with_cache, lockfile_candidates,
+    normalize_distribution_name, resolve_target_version,
 };
-use crate::path_util::join_rel;
+use crate::path_util::{join_rel, resolve_under_root};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
@@ -117,6 +117,28 @@ fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &B
 /// # Errors
 ///
 /// Returns [`ProbeError`] when a pipeline step fails fatally.
+/// Root `[tool.uv.sources]` paths that resolve outside the root: their
+/// projects are not scanned as members (#499), so say so instead of dropping
+/// them (#981). A member's path sources are not scanned either way, and its
+/// siblings sit outside the member, so only the root's are reported.
+fn outside_path_sources<'a>(
+    root: &'a Path,
+    manifest: &'a LoadedManifest,
+) -> impl Iterator<Item = ManifestWarning> + 'a {
+    manifest.uv.sources.iter().filter_map(move |source| {
+        let UvSourceKind::Path(path) = &source.kind else {
+            return None;
+        };
+        matches!(resolve_under_root(root, &root.join(path)), Ok(None)).then(|| {
+            ManifestWarning::PathOutsideRoot {
+                file: "pyproject.toml".to_owned(),
+                field: format!("tool.uv.sources.{}", source.name),
+                path: path.clone(),
+            }
+        })
+    })
+}
+
 pub(super) fn probe_project_with_cache(
     start: &Path,
     project_root_override: Option<&Path>,
@@ -171,6 +193,7 @@ pub(super) fn probe_project_with_cache(
         sources.python_files().map(|file| file.path.as_str()),
     );
     let mut warnings = collect_warnings(&manifest, &sources);
+    warnings.extend(outside_path_sources(&root.path, &manifest).map(ProbeWarning::Manifest));
     // After `drop_dev_only_members`: a dropped member is not analyzed.
     warnings.extend(member_manifest_warnings(&workspace_inputs));
     warnings.extend(member_sources_warnings(&workspace_inputs));
