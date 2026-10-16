@@ -43,19 +43,36 @@ pub(super) fn detect_duplicate_dependencies(
         .into_iter()
         .filter_map(|(name, declarations)| {
             // A repeat in one context is reported on its own, located on the
-            // line `--fix` removes: the last removable one.
-            let mut repeated = repeated_in_context(&declarations);
-            let removable = removable_among(&declarations, &repeated);
-            let (involved, removable) = if removable.is_empty() {
-                (duplicate_declarations(&declarations, |_, _| true), false)
-            } else {
-                repeated
-                    .sort_by_key(|dep| removable.iter().any(|known| std::ptr::eq(*known, *dep)));
-                (repeated, true)
+            // line `--fix` removes.
+            let (involved, removable) = match duplicate_to_remove(&declarations) {
+                Some(to_remove) => {
+                    let mut repeated = repeated_in_context(&declarations);
+                    repeated.sort_by_key(|dep| std::ptr::eq(*dep, to_remove));
+                    (repeated, true)
+                },
+                None => (duplicate_declarations(&declarations, |_, _| true), false),
             };
             (!involved.is_empty()).then(|| candidate(name, &involved, removable))
         })
         .collect()
+}
+
+pub(crate) fn duplicate_to_remove<'a>(
+    declarations: &[&'a DeclaredDependency],
+) -> Option<&'a DeclaredDependency> {
+    removable_duplicates(declarations)
+        .into_iter()
+        .max_by_key(|dep| removal_priority(&dep.context))
+}
+
+fn removal_priority(context: &DependencyContext) -> u8 {
+    match context {
+        DependencyContext::Runtime => 0,
+        DependencyContext::OptionalExtra(_) => 1,
+        DependencyContext::Group(_) => 2,
+        DependencyContext::SetupExtra(_) => 3,
+        DependencyContext::Build => 4,
+    }
 }
 
 /// The declarations of one distribution that `--fix` may remove: ones that
@@ -63,7 +80,7 @@ pub(super) fn detect_duplicate_dependencies(
 /// so a line also read under another context (`requirements.txt` pulled into
 /// `requirements-dev.txt` by `-r`) qualifies only when it is repeated in
 /// every context that reads it (#860).
-pub(crate) fn removable_duplicates<'a>(
+fn removable_duplicates<'a>(
     declarations: &[&'a DeclaredDependency],
 ) -> Vec<&'a DeclaredDependency> {
     removable_among(declarations, &repeated_in_context(declarations))
@@ -443,6 +460,41 @@ mod tests {
     }
 
     #[test]
+    fn the_issue_sits_on_the_line_fix_removes_across_contexts() {
+        let dev = [
+            at("requests", group("dev"), "requirements-dev.txt", 1),
+            at("requests", group("dev"), "requirements-dev.txt", 2),
+        ];
+        let runtime = [
+            at(
+                "requests",
+                DependencyContext::Runtime,
+                "requirements.txt",
+                1,
+            ),
+            at(
+                "requests",
+                DependencyContext::Runtime,
+                "requirements.txt",
+                2,
+            ),
+        ];
+        for declarations in [
+            [&dev[0], &dev[1], &runtime[0], &runtime[1]],
+            [&runtime[0], &runtime[1], &dev[0], &dev[1]],
+        ] {
+            let owned: Vec<DeclaredDependency> =
+                declarations.iter().map(|dep| (*dep).clone()).collect();
+            let removed = duplicate_to_remove(&declarations).map(|dep| &dep.origin);
+            assert_eq!(removed, Some(&dev[1].origin));
+            assert_eq!(
+                detect(&owned)[0].origins.last(),
+                Some(&Origin::Manifest(dev[1].origin.clone()))
+            );
+        }
+    }
+
+    #[test]
     fn group_declaration_adding_extras_refines_the_runtime_one() {
         let streamlit = with_extras(dep("streamlit", group("dev")), &["auth", "charts"]);
         assert_eq!(
@@ -731,19 +783,16 @@ mod tests {
                 );
             }
         }
-        let removable = removable_duplicates(declarations);
-        if !removable.is_empty() {
+        if let Some(removed) = duplicate_to_remove(declarations) {
             let owned: Vec<DeclaredDependency> =
                 declarations.iter().map(|dep| (*dep).clone()).collect();
-            let anchor = detect(&owned)[0].origins.last().cloned();
-            assert!(
-                removable
-                    .iter()
-                    .any(|dep| anchor == Some(Origin::Manifest(dep.origin.clone()))),
-                "issue not on a line --fix removes: {anchor:?} in {declarations:#?}"
+            assert_eq!(
+                detect(&owned)[0].origins.last(),
+                Some(&Origin::Manifest(removed.origin.clone())),
+                "issue not on the line --fix removes in {declarations:#?}"
             );
         }
-        for removed in removable {
+        for removed in removable_duplicates(declarations) {
             let rest: Vec<&DeclaredDependency> = declarations
                 .iter()
                 .copied()
