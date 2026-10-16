@@ -390,7 +390,7 @@ fn write_manifest_warning(
             );
             write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
             // A PEP 723 block's line is not a gap (§11), so it lowers nothing.
-            let script = label.starts_with("script.");
+            let script = label.starts_with("script.dependencies[");
             match invalid_requirement_name(raw).filter(|_| !script) {
                 Some(name) => write!(
                     formatter,

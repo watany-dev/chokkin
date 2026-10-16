@@ -3052,12 +3052,12 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
         // `rich_` cannot end a PEP 508 name, so the name read is `rich`.
         (
             "requirements.txt",
-            "PyYAML>=\nrich_ >=13\n>=1.0\nclick==8.1 \\\n",
+            "PyYAML>=\nrich_ >=13\n>=1.0\nclick==8.1 \\\nacmelib>=\n",
         ),
         ("acme/__init__.py", ""),
         (
             "acme/main.py",
-            "import yaml\nimport rich\nimport click\nimport idna\n",
+            "import yaml\nimport rich\nimport click\nimport idna\nimport acmelib\n",
         ),
     ]);
     let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
@@ -3080,6 +3080,8 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
             "CHK003 acme/main.py:rich info maybe",
             "CHK003 acme/main.py:click info maybe",
             "CHK003 acme/main.py:idna error certain",
+            // Unresolved, since its only declaration is the invalid line.
+            "CHK010 acme/main.py:acmelib info maybe",
         ]
     );
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))

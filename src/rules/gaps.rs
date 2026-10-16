@@ -9,7 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{Confidence, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
-use crate::manifest::{InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name};
+use crate::manifest::{
+    InlineScript, LoadedManifest, ManifestWarning, invalid_requirement_name,
+    normalize_distribution_name,
+};
 use crate::parser::{ImportContext, ParseSummary};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
@@ -144,12 +147,7 @@ impl GapKind {
                 IssueSubject::Import { .. },
             )
             | (
-                Self::InvalidRequirement,
-                RuleId::Chk003 | RuleId::Chk004,
-                IssueSubject::Import { .. },
-            )
-            | (
-                Self::AssumedTargetVersion,
+                Self::InvalidRequirement | Self::AssumedTargetVersion,
                 RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
                 IssueSubject::Import { .. },
             ) => Some(Lowering::Hint),
@@ -189,7 +187,9 @@ impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
     /// member's findings, a script's import that script's alone, and an
     /// assumed stdlib status the imports of that root in that file, and an
-    /// invalid requirement the imports of the distribution it names.
+    /// invalid requirement the imports of the distribution it names, or of
+    /// that root when the line was their only declaration and they resolve
+    /// to nothing.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
@@ -203,10 +203,20 @@ impl Gap {
                         .as_ref()
                         .is_some_and(|(root, _)| root == import_root(module))
             },
-            (GapKind::InvalidRequirement, IssueSubject::Import { distribution, .. }) => self
+            (
+                GapKind::InvalidRequirement,
+                IssueSubject::Import {
+                    module,
+                    distribution,
+                    ..
+                },
+            ) => self
                 .site
                 .as_ref()
-                .is_some_and(|(name, _)| distribution.as_deref() == Some(name.as_str())),
+                .is_some_and(|(name, _)| match distribution {
+                    Some(distribution) => distribution == name,
+                    None => normalize_distribution_name(import_root(module)) == *name,
+                }),
             _ => true,
         };
         in_member && in_site
@@ -772,7 +782,8 @@ mod tests {
 
     /// An invalid line may declare the distribution it names, so it lowers
     /// the missing-declaration findings for that one: the root's line in
-    /// every member, a member's in that member alone (#928).
+    /// every member, a member's in that member alone. An unresolved import
+    /// counts when its root normalizes to that name (#928).
     #[test]
     fn invalid_requirement_hints_only_imports_of_the_distribution_it_names() {
         let resolved = |module: &str, name: &str| IssueSubject::Import {
@@ -793,7 +804,8 @@ mod tests {
             candidate(RuleId::Chk003, resolved("idna", "idna")),
             in_member(candidate(RuleId::Chk003, resolved("rich", "rich")), "x"),
             in_member(candidate(RuleId::Chk003, resolved("rich", "rich")), "y"),
-            candidate(RuleId::Chk003, import("pyyaml")),
+            candidate(RuleId::Chk010, import("PyYAML.loader")),
+            candidate(RuleId::Chk010, import("yaml")),
             candidate(RuleId::Chk002, distribution("pyyaml")),
         ];
         apply_gaps(
@@ -828,6 +840,7 @@ mod tests {
                 kept.clone(),
                 hint("`rich` in `packages/x/pyproject.toml:2`"),
                 kept.clone(),
+                hint("`pyyaml` in `requirements.txt:2`"),
                 kept.clone(),
                 kept,
             ]

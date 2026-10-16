@@ -163,8 +163,9 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
 /// Distribution an invalid requirement line may have declared (#928): its
 /// leading name token, less the separators a PEP 508 name cannot start or end
 /// on, so `rich_ >=13` names `rich`. `None` when no name character leads it
-/// (`>=1.0`, `./pkg`), the token is a path or an archive pip reads as a file
-/// (`wheels/foo.whl`, `C:\pkg`, `foo-1.0-py3-none-any.whl`), or another word
+/// (`>=1.0`, `./pkg`), the token is a path, a URL scheme (`git+https://`) or
+/// an archive pip reads as a file (`wheels/foo.whl`, `C:\pkg`,
+/// `foo-1.0-py3-none-any.whl`), or another word
 /// follows it (`not a requirement`), which no requirement has: such a line
 /// names nothing to lower.
 #[must_use]
@@ -173,7 +174,7 @@ pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let token = leading_name_token(trimmed);
     let after = &trimmed[token.len()..];
     let name = token.trim_matches(['-', '_', '.']);
-    let file = after.starts_with(['/', '\\', ':']) || looks_like_archive(token);
+    let file = after.starts_with(['/', '\\', ':', '+']) || looks_like_archive(token);
     let followed_by_word = after
         .trim_start()
         .starts_with(|ch: char| ch.is_ascii_alphanumeric());
@@ -245,6 +246,10 @@ mod tests {
             ("wheels/foo-1.0-py3-none-any.whl", None),
             ("C:\\wheels\\foo.whl", None),
             ("foo-1.0-py3-none-any.whl", None),
+            (
+                "git+https://github.com/org/pkg.git ; python_version >=",
+                None,
+            ),
             ("", None),
         ] {
             assert_eq!(
