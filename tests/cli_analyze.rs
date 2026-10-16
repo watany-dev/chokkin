@@ -4961,3 +4961,67 @@ fn binary_unreadable_requires_python_warns_unless_target_version_is_set() {
         ]
     );
 }
+
+/// Text from the analyzed project, here a file name and venv METADATA, reaches
+/// text reporters and stderr with control characters escaped, so it cannot
+/// colour the terminal or forge a line; a dist-info whose `Name:` is not a
+/// PEP 508 name is ignored with a warning (#973).
+#[cfg(unix)]
+#[test]
+fn binary_escapes_control_characters_from_the_project() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"pyyaml\"]\n\n\
+             [project.scripts]\nacme = \"acme:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", "import yaml\n\ndef main():\n    pass\n"),
+        ("acme/bad\x1b[31m\nCHK001 forged.py", ""),
+        (
+            ".venv/lib/python3.11/site-packages/evil-1.0.dist-info/METADATA",
+            "Name: evil\x1b[31mRED\x1b[0m\n",
+        ),
+        (
+            ".venv/lib/python3.11/site-packages/evil-1.0.dist-info/top_level.txt",
+            "yaml\n",
+        ),
+    ]);
+    let control = |text: &str| text.chars().any(|ch| ch.is_control() && ch != '\n');
+
+    for reporter in ["default", "compact", "markdown", "github"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", reporter])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!control(&stdout), "{reporter}: {stdout:?}");
+        assert!(!control(&stderr), "{reporter}: {stderr:?}");
+        assert!(
+            stdout.contains("bad\\u{1b}[31m\\u{a}CHK001 forged.py"),
+            "{reporter}: {stdout}"
+        );
+        assert!(
+            !stdout.lines().any(|line| line.starts_with("CHK001 forged")),
+            "{reporter}: {stdout}"
+        );
+        assert!(
+            stderr.lines().any(|line| line
+                == "resolve: ignored `.venv/lib/python3.11/site-packages/evil-1.0.dist-info`: \
+                    `evil\\u{1b}[31mRED\\u{1b}[0m` is not a PEP 508 distribution name"),
+            "{reporter}: {stderr}"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues = parsed["issues"].to_string();
+    assert!(!issues.contains("evil"), "{issues}");
+    assert!(!issues.contains("\"CHK002\""), "{issues}");
+    assert!(!issues.contains("\"CHK003\""), "{issues}");
+}

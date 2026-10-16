@@ -189,6 +189,12 @@ pub(super) fn leading_name_token(spec: &str) -> &str {
     &spec[..end]
 }
 
+/// A whole PEP 508 project name: `[A-Za-z0-9._-]` with alphanumeric edges.
+#[must_use]
+pub(crate) fn is_project_name(name: &str) -> bool {
+    leading_name_token(name) == name && is_strict_pep508_name(name)
+}
+
 /// Strict PEP 508 name check: alphanumeric edges (separators inside only).
 #[must_use]
 pub(super) fn is_strict_pep508_name(name: &str) -> bool {

@@ -11,7 +11,7 @@ use std::path::Path;
 use crate::entry::EntryWarning;
 use crate::manifest::{ManifestWarning, invalid_requirement_name};
 use crate::plugins::PluginsWarning;
-use crate::reporters::{Diagnostic, condense_diagnostics};
+use crate::reporters::{Diagnostic, condense_diagnostics, escape_control};
 use crate::resolver::ResolveWarning;
 use crate::sources::SourcesWarning;
 
@@ -163,6 +163,7 @@ impl ProbeWarning {
             },
             Self::Resolve(warning) => match warning {
                 ResolveWarning::UnresolvedImport { file, line, .. } => (Some(file), *line),
+                ResolveWarning::VenvDistributionIgnored { path, .. } => (Some(path), None),
                 ResolveWarning::AmbiguousImport { .. } | ResolveWarning::VenvUnreadable { .. } => {
                     (None, None)
                 },
@@ -313,6 +314,10 @@ fn write_resolve_warning(
         ResolveWarning::UnresolvedImport { import, file, .. } => write!(
             formatter,
             "resolve: could not resolve import `{import}` in `{file}`"
+        ),
+        ResolveWarning::VenvDistributionIgnored { path, name } => write!(
+            formatter,
+            "resolve: ignored `{path}`: `{name}` is not a PEP 508 distribution name"
         ),
         ResolveWarning::VenvUnreadable { path, reason } => write!(
             formatter,
@@ -499,7 +504,7 @@ pub fn diagnostic_lines<'a>(
 /// Write warning lines to `err`, repeated kinds condensed.
 pub fn write_diagnostics(diagnostics: &[Diagnostic], err: &mut impl Write) -> io::Result<()> {
     for diagnostic in condense_diagnostics(diagnostics) {
-        writeln!(err, "{}", diagnostic.text)?;
+        writeln!(err, "{}", escape_control(&diagnostic.text))?;
     }
     Ok(())
 }

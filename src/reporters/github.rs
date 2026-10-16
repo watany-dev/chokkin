@@ -6,7 +6,9 @@ use std::path::Path;
 use crate::path_util::normalize_rel_path;
 use crate::rules::{Issue, IssueReport};
 
-use super::format::{baseline_suppressed_count, condense_diagnostics, format_issue_subject};
+use super::format::{
+    baseline_suppressed_count, condense_diagnostics, escape_control, format_issue_subject,
+};
 use super::types::{Diagnostic, RenderContext};
 
 /// GitHub Actions workflow-command reporter.
@@ -94,9 +96,12 @@ fn escape_property(value: &str) -> String {
         .replace(',', "%2C")
 }
 
+/// Line breaks are percent-encoded the way Actions decodes them; any other
+/// control character is spelled out so the step log stays plain (#973).
 fn escape_message(value: &str) -> String {
-    value
+    let encoded = value
         .replace('%', "%25")
         .replace('\r', "%0D")
-        .replace('\n', "%0A")
+        .replace('\n', "%0A");
+    escape_control(&encoded).into_owned()
 }

@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::discovery::ProjectRoot;
-use crate::manifest::normalize_distribution_name;
+use crate::manifest::{is_project_name, normalize_distribution_name};
 use crate::path_util::rel_to_root;
 
 use super::metadata::parse_metadata;
@@ -29,7 +29,7 @@ pub(super) fn load_venv_index(root: &ProjectRoot, warnings: &mut Vec<ResolveWarn
         return VenvIndex::default();
     };
 
-    match read_venv_index(&venv_path) {
+    match read_venv_index(&root.path, &venv_path, warnings) {
         Ok(index) => index,
         Err(reason) => {
             warnings.push(ResolveWarning::VenvUnreadable {
@@ -51,7 +51,11 @@ fn discover_venv(root: &Path) -> Option<PathBuf> {
     None
 }
 
-fn read_venv_index(venv: &Path) -> Result<VenvIndex, String> {
+fn read_venv_index(
+    root: &Path,
+    venv: &Path,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Result<VenvIndex, String> {
     let site_packages =
         find_site_packages(venv).ok_or_else(|| "site-packages not found".to_owned())?;
     let mut index = VenvIndex::default();
@@ -65,7 +69,12 @@ fn read_venv_index(venv: &Path) -> Result<VenvIndex, String> {
         if !file_name.ends_with(".dist-info") {
             continue;
         }
-        merge_dist_info(&path, &mut index);
+        if let Err(name) = merge_dist_info(&path, &mut index) {
+            warnings.push(ResolveWarning::VenvDistributionIgnored {
+                path: rel_to_root(root, &path),
+                name,
+            });
+        }
     }
 
     for imports in index.imports.values_mut() {
@@ -97,26 +106,28 @@ fn find_site_packages(venv: &Path) -> Option<PathBuf> {
     None
 }
 
-fn merge_dist_info(dist_info: &Path, index: &mut VenvIndex) {
+/// `Err` carries a name that is not a PEP 508 project name: pip installs
+/// none such, and trusting one credited `yaml` to `evil\x1b[31m` (#973).
+fn merge_dist_info(dist_info: &Path, index: &mut VenvIndex) -> Result<(), String> {
     let metadata_path = dist_info.join("METADATA");
     let Ok(contents) = fs::read_to_string(&metadata_path) else {
-        return;
+        return Ok(());
     };
     let metadata = parse_metadata(&contents);
-    let distribution = metadata
-        .name
-        .as_deref()
-        .map(normalize_distribution_name)
-        .or_else(|| {
-            dist_info
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(parse_dist_info_name)
-        });
-
-    let Some(distribution) = distribution else {
-        return;
+    let name = metadata.name.clone().or_else(|| {
+        dist_info
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(dist_info_name)
+            .map(str::to_owned)
+    });
+    let Some(name) = name else {
+        return Ok(());
     };
+    if !is_project_name(&name) {
+        return Err(name);
+    }
+    let distribution = normalize_distribution_name(&name);
 
     let top_level_path = dist_info.join("top_level.txt");
     if let Ok(top_level) = fs::read_to_string(&top_level_path) {
@@ -141,6 +152,7 @@ fn merge_dist_info(dist_info: &Path, index: &mut VenvIndex) {
     }
 
     merge_entry_points(&dist_info.join("entry_points.txt"), &distribution, index);
+    Ok(())
 }
 
 fn merge_entry_points(path: &Path, distribution: &str, index: &mut VenvIndex) {
@@ -163,10 +175,10 @@ fn push_import(index: &mut VenvIndex, import: &str, distribution: &str) {
         .push(distribution.to_owned());
 }
 
-fn parse_dist_info_name(file_name: &str) -> Option<String> {
+fn dist_info_name(file_name: &str) -> Option<&str> {
     let stem = file_name.strip_suffix(".dist-info")?;
     let (name, _version) = stem.rsplit_once('-')?;
-    Some(normalize_distribution_name(name))
+    Some(name)
 }
 
 fn imports_from_record(record_path: &Path) -> Vec<String> {
@@ -231,9 +243,54 @@ mod tests {
 
     #[test]
     fn parses_dist_info_directory_name() {
+        assert_eq!(dist_info_name("PyYAML-6.0.1.dist-info"), Some("PyYAML"));
+    }
+
+    /// A `Name:` outside PEP 508, from METADATA or the directory, credits
+    /// nothing and is handed back for the warning (#973).
+    #[test]
+    fn dist_info_with_an_invalid_name_is_ignored() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        for (dir_name, metadata) in [
+            ("evil-1.0.dist-info", "Name: evil\x1b[31mRED\x1b[0m\n"),
+            ("bad name-1.0.dist-info", "Version: 1.0\n"),
+            ("_hidden-1.0.dist-info", "Name: _hidden\n"),
+        ] {
+            let dist_info = dir.path().join(dir_name);
+            std::fs::create_dir(&dist_info).expect("mkdir");
+            std::fs::write(dist_info.join("METADATA"), metadata).expect("write");
+            std::fs::write(dist_info.join("top_level.txt"), "yaml\n").expect("write");
+            std::fs::write(
+                dist_info.join("entry_points.txt"),
+                "[console_scripts]\nyaml = yaml:main\n",
+            )
+            .expect("write");
+            let mut index = VenvIndex::default();
+            assert!(
+                merge_dist_info(&dist_info, &mut index).is_err(),
+                "{dir_name}"
+            );
+            assert_eq!(index, VenvIndex::default(), "{dir_name}");
+        }
+    }
+
+    #[test]
+    fn venv_index_warns_about_each_ignored_dist_info() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let site = dir.path().join(".venv/lib/python3.12/site-packages");
+        for (name, metadata) in [("evil", "Name: evil\x07\n"), ("good", "Name: good\n")] {
+            let dist_info = site.join(format!("{name}-1.0.dist-info"));
+            std::fs::create_dir_all(&dist_info).expect("mkdir");
+            std::fs::write(dist_info.join("METADATA"), metadata).expect("write");
+        }
+        let mut warnings = Vec::new();
+        read_venv_index(dir.path(), &dir.path().join(".venv"), &mut warnings).expect("read");
         assert_eq!(
-            parse_dist_info_name("PyYAML-6.0.1.dist-info").as_deref(),
-            Some("pyyaml")
+            warnings,
+            [ResolveWarning::VenvDistributionIgnored {
+                path: ".venv/lib/python3.12/site-packages/evil-1.0.dist-info".to_owned(),
+                name: "evil\x07".to_owned(),
+            }]
         );
     }
 
@@ -280,7 +337,7 @@ mod tests {
         )
         .expect("write");
         let mut index = VenvIndex::default();
-        merge_dist_info(&dist_info, &mut index);
+        merge_dist_info(&dist_info, &mut index).expect("valid name");
         assert_eq!(
             index.imports,
             BTreeMap::from([("demo_pkg".to_owned(), vec!["demo".to_owned()])])
@@ -300,8 +357,13 @@ mod tests {
             std::fs::write(dist_info.join("entry_points.txt"), entry_points).expect("write");
         }
         let mut index = VenvIndex::default();
-        merge_dist_info(&dir.path().join("tool-1.0.dist-info"), &mut index);
-        merge_dist_info(&dir.path().join("plug-1.0.dist-info"), &mut index);
+        for name in ["tool", "plug"] {
+            merge_dist_info(
+                &dir.path().join(format!("{name}-1.0.dist-info")),
+                &mut index,
+            )
+            .expect("valid name");
+        }
         assert_eq!(
             index.binaries,
             BTreeMap::from([("tool-cli".to_owned(), "tool".to_owned())])
@@ -341,10 +403,8 @@ mod tests {
                 name in "[A-Za-z0-9][A-Za-z0-9._-]{0,10}",
                 version in "[0-9][0-9a-z.+]{0,8}",
             ) {
-                prop_assert_eq!(
-                    parse_dist_info_name(&format!("{name}-{version}.dist-info")),
-                    Some(normalize_distribution_name(&name))
-                );
+                let file_name = format!("{name}-{version}.dist-info");
+                prop_assert_eq!(dist_info_name(&file_name), Some(name.as_str()));
             }
 
             #[test]
