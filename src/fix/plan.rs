@@ -297,16 +297,13 @@ fn plan_remove_duplicate(
         .collect();
     // Only a repeat in the same context is safe to drop; a group or extra
     // repeating the runtime declaration stays (#629, #696).
-    let to_remove = crate::rules::deps::removable_duplicates(&declarations)
-        .into_iter()
-        .max_by_key(|dep| removal_priority(&dep.context))
-        .ok_or_else(|| {
-            skipped(
-                issue,
-                SkippedReason::Ambiguous,
-                "expected multiple declarations for duplicate fix",
-            )
-        })?;
+    let to_remove = crate::rules::deps::duplicate_to_remove(&declarations).ok_or_else(|| {
+        skipped(
+            issue,
+            SkippedReason::Ambiguous,
+            "expected multiple declarations for duplicate fix",
+        )
+    })?;
 
     Ok(Some(FixAction::RemoveDependency {
         rule: issue.rule,
@@ -389,16 +386,6 @@ fn plan_move_to_runtime(
         from_label: source.origin.label.clone(),
         raw,
     }))
-}
-
-fn removal_priority(context: &crate::manifest::DependencyContext) -> u8 {
-    match context {
-        crate::manifest::DependencyContext::Runtime => 0,
-        crate::manifest::DependencyContext::OptionalExtra(_) => 1,
-        crate::manifest::DependencyContext::Group(_) => 2,
-        crate::manifest::DependencyContext::SetupExtra(_) => 3,
-        crate::manifest::DependencyContext::Build => 4,
-    }
 }
 
 fn rebuild_requirement_string(dep: &DeclaredDependency) -> String {

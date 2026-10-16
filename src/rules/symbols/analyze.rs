@@ -447,8 +447,8 @@ fn unresolved_import_candidate(
     let guarded_only = sites.iter().all(|site| site.guarded);
     let others = sites
         .iter()
-        .filter_map(|site| site.line)
-        .filter(|other| Some(*other) != line)
+        .map(|site| site.line)
+        .filter(|other| *other != line)
         .collect::<BTreeSet<_>>();
     let first_party = is_first_party_import(import, &sources.layout, &manifest.metadata);
     let site = import_site(file, line);
@@ -467,13 +467,13 @@ fn unresolved_import_candidate(
         "check for typos in first-party module names".to_owned(),
         "third-party packages may be missing from dependency declarations".to_owned(),
     ];
-    if !others.is_empty() {
-        let others = others
-            .iter()
-            .map(u32::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        details.push(format!("also imported at lines {others}"));
+    let numbered = others
+        .iter()
+        .flatten()
+        .map(u32::to_string)
+        .collect::<Vec<_>>();
+    if !numbered.is_empty() {
+        details.push(format!("also imported at lines {}", numbered.join(", ")));
     }
 
     Some(IssueCandidate {
@@ -500,8 +500,10 @@ fn unresolved_import_candidate(
         message,
         workspace_member: None,
         // Every site, anchor first, so an inline ignore must cover them all.
+        // A site without a line takes no directive, so it keeps the merged
+        // issue from being ignored inline even when it is not the anchor.
         origins: std::iter::once(line)
-            .chain(others.iter().copied().map(Some))
+            .chain(others)
             .map(|line| Origin::Import {
                 file: file.to_owned(),
                 line,
@@ -550,5 +552,176 @@ mod tests {
         assert_eq!(anchor_line(&[(None, false), (Some(8), false)]), Some(8));
         assert_eq!(anchor_line(&[(Some(14), false), (Some(8), false)]), Some(8));
         assert_eq!(anchor_line(&[(None, false), (Some(4), true)]), None);
+    }
+
+    fn sources(files: &[(&str, FileContext)]) -> DiscoveredSources {
+        let root = crate::discovery::ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: crate::discovery::RootMarker::PyProjectToml,
+        };
+        DiscoveredSources {
+            root,
+            layout: crate::sources::LayoutInfo::default(),
+            effective_globs: Vec::new(),
+            files: files
+                .iter()
+                .map(|&(path, context)| crate::sources::DiscoveredFile {
+                    path: path.to_owned(),
+                    kind: crate::sources::FileKind::Python,
+                    context,
+                })
+                .collect(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn manifest(sources: &DiscoveredSources) -> LoadedManifest {
+        LoadedManifest {
+            root: sources.root.clone(),
+            metadata: crate::manifest::ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: crate::manifest::LockfileGraph::default(),
+            sources: crate::manifest::ManifestSources::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    const FILE: &str = "pkg/app.py";
+
+    fn site_lists() -> Vec<Vec<(Option<u32>, bool)>> {
+        let sites = [None, Some(1), Some(2)]
+            .into_iter()
+            .flat_map(|line| [(line, false), (line, true)]);
+        let (mut lists, mut shorter) = (Vec::new(), vec![Vec::new()]);
+        for _ in 0..3 {
+            shorter = shorter
+                .iter()
+                .flat_map(|list: &Vec<_>| {
+                    sites
+                        .clone()
+                        .map(|site| [list.as_slice(), &[site]].concat())
+                })
+                .collect();
+            lists.extend(shorter.clone());
+        }
+        lists
+    }
+
+    fn ignored_inline(lines: &[u32]) -> crate::rules::ignore::IgnoreMatcher {
+        let parse = ParseSummary {
+            modules: vec![ParsedModule {
+                path: FILE.to_owned(),
+                ignores: lines
+                    .iter()
+                    .map(|&line| crate::parser::IgnoreDirective {
+                        file_level: false,
+                        codes: vec!["CHK010".to_owned()],
+                        line,
+                    })
+                    .collect(),
+                ..ParsedModule::default()
+            }],
+        };
+        crate::rules::ignore::IgnoreMatcher::build(
+            &crate::config::default_config(),
+            &parse,
+            &ResolutionIndex::default(),
+        )
+    }
+
+    /// §12 CHK010 aggregation against a reference model, over every list of
+    /// up to three sites (line 1, 2 or none; guarded or not) of one module,
+    /// in each file context, with `# chokkin: ignore[CHK010]` on any subset
+    /// of the lines: the merged severity is the highest a site alone would
+    /// get, the anchor is the first line that can fail, and the inline
+    /// ignore holds exactly when every site sits on an ignored line (#860).
+    #[test]
+    fn unresolved_imports_merge_as_the_sites_would_alone() {
+        use crate::rules::types::SuppressReason;
+
+        let contexts = [
+            FileContext::Runtime,
+            FileContext::Test,
+            FileContext::Docs,
+            FileContext::Dev,
+        ];
+        let ignored_sets: [&[u32]; 4] = [&[], &[1], &[2], &[1, 2]];
+        for list in &site_lists() {
+            for context in contexts {
+                let sources = sources(&[(FILE, context)]);
+                let manifest = manifest(&sources);
+                let sites = list
+                    .iter()
+                    .map(|&(line, guarded)| UnresolvedSite {
+                        line,
+                        guarded,
+                        reference: None,
+                    })
+                    .collect::<Vec<_>>();
+                let candidate =
+                    unresolved_import_candidate(FILE, "missing", &sites, &manifest, &sources)
+                        .expect("candidate");
+
+                let alone = |guarded: bool| {
+                    if guarded || matches!(context, FileContext::Docs | FileContext::Dev) {
+                        Severity::Info
+                    } else {
+                        Severity::Warning
+                    }
+                };
+                let expected_severity = list
+                    .iter()
+                    .map(|&(_, guarded)| alone(guarded))
+                    // `Error` sorts first: the strongest severity is the least.
+                    .min()
+                    .expect("sites");
+                assert_eq!(
+                    candidate.severity, expected_severity,
+                    "{list:?} {context:?}"
+                );
+
+                let can_fail = list.iter().any(|&(_, guarded)| !guarded);
+                let expected_anchor = list
+                    .iter()
+                    .filter(|&&(_, guarded)| !can_fail || !guarded)
+                    .filter_map(|&(line, _)| line)
+                    .min();
+                let IssueSubject::Import { line, .. } = &candidate.subject else {
+                    panic!("import subject");
+                };
+                assert_eq!(*line, expected_anchor, "{list:?}");
+
+                let origin_lines = candidate
+                    .origins
+                    .iter()
+                    .map(|origin| match origin {
+                        Origin::Import { line, .. } => *line,
+                        other => panic!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(origin_lines.first(), Some(&expected_anchor), "{list:?}");
+                assert_eq!(
+                    origin_lines.iter().copied().collect::<BTreeSet<_>>(),
+                    list.iter().map(|&(line, _)| line).collect::<BTreeSet<_>>(),
+                    "{list:?}"
+                );
+
+                for ignored in ignored_sets {
+                    let expected = list
+                        .iter()
+                        .all(|&(line, _)| line.is_some_and(|line| ignored.contains(&line)))
+                        .then_some(SuppressReason::Inline);
+                    assert_eq!(
+                        ignored_inline(ignored).matches_candidate(&candidate),
+                        expected,
+                        "{list:?} ignored at {ignored:?}"
+                    );
+                }
+            }
+        }
     }
 }

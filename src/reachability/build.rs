@@ -240,6 +240,7 @@ const fn confidence_for_unreachable(mode: ProjectMode) -> Confidence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ExitStatus;
     use crate::config::PluginId;
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::entry::EntryRoot;
@@ -247,6 +248,7 @@ mod tests {
     use crate::parser::{ImportContext, ImportKind, ImportRef, ParsedModule};
     use crate::plugins::{FrameworkUsedGlob, PluginContribution, ReferenceOrigin};
     use crate::reachability::trace_to_file;
+    use crate::rules::Severity;
     use crate::sources::{DiscoveredFile, LayoutInfo};
     use std::collections::BTreeSet;
 
@@ -615,6 +617,202 @@ mod tests {
                 ("libs/core/plugins/x/pkg/orphan.py", Confidence::Maybe),
             ]
         );
+    }
+
+    /// One orphan through scoring, the wheel surfaces, the gap stage, and
+    /// emit, in each mode and place it can be in.
+    #[derive(Debug, Clone, Copy)]
+    enum OrphanPlace {
+        AppRoot,
+        LibraryRoot,
+        MemberOfApp,
+        MemberOfLibrary,
+    }
+
+    impl OrphanPlace {
+        const fn library_root(self) -> bool {
+            matches!(self, Self::LibraryRoot | Self::MemberOfLibrary)
+        }
+
+        const fn in_member(self) -> bool {
+            matches!(self, Self::MemberOfApp | Self::MemberOfLibrary)
+        }
+    }
+
+    struct OrphanCase {
+        place: OrphanPlace,
+        /// The root wheel surface, if declared: whether it ships the orphan.
+        root_ships: Option<bool>,
+        /// The member wheel surface, if declared: whether it ships the orphan.
+        member_ships: Option<bool>,
+        opaque: bool,
+        shim: bool,
+        strict: bool,
+    }
+
+    impl OrphanCase {
+        fn all() -> Vec<Self> {
+            let flags = [false, true];
+            let surfaces = [None, Some(false), Some(true)];
+            let mut cases = Vec::new();
+            let places = [
+                OrphanPlace::AppRoot,
+                OrphanPlace::LibraryRoot,
+                OrphanPlace::MemberOfApp,
+                OrphanPlace::MemberOfLibrary,
+            ];
+            for place in places {
+                for root_ships in surfaces {
+                    for member_ships in surfaces {
+                        for opaque in flags {
+                            for shim in flags {
+                                for strict in flags {
+                                    cases.push(Self {
+                                        place,
+                                        root_ships,
+                                        member_ships,
+                                        opaque,
+                                        shim,
+                                        strict,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cases
+        }
+
+        fn orphan(&self) -> &'static str {
+            if self.place.in_member() {
+                "libs/core/pkg/orphan.py"
+            } else {
+                "acme/orphan.py"
+            }
+        }
+
+        fn run(&self) -> (Option<(Severity, Confidence)>, ExitStatus) {
+            let orphan = self.orphan();
+            let mut orphan_module = parsed(orphan, &[], false);
+            orphan_module.deprecated_shim = self.shim;
+            let parse = ParseSummary {
+                modules: vec![parsed("acme/main.py", &[], self.opaque), orphan_module],
+            };
+            let root = ProjectRoot {
+                path: std::env::temp_dir(),
+                marker: RootMarker::PyProjectToml,
+            };
+            let sources = flat_sources(root, &["acme/main.py", orphan]);
+            let mut graph = graph_for(&sources, &parse, &[]);
+            let mut entry = app_entry(&["acme/main.py"]);
+            if self.place.library_root() {
+                entry.mode = ProjectMode::Library;
+            }
+            entry.library_members = vec!["libs/core".to_owned()];
+            let mut report =
+                analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                    .expect("reachability");
+            let surface = |ships: bool, path: &str| PublicSurface {
+                files: [if ships { path } else { "elsewhere.py" }.to_owned()].into(),
+            };
+            if let Some(ships) = self.root_ships {
+                apply_public_surface(&mut report, &surface(ships, orphan), &entry);
+            }
+            let member = self
+                .member_ships
+                .map(|ships| ("libs/core".to_owned(), surface(ships, "pkg/orphan.py")));
+            apply_member_surfaces(&mut report, &member.iter().collect::<Vec<_>>());
+
+            let gaps: Vec<_> = self
+                .opaque
+                .then(|| crate::rules::Gap {
+                    file: "acme/main.py".to_owned(),
+                    kind: crate::rules::GapKind::OpaqueDynamicImport,
+                    member: None,
+                    site: None,
+                })
+                .into_iter()
+                .collect();
+            let issues = crate::rules::emit_issues(
+                &report,
+                &crate::rules::DependencyReport::default(),
+                &[],
+                &parse,
+                &gaps,
+                &crate::config::default_config(),
+                &crate::config::RuntimeOverrides {
+                    strict: Some(self.strict),
+                    ..Default::default()
+                },
+                &crate::resolver::ResolutionIndex::default(),
+            );
+            let finding = issues
+                .issues
+                .iter()
+                .find(|issue| issue.rule == crate::rules::RuleId::Chk001)
+                .map(|issue| (issue.severity, issue.confidence));
+            (finding, issues.exit_status)
+        }
+
+        /// §8 / §11 written out: a file of a library that its wheel ships
+        /// (or every file, when no wheel target is declared) may be imported
+        /// by a caller, so it is `maybe` and a warning; a reachable module
+        /// read only in part lowers the rest to `likely`; a deprecated shim
+        /// is info; and the exit status counts what the run counts (§7, E1).
+        fn expected(&self) -> (Option<(Severity, Confidence)>, ExitStatus) {
+            let library = self.place.library_root() || self.place.in_member();
+            let ships = if self.place.in_member() {
+                self.member_ships
+            } else {
+                self.root_ships
+            };
+            let callers_may_import = library && ships != Some(false);
+            let confidence = if callers_may_import {
+                Confidence::Maybe
+            } else if self.opaque {
+                Confidence::Likely
+            } else {
+                Confidence::Certain
+            };
+            let severity = if self.shim {
+                Severity::Info
+            } else if callers_may_import {
+                Severity::Warning
+            } else {
+                Severity::Error
+            };
+            let floor = if self.strict {
+                Confidence::Maybe
+            } else {
+                Confidence::Likely
+            };
+            let finding = (confidence >= floor).then_some((severity, confidence));
+            let fails = finding.is_some_and(|(severity, _)| {
+                severity == Severity::Error || (self.strict && severity == Severity::Warning)
+            });
+            let status = if fails {
+                ExitStatus::IssuesFound
+            } else {
+                ExitStatus::Success
+            };
+            (finding, status)
+        }
+    }
+
+    /// §8 CHK001 confidence and severity, through every stage that sets them,
+    /// against a reference model: in particular a file a caller of the
+    /// library may import never fails a run outside `--strict`, so the E1
+    /// exit status does not change with it (#860).
+    #[test]
+    fn library_orphans_callers_may_import_never_fail_the_run() {
+        for case in OrphanCase::all() {
+            let label = format!(
+                "{:?}, root ships {:?}, member ships {:?}, opaque {}, shim {}, strict {}",
+                case.place, case.root_ships, case.member_ships, case.opaque, case.shim, case.strict
+            );
+            assert_eq!(case.run(), case.expected(), "{label}");
+        }
     }
 
     #[test]

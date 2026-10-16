@@ -42,25 +42,68 @@ pub(super) fn detect_duplicate_dependencies(
     by_name
         .into_iter()
         .filter_map(|(name, declarations)| {
-            // A repeat in one context is reported on its own, so the warning
-            // names only what `--fix` removes.
-            let removable = removable_duplicates(&declarations);
-            let (involved, removable) = if removable.is_empty() {
-                (duplicate_declarations(&declarations, |_, _| true), false)
-            } else {
-                (removable, true)
+            // A repeat in one context is reported on its own, located on the
+            // line `--fix` removes.
+            let (involved, removable) = match duplicate_to_remove(&declarations) {
+                Some(to_remove) => {
+                    let mut repeated = repeated_in_context(&declarations);
+                    repeated.sort_by_key(|dep| std::ptr::eq(*dep, to_remove));
+                    (repeated, true)
+                },
+                None => (duplicate_declarations(&declarations, |_, _| true), false),
             };
             (!involved.is_empty()).then(|| candidate(name, &involved, removable))
         })
         .collect()
 }
 
-/// The declarations of one distribution that repeat another one in the same
-/// context; `--fix` removes from these only (#696).
-pub(crate) fn removable_duplicates<'a>(
+pub(crate) fn duplicate_to_remove<'a>(
+    declarations: &[&'a DeclaredDependency],
+) -> Option<&'a DeclaredDependency> {
+    removable_duplicates(declarations)
+        .into_iter()
+        .max_by_key(|dep| removal_priority(&dep.context))
+}
+
+fn removal_priority(context: &DependencyContext) -> u8 {
+    match context {
+        DependencyContext::Runtime => 0,
+        DependencyContext::OptionalExtra(_) => 1,
+        DependencyContext::Group(_) => 2,
+        DependencyContext::SetupExtra(_) => 3,
+        DependencyContext::Build => 4,
+    }
+}
+
+/// The declarations of one distribution that `--fix` may remove: ones that
+/// repeat another one in the same context (#696). `--fix` removes the line,
+/// so a line also read under another context (`requirements.txt` pulled into
+/// `requirements-dev.txt` by `-r`) qualifies only when it is repeated in
+/// every context that reads it (#860).
+fn removable_duplicates<'a>(
     declarations: &[&'a DeclaredDependency],
 ) -> Vec<&'a DeclaredDependency> {
+    removable_among(declarations, &repeated_in_context(declarations))
+}
+
+fn repeated_in_context<'a>(declarations: &[&'a DeclaredDependency]) -> Vec<&'a DeclaredDependency> {
     duplicate_declarations(declarations, |a, b| a.context == b.context)
+}
+
+fn removable_among<'a>(
+    declarations: &[&DeclaredDependency],
+    repeated: &[&'a DeclaredDependency],
+) -> Vec<&'a DeclaredDependency> {
+    repeated
+        .iter()
+        .copied()
+        .filter(|dep| {
+            declarations
+                .iter()
+                .filter(|other| other.origin == dep.origin)
+                .all(|other| repeated.iter().any(|known| std::ptr::eq(*known, *other)))
+        })
+        .collect()
 }
 
 fn duplicate_declarations<'a>(
@@ -375,6 +418,83 @@ mod tests {
     }
 
     #[test]
+    fn a_line_read_under_two_contexts_is_removable_only_if_repeated_in_both() {
+        // `requirements.txt` and `requirements-dev.txt` both have
+        // `-r base.txt`; removing `base.txt:1` for the repeat in
+        // `requirements.txt` would drop it from the dev install.
+        let base = at("requests", DependencyContext::Runtime, "base.txt", 1);
+        let included = DeclaredDependency {
+            context: group("dev"),
+            ..base.clone()
+        };
+        let requirements = at(
+            "requests",
+            DependencyContext::Runtime,
+            "requirements.txt",
+            1,
+        );
+        let found = detect(&[base.clone(), included.clone(), requirements.clone()]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].message,
+            "requests is declared more than once in runtime"
+        );
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(found[0].origins.len(), 2);
+        assert_eq!(
+            removable_duplicates(&[&base, &included, &requirements]),
+            [&requirements]
+        );
+        // The issue sits on the line `--fix` removes, whatever the load order.
+        let found = detect(&[requirements.clone(), base.clone(), included.clone()]);
+        assert_eq!(
+            found[0].origins.last(),
+            Some(&Origin::Manifest(requirements.origin.clone()))
+        );
+        // Repeated in the dev install too, the line is safe to remove.
+        let dev = at("requests", group("dev"), "requirements-dev.txt", 3);
+        assert_eq!(
+            removable_duplicates(&[&base, &included, &requirements, &dev]).len(),
+            4
+        );
+    }
+
+    #[test]
+    fn the_issue_sits_on_the_line_fix_removes_across_contexts() {
+        let dev = [
+            at("requests", group("dev"), "requirements-dev.txt", 1),
+            at("requests", group("dev"), "requirements-dev.txt", 2),
+        ];
+        let runtime = [
+            at(
+                "requests",
+                DependencyContext::Runtime,
+                "requirements.txt",
+                1,
+            ),
+            at(
+                "requests",
+                DependencyContext::Runtime,
+                "requirements.txt",
+                2,
+            ),
+        ];
+        for declarations in [
+            [&dev[0], &dev[1], &runtime[0], &runtime[1]],
+            [&runtime[0], &runtime[1], &dev[0], &dev[1]],
+        ] {
+            let owned: Vec<DeclaredDependency> =
+                declarations.iter().map(|dep| (*dep).clone()).collect();
+            let removed = duplicate_to_remove(&declarations).map(|dep| &dep.origin);
+            assert_eq!(removed, Some(&dev[1].origin));
+            assert_eq!(
+                detect(&owned)[0].origins.last(),
+                Some(&Origin::Manifest(dev[1].origin.clone()))
+            );
+        }
+    }
+
+    #[test]
     fn group_declaration_adding_extras_refines_the_runtime_one() {
         let streamlit = with_extras(dep("streamlit", group("dev")), &["auth", "charts"]);
         assert_eq!(
@@ -482,6 +602,207 @@ mod tests {
                 "numpy is declared in multiple contexts: group:dev, runtime",
             ]
         );
+    }
+
+    /// What one install ends up with for a distribution: whether it is
+    /// installed, with which extras, under which version clauses. A reference
+    /// model of pip / uv, written apart from `duplicates` (#860): extras
+    /// compare case-insensitively, clauses as written minus whitespace.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Installed {
+        present: bool,
+        extras: BTreeSet<String>,
+        clauses: BTreeSet<String>,
+    }
+
+    /// Install the declarations whose context is selected, on a platform
+    /// where the one marker of the model is `linux` or not.
+    fn install(
+        declarations: &[&DeclaredDependency],
+        selection: &[&DependencyContext],
+        linux: bool,
+    ) -> Installed {
+        let active = declarations
+            .iter()
+            .filter(|dep| selection.contains(&&dep.context) && (dep.marker.is_none() || linux));
+        let mut installed = Installed {
+            present: false,
+            extras: BTreeSet::new(),
+            clauses: BTreeSet::new(),
+        };
+        for dep in active {
+            installed.present = true;
+            installed
+                .extras
+                .extend(dep.extras.iter().map(|extra| extra.to_lowercase()));
+            installed.clauses.extend(
+                dep.specifier
+                    .iter()
+                    .flat_map(|specifier| specifier.split(','))
+                    .map(|clause| clause.replace(' ', ""))
+                    .filter(|clause| !clause.is_empty()),
+            );
+        }
+        installed
+    }
+
+    /// Every install a project offers over `contexts`: any set of contexts
+    /// (`uv sync --only-group lint`, `pip install -r requirements-dev.txt`),
+    /// on either side of the marker.
+    fn installs_agree(
+        before: &[&DeclaredDependency],
+        after: &[&DeclaredDependency],
+        contexts: &[DependencyContext],
+        must_include_runtime: bool,
+    ) -> bool {
+        (0..1_u32 << contexts.len()).all(|mask| {
+            let selection: Vec<&DependencyContext> = contexts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| mask & (1 << index) != 0)
+                .map(|(_, context)| context)
+                .collect();
+            if must_include_runtime && !selection.contains(&&DependencyContext::Runtime) {
+                return true;
+            }
+            [false, true].into_iter().all(|linux| {
+                install(before, &selection, linux) == install(after, &selection, linux)
+            })
+        })
+    }
+
+    fn requirements(
+        contexts: &[DependencyContext],
+        specifiers: &[Option<&str>],
+        extras: &[&[&str]],
+    ) -> Vec<DeclaredDependency> {
+        let mut all = Vec::new();
+        for context in contexts {
+            for marker in [None, Some("sys_platform == 'linux'")] {
+                for specifier in specifiers {
+                    for extra_list in extras {
+                        let mut dep = dep("pkg", context.clone());
+                        dep.marker = marker.map(str::to_owned);
+                        dep.specifier = specifier.map(str::to_owned);
+                        dep.extras = extra_list.iter().map(|e| (*e).to_owned()).collect();
+                        all.push(dep);
+                    }
+                }
+            }
+        }
+        all
+    }
+
+    /// The properties #860 asks of CHK009, over three declarations of one
+    /// distribution: every combination of context, marker, specifier and
+    /// extras, each on its own line or one line read through an include under
+    /// a second context.
+    ///
+    /// - `duplicates` is symmetric.
+    /// - `--fix` removes a declaration's line; for anything
+    ///   `removable_duplicates` returns, that changes no install, including
+    ///   one of a single group.
+    /// - A group or extra that duplicates the runtime declaration adds nothing
+    ///   to an install that has the runtime one (#507, #629).
+    #[test]
+    fn duplicates_follow_the_install_model() {
+        let contexts = [DependencyContext::Runtime, group("dev"), extra("x")];
+        let lines = requirements(
+            &contexts,
+            &[None, Some(">=1"), Some("<2, >=1")],
+            &[&[], &["a"], &["b"], &["A", "b"]],
+        );
+        let on = |file: &str, line: u32| -> Vec<DeclaredDependency> {
+            lines
+                .iter()
+                .map(|dep| DeclaredDependency {
+                    origin: DependencyOrigin {
+                        file: file.to_owned(),
+                        line: Some(line),
+                        ..dep.origin.clone()
+                    },
+                    ..dep.clone()
+                })
+                .collect()
+        };
+        let (first, second, third) = (
+            on("pyproject.toml", 1),
+            on("pyproject.toml", 2),
+            on("pyproject.toml", 3),
+        );
+        // Which line holds which requirement does not matter, so each
+        // multiset of three requirements is checked once.
+        for (i, a) in first.iter().enumerate() {
+            for (j, b) in second.iter().enumerate().skip(i) {
+                for c in &third[j..] {
+                    check_triple(&[a, b, c], &contexts);
+                }
+            }
+        }
+        // `base.txt` read through `-r` from files of two contexts, next to
+        // a line of its own.
+        for a in on("base.txt", 1) {
+            for context in contexts.iter().filter(|context| **context != a.context) {
+                let included = DeclaredDependency {
+                    context: context.clone(),
+                    ..a.clone()
+                };
+                for b in &first {
+                    check_triple(&[&a, &included, b], &contexts);
+                    check_triple(&[b, &a, &included], &contexts);
+                }
+            }
+        }
+    }
+
+    fn check_triple(declarations: &[&DeclaredDependency], contexts: &[DependencyContext]) {
+        for (i, a) in declarations.iter().enumerate() {
+            for b in &declarations[i + 1..] {
+                let duplicate = duplicates(a, b, declarations);
+                assert_eq!(
+                    duplicate,
+                    duplicates(b, a, declarations),
+                    "symmetry: {a:?} {b:?}"
+                );
+                if !duplicate || a.context == b.context {
+                    continue;
+                }
+                let refinement = if a.context == DependencyContext::Runtime {
+                    b
+                } else {
+                    a
+                };
+                let rest: Vec<&DeclaredDependency> = declarations
+                    .iter()
+                    .copied()
+                    .filter(|dep| !std::ptr::eq(*dep, *refinement))
+                    .collect();
+                assert!(
+                    installs_agree(declarations, &rest, contexts, true),
+                    "refinement taken for a duplicate: {refinement:?} in {declarations:#?}"
+                );
+            }
+        }
+        if let Some(removed) = duplicate_to_remove(declarations) {
+            let owned: Vec<DeclaredDependency> =
+                declarations.iter().map(|dep| (*dep).clone()).collect();
+            assert_eq!(
+                detect(&owned)[0].origins.last(),
+                Some(&Origin::Manifest(removed.origin.clone())),
+                "issue not on the line --fix removes in {declarations:#?}"
+            );
+        }
+        for removed in removable_duplicates(declarations) {
+            let rest: Vec<&DeclaredDependency> = declarations
+                .iter()
+                .copied()
+                .filter(|dep| dep.origin != removed.origin)
+                .collect();
+            assert!(
+                installs_agree(declarations, &rest, contexts, false),
+                "--fix changes an install: removing {removed:?} from {declarations:#?}"
+            );
+        }
     }
 
     mod props {
