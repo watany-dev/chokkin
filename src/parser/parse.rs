@@ -1,6 +1,5 @@
 //! Parse one Python source file and orchestrate project-wide parsing.
 
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
@@ -19,7 +18,7 @@ use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo};
 
 use super::encoding::decode_python_source;
 use super::error::ParseError;
-use super::ignores::extract_ignores;
+use super::ignores::extract_ignores_with;
 use super::lines::LineIndex;
 use super::types::{ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule};
 use super::visit::ModuleVisitor;
@@ -100,7 +99,7 @@ fn parse_python_source(
         },
     };
 
-    parsed.ignores = extract_ignores(source);
+    parsed.ignores = extract_ignores_with(source, &lines);
     parsed
 }
 
@@ -428,7 +427,7 @@ impl ParseJob<'_> {
 /// Results carry their slot index because workers finish out of order; the
 /// caller reassembles them in discovery order.
 fn run_parse_job(job: &ParseJob<'_>) -> Result<Vec<(usize, ParsedModule)>, ParseError> {
-    let workers = parse_worker_count(job.outstanding.len());
+    let workers = crate::parallel::worker_count(job.outstanding.len());
     if workers <= 1 {
         return job
             .outstanding
@@ -497,16 +496,6 @@ fn earlier_failure(
         Some(current) if current.0 < candidate.0 => current,
         _ => candidate,
     }
-}
-
-fn parse_worker_count(files: usize) -> usize {
-    // Below this, thread setup costs more than the parsing it overlaps.
-    const MIN_FILES_PER_WORKER: usize = 32;
-    if files <= MIN_FILES_PER_WORKER {
-        return 1;
-    }
-    let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    available.min(files.div_ceil(MIN_FILES_PER_WORKER)).max(1)
 }
 
 fn parse_discovered_file(
@@ -733,7 +722,7 @@ mod tests {
 
     #[test]
     fn parallel_parse_preserves_discovery_order() {
-        // Enough files to cross `parse_worker_count`'s threshold, so this walks
+        // Enough files to cross `parallel::worker_count`'s threshold, so this walks
         // the threaded path while the assertion pins module order to discovery
         // order regardless of which worker finished first.
         let temp = TempDir::new().expect("tempdir");
@@ -848,12 +837,5 @@ mod tests {
         .expect("parse");
 
         assert!(!temp.path().join(".chokkin").exists());
-    }
-
-    #[test]
-    fn parse_worker_count_stays_sequential_for_small_projects() {
-        assert_eq!(parse_worker_count(0), 1);
-        assert_eq!(parse_worker_count(32), 1);
-        assert!(parse_worker_count(10_000) >= 1);
     }
 }
