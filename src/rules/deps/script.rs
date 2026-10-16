@@ -38,7 +38,7 @@ pub(super) fn detect_script_dependency_issues(
     if scripts.is_empty() {
         return Vec::new();
     }
-    let index = ScriptIndex::new(&scripts, resolution, files, parse);
+    let index = ScriptIndex::new(resolution, files, parse);
     let mut candidates = Vec::new();
     for script in scripts {
         let declared: BTreeSet<String> = script
@@ -105,7 +105,6 @@ struct ScriptIndex<'a> {
 
 impl<'a> ScriptIndex<'a> {
     fn new(
-        scripts: &[&'a InlineScript],
         resolution: &'a ResolutionIndex,
         files: &'a [DiscoveredFile],
         parse: &'a ParseSummary,
@@ -118,14 +117,13 @@ impl<'a> ScriptIndex<'a> {
                 .push(import);
         }
         let paths = sorted_paths(files);
-        let script_paths: HashSet<&str> =
-            scripts.iter().map(|script| script.path.as_str()).collect();
-        let mut modules = HashMap::new();
-        for module in &parse.modules {
-            if script_paths.contains(module.path.as_str()) {
-                modules.entry(module.path.as_str()).or_insert(module);
-            }
-        }
+        // Reversed so the first module of a path wins.
+        let modules = parse
+            .modules
+            .iter()
+            .rev()
+            .map(|module| (module.path.as_str(), module))
+            .collect();
         Self {
             imports,
             paths,

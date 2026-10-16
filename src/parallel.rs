@@ -67,13 +67,6 @@ where
     F: Fn(&mut S, usize, &T) + Sync,
 {
     let workers = worker_count(items.len());
-    if workers <= 1 {
-        let mut state = init();
-        for (index, item) in items.iter().enumerate() {
-            work(&mut state, index, item);
-        }
-        return vec![state];
-    }
 
     // A shared cursor rather than fixed chunks: file sizes vary by an order of
     // magnitude, so static splits leave workers idle behind one large file.

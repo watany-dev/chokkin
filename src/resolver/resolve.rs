@@ -197,7 +197,6 @@ struct SiteOutcome {
 
 /// A warning as one site raised it. Whether it reaches the report depends on
 /// the sites before it in module order, which a worker cannot see.
-#[derive(Debug)]
 enum SiteWarning {
     /// Raised resolving the root behind this cache key: reported at the key's
     /// first lookup in module order only, whichever worker computed it.
