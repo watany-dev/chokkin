@@ -142,7 +142,8 @@ impl ProbeWarning {
                 manifest_location(warning)
             },
             Self::Sources(warning) => match warning {
-                SourcesWarning::GitignoreUnreadable { path } => (Some(path), None),
+                SourcesWarning::GitignoreUnreadable { path }
+                | SourcesWarning::SymlinkSkipped { path, .. } => (Some(path), None),
                 SourcesWarning::MissingEntryPath { .. }
                 | SourcesWarning::EntryPathIsDirectory { .. }
                 | SourcesWarning::AmbiguousFlatLayout { .. }

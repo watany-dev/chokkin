@@ -301,6 +301,61 @@ fn symlinked_pyproject(base: &Path) -> (PathBuf, PathBuf) {
     (root, outside)
 }
 
+/// Links the walk does not follow are named with why, one warning each,
+/// while a link inside the root is read at its target and stays silent
+/// (#986). Built at test time: a committed `/etc/passwd` link would follow
+/// the repository into every checkout and package.
+#[cfg(unix)]
+#[test]
+fn binary_skipped_symlinks_are_reported_with_their_reason() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path().join("proj");
+    let other = temp.path().join("other_project/pkg");
+    fs::create_dir_all(root.join("demo")).expect("mkdir");
+    fs::create_dir_all(&other).expect("mkdir");
+    fs::write(other.join("mod.py"), "").expect("write");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("demo/__init__.py"), "").expect("write package");
+    fs::write(root.join("demo/real.py"), "").expect("write module");
+    symlink("b", root.join("a")).expect("symlink");
+    symlink("a", root.join("b")).expect("symlink");
+    symlink("../other_project/pkg", root.join("outside")).expect("symlink");
+    symlink("/etc/passwd", root.join("secret.py")).expect("symlink");
+    symlink("missing.py", root.join("gone.py")).expect("symlink");
+    symlink("real.py", root.join("demo/alias.py")).expect("symlink");
+    symlink("demo", root.join("demo_alias")).expect("symlink");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("did not follow symlink"))
+        .collect();
+    for expected in [
+        "sources: did not follow symlink `a`: it forms a loop",
+        "sources: did not follow symlink `b`: it forms a loop",
+        "sources: did not follow symlink `outside`: it points outside the project root",
+        "sources: did not follow symlink `secret.py`: it points outside the project root",
+        "sources: did not follow symlink `gone.py`: it points to nothing",
+    ] {
+        assert!(
+            skipped.iter().any(|line| line.contains(expected)),
+            "{expected}: {stderr}"
+        );
+    }
+    assert_eq!(skipped.len(), 5, "{stderr}");
+}
+
 #[test]
 fn binary_baseline_update_then_suppresses_existing_issue() {
     let temp = tempfile::TempDir::new().expect("tempdir");

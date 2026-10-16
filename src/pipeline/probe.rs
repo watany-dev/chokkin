@@ -253,8 +253,14 @@ fn member_sources_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<Pr
                 .warnings
                 .iter()
                 // The root walk covers every member tree, so the root's count
-                // already includes these files.
-                .filter(|warning| !matches!(warning, SourcesWarning::LargeProject { .. }))
+                // already includes these files, and a link from one member
+                // into another is inside the root (#986).
+                .filter(|warning| {
+                    !matches!(
+                        warning,
+                        SourcesWarning::LargeProject { .. } | SourcesWarning::SymlinkSkipped { .. }
+                    )
+                })
                 .map(|warning| {
                     let mut warning = warning.clone();
                     warning.rebase(&input.member.path);
