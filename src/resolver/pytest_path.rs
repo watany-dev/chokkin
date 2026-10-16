@@ -388,8 +388,7 @@ impl PytestImportPaths {
         }
         let base = basedir(file, &self.files);
         let inner = parent_dir(file).strip_prefix(base.as_str())?;
-        let inner = inner.strip_prefix('/').unwrap_or(inner);
-        let top = inner.split('/').next().filter(|top| !top.is_empty())?;
+        let top = inner.trim_start_matches('/').split('/').next()?;
         (import_root(module) == top)
             .then(|| self.find_module(&base, module))
             .flatten()

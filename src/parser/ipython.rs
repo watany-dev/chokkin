@@ -10,6 +10,8 @@
 //! (`%load_ext`) becomes that import. Any other magic is not recognized and
 //! fails the cell, which the caller reports as unread (ADR 0005).
 
+use super::dynamic::is_dotted_identifier;
+
 /// Line magics that neither run the cell's Python nor import a module, so
 /// dropping them hides nothing a rule reads. `%pip` installs a distribution
 /// but does not import it; whether its arguments declare dependencies is
@@ -119,56 +121,32 @@ const PYTHON_CELL_MAGICS: &[&str] = &[
 /// `IPython.extensions` rather than as a top-level module.
 const BUILTIN_EXTENSIONS: &[&str] = &["autoreload", "storemagic"];
 
-/// An `IPython` form the rewrite does not recognize, at a 0-based line of
-/// the cell.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Unrecognized {
-    pub(super) line: usize,
-    pub(super) message: String,
-}
-
 /// Rewrite `cell` into Python with the same number of lines, or name the
-/// `IPython` form that was not recognized.
-pub(super) fn cell_to_python(cell: &str) -> Result<String, Unrecognized> {
-    let mut lines = cell.split_inclusive('\n');
+/// `IPython` form that was not recognized and its 0-based line in the cell.
+pub(super) fn cell_to_python(cell: &str) -> Result<String, (usize, String)> {
+    let lines: Vec<&str> = cell.split_inclusive('\n').collect();
     let mut out = String::with_capacity(cell.len());
     // IPython drops leading blank lines before it looks for a cell magic.
-    let mut first = None;
-    let mut skipped = 0;
-    for line in lines.by_ref() {
-        if line.trim().is_empty() {
-            out.push_str(line);
-            skipped += 1;
-        } else {
-            first = Some(line);
-            break;
-        }
+    let Some(first) = lines.iter().position(|line| !line.trim().is_empty()) else {
+        return Ok(cell.to_owned());
+    };
+    for line in &lines[..first] {
+        out.push_str(line);
     }
-    let Some(first) = first else {
+    let Some(magic) = lines[first].trim_start().strip_prefix("%%") else {
+        rewrite_lines(&lines[first..], first, &mut out)?;
         return Ok(out);
     };
-    let rest: Vec<&str> = lines.collect();
-    if let Some(magic) = first.trim_start().strip_prefix("%%") {
-        let body = cell_magic(magic).map_err(|message| Unrecognized {
-            line: skipped,
-            message,
-        })?;
-        match body {
-            CellBody::Python => blank_line(first, &mut out),
-            CellBody::Foreign => {
-                for line in std::iter::once(first).chain(rest.iter().copied()) {
-                    blank_line(line, &mut out);
-                }
-                return Ok(out);
-            },
-        }
-        rewrite_lines(rest.iter().copied(), skipped + 1, &mut out)?;
-    } else {
-        rewrite_lines(
-            std::iter::once(first).chain(rest.iter().copied()),
-            skipped,
-            &mut out,
-        )?;
+    match cell_magic(magic).map_err(|message| (first, message))? {
+        CellBody::Python => {
+            blank_line(lines[first], &mut out);
+            rewrite_lines(&lines[first + 1..], first + 1, &mut out)?;
+        },
+        CellBody::Foreign => {
+            for line in &lines[first..] {
+                blank_line(line, &mut out);
+            }
+        },
     }
     Ok(out)
 }
@@ -207,21 +185,14 @@ fn cell_magic(line: &str) -> Result<CellBody, String> {
 /// Rewrite each line on its own, the first being the cell's line `start`.
 /// A magic or shell line ending in `\` continues onto the next, which goes
 /// with it.
-fn rewrite_lines<'a>(
-    lines: impl Iterator<Item = &'a str>,
-    start: usize,
-    out: &mut String,
-) -> Result<(), Unrecognized> {
+fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (usize, String)> {
     let mut continued = false;
-    for (index, line) in lines.enumerate() {
+    for (index, line) in lines.iter().copied().enumerate() {
         let text = line.trim_end_matches(['\n', '\r']);
         if continued {
             blank_line(line, out);
         } else {
-            let python = rewrite_line(text).map_err(|message| Unrecognized {
-                line: start + index,
-                message,
-            })?;
+            let python = rewrite_line(text).map_err(|message| (start + index, message))?;
             let Some(python) = python else {
                 out.push_str(line);
                 continue;
@@ -303,7 +274,7 @@ fn line_magic(magic: &str) -> Result<String, String> {
 }
 
 fn extension_import(module: &str) -> String {
-    if module.is_empty() || BUILTIN_EXTENSIONS.contains(&module) || !is_dotted_name(module) {
+    if BUILTIN_EXTENSIONS.contains(&module) || !is_dotted_identifier(module) {
         // A name that is not a module path fails to load, importing nothing.
         return "pass".to_owned();
     }
@@ -314,7 +285,7 @@ fn extension_import(module: &str) -> String {
 fn aimport(args: &str) -> String {
     let modules: Vec<&str> = args
         .split([',', ' ', '\t'])
-        .filter(|module| is_dotted_name(module))
+        .filter(|module| is_dotted_identifier(module))
         .collect();
     if modules.is_empty() {
         return "pass".to_owned();
@@ -337,23 +308,7 @@ fn statement(args: &str, valued: &[&str]) -> String {
                 .map_or("", |(_, after)| after.trim_start());
         }
     }
-    if rest.is_empty() {
-        "pass".to_owned()
-    } else {
-        rest.to_owned()
-    }
-}
-
-fn is_dotted_name(text: &str) -> bool {
-    !text.is_empty()
-        && text.split('.').all(|part| {
-            part.chars()
-                .next()
-                .is_some_and(|char| char.is_alphabetic() || char == '_')
-                && part
-                    .chars()
-                    .all(|char| char.is_alphanumeric() || char == '_')
-        })
+    if rest.is_empty() { "pass" } else { rest }.to_owned()
 }
 
 fn blank_line(line: &str, out: &mut String) {
@@ -363,13 +318,10 @@ fn blank_line(line: &str, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Unrecognized, cell_to_python};
+    use super::cell_to_python;
 
-    fn unrecognized(line: usize, message: &str) -> Result<String, Unrecognized> {
-        Err(Unrecognized {
-            line,
-            message: message.to_owned(),
-        })
+    fn unrecognized(line: usize, message: &str) -> Result<String, (usize, String)> {
+        Err((line, message.to_owned()))
     }
 
     #[test]

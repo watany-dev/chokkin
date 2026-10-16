@@ -131,13 +131,13 @@ fn parse_notebook_file(
     // IPython syntax fails the joined cells as a whole, so read them one by
     // one, as IPython does (#962).
     if parsed.skipped
-        && let Some(cells) = ipython_cells(&notebook)
+        && let Some((source, unread)) = ipython_cells(&notebook)
     {
-        let reread = parse_python_source(path, &cells.source, layout, file_context, target);
+        let reread = parse_python_source(path, &source, layout, file_context, target);
         if !reread.skipped {
             parsed = reread;
-            parsed.has_unread_cells |= !cells.unread.is_empty();
-            parsed.diagnostics.extend(cells.unread);
+            parsed.has_unread_cells |= !unread.is_empty();
+            parsed.diagnostics.extend(unread);
         }
     }
     // A skipped notebook is unknown as a whole, so a dropped cell adds nothing.
@@ -165,38 +165,28 @@ impl NotebookSource {
 
     /// The cells as one source, each followed by a blank line.
     fn joined(&self) -> String {
-        join_cells(self.cells.iter().map(Option::as_deref))
+        let mut source = String::new();
+        for cell in &self.cells {
+            source.push_str(cell.as_deref().unwrap_or_default());
+            source.push('\n');
+        }
+        source
     }
-}
-
-fn join_cells<'a>(cells: impl Iterator<Item = Option<&'a str>>) -> String {
-    let mut source = String::new();
-    for cell in cells {
-        source.push_str(cell.unwrap_or_default());
-        source.push('\n');
-    }
-    source
-}
-
-/// The notebook's cells read one by one, with their `IPython` syntax rewritten.
-struct IpythonCells {
-    source: String,
-    /// One warning per code cell that still did not parse.
-    unread: Vec<ParseDiagnostic>,
 }
 
 /// Read each code cell on its own, rewriting its `IPython` syntax into Python
 /// when it does not parse as it is. A cell that still does not parse is
-/// blanked, keeping the lines of the cells after it, and warned about. `None`
-/// when no cell could be read, which leaves the notebook skipped.
-fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
-    let mut cells = Vec::with_capacity(notebook.cells.len());
+/// blanked, keeping the lines of the cells after it, and warned about with
+/// one warning per cell. `None` when no cell could be read, which leaves the
+/// notebook skipped.
+fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnostic>)> {
+    let mut source = String::new();
     let mut unread = Vec::new();
     let mut read_any = false;
     let mut first_line = 1;
     for cell in &notebook.cells {
         let Some(text) = cell.as_deref() else {
-            cells.push(None);
+            source.push('\n');
             first_line += 1;
             continue;
         };
@@ -204,7 +194,7 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
         match python_cell(text) {
             Ok(python) => {
                 read_any = true;
-                cells.push(Some(python));
+                source.push_str(&python);
             },
             Err((line, error)) => {
                 unread.push(ParseDiagnostic {
@@ -212,15 +202,13 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
                     message: format!("code cell not read: {error}"),
                     severity: ParseSeverity::Warning,
                 });
-                cells.push(Some("\n".repeat(lines)));
+                source.push_str(&"\n".repeat(lines));
             },
         }
+        source.push('\n');
         first_line += lines + 1;
     }
-    read_any.then(|| IpythonCells {
-        source: join_cells(cells.iter().map(Option::as_deref)),
-        unread,
-    })
+    read_any.then_some((source, unread))
 }
 
 /// `text` as Python, or the 0-based line of the cell and what failed there.
@@ -228,8 +216,7 @@ fn python_cell(text: &str) -> Result<String, (usize, String)> {
     if ruff_python_parser::parse_module(text).is_ok() {
         return Ok(text.to_owned());
     }
-    let python = super::ipython::cell_to_python(text)
-        .map_err(|unrecognized| (unrecognized.line, unrecognized.message))?;
+    let python = super::ipython::cell_to_python(text)?;
     match ruff_python_parser::parse_module(&python) {
         Ok(_) => Ok(python),
         Err(error) => {

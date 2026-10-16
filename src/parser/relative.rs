@@ -96,14 +96,13 @@ fn package_chain_module(file_path: &str, layout: &LayoutInfo) -> Option<String> 
     if !layout.package_dirs.contains(dir) {
         return None;
     }
-    let mut base = 0;
-    while let Some((parent, _)) = dir.rsplit_once('/') {
-        if !layout.package_dirs.contains(parent) {
-            base = parent.len() + 1;
-            break;
-        }
+    while let Some((parent, _)) = dir
+        .rsplit_once('/')
+        .filter(|(parent, _)| layout.package_dirs.contains(*parent))
+    {
         dir = parent;
     }
+    let base = dir.rfind('/').map_or(0, |slash| slash + 1);
     let module = stem[base..]
         .strip_suffix("/__init__")
         .unwrap_or_else(|| &stem[base..]);

@@ -163,15 +163,16 @@ impl LayoutInfo {
             hasher.field_str(&member.path);
             hasher.field_str(&member.layout.cache_key_hash());
         }
-        hasher.field_u64(u64::try_from(self.package_dirs.len()).unwrap_or(u64::MAX));
-        for dir in &self.package_dirs {
-            hasher.field_str(dir);
-        }
+        hash_str_list(&mut hasher, &self.package_dirs);
         hasher.finish()
     }
 }
 
-fn hash_str_list(hasher: &mut CacheKeyHasher, values: &[String]) {
+fn hash_str_list<'a>(
+    hasher: &mut CacheKeyHasher,
+    values: impl IntoIterator<Item = &'a String, IntoIter: ExactSizeIterator>,
+) {
+    let values = values.into_iter();
     hasher.field_u64(u64::try_from(values.len()).unwrap_or(u64::MAX));
     for value in values {
         hasher.field_str(value);

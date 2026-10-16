@@ -1,7 +1,5 @@
 //! Source file discovery orchestration.
 
-use std::collections::BTreeSet;
-
 use crate::config::LoadedConfig;
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
@@ -86,7 +84,12 @@ pub(crate) fn discover_sources_cached(
     };
     let collected = collect_files(&collect_options)?;
     let files = collected.files;
-    layout.package_dirs = package_dirs(files.iter().chain(&collected.held_tests));
+    // Directories holding a discovered `__init__.py`.
+    layout.package_dirs = files
+        .iter()
+        .chain(&collected.held_tests)
+        .filter_map(|file| file.path.strip_suffix("/__init__.py").map(str::to_owned))
+        .collect();
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
     warnings.extend(layout_warning);
@@ -108,11 +111,4 @@ pub(crate) fn discover_sources_cached(
         },
         held_tests: collected.held_tests,
     })
-}
-
-/// Directories holding one of `files`' `__init__.py`.
-fn package_dirs<'a>(files: impl Iterator<Item = &'a DiscoveredFile>) -> BTreeSet<String> {
-    files
-        .filter_map(|file| file.path.strip_suffix("/__init__.py").map(str::to_owned))
-        .collect()
 }
