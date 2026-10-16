@@ -389,6 +389,7 @@ fn run_analysis_core(
         &probe.scripts,
         &plugins,
         &skipped_entries,
+        &probe.effective_config.dependencies,
     );
     warnings.extend(opaque_import_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));

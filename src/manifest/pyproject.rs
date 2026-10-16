@@ -906,6 +906,7 @@ fn push_templated_array(
                     line: None,
                     label,
                     raw: raw.to_owned(),
+                    context: context.clone(),
                 }),
         }
     }
@@ -1413,6 +1414,7 @@ wrapped = { version = "*", markers = "os_name == 'nt' or\nos_name == 'java'", py
                             "tool.hatch.metadata.hooks.uv-dynamic-versioning.dependencies[{index}]"
                         ),
                         raw: raw.to_owned(),
+                        context: DependencyContext::Runtime,
                     })
             );
         }

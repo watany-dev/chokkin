@@ -9,7 +9,7 @@ use std::mem::discriminant;
 use std::path::Path;
 
 use crate::entry::EntryWarning;
-use crate::manifest::{ManifestWarning, invalid_requirement_name};
+use crate::manifest::{DependencyContext, ManifestWarning, invalid_requirement_name};
 use crate::plugins::PluginsWarning;
 use crate::reporters::{Diagnostic, condense_diagnostics, escape_control};
 use crate::resolver::ResolveWarning;
@@ -391,6 +391,7 @@ fn write_manifest_warning(
             line,
             label,
             raw,
+            context,
         } => {
             let at = line.map_or_else(
                 || format!("`{file}` ({label})"),
@@ -399,11 +400,15 @@ fn write_manifest_warning(
             write!(formatter, "manifest: invalid requirement at {at}: {raw}")?;
             // A PEP 723 block's line is not a gap (§11), so it lowers nothing.
             let script = label.starts_with("script.");
+            // A group's bucket is config's to decide, which the text does not
+            // see; only the fixed runtime contexts name misplaced findings.
+            let findings = if matches!(context, DependencyContext::Group(_)) {
+                "undeclared imports"
+            } else {
+                "undeclared or misplaced imports"
+            };
             match invalid_requirement_name(raw).filter(|_| !script) {
-                Some(name) => write!(
-                    formatter,
-                    "; undeclared imports of `{name}` are reported as hints"
-                ),
+                Some(name) => write!(formatter, "; {findings} of `{name}` are reported as hints"),
                 None => Ok(()),
             }
         },
@@ -539,7 +544,7 @@ pub(super) fn collect_warnings(
 mod tests {
     use crate::config::PluginId;
     use crate::entry::EntryWarning;
-    use crate::manifest::ManifestWarning;
+    use crate::manifest::{DependencyContext, ManifestWarning};
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
@@ -909,16 +914,17 @@ mod tests {
                 line,
                 label: "project.dependencies[0]".to_owned(),
                 raw: "foo @".to_owned(),
+                context: DependencyContext::Runtime,
             })
         };
 
         assert_eq!(
             warning(Some(3)).to_string(),
-            "manifest: invalid requirement at `pyproject.toml:3`: foo @; undeclared imports of `foo` are reported as hints"
+            "manifest: invalid requirement at `pyproject.toml:3`: foo @; undeclared or misplaced imports of `foo` are reported as hints"
         );
         assert_eq!(
             warning(None).to_string(),
-            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared imports of `foo` are reported as hints"
+            "manifest: invalid requirement at `pyproject.toml` (project.dependencies[0]): foo @; undeclared or misplaced imports of `foo` are reported as hints"
         );
         // A PEP 723 block's line lowers nothing, so it promises no hint.
         let script = ProbeWarning::Manifest(ManifestWarning::InvalidRequirementLine {
@@ -926,6 +932,7 @@ mod tests {
             line: Some(4),
             label: "script.dependencies[0]".to_owned(),
             raw: "rich>=".to_owned(),
+            context: DependencyContext::Runtime,
         });
         assert_eq!(
             script.to_string(),

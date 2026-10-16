@@ -104,7 +104,15 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &[],
     );
     let symbols = analyze_with_context(&rules, &entry, &plugins, &manifest, &[], None);
-    let gaps = collect_gaps(&rules, &manifest, &[], &[], &plugins, &[]);
+    let gaps = collect_gaps(
+        &rules,
+        &manifest,
+        &[],
+        &[],
+        &plugins,
+        &[],
+        &loaded.effective.dependencies,
+    );
 
     EmitInputs {
         config: loaded.effective,

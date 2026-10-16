@@ -407,12 +407,14 @@ install_requires =
                     line: None,
                     label: "options.install_requires[3]".to_owned(),
                     raw: "rich#x".to_owned(),
+                    context: DependencyContext::Runtime,
                 },
                 ManifestWarning::InvalidRequirementLine {
                     file: "setup.cfg".to_owned(),
                     line: None,
                     label: "options.extras_require.test[0]".to_owned(),
                     raw: "pytest \\".to_owned(),
+                    context: DependencyContext::SetupExtra("test".to_owned()),
                 },
             ]
         );

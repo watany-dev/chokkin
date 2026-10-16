@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::path_util::join_rel;
 
+use super::types::DependencyContext;
+
 /// Warning that does not prevent manifest extraction from completing.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +37,9 @@ pub enum ManifestWarning {
         label: String,
         /// Raw line content.
         raw: String,
+        /// Where the line would have declared its distribution: a runtime
+        /// line may be the declaration CHK005 misses (#935).
+        context: DependencyContext,
     },
     /// `setup.py` was only partially parsed statically.
     SetupPyPartiallyStatic {

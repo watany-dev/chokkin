@@ -3422,8 +3422,8 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
         .expect("run chokkin");
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     for warning in [
-        "manifest: invalid requirement at `requirements.txt:1`: PyYAML>=; undeclared imports of `pyyaml` are reported as hints",
-        "manifest: invalid requirement at `requirements.txt:2`: rich_ >=13; undeclared imports of `rich` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:1`: PyYAML>=; undeclared or misplaced imports of `pyyaml` are reported as hints",
+        "manifest: invalid requirement at `requirements.txt:2`: rich_ >=13; undeclared or misplaced imports of `rich` are reported as hints",
         "manifest: invalid requirement at `requirements.txt:3`: >=1.0\n",
     ] {
         assert!(stderr.contains(warning), "{warning}\n{stderr}");
@@ -3432,6 +3432,50 @@ fn binary_invalid_requirement_line_turns_imports_of_its_name_into_hints() {
         stderr.contains("a requirement line naming the distribution could not be read: `pyyaml` in `requirements.txt:1`"),
         "{stderr}"
     );
+}
+
+/// An unreadable runtime line may be the runtime declaration of a dev-only
+/// distribution, so its runtime import is a misplaced hint; a valid dev
+/// line beside it does not settle where the distribution belongs (#935).
+#[test]
+fn binary_invalid_runtime_requirement_turns_misplaced_findings_into_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"rich>=\"]\n\n[dependency-groups]\ndev = [\"rich\", \"pytest\", \"black>=\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/main.py", "import rich\nimport pytest\n"),
+    ]);
+    let levels: Vec<_> = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            format!(
+                "{} {} {} {}",
+                field("code"),
+                field("target"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        levels,
+        ["CHK005 pytest warning certain", "CHK005 rich info maybe"]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--confidence", "maybe"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for warning in [
+        "(project.dependencies[0]): rich>=; undeclared or misplaced imports of `rich` are reported as hints",
+        "(dependency-groups.dev[2]): black>=; undeclared imports of `black` are reported as hints",
+    ] {
+        assert!(stderr.contains(warning), "{warning}\n{stderr}");
+    }
 }
 
 /// What the parser could not read in a file it kept reaches stderr and the
@@ -3620,7 +3664,7 @@ fn binary_member_and_extra_requirements_warnings_reach_stderr() {
         // lowers nothing and the warning claims no hints.
         "manifest: could not read `requires-python` \"3.10+\" in `packages/old/pyproject.toml`; assuming target version py311",
         "manifest: stopped reading `requirements/ci.txt`: requirements file not found: missing-base.txt",
-        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared imports of `requests` are reported as hints",
+        "manifest: invalid requirement at `packages/tool/pyproject.toml` (project.dependencies[0]): requests >= 2 ;;; undeclared or misplaced imports of `requests` are reported as hints",
         "manifest: `packages/tool`: Poetry sections detected (partial dependency extraction)",
         "manifest: runtime dependencies in `packages/dyn/pyproject.toml` could not be read statically; missing-dependency findings in `packages/dyn` are reported as low-confidence info",
     ] {

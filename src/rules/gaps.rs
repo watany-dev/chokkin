@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::config::{Confidence, TargetVersion};
+use crate::config::{Confidence, DependencyGroupsConfig, TargetVersion};
 use crate::entry::resolve_module_to_path;
 use crate::graph::ProjectGraph;
 use crate::manifest::{
@@ -18,7 +18,7 @@ use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSetting
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolveWarning, StdlibRange, import_root, is_first_party_import};
 use crate::rules::RuleContext;
-use crate::rules::deps::file_context;
+use crate::rules::deps::{DeclarationBucket, declaration_bucket, file_context};
 use crate::rules::types::{IssueCandidate, IssueSubject, RuleId, Severity, import_site};
 use crate::sources::FileContext;
 
@@ -82,6 +82,9 @@ pub enum GapKind {
     /// names could not be parsed (#928): an import of that distribution may
     /// be declared.
     InvalidRequirement,
+    /// The same on the runtime side (a runtime, extra or runtime-group line):
+    /// it may also be the runtime declaration a misplaced finding misses (#935).
+    InvalidRuntimeRequirement,
     /// A reachable import no source resolved to a module (§7): any declared
     /// distribution may provide it (#911).
     UnresolvedImport,
@@ -152,14 +155,16 @@ impl GapKind {
                 Some(Lowering::Cap(Confidence::Likely))
             },
             (
-                Self::RuntimeDependenciesUnknown,
+                Self::RuntimeDependenciesUnknown
+                | Self::InvalidRequirement
+                | Self::InvalidRuntimeRequirement,
                 RuleId::Chk003 | RuleId::Chk004,
                 IssueSubject::Import { .. },
             )
             | (
-                Self::InvalidRequirement,
-                RuleId::Chk003 | RuleId::Chk004,
-                IssueSubject::Import { .. },
+                Self::RuntimeDependenciesUnknown | Self::InvalidRuntimeRequirement,
+                RuleId::Chk005,
+                IssueSubject::Distribution { .. },
             )
             | (
                 Self::AssumedTargetVersion,
@@ -183,7 +188,7 @@ impl GapKind {
             },
             Self::RuntimeDependenciesUnknown => "runtime dependencies could not be read statically",
             Self::UnknownExtras => "extras could not be read statically",
-            Self::InvalidRequirement => {
+            Self::InvalidRequirement | Self::InvalidRuntimeRequirement => {
                 "a requirement line naming the distribution could not be read"
             },
             Self::UnresolvedImport => "a reachable import could not be resolved to a distribution",
@@ -203,7 +208,7 @@ impl Gap {
     /// Whether the gap is in `candidate`'s scope: a member's gap reaches that
     /// member's findings, a script's import that script's alone, and an
     /// assumed stdlib status the imports of that root in that file, and an
-    /// invalid requirement the imports of the distribution it names.
+    /// invalid requirement the findings on the distribution it names.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
@@ -217,10 +222,16 @@ impl Gap {
                         .as_ref()
                         .is_some_and(|(root, _)| root == import_root(module))
             },
-            (GapKind::InvalidRequirement, IssueSubject::Import { distribution, .. }) => self
+            (
+                GapKind::InvalidRequirement | GapKind::InvalidRuntimeRequirement,
+                IssueSubject::Import { distribution, .. },
+            ) => self
                 .site
                 .as_ref()
                 .is_some_and(|(name, _)| distribution.as_deref() == Some(name.as_str())),
+            (GapKind::InvalidRuntimeRequirement, IssueSubject::Distribution { name }) => {
+                self.site.as_ref().is_some_and(|(site, _)| site == name)
+            },
             _ => true,
         };
         in_member && in_site
@@ -251,6 +262,7 @@ pub fn collect_gaps(
     scripts: &[InlineScript],
     plugins: &PluginHints,
     skipped_entries: &[String],
+    groups: &DependencyGroupsConfig,
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
     gaps.extend(skipped_entries.iter().map(|path| Gap {
@@ -268,14 +280,14 @@ pub fn collect_gaps(
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(manifest_gap(manifest));
     gaps.extend(extras_gap(manifest));
-    gaps.extend(invalid_requirement_gaps(manifest));
+    gaps.extend(invalid_requirement_gaps(manifest, groups));
     gaps.extend(assumed_target_gaps(context.parse, manifest, scripts));
     gaps.extend(members.iter().flat_map(|member| {
         let manifest = member.manifest;
         manifest_gap(manifest)
             .into_iter()
             .chain(extras_gap(manifest))
-            .chain(invalid_requirement_gaps(manifest))
+            .chain(invalid_requirement_gaps(manifest, groups))
             .map(|mut gap| {
                 gap.file = join_rel(member.path, &gap.file);
                 gap.member = Some(member.id.to_owned());
@@ -578,17 +590,31 @@ fn extras_gap(manifest: &LoadedManifest) -> Option<Gap> {
 /// A line with no name (`>=1.0`, `{{ name }}>=1`) lowers nothing: it names
 /// no distribution, and reading it as an unread manifest would turn every
 /// missing declaration into a hint for one stray line. Constraint lines are
-/// not told apart from declarations, so they lower the same way.
-fn invalid_requirement_gaps(manifest: &LoadedManifest) -> Vec<Gap> {
+/// not told apart from declarations, so they lower the same way. A line in
+/// a runtime bucket may also be the runtime declaration CHK005 misses; a dev
+/// or type line beside a valid dev one cannot be (#935).
+fn invalid_requirement_gaps(
+    manifest: &LoadedManifest,
+    groups: &DependencyGroupsConfig,
+) -> Vec<Gap> {
     manifest
         .warnings
         .iter()
         .filter_map(|warning| match warning {
             ManifestWarning::InvalidRequirementLine {
-                file, line, raw, ..
+                file,
+                line,
+                raw,
+                context,
+                ..
             } => Some(Gap {
                 file: file.clone(),
-                kind: GapKind::InvalidRequirement,
+                kind: match declaration_bucket(context, groups) {
+                    DeclarationBucket::Runtime | DeclarationBucket::Optional(_) => {
+                        GapKind::InvalidRuntimeRequirement
+                    },
+                    DeclarationBucket::Dev | DeclarationBucket::Type => GapKind::InvalidRequirement,
+                },
                 member: None,
                 site: Some((invalid_requirement_name(raw)?, *line)),
             }),
@@ -762,6 +788,7 @@ mod tests {
                 candidate(RuleId::Chk004, import("idna")),
                 candidate(RuleId::Chk003, script_distribution("rich")),
                 candidate(RuleId::Chk001, file("acme/orphan.py")),
+                candidate(RuleId::Chk005, distribution("pytest")),
             ],
         );
         assert_eq!(
@@ -769,6 +796,43 @@ mod tests {
             [
                 (Severity::Info, Confidence::Maybe),
                 (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Info, Confidence::Maybe),
+            ]
+        );
+    }
+
+    /// A runtime line may be the declaration a misplaced finding misses, so
+    /// it hints CHK005 on the distribution it names; a dev line cannot be
+    /// (#935).
+    #[test]
+    fn invalid_runtime_requirement_also_hints_misplaced_findings_on_its_name() {
+        let invalid = |kind| Gap {
+            file: "pyproject.toml".to_owned(),
+            kind,
+            member: None,
+            site: Some(("rich".to_owned(), None)),
+        };
+        let candidates = || {
+            vec![
+                candidate(RuleId::Chk005, distribution("rich")),
+                candidate(RuleId::Chk005, distribution("pytest")),
+                candidate(RuleId::Chk002, distribution("rich")),
+            ]
+        };
+        assert_eq!(
+            lowered(&[invalid(GapKind::InvalidRuntimeRequirement)], candidates()),
+            [
+                (Severity::Info, Confidence::Maybe),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+        assert_eq!(
+            lowered(&[invalid(GapKind::InvalidRequirement)], candidates()),
+            [
+                (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
                 (Severity::Error, Confidence::Certain),
             ]

@@ -10,7 +10,9 @@ mod script;
 mod unused;
 mod used;
 
-pub(crate) use context::{DeclarationBucket, declaration_buckets, file_context};
+pub(crate) use context::{
+    DeclarationBucket, declaration_bucket, declaration_buckets, file_context,
+};
 pub(crate) use duplicate::duplicate_to_remove;
 pub(crate) use used::local_source_member;
 

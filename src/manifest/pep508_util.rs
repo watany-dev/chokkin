@@ -94,7 +94,7 @@ fn parse_with(
     } else if is_direct_reference(trimmed) {
         // `name @ url` that failed the grammar (e.g. a space in the URL) is
         // invalid, not an opaque URL line.
-        return Err(invalid(raw, origin));
+        return Err(invalid(raw, context, origin));
     } else if let Some(name) = extract_egg_name(trimmed) {
         (name, Vec::new(), None, Some(trimmed.to_owned()), false)
     } else if is_url_like(trimmed) || (files && looks_like_pip_file(trimmed)) {
@@ -106,7 +106,7 @@ fn parse_with(
             true,
         )
     } else {
-        return Err(invalid(raw, origin));
+        return Err(invalid(raw, context, origin));
     };
     Ok(DeclaredDependency {
         name,
@@ -120,12 +120,17 @@ fn parse_with(
     })
 }
 
-pub(super) fn invalid(raw: &str, origin: DependencyOrigin) -> ManifestWarning {
+pub(super) fn invalid(
+    raw: &str,
+    context: DependencyContext,
+    origin: DependencyOrigin,
+) -> ManifestWarning {
     ManifestWarning::InvalidRequirementLine {
         file: origin.file,
         line: origin.line,
         label: origin.label,
         raw: raw.to_owned(),
+        context,
     }
 }
 
@@ -400,6 +405,7 @@ mod tests {
                     line: Some(3),
                     label: "requirements.txt".to_owned(),
                     raw: raw.to_owned(),
+                    context: DependencyContext::Runtime,
                 })
             );
         }
@@ -559,6 +565,7 @@ mod tests {
                 line: None,
                 label: "project.dependencies[2]".to_owned(),
                 raw: "pkg >=".to_owned(),
+                context: DependencyContext::Runtime,
             })
         );
     }

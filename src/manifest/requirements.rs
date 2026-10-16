@@ -193,7 +193,9 @@ fn parse_requirements_line(
     // requirement line with bad options is, and the rest of the file is read.
     let (requirement, options) = break_args_options(trimmed);
     let Some(options) = pip_line_options(options) else {
-        ctx.result.warnings.push(invalid(trimmed, origin()));
+        ctx.result
+            .warnings
+            .push(invalid(trimmed, ctx.default_context.clone(), origin()));
         return Ok(());
     };
 
@@ -329,7 +331,7 @@ fn parse_pip_line(
     ) -> Result<DeclaredDependency, ManifestWarning>,
 ) -> Result<DeclaredDependency, ManifestWarning> {
     let Some((requirement, marker)) = split_pip_marker(line) else {
-        return Err(invalid(line, origin));
+        return Err(invalid(line, context, origin));
     };
     // Rewrite the warning's `raw` rather than clone `origin` up front: that
     // clone cost every valid line two allocations.
@@ -1169,6 +1171,7 @@ mod tests {
                     line: Some(1),
                     label: "requirements.txt".to_owned(),
                     raw: line.to_owned(),
+                    context: DependencyContext::Runtime,
                 }],
                 "{line:?}"
             );
@@ -1244,6 +1247,7 @@ mod tests {
                     line: Some(1),
                     label: "requirements.txt".to_owned(),
                     raw: line.to_owned(),
+                    context: DependencyContext::Runtime,
                 }],
                 "{line:?}"
             );
@@ -1329,6 +1333,7 @@ mod tests {
                 line: Some(1),
                 label: "pins.txt".to_owned(),
                 raw: "./pkg".to_owned(),
+                context: DependencyContext::Runtime,
             }]
         );
     }
