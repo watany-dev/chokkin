@@ -2369,9 +2369,7 @@ value = t\"{utils.C}\"
         /// What a generated `try` catches.
         #[derive(Clone, Copy, Debug)]
         enum Handler {
-            /// `except ImportError:`.
             ImportError,
-            /// `except (ValueError, ModuleNotFoundError):`.
             Tuple,
             /// `except ValueError:`, which a missing module does not raise.
             Other,
@@ -2389,30 +2387,17 @@ value = t\"{utils.C}\"
             Opaque,
         }
 
-        /// A statement around imports.
         #[derive(Clone, Debug)]
         enum Block {
-            /// `import zzm<n>`, or `from zzm<n> import x` when `from`; `n`
-            /// unique in the file.
-            Import {
-                from: bool,
-            },
-            /// `if importlib.util.find_spec("zzc") is None: raise ImportError`.
+            Import { from: bool },
             Check,
             Try(Try),
-            /// `with suppress(ImportError):`, or `with nullcontext():` when
-            /// not `suppress`.
-            With {
-                suppress: bool,
-                body: Vec<Self>,
-            },
+            With { suppress: bool, body: Vec<Self> },
             If(Guard, Vec<Self>),
             Def(Vec<Self>),
             Class(Vec<Self>),
         }
 
-        /// `try:`, one `except` clause, then `else:` and `finally:` when not
-        /// empty.
         #[derive(Clone, Debug)]
         struct Try {
             body: Vec<Block>,
@@ -2490,7 +2475,6 @@ value = t\"{utils.C}\"
             })
         }
 
-        /// The flags spec §10 gives an import.
         #[derive(Clone, Debug, PartialEq, Eq)]
         struct Flags {
             optional: bool,
@@ -2500,7 +2484,6 @@ value = t\"{utils.C}\"
             fallback_for: Vec<String>,
         }
 
-        /// What encloses a statement.
         #[allow(clippy::struct_excessive_bools)]
         #[derive(Clone, Default)]
         struct Frame {
@@ -2517,7 +2500,6 @@ value = t\"{utils.C}\"
             fallback_for: Vec<String>,
         }
 
-        /// A function the reference model is inside.
         struct Function {
             /// An enclosing function checks for a package, so every import
             /// here may run after that check (#713).

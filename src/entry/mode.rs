@@ -368,7 +368,6 @@ mod tests {
         PackageTop,
         /// Deeper in the package directory (`src/acme/web/app.py`).
         PackageNested,
-        /// Anywhere else.
         Outside,
     }
 
