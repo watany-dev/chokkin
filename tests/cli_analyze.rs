@@ -3364,6 +3364,79 @@ fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
     );
 }
 
+/// `--production` leaves test files out on purpose, so a target naming one
+/// is dropped like any non-production entry rather than skipped (#933).
+#[test]
+fn binary_production_module_entry_in_tests_is_not_a_skipped_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"tests.app:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/helper.py", "# helper\n"),
+        ("tests/__init__.py", ""),
+        ("tests/app.py", "import requests\n\ndef main():\n    pass\n"),
+    ]);
+    let levels: Vec<(String, String)> =
+        json_issues(project.path(), &["--no-cache", "--production"])
+            .iter()
+            .map(|issue| {
+                let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+                (field("target"), field("confidence"))
+            })
+            .collect();
+    assert!(
+        levels.contains(&("requests".to_owned(), "certain".to_owned())),
+        "{levels:?}"
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
+}
+
+/// A member's build hook outside the member's own tree is not an entry the
+/// root skipped: it is dropped as the root drops one, lowering nothing (#934).
+#[test]
+fn binary_member_build_script_outside_its_tree_is_not_a_skipped_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nroot = \"root_pkg.cli:main\"\n\n[tool.uv.workspace]\nmembers = [\"pkgs/a\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("root_pkg/__init__.py", ""),
+        ("root_pkg/cli.py", "def main():\n    pass\n"),
+        (
+            "pkgs/a/pyproject.toml",
+            "[project]\nname = \"a\"\nversion = \"0\"\n\n[tool.hatch.build.hooks.custom]\npath = \"../../tools/hook.py\"\n",
+        ),
+        ("pkgs/a/a/__init__.py", ""),
+        ("tools/hook.py", "# hook\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
+    let levels: Vec<(String, String)> = json_issues(project.path(), &["--no-cache"])
+        .iter()
+        .map(|issue| {
+            let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+            (field("target"), field("confidence"))
+        })
+        .collect();
+    assert!(
+        levels.contains(&("requests".to_owned(), "certain".to_owned())),
+        "{levels:?}"
+    );
+}
+
 /// A member's manifest entry the root excludes is skipped like a root one:
 /// its imports are unknown, so what it may use falls to likely (#934).
 #[test]

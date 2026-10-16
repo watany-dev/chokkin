@@ -235,6 +235,7 @@ fn run_analysis_core(
             .workspace_inputs
             .iter()
             .map(|input| (input.member.path.as_str(), &input.manifest, &input.sources)),
+        production,
     );
     let entry_warnings = entry_warnings(&entry, &probe.sources);
     let skipped_entries: Vec<String> = entry_warnings

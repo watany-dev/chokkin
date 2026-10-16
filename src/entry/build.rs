@@ -33,6 +33,7 @@ pub fn build_entry_roots(
         manifest,
         sources,
         &known_paths,
+        production,
         &mut candidates,
         &mut warnings,
     );
@@ -47,6 +48,7 @@ pub fn build_entry_roots(
         sources,
         &known_paths,
         &file_contexts,
+        production,
         &mut candidates,
         &mut warnings,
     );
@@ -79,6 +81,7 @@ pub(crate) fn add_member_manifest_roots<'a>(
     plan: &mut EntryPlan,
     root_sources: &DiscoveredSources,
     members: impl IntoIterator<Item = (&'a str, &'a LoadedManifest, &'a DiscoveredSources)>,
+    production: bool,
 ) {
     let root_paths = known_file_paths(root_sources);
     for (member_path, manifest, sources) in members {
@@ -88,6 +91,7 @@ pub(crate) fn add_member_manifest_roots<'a>(
             manifest,
             sources,
             &known_file_paths(sources),
+            production,
             &mut candidates,
             &mut warnings,
         );
@@ -100,7 +104,14 @@ pub(crate) fn add_member_manifest_roots<'a>(
             }
         }
         plan.warnings.append(&mut warnings);
-        candidates.extend(build_script_entries(manifest));
+        // A build script the root's walk does not find is dropped, as the
+        // root's own is; `../` paths name no file of the walk at all.
+        candidates.extend(build_script_entries(manifest).filter(|candidate| {
+            root_paths.contains(&format!("{member_path}/{}", candidate.spec.path))
+        }));
+        if production {
+            candidates.retain(|candidate| candidate.context.is_included_in_production());
+        }
         for candidate in candidates {
             let path = format!("{member_path}/{}", candidate.spec.path);
             // The member's own walk found the file but the root's did not (a
@@ -130,15 +141,20 @@ pub(crate) fn add_member_manifest_roots<'a>(
 /// A target that maps to no discovered file: skipped when a file is there
 /// that discovery left out, its imports unread like a skipped path entry's;
 /// unmapped when no file is, since it runs nothing chokkin could read (#933).
+/// `--production` leaves out a test or dev file on purpose, so its target is
+/// unmapped as it was before #933, not a skipped read.
 fn unresolved_target(
     module: &str,
     file: &str,
     label: &str,
     sources: &DiscoveredSources,
+    production: bool,
 ) -> EntryWarning {
     match resolve_module_on_disk(module, &sources.layout, &sources.root.path) {
-        Some(path) => EntryWarning::MissingEntryPath { path },
-        None => EntryWarning::UnresolvedModuleTarget {
+        Some(path) if !production || assign_file_context(&path).is_included_in_production() => {
+            EntryWarning::MissingEntryPath { path }
+        },
+        _ => EntryWarning::UnresolvedModuleTarget {
             module: module.to_owned(),
             file: file.to_owned(),
             label: label.to_owned(),
@@ -173,10 +189,12 @@ fn collect_config_entries(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_manifest_entries(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
+    production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
 ) {
@@ -190,6 +208,7 @@ fn collect_manifest_entries(
                 &entry_point.origin.file,
                 &entry_point.origin.label,
                 sources,
+                production,
             ));
             continue;
         };
@@ -346,6 +365,7 @@ fn collect_symbol_ref_entries(
     sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
+    production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
 ) {
@@ -357,6 +377,7 @@ fn collect_symbol_ref_entries(
                 &symbol_ref.origin.file,
                 &symbol_ref.origin.label,
                 sources,
+                production,
             ));
             continue;
         };
