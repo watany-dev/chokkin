@@ -5064,3 +5064,45 @@ fn binary_wheel_included_namespace_directory_is_a_package() {
         .collect();
     assert_eq!(named, Vec::<String>::new());
 }
+
+#[test]
+fn pytest_testpaths_suite_package_resolves_by_absolute_name() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"celery\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
+        ),
+        ("celery/__init__.py", "def run():\n    return 1\n"),
+        ("t/__init__.py", ""),
+        ("t/unit/__init__.py", ""),
+        ("t/unit/helpers.py", "def helper():\n    return 1\n"),
+        (
+            "t/unit/test_run.py",
+            "from celery import run\nfrom t.unit.helpers import helper\nfrom .helpers import helper as again\n\n\
+             def test_run():\n    assert run() == helper() == again()\n",
+        ),
+        ("t/integration/__init__.py", ""),
+        (
+            "t/integration/test_live.py",
+            "from t.unit.helpers import helper\nfrom . import conftest\n",
+        ),
+        ("t/integration/conftest.py", "VALUE = 1\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("relative import"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<String> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| ["CHK001", "CHK010"].contains(&issue["code"].as_str().unwrap_or("")))
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(issues, Vec::<String>::new());
+}

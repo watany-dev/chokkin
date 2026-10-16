@@ -48,6 +48,17 @@ pub(crate) fn infer_layout(
         .filter(|name| root.join(name).join("__init__.py").is_file())
         .map(str::to_owned)
         .collect();
+    // A suite package `testpaths` names (celery's `t/`) imports itself by
+    // absolute name, as `tests/` does (#978).
+    for path in pytest_testpaths(root, &layout) {
+        let top_level = !path.contains('/');
+        if top_level
+            && root.join(&path).join("__init__.py").is_file()
+            && !layout.local_packages.contains(&path)
+        {
+            layout.local_packages.push(path);
+        }
+    }
     (layout, warning)
 }
 
@@ -255,6 +266,25 @@ fn heuristic_layout(
             return (LayoutInfo::new(base, vec![package]), None);
         }
     }
+    // A guess skips the suite `testpaths` names; a package named after the
+    // project above still wins, as pandas' `testpaths = "pandas"` does (#978).
+    let suites = testpath_tops(root, "");
+    let guessable = candidates.iter().map(|(base, packages)| {
+        let kept: Vec<String> = packages
+            .iter()
+            .filter(|package| !suites.contains(&join_rel(base, package)))
+            .cloned()
+            .collect();
+        (*base, kept)
+    });
+    let guessable: Vec<(&str, Vec<String>)> = guessable
+        .filter(|(_, packages)| !packages.is_empty())
+        .collect();
+    let candidates = if guessable.is_empty() {
+        candidates
+    } else {
+        guessable
+    };
     let Some((base, packages)) = candidates.into_iter().next() else {
         let layout = LayoutInfo {
             inferred_globs: default_globs(ProjectLayout::Unknown, "", &[]),
@@ -357,6 +387,11 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
 /// root such as streamlit's `lib/`, from the config beside it (#544).
 /// Entries overlapping a package (pandas' `testpaths = "pandas"`) are dropped:
 /// they would turn the runtime package into test code.
+///
+/// Each entry widens to the top of its `__init__.py` chain within the
+/// config's directory (#978): celery's `t/unit` is package `t.unit`, so its
+/// sibling suites under `t/` are tests too. Entries are taken literally;
+/// a glob such as `tests/*` is not expanded.
 pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> {
     let package_root = layout.package_root.as_str();
     let mut dirs = vec![""];
@@ -365,14 +400,7 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
     }
     let mut testpaths = Vec::new();
     for dir in dirs {
-        for path in pytest_import_settings(&root.join(dir))
-            .unwrap_or_default()
-            .testpaths
-        {
-            let Some(path) = in_root_dir(&path) else {
-                continue;
-            };
-            let path = join_rel(dir, &path);
+        for path in testpath_tops(root, dir) {
             let overlaps_package = layout.packages.iter().any(|package| {
                 let package = layout.package_dir(package);
                 Path::new(&path).starts_with(&package) || Path::new(&package).starts_with(&path)
@@ -383,6 +411,29 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
         }
     }
     testpaths
+}
+
+/// Root-relative `testpaths` of the pytest config in `dir`, each widened to
+/// the top of its `__init__.py` chain without climbing above `dir`.
+fn testpath_tops(root: &Path, dir: &str) -> Vec<String> {
+    let floor = dir.split('/').filter(|part| !part.is_empty()).count();
+    pytest_import_settings(&root.join(dir))
+        .unwrap_or_default()
+        .testpaths
+        .iter()
+        .filter_map(|path| in_root_dir(path))
+        .map(|path| {
+            let path = join_rel(dir, &path);
+            let parts: Vec<&str> = path.split('/').collect();
+            let is_package =
+                |parts: &[&str]| root.join(parts.join("/")).join("__init__.py").is_file();
+            let mut keep = parts.len();
+            while keep > floor + 1 && is_package(&parts[..keep]) && is_package(&parts[..keep - 1]) {
+                keep -= 1;
+            }
+            parts[..keep].join("/")
+        })
+        .collect()
 }
 
 fn normalized_project_names(name: &str) -> Vec<String> {
@@ -637,6 +688,73 @@ mod tests {
         );
         assert_eq!(path_to_module("build/lib.py", &layout), None);
         assert_eq!(path_to_module("testsuite/x.py", &layout), None);
+    }
+
+    #[test]
+    fn testpaths_widen_to_their_test_package_and_index_it() {
+        let temp = tree(&["celery", "t", "t/unit", "t/integration"]);
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
+        )
+        .expect("write");
+        let (layout, warning) =
+            infer_layout(temp.path(), &metadata("celery"), &UvToolSettings::default());
+        assert_eq!(warning, None);
+        assert_eq!(pytest_testpaths(temp.path(), &layout), vec!["t".to_owned()]);
+        assert_eq!(layout.local_packages, vec!["t".to_owned()]);
+        assert_eq!(
+            path_to_module("t/integration/test_app.py", &layout),
+            Some("t.integration.test_app".to_owned())
+        );
+    }
+
+    #[test]
+    fn testpaths_suite_is_not_a_guessed_package() {
+        let temp = tree(&["t", "t/unit", "worker"]);
+        fs::write(
+            temp.path().join("pytest.ini"),
+            "[pytest]\ntestpaths = t/unit\n",
+        )
+        .expect("write");
+        let (layout, warning) =
+            infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(layout.packages, vec!["worker".to_owned()]);
+        assert!(matches!(
+            warning,
+            Some(SourcesWarning::GuessedPackageDir { .. })
+        ));
+        assert_eq!(layout.local_packages, vec!["t".to_owned()]);
+    }
+
+    #[test]
+    fn testpaths_naming_the_project_package_stay_dropped() {
+        let temp = tree(&["pandas", "pandas/tests"]);
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\ntestpaths = \"pandas\"\n",
+        )
+        .expect("write");
+        let (layout, _) =
+            infer_layout(temp.path(), &metadata("pandas"), &UvToolSettings::default());
+        assert_eq!(layout.packages, vec!["pandas".to_owned()]);
+        assert!(pytest_testpaths(temp.path(), &layout).is_empty());
+        assert!(layout.local_packages.is_empty());
+    }
+
+    #[test]
+    fn testpaths_do_not_climb_above_the_config_directory() {
+        let temp = tree(&["lib", "lib/streamlit", "lib/tests", "lib/tests/unit"]);
+        fs::write(
+            temp.path().join("lib/pytest.ini"),
+            "[pytest]\ntestpaths = tests/unit\n",
+        )
+        .expect("write");
+        let layout = LayoutInfo::new("lib", vec!["streamlit".to_owned()]);
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout),
+            vec!["lib/tests".to_owned()]
+        );
     }
 
     #[test]
