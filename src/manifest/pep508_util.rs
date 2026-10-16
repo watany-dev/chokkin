@@ -185,8 +185,9 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
 /// ([`looks_like_pip_file`]: `wheels/foo.whl`, `C:\pkg`,
 /// `foo-1.0-py3-none-any.whl`; a requirements file reads these as opaque, a
 /// manifest field as invalid), or another word follows it
-/// (`not a requirement`), which no requirement has: such a line names nothing
-/// to lower.
+/// (`not a requirement`), which no requirement has, or it starts with `-`,
+/// which pip reads as an option (`-r` alone, `-example-pkg`) and a PEP 508
+/// name cannot start on: such a line names nothing to lower.
 #[must_use]
 pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
@@ -196,7 +197,10 @@ pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let followed_by_word = after
         .trim_start()
         .starts_with(|ch: char| ch.is_ascii_alphanumeric());
-    (!name.is_empty() && !looks_like_pip_file(trimmed) && !followed_by_word)
+    (!name.is_empty()
+        && !token.starts_with('-')
+        && !looks_like_pip_file(trimmed)
+        && !followed_by_word)
         .then(|| normalize_distribution_name(name))
 }
 
@@ -216,7 +220,8 @@ pub(super) fn looks_like_pip_file(trimmed: &str) -> bool {
         || after
             .strip_prefix(':')
             .is_some_and(|rest| rest.starts_with(['/', '\\']))
-        || (looks_like_archive(token) && (after.is_empty() || after.starts_with('[')))
+        || (looks_like_archive(token)
+            && (after.is_empty() || (after.starts_with('[') && after.ends_with(']'))))
 }
 
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
@@ -284,6 +289,8 @@ mod tests {
             ("wheels/foo-1.0-py3-none-any.whl", None),
             ("C:\\wheels\\foo.whl", None),
             ("foo-1.0-py3-none-any.whl", None),
+            ("-r", None),
+            ("-example-pkg", None),
             ("", None),
         ] {
             assert_eq!(
