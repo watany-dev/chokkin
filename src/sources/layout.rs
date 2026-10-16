@@ -79,7 +79,7 @@ fn declared_layout(root: &Path, targets: Option<&WheelTargets>) -> Option<Layout
         .paths
         .iter()
         .filter(|path| !path.is_empty() && !path.contains(['*', '?', '[', '{']))
-        .filter(|path| root.join(path).join("__init__.py").is_file())
+        .filter(|path| ships_modules(&root.join(path)))
         .filter_map(|path| top_level_package(root, path))
         .collect();
     for find in &targets.find {
@@ -94,6 +94,52 @@ fn declared_layout(root: &Path, targets: Option<&WheelTargets>) -> Option<Layout
     let package_root = package_root.clone();
     let packages = dirs.into_iter().map(|(_, package)| package).collect();
     Some(LayoutInfo::new(&package_root, packages))
+}
+
+/// Whether a wheel-declared directory is a package: a regular one, or a
+/// PEP 420 namespace holding modules directly (locust's `pytest_locust/`
+/// with only `plugin.py`, #977). A directory of packages without modules of
+/// its own (`include = ["src"]`) stays a container, left to the heuristics.
+fn ships_modules(dir: &Path) -> bool {
+    if dir.join("__init__.py").is_file() {
+        return true;
+    }
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let path = entry.path();
+            path.extension().is_some_and(|ext| ext == "py") && path.is_file()
+        })
+    })
+}
+
+/// Root directories holding modules but no `__init__.py` that the layout did
+/// not take: a namespace package nothing declared, or loose scripts. Neither
+/// is scanned by the inferred globs, so `--probe` names them rather than
+/// letting them drop out unseen (#977). Directories the layout never takes
+/// as packages (`tests/`, `examples/`, ...) and names that cannot be
+/// imported (`my-tools/`) are left out.
+pub(crate) fn unpackaged_module_dirs(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<String> = entries
+        .flatten()
+        .filter(entry_is_dir)
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .filter(|name| {
+            !name.starts_with('.')
+                && !name.contains(['.', '-', ' '])
+                && !is_non_package_dir(name)
+                && !layout.packages.contains(name)
+                && !layout.local_packages.contains(name)
+        })
+        .filter(|name| {
+            let dir = root.join(name);
+            !dir.join("__init__.py").is_file() && ships_modules(&dir)
+        })
+        .collect();
+    dirs.sort();
+    dirs
 }
 
 /// Split a package directory into `(package_root, top-level package)`,
@@ -891,6 +937,52 @@ mod tests {
         assert_eq!(
             path_to_module("src/acme/x.py", &layout),
             Some("acme.x".to_owned())
+        );
+    }
+
+    #[test]
+    fn declared_namespace_directory_with_modules_is_a_package() {
+        // locust's `include = ["locust", "pytest_locust"]`: the second ships
+        // `plugin.py` with no `__init__.py`, a PEP 420 namespace (#977).
+        let temp = tree(&["locust"]);
+        fs::create_dir_all(temp.path().join("pytest_locust")).expect("create dir");
+        fs::write(temp.path().join("pytest_locust/plugin.py"), "").expect("write");
+        let metadata = ProjectMetadata {
+            wheel_targets: Some(WheelTargets {
+                source: "tool.hatch.build.targets.wheel".to_owned(),
+                paths: vec!["locust".to_owned(), "pytest_locust".to_owned()],
+                find: Vec::new(),
+            }),
+            ..metadata("locust")
+        };
+        let (layout, warning) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        assert_eq!(warning, None);
+        assert_eq!(layout.layout, ProjectLayout::Flat);
+        assert_eq!(
+            layout.packages,
+            vec!["locust".to_owned(), "pytest_locust".to_owned()]
+        );
+        assert_eq!(
+            path_to_module("pytest_locust/plugin.py", &layout),
+            Some("pytest_locust.plugin".to_owned())
+        );
+    }
+
+    #[test]
+    fn undeclared_module_directories_without_init_are_named() {
+        let temp = tree(&["acme", "tests"]);
+        for dir in ["pytest_acme", "examples", "my-tools", "data"] {
+            fs::create_dir_all(temp.path().join(dir)).expect("create dir");
+        }
+        for file in ["pytest_acme/plugin.py", "examples/demo.py", "my-tools/x.py"] {
+            fs::write(temp.path().join(file), "").expect("write");
+        }
+        fs::write(temp.path().join("data/schema.json"), "{}").expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(layout.packages, vec!["acme".to_owned()]);
+        assert_eq!(
+            unpackaged_module_dirs(temp.path(), &layout),
+            vec!["pytest_acme".to_owned()]
         );
     }
 

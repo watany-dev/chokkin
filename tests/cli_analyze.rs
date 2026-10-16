@@ -5025,3 +5025,42 @@ fn binary_escapes_control_characters_from_the_project() {
     assert!(!issues.contains("\"CHK002\""), "{issues}");
     assert!(!issues.contains("\"CHK003\""), "{issues}");
 }
+
+/// locust's shape (#977): the wheel includes `pytest_locust/`, a namespace
+/// directory with only `plugin.py`, named by a `pytest11` entry point. It is
+/// a package, so the entry maps and the plugin is neither unused nor its
+/// import unresolved.
+#[test]
+fn binary_wheel_included_namespace_directory_is_a_package() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n\
+             [project]\nname = \"locust\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.entry-points.pytest11]\nlocust = \"pytest_locust.plugin\"\n\n\
+             [tool.hatch.build.targets.wheel]\ninclude = [\"locust\", \"pytest_locust\"]\n",
+        ),
+        ("locust/__init__.py", "from locust.core import run\n"),
+        ("locust/core.py", "def run():\n    return 1\n"),
+        (
+            "pytest_locust/plugin.py",
+            "from locust import run\n\n\ndef pytest_configure(config):\n    run()\n",
+        ),
+        ("locust/helpers.py", "import pytest_locust.plugin\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("could not map"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues = parsed["issues"].as_array().expect("issues");
+    let named: Vec<String> = issues
+        .iter()
+        .filter(|issue| issue.to_string().contains("pytest_locust"))
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(named, Vec::<String>::new());
+}

@@ -26,6 +26,7 @@ use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, MemberLayout,
     ProjectLayout, SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
+    unpackaged_module_dirs,
 };
 
 use super::error::ProbeError;
@@ -530,6 +531,14 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         report.effective_config.mode
     )?;
     writeln!(out, "Layout  : {}", format_layout(&report.sources))?;
+    let unpackaged = unpackaged_module_dirs(&report.root.path, &report.sources.layout);
+    if !unpackaged.is_empty() {
+        writeln!(
+            out,
+            "Unpackaged: {} (modules without `__init__.py`, not taken as packages)",
+            unpackaged.join(", ")
+        )?;
+    }
     if !report.workspace_members.is_empty() {
         writeln!(
             out,
