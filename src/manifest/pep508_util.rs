@@ -43,12 +43,17 @@ pub(super) fn extract_egg_name(spec: &str) -> Option<String> {
 }
 
 /// Parse a requirements-file line into a declared dependency, the way pip reads it.
+///
+/// A line pip installs from a directory or an archive (`./pkg`, `pkg/sub`,
+/// `wheels/foo.whl`, `foo-1.0-py3-none-any.whl`) is an opaque dependency, as a
+/// `-e ./path` line is (spec §4, #963). The shape alone decides: pip errors
+/// when the directory does not exist, and chokkin does not check.
 pub(super) fn parse_requirement(
     raw: &str,
     context: DependencyContext,
     origin: DependencyOrigin,
 ) -> Result<DeclaredDependency, ManifestWarning> {
-    parse_with(raw, context, origin, parse_pip_requirement)
+    parse_with(raw, context, origin, parse_pip_requirement, true)
 }
 
 /// Parse a requirement from a PEP 508 manifest field (`pyproject.toml`,
@@ -61,7 +66,13 @@ pub(super) fn parse_pep508_requirement(
     context: DependencyContext,
     origin: DependencyOrigin,
 ) -> Result<DeclaredDependency, ManifestWarning> {
-    parse_with(raw, context, origin, super::pep508::parse_requirement)
+    parse_with(
+        raw,
+        context,
+        origin,
+        super::pep508::parse_requirement,
+        false,
+    )
 }
 
 fn parse_with(
@@ -69,6 +80,7 @@ fn parse_with(
     context: DependencyContext,
     origin: DependencyOrigin,
     parse: fn(&str) -> Option<Requirement>,
+    files: bool,
 ) -> Result<DeclaredDependency, ManifestWarning> {
     let trimmed = strip_python(raw);
     let (name, extras, marker, specifier, opaque) = if let Some(requirement) = parse(trimmed) {
@@ -85,7 +97,7 @@ fn parse_with(
         return Err(invalid(raw, origin));
     } else if let Some(name) = extract_egg_name(trimmed) {
         (name, Vec::new(), None, Some(trimmed.to_owned()), false)
-    } else if is_url_like(trimmed) {
+    } else if is_url_like(trimmed) || (files && looks_like_pip_file(trimmed)) {
         (
             String::new(),
             Vec::new(),
@@ -163,21 +175,49 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
 /// Distribution an invalid requirement line may have declared (#928): its
 /// leading name token, less the separators a PEP 508 name cannot start or end
 /// on, so `rich_ >=13` names `rich`. `None` when no name character leads it
-/// (`>=1.0`, `./pkg`), the token is a path or an archive pip reads as a file
-/// (`wheels/foo.whl`, `C:\pkg`, `foo-1.0-py3-none-any.whl`), or another word
-/// follows it (`not a requirement`), which no requirement has: such a line
-/// names nothing to lower.
+/// (`>=1.0`), the line is a path or an archive pip reads as a file
+/// ([`looks_like_pip_file`]: `wheels/foo.whl`, `C:\pkg`,
+/// `foo-1.0-py3-none-any.whl`; a requirements file reads these as opaque, a
+/// manifest field as invalid), or another word follows it
+/// (`not a requirement`), which no requirement has, or a `:` follows it, as
+/// in a URL (`file:../other`), or it starts with `-`, which pip reads as an
+/// option (`-r` alone, `-example-pkg`) and a PEP 508 name cannot start on:
+/// such a line names nothing to lower.
 #[must_use]
 pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     let token = leading_name_token(trimmed);
     let after = &trimmed[token.len()..];
     let name = token.trim_matches(['-', '_', '.']);
-    let file = after.starts_with(['/', '\\', ':']) || looks_like_archive(token);
     let followed_by_word = after
         .trim_start()
         .starts_with(|ch: char| ch.is_ascii_alphanumeric());
-    (!name.is_empty() && !file && !followed_by_word).then(|| normalize_distribution_name(name))
+    (!name.is_empty()
+        && !token.starts_with('-')
+        && !looks_like_pip_file(trimmed)
+        && !after.starts_with(':')
+        && !followed_by_word)
+        .then(|| normalize_distribution_name(name))
+}
+
+/// pip reads the line as a directory or an archive, not a requirement
+/// (`_looks_like_path` and `is_archive_file`, #963): it starts with `.`, a
+/// path separator follows its leading name token (`pkg/sub`, `/abs`, the
+/// drive `C:\pkg`), or the token is an archive name (`foo.whl`,
+/// `foo.whl[tests]`; pip's `_strip_extras` takes `[...]` only at the very
+/// end). `pkg >= 1/2` and `foo:bar` are not paths, and `foo.whl>=1` and
+/// `foo.whl[tests]>=1` are requirements named `foo.whl`, as in pip.
+#[must_use]
+pub(super) fn looks_like_pip_file(trimmed: &str) -> bool {
+    let token = leading_name_token(trimmed);
+    let after = &trimmed[token.len()..];
+    trimmed.starts_with('.')
+        || after.starts_with(['/', '\\'])
+        || after
+            .strip_prefix(':')
+            .is_some_and(|rest| rest.starts_with(['/', '\\']))
+        || (looks_like_archive(token)
+            && (after.is_empty() || (after.starts_with('[') && after.ends_with(']'))))
 }
 
 /// Leading run of PEP 508 name characters (`[A-Za-z0-9._-]`).
@@ -251,6 +291,10 @@ mod tests {
             ("wheels/foo-1.0-py3-none-any.whl", None),
             ("C:\\wheels\\foo.whl", None),
             ("foo-1.0-py3-none-any.whl", None),
+            ("-r", None),
+            ("-example-pkg", None),
+            ("file:../other", None),
+            ("foo:bar", None),
             ("", None),
         ] {
             assert_eq!(
@@ -393,10 +437,12 @@ mod tests {
             label: "requirements.txt".to_owned(),
         };
         for raw in ["foo.tar.gz", "foo.whl", "foo.whl[tests]"] {
-            assert!(
-                parse_requirement(raw, DependencyContext::Runtime, origin.clone()).is_err(),
-                "{raw:?}"
-            );
+            // #963: an archive pip installs from a file is an opaque dependency.
+            let dep = parse_requirement(raw, DependencyContext::Runtime, origin.clone())
+                .expect("pip reads it as a file");
+            assert!(dep.opaque, "{raw:?}");
+            assert_eq!(dep.name, "", "{raw:?}");
+            assert_eq!(dep.specifier.as_deref(), Some(raw), "{raw:?}");
             assert_eq!(requirement_name(raw), None, "{raw:?}");
         }
         let dep = parse_pep508_requirement("foo.whl[tests]", DependencyContext::Runtime, origin)
@@ -407,6 +453,75 @@ mod tests {
             pep508_distribution_name("foo.whl[tests]").as_deref(),
             Some("foo-whl")
         );
+    }
+
+    #[test]
+    fn pip_reading_treats_path_lines_as_opaque_files() {
+        // #963: the shapes pip's `_looks_like_path` and `is_archive_file`
+        // accept; a PEP 508 manifest field has no path form, so it stays invalid.
+        let origin = DependencyOrigin {
+            file: "requirements.txt".to_owned(),
+            line: Some(1),
+            label: "requirements.txt".to_owned(),
+        };
+        for raw in [
+            "../../../llama-index-core",
+            "./pkg",
+            ".",
+            ".venv/pkg",
+            "pkg/sub",
+            "/abs/pkg",
+            "wheels/foo-1.0-py3-none-any.whl",
+            "C:\\pkg",
+            "foo-1.0-py3-none-any.whl",
+        ] {
+            let dep = parse_requirement(raw, DependencyContext::Runtime, origin.clone())
+                .unwrap_or_else(|warning| panic!("{raw:?} must be opaque, got {warning:?}"));
+            assert!(dep.opaque, "{raw:?}");
+            assert_eq!(dep.name, "", "{raw:?}");
+            assert_eq!(dep.specifier.as_deref(), Some(raw), "{raw:?}");
+            assert_eq!(requirement_name(raw), None, "{raw:?}");
+            if !looks_like_archive(raw) {
+                assert!(
+                    parse_pep508_requirement(raw, DependencyContext::Runtime, origin.clone())
+                        .is_err(),
+                    "{raw:?} is not a PEP 508 requirement"
+                );
+            }
+        }
+        // Not a path: a separator after the name token is a version, and a
+        // bare `name:x` is not a drive.
+        for raw in ["pkg >= 1/2", "foo:bar", "not a requirement!!"] {
+            assert!(
+                parse_requirement(raw, DependencyContext::Runtime, origin.clone()).is_err(),
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn looks_like_pip_file_reads_the_line_shape() {
+        for (raw, expected) in [
+            ("./pkg", true),
+            ("../pkg", true),
+            (".", true),
+            (".foo", true),
+            ("pkg/sub", true),
+            ("/abs", true),
+            ("C:\\pkg", true),
+            ("C:/pkg", true),
+            ("foo.whl", true),
+            ("foo.whl[tests]", true),
+            ("foo.tar.gz", true),
+            ("foo:bar", false),
+            ("pkg >= 1/2", false),
+            ("requests", false),
+            ("foo.whl>=1", false),
+            ("foo.whl[tests]>=1", false),
+            ("", false),
+        ] {
+            assert_eq!(looks_like_pip_file(raw), expected, "{raw:?}");
+        }
     }
 
     #[test]

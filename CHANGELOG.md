@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `-r`, `-c` and `-e` lines in requirements files are read with pip's option
+  parser, so other options on the line (`-r base.txt --pre`,
+  `--requirement=more.txt --no-index`, `-e <url> --config-settings=k=v`) no
+  longer become part of the file name or the editable spec, quoted values
+  (`-r "my reqs.txt"`) are unquoted, and a flag line pip rejects (`-r` with no
+  value, an unknown option) is reported as an invalid requirement line instead
+  of stopping the file (#964).
+- A requirements line pip installs from a directory or an archive without
+  `-e` (`../../../llama-index-core`, `./pkg`, `pkg/sub`, `wheels/foo.whl`,
+  `foo-1.0-py3-none-any.whl`) is recorded as an opaque dependency, as
+  `-e ./path` is, instead of being reported as an invalid requirement line;
+  PEP 508 manifest fields and constraints files still reject it (#963).
+- A string `install_requires` / `extras_require` in `setup.py`, the string
+  items of its lists, and `setup.cfg` requirement values are read the way
+  setuptools' `parse_strings` reads them: ` #` starts a comment
+  (`rich  # pretty output` declares `rich`) and a line ending in `\` joins
+  the next one (`requests \` + `>=2` declares `requests>=2`), instead of
+  being reported as invalid requirement lines (#965).
+
 ## [0.7.6] - 2026-10-16
 
 v0.7.6 ships the first version of the unknown-input contract (ADR 0005).
