@@ -14,8 +14,8 @@ use super::dynamic::is_dotted_identifier;
 
 /// Line magics that neither run the cell's Python nor import a module, so
 /// dropping them hides nothing a rule reads. `%pip` installs a distribution
-/// but does not import it; whether its arguments declare dependencies is
-/// left to #962's follow-up.
+/// but does not import it; reading its arguments as declared dependencies
+/// is #991.
 const INERT_LINE_MAGICS: &[&str] = &[
     "alias",
     "alias_magic",
