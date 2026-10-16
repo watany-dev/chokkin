@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
+use serde::Deserialize;
 use toml::Value;
+use toml::de::{DeTable, Deserializer};
 
 use crate::path_util::rel_to_root;
 
@@ -56,11 +58,13 @@ pub(super) fn extract_pyproject(
     path: &Path,
 ) -> Result<PyprojectExtraction, ManifestError> {
     let contents = read_to_string(path)?;
-    let table: toml::Table =
-        toml::from_str(&contents).map_err(|source| ManifestError::InvalidToml {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let invalid = |source| ManifestError::InvalidToml {
+        path: path.to_path_buf(),
+        source,
+    };
+    // One parse feeds both the table and the declaration lines (#983).
+    let document = DeTable::parse(&contents).map_err(invalid)?;
+    let table = toml::Table::deserialize(Deserializer::from(document.clone())).map_err(invalid)?;
 
     let rel = rel_to_root(root, path);
     let mut result = PyprojectExtraction::default();
@@ -160,8 +164,15 @@ pub(super) fn extract_pyproject(
         extract_dependency_groups(groups, &rel, &mut result.dependencies, &mut result.warnings);
     }
 
-    fill_declaration_lines(&contents, &rel, &mut result.dependencies);
-    fill_declaration_lines(&contents, &rel, &mut result.constraints);
+    fill_declaration_lines(
+        document.get_ref(),
+        &contents,
+        &rel,
+        result
+            .dependencies
+            .iter_mut()
+            .chain(&mut result.constraints),
+    );
     Ok(result)
 }
 
