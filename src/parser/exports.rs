@@ -9,33 +9,94 @@ use super::types::{Exports, ParseDiagnostic, ParseSeverity};
 
 /// Read `__all__` and warn about each update that could not be read.
 ///
-/// A literal assignment replaces the list; a later literal `+=`, `.extend`
-/// or `.append` adds to it, also from inside `if` / `try` / `with` blocks
-/// (#567). Any other update leaves the result [`Exports::Partial`] or
-/// [`Exports::Unknown`] (ADR 0005).
+/// A literal assignment replaces the list; a later literal `+=`, `.extend`,
+/// `.append`, `.insert` or `__all__ + [...]` adds to it (#567, #876). A
+/// block's paths are read one by one and joined as the union of their names
+/// (#906); a loop adds its literal additions once (#875). Any other update
+/// leaves the result [`Exports::Partial`] or [`Exports::Unknown`] (ADR 0005).
 pub(super) fn extract_exports(
     stmts: &[Stmt],
     lines: &LineIndex,
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) -> Exports {
-    let mut exports = Exports::Absent;
-    read_body(stmts, Scope::TopLevel, lines, &mut exports, diagnostics);
+    let mut state = State::default();
+    Reader { lines, diagnostics }.body(stmts, Scope::Module, &mut state);
+    let State {
+        mut exports,
+        unbound,
+    } = state;
+    if let Some(line) = unbound {
+        diagnostics.push(ParseDiagnostic {
+            line,
+            message: "`__all__` is assigned on only some paths through this block, so it may be \
+                      unset"
+                .to_owned(),
+            severity: ParseSeverity::Warning,
+        });
+        exports.lose();
+    }
     exports
+}
+
+/// What `__all__` holds after the statements read so far, over every path
+/// through them.
+#[derive(Clone, Default)]
+struct State {
+    exports: Exports,
+    /// The line of the block after which `__all__` may still be unbound on
+    /// some path, while it holds [`Self::exports`] on the others. Only set
+    /// with a read list.
+    unbound: Option<u32>,
+}
+
+impl State {
+    /// The state after either `self` or `other`, where the paths of the
+    /// block at `line` meet. Names are united: an export that only one path
+    /// adds is public too.
+    fn join(self, other: Self, line: u32) -> Self {
+        let unbound = self.unbound.or(other.unbound);
+        let (exports, unbound) = match (self.exports, other.exports) {
+            (Exports::Unknown, _) | (_, Exports::Unknown) => (Exports::Unknown, None),
+            (Exports::Absent, Exports::Absent) => (Exports::Absent, None),
+            (Exports::Absent, read) | (read, Exports::Absent) => (read, unbound.or(Some(line))),
+            (Exports::Known(mut names), Exports::Known(more)) => {
+                unite(&mut names, more);
+                (Exports::Known(names), unbound)
+            },
+            (
+                Exports::Known(mut names) | Exports::Partial(mut names),
+                Exports::Known(more) | Exports::Partial(more),
+            ) => {
+                unite(&mut names, more);
+                (Exports::Partial(names), unbound)
+            },
+        };
+        Self { exports, unbound }
+    }
+}
+
+fn unite(names: &mut Vec<String>, more: Vec<String>) {
+    for name in more {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
 }
 
 /// Where a statement runs, which decides what its update can tell. Ordered
 /// from most to least readable.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Scope {
-    /// Module level: runs once, in order.
-    TopLevel,
-    /// `if` / `try` / `with` blocks: which branch runs is unknown, and adding
-    /// the names of every branch keeps each optional export public, so only
-    /// additions are read. An assignment there may or may not replace the
-    /// list.
-    Branch,
-    /// Loop and `match` bodies and function bodies: they run any number of
-    /// times, or only when called, so no update there is read (#875).
+    /// Module level, blocks included: each path through it runs once, in
+    /// order.
+    Module,
+    /// A `for` / `while` body or `else` at module level, which runs any
+    /// number of times and may `break` anywhere: additions are read, since
+    /// adding a literal once or more gives the same names, but a rebinding
+    /// is not (#875).
+    Loop,
+    /// Function bodies with `global __all__`: they run only when called, so
+    /// no update there is read.
     Opaque,
     /// A class body, or a function body without `global __all__`: binding
     /// `__all__` there makes a local name, so only mutations of the module
@@ -43,99 +104,147 @@ enum Scope {
     Local,
 }
 
-fn read_body(
-    stmts: &[Stmt],
-    scope: Scope,
-    lines: &LineIndex,
-    exports: &mut Exports,
-    diagnostics: &mut Vec<ParseDiagnostic>,
-) {
-    for stmt in stmts {
-        read_nested(stmt, scope, lines, exports, diagnostics);
+struct Reader<'a> {
+    lines: &'a LineIndex,
+    diagnostics: &'a mut Vec<ParseDiagnostic>,
+}
+
+impl Reader<'_> {
+    fn body(&mut self, stmts: &[Stmt], scope: Scope, state: &mut State) {
+        for stmt in stmts {
+            self.stmt(stmt, scope, state);
+        }
+    }
+
+    fn stmt(&mut self, stmt: &Stmt, scope: Scope, state: &mut State) {
+        self.nested(stmt, scope, state);
         if scope == Scope::Local && binds_all(stmt) {
-            continue;
+            return;
         }
         let Some(update) = all_update(stmt) else {
-            continue;
+            return;
         };
-        if apply(update, scope, exports).is_err() {
-            diagnostics.push(ParseDiagnostic {
-                line: lines.line(stmt.start()),
+        if apply(update, scope, state).is_err() {
+            self.diagnostics.push(ParseDiagnostic {
+                line: self.lines.line(stmt.start()),
                 message: "unsupported `__all__` assignment form".to_owned(),
                 severity: ParseSeverity::Warning,
             });
         }
     }
-}
 
-fn read_nested(
-    stmt: &Stmt,
-    scope: Scope,
-    lines: &LineIndex,
-    exports: &mut Exports,
-    diagnostics: &mut Vec<ParseDiagnostic>,
-) {
-    let branch = scope.max(Scope::Branch);
-    let opaque = scope.max(Scope::Opaque);
-    let mut read = |body: &[Stmt], scope| read_body(body, scope, lines, exports, diagnostics);
-    match stmt {
-        Stmt::If(stmt) => {
-            read(&stmt.body, branch);
-            for clause in &stmt.elif_else_clauses {
-                read(&clause.body, branch);
-            }
-        },
-        Stmt::Try(stmt) => {
-            read(&stmt.body, branch);
-            for ExceptHandler::ExceptHandler(handler) in &stmt.handlers {
-                read(&handler.body, branch);
-            }
-            read(&stmt.orelse, branch);
-            read(&stmt.finalbody, branch);
-        },
-        Stmt::With(stmt) => read(&stmt.body, branch),
-        Stmt::For(ast::StmtFor { body, orelse, .. })
-        | Stmt::While(ast::StmtWhile { body, orelse, .. }) => {
-            read(body, opaque);
-            read(orelse, opaque);
-        },
-        Stmt::Match(stmt) => {
-            for case in &stmt.cases {
-                read(&case.body, opaque);
-            }
-        },
-        // An `export` decorator appending `fn.__name__` is the usual case.
-        // `global` is read from the function's own statements only: one
-        // nested in a block leaves the rebinding skipped as local.
-        Stmt::FunctionDef(stmt) => {
-            let global = stmt.body.iter().any(|stmt| {
-                matches!(stmt, Stmt::Global(global)
-                    if global.names.iter().any(|name| name.as_str() == "__all__"))
-            });
-            read(
-                &stmt.body,
-                if global { Scope::Opaque } else { Scope::Local },
-            );
-        },
-        Stmt::ClassDef(stmt) => read(&stmt.body, Scope::Local),
-        _ => {},
+    /// Read the statements nested in `stmt`, joining the paths through it.
+    fn nested(&mut self, stmt: &Stmt, scope: Scope, state: &mut State) {
+        let line = self.lines.line(stmt.start());
+        match stmt {
+            Stmt::If(stmt) => {
+                let before = state.clone();
+                self.body(&stmt.body, scope, state);
+                for clause in &stmt.elif_else_clauses {
+                    let mut branch = before.clone();
+                    self.body(&clause.body, scope, &mut branch);
+                    *state = std::mem::take(state).join(branch, line);
+                }
+                if stmt
+                    .elif_else_clauses
+                    .last()
+                    .is_none_or(|clause| clause.test.is_some())
+                {
+                    *state = before.join(std::mem::take(state), line);
+                }
+            },
+            Stmt::Try(stmt) => {
+                // A handler starts wherever the body may have raised.
+                let raised = self.cut_short(&stmt.body, scope, state, line);
+                let mut handled: Option<State> = None;
+                for ExceptHandler::ExceptHandler(handler) in &stmt.handlers {
+                    let mut branch = raised.clone();
+                    self.body(&handler.body, scope, &mut branch);
+                    handled = Some(match handled {
+                        Some(handled) => handled.join(branch, line),
+                        None => branch,
+                    });
+                }
+                self.body(&stmt.orelse, scope, state);
+                if let Some(handled) = handled {
+                    *state = handled.join(std::mem::take(state), line);
+                }
+                self.body(&stmt.finalbody, scope, state);
+            },
+            // The context manager may suppress an exception and skip the
+            // rest of the body (`suppress(ImportError)`).
+            Stmt::With(stmt) => *state = self.cut_short(&stmt.body, scope, state, line),
+            Stmt::For(ast::StmtFor { body, orelse, .. })
+            | Stmt::While(ast::StmtWhile { body, orelse, .. }) => {
+                let mut ran = state.clone();
+                self.body(body, scope.max(Scope::Loop), &mut ran);
+                self.body(orelse, scope.max(Scope::Loop), &mut ran);
+                *state = std::mem::take(state).join(ran, line);
+            },
+            // Like `if` / `elif`: no case runs unless one always matches.
+            Stmt::Match(stmt) => {
+                let before = state.clone();
+                let exhaustive = stmt
+                    .cases
+                    .iter()
+                    .any(|case| case.guard.is_none() && case.pattern.is_irrefutable());
+                let mut matched = (!exhaustive).then(|| before.clone());
+                for case in &stmt.cases {
+                    let mut branch = before.clone();
+                    self.body(&case.body, scope, &mut branch);
+                    matched = Some(match matched {
+                        Some(matched) => matched.join(branch, line),
+                        None => branch,
+                    });
+                }
+                *state = matched.unwrap_or(before);
+            },
+            // An `export` decorator appending `fn.__name__` is the usual case.
+            // `global` is read from the function's own statements only: one
+            // nested in a block leaves the rebinding skipped as local.
+            Stmt::FunctionDef(stmt) => {
+                let global = stmt.body.iter().any(|stmt| {
+                    matches!(stmt, Stmt::Global(global)
+                        if global.names.iter().any(|name| name.as_str() == "__all__"))
+                });
+                let scope = if global { Scope::Opaque } else { Scope::Local };
+                self.body(&stmt.body, scope.max(Scope::Opaque), state);
+            },
+            Stmt::ClassDef(stmt) => self.body(&stmt.body, Scope::Local, state),
+            _ => {},
+        }
+    }
+
+    /// Read `body`, which may stop after any statement, into `state`, and
+    /// return the join of every state it may stop in, the one before it
+    /// included.
+    fn cut_short(&mut self, body: &[Stmt], scope: Scope, state: &mut State, line: u32) -> State {
+        let mut stopped = state.clone();
+        for stmt in body {
+            self.stmt(stmt, scope, state);
+            stopped = stopped.join(state.clone(), line);
+        }
+        stopped
     }
 }
 
 /// Apply `update` read in `scope`; `Err` when it could not be read.
-fn apply(update: AllUpdate, scope: Scope, exports: &mut Exports) -> Result<(), ()> {
+fn apply(update: AllUpdate, scope: Scope, state: &mut State) -> Result<(), ()> {
     let names = match (scope, update) {
-        (Scope::TopLevel, AllUpdate::Replace(Some(names))) => {
-            *exports = Exports::Known(names);
+        (Scope::Module, AllUpdate::Replace(Some(names))) => {
+            *state = State {
+                exports: Exports::Known(names),
+                unbound: None,
+            };
             return Ok(());
         },
-        (Scope::TopLevel | Scope::Branch, AllUpdate::Add(names)) => names,
+        (Scope::Module | Scope::Loop, AllUpdate::Add(names)) => names,
         // An unread rebinding keeps the names read so far until gaps demote
         // findings (ADR 0005 step 3): rebuilding the list (`sorted(__all__)`)
         // keeps them, and dropping them would report them as CHK006.
         _ => None,
     };
-    match (names, exports) {
+    match (names, &mut state.exports) {
         (Some(names), Exports::Known(list) | Exports::Partial(list)) => {
             list.extend(names);
             Ok(())
@@ -164,17 +273,12 @@ enum AllUpdate {
 
 fn all_update(stmt: &Stmt) -> Option<AllUpdate> {
     match stmt {
-        Stmt::Assign(assign) if assign.targets.iter().any(is_all) => {
-            Some(AllUpdate::Replace(literal_names(&assign.value)))
-        },
+        Stmt::Assign(assign) if assign.targets.iter().any(is_all) => Some(rebinding(&assign.value)),
         // `__all__[:] = names`, `__all__[0] = name`.
         Stmt::Assign(assign) if assign.targets.iter().any(is_all_subscript) => {
             Some(AllUpdate::Add(None))
         },
-        Stmt::AnnAssign(assign) if is_all(&assign.target) => assign
-            .value
-            .as_deref()
-            .map(|value| AllUpdate::Replace(literal_names(value))),
+        Stmt::AnnAssign(assign) if is_all(&assign.target) => assign.value.as_deref().map(rebinding),
         Stmt::AugAssign(assign) if is_all(&assign.target) && assign.op == Operator::Add => {
             Some(AllUpdate::Add(literal_names(&assign.value)))
         },
@@ -189,24 +293,45 @@ fn all_update(stmt: &Stmt) -> Option<AllUpdate> {
             if !is_all(&method.value) {
                 return None;
             }
-            let read: fn(&Expr) -> Option<Vec<String>> = match method.attr.as_str() {
-                "extend" => literal_names,
-                "append" => |value| string_literal(value).map(|name| vec![name.to_owned()]),
+            let name = |value: &Expr| string_literal(value).map(|name| vec![name.to_owned()]);
+            let names = match (method.attr.as_str(), &*call.arguments.args) {
                 // Removes, reorders or only reads names. A list wider than the
                 // runtime one only keeps names public, so these need not be
                 // followed.
-                "remove" | "pop" | "clear" | "sort" | "reverse" | "copy" | "index" | "count" => {
+                (
+                    "remove" | "pop" | "clear" | "sort" | "reverse" | "copy" | "index" | "count",
+                    _,
+                ) => {
                     return None;
                 },
-                _ => return Some(AllUpdate::Add(None)),
+                _ if !call.arguments.keywords.is_empty() => None,
+                ("extend", [names]) => literal_names(names),
+                ("append", [value]) | ("insert", [_, value]) => name(value),
+                _ => None,
             };
-            match (&*call.arguments.args, &*call.arguments.keywords) {
-                ([argument], []) => Some(AllUpdate::Add(read(argument))),
-                _ => Some(AllUpdate::Add(None)),
-            }
+            Some(AllUpdate::Add(names))
         },
         _ => None,
     }
+}
+
+/// The update of `__all__ = value`: concatenating `__all__` with another
+/// list adds that list (#876), anything else replaces it.
+fn rebinding(value: &Expr) -> AllUpdate {
+    if let Expr::BinOp(ast::ExprBinOp {
+        left,
+        op: Operator::Add,
+        right,
+        ..
+    }) = value
+    {
+        match (is_all(left), is_all(right)) {
+            (true, false) => return AllUpdate::Add(literal_names(right)),
+            (false, true) => return AllUpdate::Add(literal_names(left)),
+            _ => {},
+        }
+    }
+    AllUpdate::Replace(literal_names(value))
 }
 
 /// Whether `stmt` binds the name `__all__`, which in a class or function
@@ -331,16 +456,18 @@ mod tests {
     }
 
     /// An update that is not read keeps the names read so far and marks the
-    /// list partial: a non-literal rebinding, a block assignment, a mutation
-    /// in a loop, `match`, function or class body, a non-literal addition, or
-    /// a method that may add.
+    /// list partial: a non-literal rebinding, a rebinding in a loop, a
+    /// mutation in a function or class body, a non-literal addition, or a
+    /// method that may add.
     #[test]
     fn unread_updates_make_the_list_partial() {
         for source in [
-            "if WIN:\n    __all__ = [\"replaced\"]\n",
+            "if WIN:\n    __all__ = sorted(names)\n",
+            "try:\n    import x\nexcept ImportError:\n    __all__ = __all__ + names\n",
             "for name in names:\n    __all__.append(name)\n",
-            "while more():\n    __all__ += [\"x\"]\nelse:\n    pass\n",
-            "match sys.platform:\n    case \"win32\":\n        __all__ += [\"win\"]\n",
+            "for name in names:\n    __all__ = [\"x\"]\n",
+            "while more():\n    pass\nelse:\n    __all__ = __all__ + names\n",
+            "match sys.platform:\n    case \"win32\":\n        __all__ = sorted(names)\n",
             "def export(fn):\n    __all__.append(fn.__name__)\n    return fn\n",
             "if X:\n    def f():\n        __all__.append(\"f\")\n",
             "def f():\n    global __all__; __all__ = [\"g\"]\n",
@@ -356,9 +483,11 @@ mod tests {
             "__all__.append([\"x\"])\n",
             "__all__.append()\n",
             "__all__.extend([\"y\"], key=1)\n",
-            "__all__.insert(0, \"b\")\n",
-            "__all__ = __all__ + [\"c\"]\n",
+            "__all__.insert(0, name)\n",
+            "__all__.insert(\"b\")\n",
+            "__all__ = __all__ + names\n",
             "__all__ = other + __all__\n",
+            "__all__ = __all__ + __all__\n",
             "__all__[:] = names\n",
         ] {
             let source = format!("__all__ = [\"foo\"]\n{source}");
@@ -373,6 +502,132 @@ mod tests {
                 "{source}"
             );
         }
+    }
+
+    /// Concatenating a literal to `__all__` and inserting a literal name add
+    /// to the list like `+=` and `.append` (#876).
+    #[test]
+    fn reads_concatenation_and_insert() {
+        let source = "__all__ = [\"foo\"]\n__all__ = __all__ + [\"a\"]\n__all__ = (\"b\",) + __all__\n\
+                      __all__: list[str] = __all__ + [\"c\"]\n__all__.insert(0, \"d\")\n\
+                      if X:\n    __all__ = __all__ + [\"e\"]\n";
+        assert_eq!(
+            read(source),
+            (known(&["foo", "a", "b", "c", "d", "e"]), vec![])
+        );
+    }
+
+    /// A literal assignment in a block replaces the list on that path, and
+    /// the paths join as the union of their names: an export that only an
+    /// optional dependency adds is public too (#906).
+    #[test]
+    fn reads_assignments_in_blocks() {
+        for (source, names) in [
+            (
+                "try:\n    from .app_auth import Auth\n    __all__ = [\"Client\", \"Auth\"]\n\
+                 except ImportError:\n    __all__ = [\"Client\"]\n",
+                &["Client", "Auth"][..],
+            ),
+            (
+                "__all__ = [\"a\"]\ntry:\n    from ._speedups import fast\n    \
+                 __all__ = [\"a\", \"fast\"]\nexcept ImportError:\n    pass\n",
+                &["a", "fast"],
+            ),
+            (
+                "__all__ = [\"old\"]\nif WIN:\n    __all__ = [\"a\"]\nelif MAC:\n    \
+                 __all__ = (\"b\",)\nelse:\n    __all__: list[str] = [\"c\"]\n__all__.append(\"d\")\n",
+                &["a", "b", "c", "d"],
+            ),
+            (
+                "__all__ = [\"old\"]\nif X:\n    __all__ = [\"a\"]\n",
+                &["old", "a"],
+            ),
+            (
+                "__all__ = [\"old\"]\nwith suppress(ImportError):\n    __all__ = [\"a\"]\n",
+                &["old", "a"],
+            ),
+            (
+                "try:\n    import x\nexcept ImportError:\n    __all__ = [\"a\"]\nelse:\n    \
+                 __all__ = [\"b\"]\n",
+                &["a", "b"],
+            ),
+            (
+                "if A:\n    if B:\n        __all__ = [\"x\"]\n    __all__ = [\"y\"]\nelse:\n    \
+                 __all__ = [\"z\"]\n",
+                &["y", "z"],
+            ),
+            (
+                "try:\n    __all__ = [\"a\"]\nexcept ImportError:\n    pass\n__all__ = [\"b\"]\n",
+                &["b"],
+            ),
+        ] {
+            assert_eq!(read(source), (known(names), vec![]), "{source}");
+        }
+    }
+
+    /// A block that assigns `__all__` on some paths only, with no list before
+    /// it, may leave `__all__` unbound: the list is partial, warned at the
+    /// block, since every public name may be exported instead.
+    #[test]
+    fn assigning_on_some_paths_only_is_partial() {
+        for (source, names) in [
+            ("if TYPE_CHECKING:\n    __all__: list[str] = []\n", &[][..]),
+            (
+                "try:\n    __all__ = [\"a\"]\nexcept ImportError:\n    pass\n",
+                &["a"],
+            ),
+            (
+                "try:\n    import x\nexcept ImportError:\n    __all__ = [\"a\"]\n__all__ += [\"b\"]\n",
+                &["a", "b"],
+            ),
+        ] {
+            assert_eq!(read(source), (partial(names), vec![1]), "{source}");
+        }
+    }
+
+    /// Literal additions in a loop body or `else` are read once: a loop adds
+    /// the same names however often it runs. `match` cases are paths like
+    /// `if` branches (#875).
+    #[test]
+    fn reads_loops_and_match() {
+        for (source, names) in [
+            (
+                "__all__ = [\"foo\"]\nmatch sys.platform:\n    case \"win32\":\n        \
+                 __all__ += [\"win_only\"]\n",
+                &["foo", "win_only"][..],
+            ),
+            (
+                "__all__ = [\"foo\"]\nfor name in (\"a\", \"b\"):\n    if X:\n        \
+                 __all__.append(\"a\")\n        break\nwhile more():\n    pass\nelse:\n    \
+                 __all__.extend([\"b\"])\n",
+                &["foo", "a", "b"],
+            ),
+            (
+                "match kind:\n    case 1:\n        __all__ = [\"a\"]\n    case _:\n        \
+                 __all__ = [\"b\"]\n",
+                &["a", "b"],
+            ),
+            (
+                "__all__ = [\"old\"]\nmatch kind:\n    case 1:\n        __all__ = [\"a\"]\n    \
+                 case x if x:\n        __all__ = [\"b\"]\n",
+                &["old", "a", "b"],
+            ),
+        ] {
+            assert_eq!(read(source), (known(names), vec![]), "{source}");
+        }
+        // No case matches, so `__all__` may stay unbound.
+        assert_eq!(
+            read("match kind:\n    case 1:\n        __all__ = [\"a\"]\n"),
+            (partial(&["a"]), vec![1])
+        );
+    }
+
+    /// One path the parser cannot read leaves nothing usable when no list
+    /// was read before the block.
+    #[test]
+    fn an_unread_path_without_a_list_is_unknown() {
+        let source = "if X:\n    __all__ = names()\nelse:\n    __all__ = [\"b\"]\n";
+        assert_eq!(read(source), (Exports::Unknown, vec![2]));
     }
 
     /// Literal additions after an unread one still add to the partial list.
@@ -404,10 +659,6 @@ mod tests {
             (
                 "__all__ = list(core.__all__)\n__all__ += [\"extra\"]\n",
                 vec![1],
-            ),
-            (
-                "if WIN:\n    __all__ = [\"a\"]\nelse:\n    __all__ = [\"b\"]\n__all__.append(\"d\")\n",
-                vec![2, 4],
             ),
             (
                 "from .sub import __all__\n__all__.extend([\"extra\"])\n",
