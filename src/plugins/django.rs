@@ -456,15 +456,15 @@ const SETTINGS_CALLS: &[&str] = &["include", "exec"];
 
 /// The first [`SETTINGS_CALLS`] call that runs when the settings are
 /// imported, shown as `name()`, and where it starts. Module-level blocks
-/// (`if`, `try`, `with`) count; function, class and lambda bodies do not
-/// run on import (#925).
+/// (`if`, `try`, `with`) and class bodies count; function and lambda bodies
+/// do not run on import (#925).
 fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
     #[derive(Default)]
     struct Calls(Option<(String, TextSize)>);
 
     impl Visitor<'_> for Calls {
         fn visit_stmt(&mut self, stmt: &Stmt) {
-            if self.0.is_none() && !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+            if self.0.is_none() && !matches!(stmt, Stmt::FunctionDef(_)) {
                 walk_stmt(self, stmt);
             }
         }

@@ -2825,8 +2825,8 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
     }
 
     // Settings that set every field they explain need nothing it includes,
-    // and a call in a function, class or lambda body does not run when they
-    // are imported.
+    // and a call in a function or lambda body does not run when they are
+    // imported.
     let project = discovered_manage_django_project();
     fs::write(
         project.path().join("mysite/settings/dev.py"),
@@ -2839,13 +2839,23 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
     );
     fs::write(
         project.path().join("mysite/settings/dev.py"),
-        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\n",
+        "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n\nclass Local:\n    def load(self):\n        include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\n",
     )
     .expect("write settings");
     fs::write(project.path().join("mysite/orphan.py"), "").expect("write orphan");
     assert_eq!(
         levels(project.path()),
         [level("CHK001", "mysite/orphan.py", "certain")]
+    );
+    // A class body runs when the settings are imported.
+    fs::write(
+        project.path().join("mysite/settings/dev.py"),
+        "from .base import *\n\nclass Local:\n    include(\"local.py\")\n",
+    )
+    .expect("write settings");
+    assert_eq!(
+        levels(project.path()),
+        [level("CHK001", "mysite/orphan.py", "likely")]
     );
 }
 
