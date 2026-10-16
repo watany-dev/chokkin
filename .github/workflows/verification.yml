@@ -217,9 +217,9 @@ jobs:
           fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
       - name: Check for changes to a file with harnesses
         id: changes
-        # A harness checks the code in its own file, so a PR that changes the
-        # file without running the harness could break the proof unseen until
-        # the weekly run. Changes elsewhere wait for that run.
+        # A harness mostly checks the code in its own file, so a change there
+        # is the likeliest to break a proof. A change elsewhere that a harness
+        # calls into (`emit.rs` uses `filter.rs`) waits for the weekly run.
         run: |
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             echo "run=true" >>"$GITHUB_OUTPUT"
