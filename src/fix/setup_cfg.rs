@@ -2,7 +2,7 @@
 
 use crate::manifest::{
     IniLine, ini_lines, normalize_distribution_name, pep508_distribution_name,
-    split_requirement_lines,
+    setuptools_requirement_items,
 };
 
 use super::error::FixError;
@@ -40,10 +40,16 @@ pub(super) fn remove_dependency(
             && !removed
             && *at == section
             && *option == key
-            && split_requirement_lines(value).next().is_some()
+            // One physical line is at most one item (#965).
+            && let Some(item) =
+                setuptools_requirement_items(std::iter::once(*value)).into_iter().next()
         {
             if seen == index {
-                if pep508_distribution_name(value).is_none_or(|name| name != target) {
+                // A line continued with `\` is only the start of its item:
+                // removing it alone would leave the rest of the item behind.
+                if item.text.ends_with('\\')
+                    || pep508_distribution_name(&item.text).is_none_or(|name| name != target)
+                {
                     break;
                 }
                 removed = true;
@@ -141,6 +147,28 @@ mod tests {
                 "[options]\ninstall_requires = a\n# note\n[other]\nx = 1\n[options]\n\
                 install_requires =\n\n    ; c\n    b\n"
             )
+        );
+    }
+
+    /// An inline comment is not part of the item (#965), and an item
+    /// continued with `\` spans two lines, so it is left alone.
+    #[test]
+    fn reads_items_like_setuptools_parse_strings() {
+        let contents = "[options]\ninstall_requires =\n    requests \\\n      >=2\n    rich  # pretty output\n";
+        assert_eq!(
+            remove(contents, "options.install_requires[2]", "rich").as_deref(),
+            Ok("[options]\ninstall_requires =\n    requests \\\n      >=2\n")
+        );
+        assert_eq!(
+            remove(contents, "options.install_requires[0]", "requests"),
+            Err("could not find `options.install_requires[0]` in setup.cfg".to_owned())
+        );
+        // A `\` glued to a URL still parses as a requirement on its own, but
+        // the line is only the start of an item.
+        let url = "[options]\ninstall_requires =\n    requests @ https://h/x.zip\\\n    ; python_version > \"3\"\n";
+        assert_eq!(
+            remove(url, "options.install_requires[0]", "requests"),
+            Err("could not find `options.install_requires[0]` in setup.cfg".to_owned())
         );
     }
 
