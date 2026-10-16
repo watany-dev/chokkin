@@ -680,6 +680,40 @@ fn binary_pep723_script_reports_script_scoped_dependencies() {
     }
 }
 
+/// #984: a PEP 723 block declares the environment `uv run` builds, so it
+/// lists runtime peers (marimo's dataframe backends, transformers' `torch`)
+/// that the script never imports. CHK002 says so as likely, not certain.
+#[test]
+fn pep723_unused_dependency_is_likely() {
+    let project = pep723_project();
+    for (extra, severity) in [(&[][..], "warning"), (&["--strict"][..], "error")] {
+        let issues = json_issues(project.path(), extra);
+        let httpx = issues
+            .iter()
+            .find(|issue| issue["target"] == "script:scripts/tool.py:httpx")
+            .expect("httpx unused");
+        assert_eq!(httpx["confidence"], "likely", "{extra:?}");
+        assert_eq!(httpx["severity"], severity, "{extra:?}");
+    }
+}
+
+/// #984: transformers imports `accelerate` itself for `device_map="auto"`.
+#[test]
+fn accelerate_is_used_when_transformers_is() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"transformers\", \"accelerate\"]\n\n[project.scripts]\nacme = \"acme:main\"\n",
+        ),
+        (
+            "acme.py",
+            "import transformers\n\n\ndef main() -> None:\n    transformers.pipeline(\"text-generation\", device_map=\"auto\")\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(!keys.iter().any(|(code, _)| code == "CHK002"), "{keys:?}");
+}
+
 #[test]
 fn binary_version_guarded_stdlib_import_is_not_chk010() {
     // #358: `tomllib` is stdlib on 3.11+, which `>=3.10,<3.15` covers.

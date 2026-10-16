@@ -700,7 +700,9 @@ runtime peer (例: python-multipart)
   -> 他の library が実行時に遅延 import するので、project 自身は import しない
      (starletteの request.form() が python_multipart を読む)
   -> 同梱の表で対応する provider (starlette / fastapi) の使用があればused扱い
+     (accelerate は transformers。device_map="auto" で transformers が読む、#984)
   -> provider自体が未使用なら、peerも併せてunused報告する
+
 
 metapackage (wheel target が一致する file を持たない、または hatch の bypass-selection)
   -> 配布する依存そのものが中身なので、import されなくても未使用ではない
@@ -818,6 +820,13 @@ target : script の `requires-python` 下限を、その file の parse と stdl
 report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
          (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
          同じく marker 付きを default で除外し、--strict で報告する
+         CHK002 は一律 likely (default は warning、--strict で error)。block は
+         `uv run` が作る環境の宣言で、script が import しない runtime peer (marimo
+         notebook の polars / duckdb、transformers の torch) を並べるため (#984)。
+         extra 名やコマンド名がソースの文字列に現れるかで下げる判定は入れない。
+         動的に組んだ名前や別 process の起動を拾えず、拾えなかった宣言を
+         certain のまま残すため。optional extra は default で対象外のまま、
+         --strict では certain (--fix で消す) のままにする
          到達しない script (--production で dev context 等) は判定しない
 fix    : script block は書き換えない。--fix は UnsupportedTarget で skip する
 cache  : block は file text の一部なので parse cache の file fingerprint で無効化される

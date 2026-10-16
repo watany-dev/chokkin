@@ -220,12 +220,15 @@ fn unused_in_script(
         {
             continue;
         }
-        // Mirrors project CHK002: a marker may hide a platform-specific use.
-        let (confidence, severity) = match (dep.marker.is_some(), strict) {
-            (true, false) => (Confidence::Likely, Severity::Warning),
-            (true, true) => (Confidence::Likely, Severity::Error),
-            (false, _) => (Confidence::Certain, Severity::Error),
+        // The block declares the environment `uv run` builds, which lists
+        // runtime peers the script never imports (marimo's dataframe
+        // backends, transformers' `torch`), so no import is not proof (#984).
+        let severity = if strict {
+            Severity::Error
+        } else {
+            Severity::Warning
         };
+        let confidence = Confidence::Likely;
         candidates.push(IssueCandidate {
             rule: RuleId::Chk002,
             subject: IssueSubject::ScriptDistribution {
