@@ -1437,7 +1437,7 @@ mod props {
     ];
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
+        #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
         #[test]
         fn evaluation_matches_python_model(

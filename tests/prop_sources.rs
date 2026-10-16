@@ -102,7 +102,7 @@ fn discover_tree(root_dir: &Path, production: bool) -> DiscoveredSources {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(48))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(48)))]
 
     #[test]
     fn discovery_invariants_hold_for_random_trees(paths in tree_paths()) {

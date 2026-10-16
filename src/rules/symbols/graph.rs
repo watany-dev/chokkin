@@ -362,4 +362,232 @@ mod tests {
         let names = bound_names(&module);
         assert_eq!(names, HashSet::from(["helper", "renamed", "sub"]));
     }
+
+    mod props {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        use proptest::prelude::*;
+        use proptest::sample::Index;
+
+        use super::*;
+        use crate::parser::{Exports, SymbolKind};
+
+        const MODULES: usize = 5;
+        const NAMES: [&str; 3] = ["alpha", "beta", "_gamma"];
+        /// A star target no generated module is: it may bind any name.
+        const OPAQUE: &str = "vendored.blob";
+
+        #[derive(Debug, Clone)]
+        struct Module {
+            /// Defined names, each maybe under `TYPE_CHECKING`.
+            symbols: Vec<(usize, bool)>,
+            /// Names bound by `from ext import name`.
+            imported: Vec<usize>,
+            /// Star targets: a module index, or `MODULES` for [`OPAQUE`].
+            stars: Vec<usize>,
+            all: Option<Vec<usize>>,
+        }
+
+        fn module() -> impl Strategy<Value = Module> {
+            let name = 0..NAMES.len();
+            (
+                prop::collection::vec((name.clone(), any::<bool>()), 0..3),
+                prop::collection::vec(name.clone(), 0..2),
+                prop::collection::vec(0..=MODULES, 0..3),
+                prop::option::of(prop::collection::vec(name, 0..3)),
+            )
+                .prop_map(|(symbols, imported, stars, all)| Module {
+                    symbols,
+                    imported,
+                    stars,
+                    all,
+                })
+        }
+
+        fn modules() -> impl Strategy<Value = Vec<Module>> {
+            prop::collection::vec(module(), MODULES)
+        }
+
+        fn module_name(index: usize) -> String {
+            if index == MODULES {
+                OPAQUE.to_owned()
+            } else {
+                format!("pkg.m{index}")
+            }
+        }
+
+        fn parsed(index: usize, module: &Module) -> ParsedModule {
+            let symbols = module
+                .symbols
+                .iter()
+                .map(|&(name, in_type_checking)| SymbolDef {
+                    name: NAMES[name].to_owned(),
+                    kind: SymbolKind::Function,
+                    line: 1,
+                    is_public: !NAMES[name].starts_with('_'),
+                    decorators: Vec::new(),
+                    in_type_checking,
+                    used_in_module: false,
+                })
+                .collect();
+            let imported = module
+                .imported
+                .iter()
+                .map(|&name| import(ImportKind::ImportFrom, "ext", Some(NAMES[name]), None));
+            let stars = module.stars.iter().map(|&target| {
+                import(
+                    ImportKind::ImportFrom,
+                    &module_name(target),
+                    Some("*"),
+                    None,
+                )
+            });
+            ParsedModule {
+                path: format!("pkg/m{index}.py"),
+                symbols,
+                imports: imported.chain(stars).collect(),
+                exports: module.all.as_ref().map_or(Exports::Absent, |all| {
+                    Exports::Known(all.iter().map(|&name| NAMES[name].to_owned()).collect())
+                }),
+                ..ParsedModule::default()
+            }
+        }
+
+        type Sources = BTreeMap<(String, &'static str), BTreeSet<String>>;
+
+        /// `StarImports::sources` for every (module, name) pair, with the
+        /// modules handed over in `order`.
+        fn star_sources(modules: &[Module], order: &[usize]) -> Sources {
+            let parsed: Vec<_> = order
+                .iter()
+                .map(|&index| parsed(index, &modules[index]))
+                .collect();
+            let refs: Vec<&ParsedModule> = parsed.iter().collect();
+            let names: HashMap<&str, String> = parsed
+                .iter()
+                .zip(order)
+                .map(|(module, &index)| (module.path.as_str(), module_name(index)))
+                .collect();
+            let mut stars = StarImports::build(&refs, &names);
+            let mut sources = Sources::new();
+            for index in 0..MODULES {
+                for name in NAMES {
+                    let found = stars
+                        .sources(&SymbolId::new(module_name(index), name))
+                        .iter()
+                        .map(|&source| source.to_owned())
+                        .collect();
+                    sources.insert((module_name(index), name), found);
+                }
+            }
+            sources
+        }
+
+        /// The naive reading of the spec (§symbols, #576): iterate to a fixed
+        /// point the (name, binder) pairs each module's namespace gets from
+        /// its star imports. A target hands on its own bindings and what it
+        /// got itself, filtered by its `__all__` (empty counts as none), and
+        /// a module's own definitions shadow what it would get.
+        fn reference(modules: &[Module]) -> Sources {
+            let hands_on = |target: usize, name: &str| match modules
+                .get(target)
+                .and_then(|module| module.all.as_ref())
+                .filter(|all| !all.is_empty())
+            {
+                Some(all) => all.iter().any(|&export| NAMES[export] == name),
+                None => !name.starts_with('_'),
+            };
+            let bindings = |target: usize| -> BTreeSet<&'static str> {
+                match modules.get(target) {
+                    Some(module) => module
+                        .symbols
+                        .iter()
+                        .map(|&(name, _)| NAMES[name])
+                        .chain(module.imported.iter().map(|&name| NAMES[name]))
+                        .collect(),
+                    None => NAMES.into_iter().collect(),
+                }
+            };
+            let mut got: Vec<BTreeSet<(&'static str, usize)>> = vec![BTreeSet::new(); MODULES];
+            loop {
+                let mut changed = false;
+                for (index, module) in modules.iter().enumerate() {
+                    let defines: BTreeSet<_> = module
+                        .symbols
+                        .iter()
+                        .filter(|&&(_, in_type_checking)| !in_type_checking)
+                        .map(|&(name, _)| NAMES[name])
+                        .collect();
+                    for &target in module.stars.iter().filter(|&&target| target != index) {
+                        let own = bindings(target).into_iter().map(|name| (name, target));
+                        let passed = got.get(target).cloned().unwrap_or_default();
+                        let handed: Vec<_> = own
+                            .chain(passed)
+                            .filter(|&(name, _)| hands_on(target, name) && !defines.contains(name))
+                            .collect();
+                        for pair in handed {
+                            changed |= got[index].insert(pair);
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            let mut sources = Sources::new();
+            for (index, pairs) in got.iter().enumerate() {
+                for name in NAMES {
+                    let found = pairs
+                        .iter()
+                        .filter(|&&(bound, _)| bound == name)
+                        .map(|&(_, source)| module_name(source))
+                        .collect();
+                    sources.insert((module_name(index), name), found);
+                }
+            }
+            sources
+        }
+
+        fn identity() -> Vec<usize> {
+            (0..MODULES).collect()
+        }
+
+        proptest! {
+            #[test]
+            fn star_sources_match_the_fixed_point(modules in modules()) {
+                prop_assert_eq!(star_sources(&modules, &identity()), reference(&modules));
+            }
+
+            #[test]
+            fn star_sources_ignore_module_order(
+                modules in modules(),
+                order in Just(identity()).prop_shuffle(),
+            ) {
+                prop_assert_eq!(
+                    star_sources(&modules, &order),
+                    star_sources(&modules, &identity())
+                );
+            }
+
+            #[test]
+            fn adding_all_only_drops_the_names_it_leaves_out(
+                mut modules in modules(),
+                target in any::<Index>(),
+                all in prop::collection::btree_set(0..NAMES.len() - 1, 1..NAMES.len()),
+            ) {
+                let target = target.index(MODULES);
+                modules[target].all = None;
+                let before = star_sources(&modules, &identity());
+                modules[target].all = Some(all.iter().copied().collect());
+                let after = star_sources(&modules, &identity());
+                for (key, sources) in &after {
+                    if all.iter().any(|&export| NAMES[export] == key.1) {
+                        prop_assert_eq!(sources, &before[key], "{:?}", key);
+                    } else {
+                        prop_assert!(sources.is_subset(&before[key]), "{:?}", key);
+                    }
+                }
+            }
+        }
+    }
 }

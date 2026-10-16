@@ -54,8 +54,12 @@ proptest! {
 
     /// Splitting one element into two never collides with the original list.
     #[test]
-    fn list_hash_distinguishes_split_elements(value in "[a-z]{2,8}", at in 1usize..7) {
-        prop_assume!(at < value.len());
+    fn list_hash_distinguishes_split_elements(
+        (value, at) in "[a-z]{2,8}".prop_flat_map(|value| {
+            let len = value.len();
+            (Just(value), 1..len)
+        }),
+    ) {
         let whole = stable_list_hash([value.as_str()]);
         let split = stable_list_hash([&value[..at], &value[at..]]);
         prop_assert_ne!(whole, split);

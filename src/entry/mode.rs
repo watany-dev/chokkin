@@ -356,4 +356,256 @@ mod tests {
         manifest.entry_points.push(console_script("acme.cli:main"));
         assert!(!is_library_member(&manifest, &sources));
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        const PACKAGES: &[&str] = &["acme", "acme_web", "tools"];
+        const TARGETS: &[&str] = &[
+            "acme.cli:main",
+            "acme",
+            "acme_web.main:run",
+            "acme_cli:main",
+            "tools.run:main",
+        ];
+        const FILES: &[&str] = &[
+            "manage.py",
+            "app.py",
+            "wsgi.py",
+            "deploy/asgi.py",
+            "PKG/wsgi.py",
+            "PKG/web/app.py",
+            "tests/apps/wsgi.py",
+            "acme_web/app.py",
+            "scripts/run.py",
+        ];
+
+        /// The inputs mode resolution reads: the distribution name, package
+        /// directories (with or without `__init__.py`), entry points and the
+        /// files auto-entry detection sees.
+        #[derive(Debug, Clone)]
+        struct Inputs {
+            name: bool,
+            dynamic_name: bool,
+            src_layout: bool,
+            packages: Vec<(String, bool)>,
+            entry_points: Vec<(bool, String)>,
+            files: Vec<String>,
+        }
+
+        impl Inputs {
+            fn package_root(&self) -> &'static str {
+                if self.src_layout { "src" } else { "" }
+            }
+
+            fn file(&self, path: &str) -> String {
+                let root = self.package_root();
+                let prefix = if root.is_empty() {
+                    String::new()
+                } else {
+                    format!("{root}/")
+                };
+                path.replace("PKG/", &format!("{prefix}acme/"))
+            }
+
+            fn manifest(&self) -> LoadedManifest {
+                let mut manifest = empty_manifest();
+                manifest.metadata.name = self.name.then(|| "acme".to_owned());
+                manifest.sources.setup_py_dynamic_name = self.dynamic_name;
+                manifest.entry_points = self
+                    .entry_points
+                    .iter()
+                    .map(|(gui, target)| {
+                        let mut entry = console_script(target);
+                        if *gui {
+                            entry.group = "gui".to_owned();
+                        }
+                        entry
+                    })
+                    .collect();
+                manifest
+            }
+
+            fn sources(&self) -> DiscoveredSources {
+                let mut sources = library_sources();
+                sources.layout.package_root = self.package_root().to_owned();
+                sources.layout.packages =
+                    self.packages.iter().map(|(name, _)| name.clone()).collect();
+                let layout = sources.layout.clone();
+                sources.files = self
+                    .packages
+                    .iter()
+                    .filter(|(_, init)| *init)
+                    .map(|(name, _)| format!("{}/__init__.py", layout.package_dir(name)))
+                    .chain(self.files.iter().map(|path| self.file(path)))
+                    .map(|path| DiscoveredFile {
+                        context: crate::sources::assign_file_context(&path),
+                        path,
+                        kind: FileKind::Python,
+                    })
+                    .collect();
+                sources
+            }
+
+            fn resolve(&self, mode: ProjectMode) -> ProjectMode {
+                let mut config = default_config();
+                config.mode = mode;
+                let candidates: Vec<_> = self
+                    .files
+                    .iter()
+                    .map(|path| auto_candidate(&self.file(path)))
+                    .collect();
+                resolve_project_mode(&config, &self.manifest(), &self.sources(), &candidates)
+            }
+
+            fn library_member(&self) -> bool {
+                is_library_member(&self.manifest(), &self.sources())
+            }
+        }
+
+        fn pick(pool: &'static [&'static str]) -> impl Strategy<Value = String> {
+            prop::sample::select(pool).prop_map(str::to_owned)
+        }
+
+        fn inputs() -> impl Strategy<Value = Inputs> {
+            (
+                any::<bool>(),
+                prop::bool::weighted(0.2),
+                any::<bool>(),
+                prop::collection::btree_map(pick(PACKAGES), any::<bool>(), 0..3),
+                prop::collection::vec((prop::bool::weighted(0.2), pick(TARGETS)), 0..3),
+                prop::collection::vec(pick(FILES), 0..3),
+            )
+                .prop_map(
+                    |(name, dynamic_name, src_layout, packages, entry_points, files)| Inputs {
+                        name,
+                        dynamic_name,
+                        src_layout,
+                        packages: packages.into_iter().collect(),
+                        entry_points,
+                        files,
+                    },
+                )
+        }
+
+        /// Changes that each add one app signal: a GUI script, a console
+        /// script outside every package, or a runtime app file at the root.
+        #[derive(Debug, Clone)]
+        enum AppSignal {
+            Gui(String),
+            OutsideCli,
+            RootFile(String),
+        }
+
+        fn app_signal() -> impl Strategy<Value = AppSignal> {
+            prop_oneof![
+                pick(TARGETS).prop_map(AppSignal::Gui),
+                Just(AppSignal::OutsideCli),
+                pick(&["manage.py", "app.py", "asgi.py", "wsgi.py"]).prop_map(AppSignal::RootFile),
+            ]
+        }
+
+        fn add_app_signal(inputs: &mut Inputs, signal: &AppSignal) {
+            match signal {
+                AppSignal::Gui(target) => inputs.entry_points.push((true, target.clone())),
+                AppSignal::OutsideCli => {
+                    inputs
+                        .entry_points
+                        .push((false, "zz_server.cli:main".to_owned()));
+                },
+                AppSignal::RootFile(path) => inputs.files.push(path.clone()),
+            }
+        }
+
+        /// Changes that each add one library signal: a declared or
+        /// unreadable distribution name, or a package with `__init__.py`.
+        #[derive(Debug, Clone)]
+        enum LibrarySignal {
+            Name,
+            DynamicName,
+            Package(String),
+        }
+
+        fn library_signal() -> impl Strategy<Value = LibrarySignal> {
+            prop_oneof![
+                Just(LibrarySignal::Name),
+                Just(LibrarySignal::DynamicName),
+                pick(PACKAGES).prop_map(LibrarySignal::Package),
+            ]
+        }
+
+        fn add_library_signal(inputs: &mut Inputs, signal: &LibrarySignal) {
+            match signal {
+                LibrarySignal::Name => inputs.name = true,
+                LibrarySignal::DynamicName => inputs.dynamic_name = true,
+                LibrarySignal::Package(name) => {
+                    inputs.packages.retain(|(package, _)| package != name);
+                    inputs.packages.push((name.clone(), true));
+                },
+            }
+        }
+
+        /// App below library, so "never flips to library" is `<=`.
+        fn rank(mode: ProjectMode) -> u8 {
+            match mode {
+                ProjectMode::App => 0,
+                ProjectMode::Library => 1,
+                ProjectMode::Auto => panic!("auto never resolves to itself"),
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
+
+            /// An explicit `mode` wins over every other input.
+            #[test]
+            fn explicit_mode_wins(inputs in inputs()) {
+                for mode in [ProjectMode::App, ProjectMode::Library] {
+                    prop_assert_eq!(inputs.resolve(mode), mode);
+                }
+            }
+
+            /// One more app signal resolves the project, and the member, to app.
+            #[test]
+            fn app_signal_never_leans_to_library(
+                inputs in inputs(),
+                signal in app_signal(),
+            ) {
+                let mut with = inputs;
+                add_app_signal(&mut with, &signal);
+                prop_assert_eq!(with.resolve(ProjectMode::Auto), ProjectMode::App);
+                prop_assert!(!with.library_member());
+            }
+
+            /// One more library signal never turns a library into an app: a
+            /// new package can only take app signals into the package.
+            #[test]
+            fn library_signal_never_leans_to_app(
+                inputs in inputs(),
+                signal in library_signal(),
+            ) {
+                let mut with = inputs.clone();
+                add_library_signal(&mut with, &signal);
+                prop_assert!(
+                    rank(with.resolve(ProjectMode::Auto)) >= rank(inputs.resolve(ProjectMode::Auto))
+                );
+                prop_assert!(with.library_member() || !inputs.library_member());
+            }
+
+            /// The order of entry points, packages and files does not matter.
+            #[test]
+            fn mode_ignores_input_order(inputs in inputs()) {
+                let mut reversed = inputs.clone();
+                reversed.packages.reverse();
+                reversed.entry_points.reverse();
+                reversed.files.reverse();
+                prop_assert_eq!(
+                    reversed.resolve(ProjectMode::Auto),
+                    inputs.resolve(ProjectMode::Auto)
+                );
+                prop_assert_eq!(reversed.library_member(), inputs.library_member());
+            }
+        }
+    }
 }

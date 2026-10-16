@@ -1,6 +1,7 @@
 //! Python source parser (pipeline step 6).
 
 mod attributes;
+mod condition;
 mod decorators;
 mod deprecation;
 mod dynamic;

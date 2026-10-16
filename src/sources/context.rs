@@ -509,7 +509,7 @@ mod tests {
         }
 
         proptest! {
-            #![proptest_config(ProptestConfig::with_cases(256))]
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
 
             #[test]
             fn assign_file_context_matches_reference_model((dirs, file) in path_strategy()) {

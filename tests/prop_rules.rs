@@ -345,7 +345,7 @@ fn rule_count(keys: &[Key], code: &str, name: &str) -> usize {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(40))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(40)))]
 
     /// CHK002/CHK003/CHK004/CHK005/CHK009 agree with the reference decision
     /// table for every generated distribution.
@@ -358,7 +358,7 @@ proptest! {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(24))]
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
 
     /// Declaration and import order never changes which issues are reported.
     #[test]
@@ -438,5 +438,339 @@ fn pool_names_are_not_affixed_forms_of_each_other() {
         for affix in ["py", "-python", "-py"] {
             assert!(!names.contains(format!("{name}{affix}").as_str()));
         }
+    }
+}
+
+/// Distributions of the CHK005 strength properties, all declared only in the
+/// dev group. `pytest` is the one a `pytest11` plugin module is host-loaded by.
+const LATTICE: [&str; 4] = ["zz-alpha", "zz-bravo", "zz-charlie", "pytest"];
+
+/// Where an import site sits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    /// The entry module, `src/pkg/main.py`.
+    Main,
+    /// `src/pkg/<module>/__init__.py`, a subpackage named after the import,
+    /// loaded from the entry module.
+    OptIn,
+    /// `src/pkg/testing.py`, test support loaded from the entry module.
+    Testing,
+    /// `src/pkg/plugin.py`, the `pytest11` entry point.
+    Plugin,
+    /// `src/pkg/conftest.py`, which only pytest loads.
+    Conftest,
+}
+
+/// How the import statement is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Top,
+    Function,
+    TryExcept,
+    Platform,
+    TypeChecking,
+}
+
+/// Mirrors `ImportStrength` in `src/rules/deps/misplaced.rs`, weakest first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Strength {
+    HostLoaded,
+    OptIn,
+    TestSupport,
+    Optional,
+    DeferredOptional,
+    Deferred,
+    TopLevel,
+}
+
+type Site = (Place, Form);
+
+fn site_strategy() -> impl Strategy<Value = Site> {
+    (
+        prop::sample::select(vec![
+            Place::Main,
+            Place::OptIn,
+            Place::Testing,
+            Place::Plugin,
+            Place::Conftest,
+        ]),
+        prop::sample::select(vec![
+            Form::Top,
+            Form::Function,
+            Form::TryExcept,
+            Form::Platform,
+            Form::TypeChecking,
+        ]),
+    )
+}
+
+/// Import sites per `LATTICE` distribution, in file order.
+fn lattice_strategy() -> impl Strategy<Value = Vec<Vec<Site>>> {
+    prop::collection::vec(prop::collection::vec(site_strategy(), 0..5), LATTICE.len())
+}
+
+/// The strength one site gives `name`, or `None` when it is no runtime
+/// import: a `TYPE_CHECKING` block or a conftest.
+fn site_strength(name: &str, (place, form): Site) -> Option<Strength> {
+    if form == Form::TypeChecking || place == Place::Conftest {
+        return None;
+    }
+    if place == Place::Plugin && name == "pytest" {
+        return Some(Strength::HostLoaded);
+    }
+    let mut strength = match form {
+        Form::Top => Strength::TopLevel,
+        Form::Function => Strength::Deferred,
+        _ => Strength::Optional,
+    };
+    if place == Place::OptIn {
+        strength = strength.min(Strength::OptIn);
+    }
+    if place == Place::Testing && strength < Strength::TopLevel {
+        strength = strength.min(Strength::TestSupport);
+    }
+    Some(strength)
+}
+
+/// The reference lattice: the strongest site wins whatever the order, and a
+/// `try`/`except ImportError` anywhere demotes a function-local winner (#808).
+/// A platform guard says the package needs it there, so it does not (#808).
+fn lattice_expected(name: &str, sites: &[Site]) -> Option<(String, String)> {
+    let strongest = sites
+        .iter()
+        .filter_map(|site| site_strength(name, *site))
+        .max()?;
+    let optional = sites
+        .iter()
+        .any(|&(place, form)| form == Form::TryExcept && place != Place::Conftest);
+    let strength = if strongest == Strength::Deferred && optional {
+        Strength::DeferredOptional
+    } else {
+        strongest
+    };
+    let severity = match strength {
+        Strength::TopLevel | Strength::Deferred => "warning",
+        _ => "info",
+    };
+    let confidence = if strength == Strength::TopLevel {
+        "certain"
+    } else {
+        "likely"
+    };
+    Some((severity.to_owned(), confidence.to_owned()))
+}
+
+fn lattice_project(sites: &[Vec<Site>]) -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    let dev: Vec<String> = LATTICE.iter().map(|name| (*name).to_owned()).collect();
+    write(
+        root,
+        "pyproject.toml",
+        &format!(
+            "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\ndependencies = []\n\n[dependency-groups]\ndev = [{}]\n\n[project.scripts]\npkg = \"pkg.main:main\"\n\n[project.entry-points.pytest11]\npkg = \"pkg.plugin\"\n",
+            quoted(&dev)
+        ),
+    );
+    let header = "import sys\nfrom typing import TYPE_CHECKING\n";
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut loads: BTreeSet<String> = BTreeSet::new();
+    let mut functions = 0;
+    for (name, sites) in LATTICE.iter().zip(sites) {
+        let module = module(name);
+        for &(place, form) in sites {
+            let file = match place {
+                Place::Main => "src/pkg/main.py".to_owned(),
+                Place::OptIn => {
+                    loads.insert(format!("pkg.{module}"));
+                    format!("src/pkg/{module}/__init__.py")
+                },
+                Place::Testing => {
+                    loads.insert("pkg.testing".to_owned());
+                    "src/pkg/testing.py".to_owned()
+                },
+                Place::Plugin => "src/pkg/plugin.py".to_owned(),
+                Place::Conftest => "src/pkg/conftest.py".to_owned(),
+            };
+            let statement = match form {
+                Form::Top => format!("import {module}\n"),
+                Form::Function => {
+                    functions += 1;
+                    format!("\n\ndef f_{functions}():\n    import {module}\n\n\n")
+                },
+                Form::TryExcept => {
+                    format!("try:\n    import {module}\nexcept ImportError:\n    pass\n")
+                },
+                Form::Platform => format!("if sys.platform == \"win32\":\n    import {module}\n"),
+                Form::TypeChecking => format!("if TYPE_CHECKING:\n    import {module}\n"),
+            };
+            match files.iter_mut().find(|(path, _)| *path == file) {
+                Some((_, text)) => text.push_str(&statement),
+                None => files.push((file, format!("{header}{statement}"))),
+            }
+        }
+    }
+    let mut main = header.to_owned();
+    for load in &loads {
+        writeln!(main, "import {load}").expect("fmt");
+    }
+    if let Some((_, text)) = files.iter().find(|(path, _)| path == "src/pkg/main.py") {
+        main.push_str(text.trim_start_matches(header));
+    }
+    main.push_str("\n\ndef main():\n    pass\n");
+    write(root, "src/pkg/__init__.py", "");
+    write(root, "src/pkg/plugin.py", header);
+    for (path, text) in &files {
+        write(root, path, text);
+    }
+    write(root, "src/pkg/main.py", &main);
+    dir
+}
+
+/// `(distribution, severity, confidence)` of each CHK005, sorted.
+fn misplaced(root: &Path) -> Vec<(String, String, String)> {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--reporter", "json", "--no-cache"])
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    assert!(
+        output.status.code().is_some_and(|code| code <= 1),
+        "chokkin failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json reporter output");
+    let mut found: Vec<(String, String, String)> = parsed["issues"]
+        .as_array()
+        .expect("issues array")
+        .iter()
+        .filter(|issue| issue["code"] == "CHK005")
+        .map(|issue| {
+            let field = |name: &str| issue[name].as_str().unwrap_or_default().to_owned();
+            (
+                field("distribution"),
+                field("severity"),
+                field("confidence"),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn lattice_reference(sites: &[Vec<Site>]) -> Vec<(String, String, String)> {
+    let mut out: Vec<(String, String, String)> = LATTICE
+        .iter()
+        .zip(sites)
+        .filter_map(|(name, sites)| {
+            lattice_expected(name, sites)
+                .map(|(severity, confidence)| ((*name).to_owned(), severity, confidence))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn confidence_rank(found: &[(String, String, String)], name: &str) -> u8 {
+    found
+        .iter()
+        .find(|(dist, ..)| dist == name)
+        .map_or(
+            0,
+            |(.., confidence)| if confidence == "certain" { 2 } else { 1 },
+        )
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(32)))]
+
+    /// CHK005's severity and confidence follow the strength lattice: the
+    /// strongest runtime site of a dev-only distribution decides, so one
+    /// top-level import in a loaded module is certain whatever else is mixed
+    /// in, and `TYPE_CHECKING` and conftest imports never count.
+    #[test]
+    fn misplaced_strength_is_the_strongest_site(sites in lattice_strategy()) {
+        let dir = lattice_project(&sites);
+        prop_assert_eq!(misplaced(dir.path()), lattice_reference(&sites), "{:#?}", sites);
+    }
+
+    /// Reordering the import sites, within and across files, changes nothing.
+    #[test]
+    fn misplaced_strength_ignores_site_order(
+        sites in lattice_strategy(),
+        turn in any::<prop::sample::Index>(),
+    ) {
+        let reordered: Vec<Vec<Site>> = sites
+            .iter()
+            .map(|sites| {
+                let mut sites = sites.clone();
+                let len = sites.len();
+                sites.rotate_left(turn.index(len.max(1)).min(len));
+                sites.reverse();
+                sites
+            })
+            .collect();
+        let first = lattice_project(&sites);
+        let second = lattice_project(&reordered);
+        prop_assert_eq!(misplaced(first.path()), misplaced(second.path()));
+    }
+
+    /// One more import site never lowers a CHK005's confidence.
+    #[test]
+    fn misplaced_confidence_is_monotone_in_sites(
+        sites in lattice_strategy(),
+        pick in any::<prop::sample::Index>(),
+        extra in site_strategy(),
+        at in any::<prop::sample::Index>(),
+    ) {
+        let target = pick.index(LATTICE.len());
+        let mut grown = sites.clone();
+        let position = at.index(grown[target].len() + 1);
+        grown[target].insert(position, extra);
+        let before = misplaced(lattice_project(&sites).path());
+        let after = misplaced(lattice_project(&grown).path());
+        prop_assert!(
+            confidence_rank(&after, LATTICE[target]) >= confidence_rank(&before, LATTICE[target]),
+            "{before:?} -> {after:?}"
+        );
+    }
+
+    /// `--fix` moves exactly the certain CHK005 distributions to runtime and
+    /// leaves every likely one in the dev group (#590, #808).
+    #[test]
+    fn fix_moves_only_certain_misplaced_dependencies(sites in lattice_strategy()) {
+        let dir = lattice_project(&sites);
+        let root = dir.path();
+        let certain: BTreeSet<String> = lattice_reference(&sites)
+            .into_iter()
+            .filter(|(.., confidence)| confidence == "certain")
+            .map(|(name, ..)| name)
+            .collect();
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--fix", "--no-cache"])
+            .current_dir(root)
+            .output()
+            .expect("run chokkin");
+        prop_assert!(output.status.code().is_some_and(|code| code <= 1));
+        let text = fs::read_to_string(root.join("pyproject.toml")).expect("read");
+        let doc: toml::Table = text.parse().expect("pyproject stays valid TOML");
+        let names = |value: &toml::Value| -> BTreeSet<String> {
+            value
+                .as_array()
+                .expect("array")
+                .iter()
+                .map(|v| v.as_str().expect("string").to_owned())
+                .collect()
+        };
+        let runtime = names(&doc["project"]["dependencies"]);
+        let dev = names(&doc["dependency-groups"]["dev"]);
+        prop_assert_eq!(&runtime, &certain);
+        let rest: BTreeSet<String> = LATTICE
+            .iter()
+            .map(|name| (*name).to_owned())
+            .filter(|name| !certain.contains(name))
+            .collect();
+        prop_assert_eq!(dev, rest);
     }
 }
