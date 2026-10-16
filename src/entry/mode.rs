@@ -359,6 +359,245 @@ mod tests {
         assert!(!is_library_member(&manifest, &sources));
     }
 
+    /// Where a file sits relative to the project's own package `acme`.
+    #[derive(Debug, Clone, Copy)]
+    enum Place {
+        /// Directly under the project root (`manage.py`).
+        Root,
+        /// Directly in the package directory (`src/acme/wsgi.py`).
+        PackageTop,
+        /// Deeper in the package directory (`src/acme/web/app.py`).
+        PackageNested,
+        Outside,
+    }
+
+    /// Directories an app-named file is put in (`PKG` is the package
+    /// directory, whether or not the layout lists `acme`), with the §10
+    /// context of a file there.
+    const PLACES: &[(&str, FileContext, Place)] = &[
+        ("", FileContext::Runtime, Place::Root),
+        ("PKG", FileContext::Runtime, Place::PackageTop),
+        ("PKG/web", FileContext::Runtime, Place::PackageNested),
+        // `acme_web` only shares a prefix with `acme`.
+        ("PKG_web", FileContext::Runtime, Place::Outside),
+        ("deploy", FileContext::Runtime, Place::Outside),
+        ("tests/apps", FileContext::Test, Place::Outside),
+        ("docs", FileContext::Docs, Place::Outside),
+        ("scripts", FileContext::Dev, Place::Outside),
+        ("examples", FileContext::Dev, Place::Outside),
+    ];
+
+    /// `main.py` is auto-detected like the others but names no app.
+    const FILE_NAMES: &[(&str, bool)] = &[
+        ("manage.py", true),
+        ("asgi.py", true),
+        ("wsgi.py", true),
+        ("app.py", true),
+        ("main.py", false),
+    ];
+
+    /// Entry points as (group, target, whether the target's top module is
+    /// `acme`). A plugin group is never an app signal.
+    const ENTRIES: &[(&str, &str, bool)] = &[
+        ("console", "acme.cli:main", true),
+        ("console", "acme", true),
+        ("console", " acme.cli : main", true),
+        ("console", "acme_cli:main", false),
+        ("console", "tools.run:main", false),
+        ("gui", "acme.gui:main", true),
+        ("gui", "tools.gui:main", false),
+        ("acme.plugins", "tools.run:main", false),
+    ];
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Package {
+        Absent,
+        WithoutInit,
+        WithInit,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ModeCase {
+        name: bool,
+        dynamic_name: bool,
+        src_layout: bool,
+        package: Package,
+        entry: Option<(&'static str, &'static str, bool)>,
+        file: Option<(
+            &'static str,
+            bool,
+            &'static (&'static str, FileContext, Place),
+        )>,
+    }
+
+    impl ModeCase {
+        fn path(&self) -> Option<String> {
+            let (file_name, _, (dir, _, _)) = self.file?;
+            let package_dir = if self.src_layout { "src/acme" } else { "acme" };
+            let dir = dir.replace("PKG", package_dir);
+            Some(if dir.is_empty() {
+                file_name.to_owned()
+            } else {
+                format!("{dir}/{file_name}")
+            })
+        }
+
+        fn manifest(&self) -> LoadedManifest {
+            let mut manifest = empty_manifest();
+            manifest.metadata.name = self.name.then(|| "acme".to_owned());
+            manifest.sources.setup_py_dynamic_name = self.dynamic_name;
+            manifest.entry_points = self
+                .entry
+                .iter()
+                .map(|(group, target, _)| {
+                    let mut entry = console_script(target);
+                    (*group).clone_into(&mut entry.group);
+                    entry
+                })
+                .collect();
+            manifest
+        }
+
+        fn sources(&self) -> DiscoveredSources {
+            let mut sources = library_sources();
+            let packages = if self.package == Package::Absent {
+                Vec::new()
+            } else {
+                vec!["acme".to_owned()]
+            };
+            sources.layout = LayoutInfo::new(if self.src_layout { "src" } else { "" }, packages);
+            let init = (self.package == Package::WithInit)
+                .then(|| format!("{}/__init__.py", sources.layout.package_dir("acme")));
+            sources.files = init
+                .into_iter()
+                .chain(self.path())
+                .map(|path| DiscoveredFile {
+                    context: crate::sources::assign_file_context(&path),
+                    path,
+                    kind: FileKind::Python,
+                })
+                .collect();
+            sources
+        }
+
+        /// Whether the file is an app signal (§8) when it is an entry: an
+        /// app file name, in runtime context, outside the package. With
+        /// `detected_only`, only auto-detection can make it an entry, as for
+        /// a member or a root whose `entry` config does not name it.
+        fn file_signal(&self, detected_only: bool) -> bool {
+            let Some((_, app_name, (_, context, place))) = self.file else {
+                return false;
+            };
+            let listed = self.package != Package::Absent;
+            let (in_package, auto) = match *place {
+                Place::Root => (false, true),
+                Place::PackageTop => (listed, listed),
+                Place::PackageNested => (listed, false),
+                Place::Outside => (false, false),
+            };
+            app_name && *context == FileContext::Runtime && !in_package && (auto || !detected_only)
+        }
+
+        /// Whether the entry point is an app signal (§8): a GUI script
+        /// always is; a console script is unless, at the root, it targets
+        /// the project's own package.
+        fn entry_signal(&self, member: bool) -> bool {
+            self.entry.is_some_and(|(group, _, targets_acme)| {
+                group == "gui"
+                    || (group == "console"
+                        && (member || !(targets_acme && self.package != Package::Absent)))
+            })
+        }
+
+        fn names_distribution(&self) -> bool {
+            self.name || self.dynamic_name
+        }
+
+        /// The §8 table for the workspace root.
+        fn root_model(&self, detected_only: bool) -> ProjectMode {
+            if self.entry_signal(false) || self.file_signal(detected_only) {
+                ProjectMode::App
+            } else if self.names_distribution() && self.package == Package::WithInit {
+                ProjectMode::Library
+            } else {
+                ProjectMode::App
+            }
+        }
+
+        /// §8 for a workspace member: a name and no app signal, with or
+        /// without a package.
+        fn member_model(&self) -> bool {
+            self.names_distribution() && !self.entry_signal(true) && !self.file_signal(true)
+        }
+    }
+
+    #[test]
+    fn mode_follows_the_spec_table() {
+        let files =
+            std::iter::once(None).chain(FILE_NAMES.iter().flat_map(|(name, app)| {
+                PLACES.iter().map(move |place| Some((*name, *app, place)))
+            }));
+        let files: Vec<_> = files.collect();
+        let entries: Vec<_> = std::iter::once(None)
+            .chain(ENTRIES.iter().copied().map(Some))
+            .collect();
+        let mut checked = 0;
+        for (name, dynamic_name) in [(false, false), (true, false), (false, true)] {
+            for src_layout in [false, true] {
+                for package in [Package::Absent, Package::WithoutInit, Package::WithInit] {
+                    for &entry in &entries {
+                        for &file in &files {
+                            let case = ModeCase {
+                                name,
+                                dynamic_name,
+                                src_layout,
+                                package,
+                                entry,
+                                file,
+                            };
+                            check_mode_case(&case);
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 3 * 2 * 3 * 9 * (1 + 5 * 9));
+    }
+
+    fn check_mode_case(case: &ModeCase) {
+        let (manifest, sources, path) = (case.manifest(), case.sources(), case.path());
+        let candidates: Vec<EntryCandidate> =
+            path.as_deref().into_iter().map(auto_candidate).collect();
+        let mut config = default_config();
+        for mode in [ProjectMode::App, ProjectMode::Library] {
+            config.mode = mode;
+            assert_eq!(
+                resolve_project_mode(&config, &manifest, &sources, &candidates),
+                mode,
+                "explicit mode: {case:?}"
+            );
+        }
+        config.mode = ProjectMode::Auto;
+        // The file as an `entry` config names it, then as only
+        // auto-detection finds it.
+        assert_eq!(
+            resolve_project_mode(&config, &manifest, &sources, &candidates),
+            case.root_model(false),
+            "root: {case:?} at {path:?}"
+        );
+        assert_eq!(
+            resolve_project_mode(&config, &manifest, &sources, &detect_auto_entries(&sources)),
+            case.root_model(true),
+            "root, detected only: {case:?} at {path:?}"
+        );
+        assert_eq!(
+            is_library_member(&manifest, &sources),
+            case.member_model(),
+            "member: {case:?} at {path:?}"
+        );
+    }
+
     mod props {
         use super::*;
         use proptest::prelude::*;
