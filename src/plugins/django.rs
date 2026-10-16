@@ -65,7 +65,6 @@ const MAX_SETTINGS_FILES: usize = 16;
 /// tell the settings entry from `manage.py` and `ROOT_URLCONF` (#729).
 pub(crate) const SETTINGS_LABEL: &str = "settings.py";
 
-/// Label of the migrations glob's origin.
 const MIGRATIONS_LABEL: &str = "Django migrations";
 
 /// How `DJANGO_SETTINGS_MODULE` was set across the files that set it.
