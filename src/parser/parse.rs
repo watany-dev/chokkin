@@ -127,9 +127,21 @@ fn parse_notebook_file(
             return Ok(parsed);
         },
     };
-    let mut parsed = parse_python_source(path, &notebook.source, layout, file_context, target);
+    let mut parsed = parse_python_source(path, &notebook.joined(), layout, file_context, target);
+    // IPython syntax fails the joined cells as a whole, so read them one by
+    // one, as IPython does (#962).
+    if parsed.skipped
+        && let Some(cells) = ipython_cells(&notebook)
+    {
+        let reread = parse_python_source(path, &cells.source, layout, file_context, target);
+        if !reread.skipped {
+            parsed = reread;
+            parsed.has_unread_cells |= !cells.unread.is_empty();
+            parsed.diagnostics.extend(cells.unread);
+        }
+    }
     // A skipped notebook is unknown as a whole, so a dropped cell adds nothing.
-    if notebook.has_unreadable_cells && !parsed.skipped {
+    if notebook.has_unreadable_cells() && !parsed.skipped {
         parsed.has_unread_cells = true;
         parsed.diagnostics.push(ParseDiagnostic {
             line: 0,
@@ -142,13 +154,94 @@ fn parse_notebook_file(
 }
 
 struct NotebookSource {
-    source: String,
-    /// A cell that may be code was not text (#898).
-    has_unreadable_cells: bool,
+    /// Each code cell's text, `None` where it is not text (#898).
+    cells: Vec<Option<String>>,
 }
 
-/// Join the code cells' `source`. A cell without a string `cell_type` may be
-/// code, so it counts as unreadable like a code cell whose `source` is not
+impl NotebookSource {
+    fn has_unreadable_cells(&self) -> bool {
+        self.cells.iter().any(Option::is_none)
+    }
+
+    /// The cells as one source, each followed by a blank line.
+    fn joined(&self) -> String {
+        join_cells(self.cells.iter().map(Option::as_deref))
+    }
+}
+
+fn join_cells<'a>(cells: impl Iterator<Item = Option<&'a str>>) -> String {
+    let mut source = String::new();
+    for cell in cells {
+        source.push_str(cell.unwrap_or_default());
+        source.push('\n');
+    }
+    source
+}
+
+/// The notebook's cells read one by one, with their `IPython` syntax rewritten.
+struct IpythonCells {
+    source: String,
+    /// One warning per code cell that still did not parse.
+    unread: Vec<ParseDiagnostic>,
+}
+
+/// Read each code cell on its own, rewriting its `IPython` syntax into Python
+/// when it does not parse as it is. A cell that still does not parse is
+/// blanked, keeping the lines of the cells after it, and warned about. `None`
+/// when no cell could be read, which leaves the notebook skipped.
+fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
+    let mut cells = Vec::with_capacity(notebook.cells.len());
+    let mut unread = Vec::new();
+    let mut read_any = false;
+    let mut first_line = 1;
+    for cell in &notebook.cells {
+        let Some(text) = cell.as_deref() else {
+            cells.push(None);
+            first_line += 1;
+            continue;
+        };
+        let lines = text.lines().count();
+        match python_cell(text) {
+            Ok(python) => {
+                read_any = true;
+                cells.push(Some(python));
+            },
+            Err((line, error)) => {
+                unread.push(ParseDiagnostic {
+                    line: u32::try_from(first_line + line).unwrap_or(u32::MAX),
+                    message: format!("code cell not read: {error}"),
+                    severity: ParseSeverity::Warning,
+                });
+                cells.push(Some("\n".repeat(lines)));
+            },
+        }
+        first_line += lines + 1;
+    }
+    read_any.then(|| IpythonCells {
+        source: join_cells(cells.iter().map(Option::as_deref)),
+        unread,
+    })
+}
+
+/// `text` as Python, or the 0-based line of the cell and what failed there.
+fn python_cell(text: &str) -> Result<String, (usize, String)> {
+    if ruff_python_parser::parse_module(text).is_ok() {
+        return Ok(text.to_owned());
+    }
+    let python = super::ipython::cell_to_python(text)
+        .map_err(|unrecognized| (unrecognized.line, unrecognized.message))?;
+    match ruff_python_parser::parse_module(&python) {
+        Ok(_) => Ok(python),
+        Err(error) => {
+            let line = LineIndex::new(&python).line(error.location.start());
+            let line = usize::try_from(line).unwrap_or(1).saturating_sub(1);
+            Err((line, format!("syntax error: {}", error.error)))
+        },
+    }
+}
+
+/// Collect the code cells' `source`. A cell without a string `cell_type` may
+/// be code, so it counts as unreadable like a code cell whose `source` is not
 /// text; markdown and raw cells hold no imports. A notebook whose code cells
 /// are all unreadable is as unknown as one without cells.
 fn notebook_python_source(source: &str) -> Result<NotebookSource, String> {
@@ -157,47 +250,34 @@ fn notebook_python_source(source: &str) -> Result<NotebookSource, String> {
     let Some(cells) = value.get("cells").and_then(Value::as_array) else {
         return Err("invalid notebook JSON: missing cells array".to_owned());
     };
-    let mut notebook = NotebookSource {
-        source: String::new(),
-        has_unreadable_cells: false,
-    };
-    let mut read_any = false;
+    let mut notebook = NotebookSource { cells: Vec::new() };
     for cell in cells {
-        let read = match cell.get("cell_type").map(Value::as_str) {
-            Some(Some("code")) => cell
-                .get("source")
-                .is_some_and(|source| push_notebook_cell_source(source, &mut notebook.source)),
+        let text = match cell.get("cell_type").map(Value::as_str) {
+            Some(Some("code")) => cell.get("source").and_then(notebook_cell_source),
             Some(Some(_)) => continue,
-            Some(None) | None => false,
+            Some(None) | None => None,
         };
-        read_any |= read;
-        notebook.has_unreadable_cells |= !read;
-        notebook.source.push('\n');
+        notebook.cells.push(text);
     }
-    if notebook.has_unreadable_cells && !read_any {
+    if !notebook.cells.is_empty() && notebook.cells.iter().all(Option::is_none) {
         return Err("invalid notebook JSON: no code cell could be read".to_owned());
     }
     Ok(notebook)
 }
 
-/// Append the text of a cell's `source`, or nothing when it is not a string
-/// or a list of strings. A list is all or nothing: the strings around a
-/// dropped line would join into code the notebook does not have.
-fn push_notebook_cell_source(source: &Value, extracted: &mut String) -> bool {
+/// The text of a cell's `source`, or `None` when it is not a string or a
+/// list of strings. A list is all or nothing: the strings around a dropped
+/// line would join into code the notebook does not have.
+fn notebook_cell_source(source: &Value) -> Option<String> {
+    let mut extracted = String::new();
     if let Some(text) = source.as_str() {
-        push_notebook_line(text, extracted);
-        return true;
+        push_notebook_line(text, &mut extracted);
+        return Some(extracted);
     }
-    let Some(lines) = source
-        .as_array()
-        .and_then(|lines| lines.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
-    else {
-        return false;
-    };
-    for text in lines {
-        push_notebook_line(text, extracted);
+    for text in source.as_array()?.iter().map(Value::as_str) {
+        push_notebook_line(text?, &mut extracted);
     }
-    true
+    Some(extracted)
 }
 
 fn push_notebook_line(text: &str, extracted: &mut String) {
@@ -498,7 +578,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v41".to_owned(),
+        unit_version: "parse-v42".to_owned(),
     }
 }
 

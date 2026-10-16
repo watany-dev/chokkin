@@ -9,6 +9,7 @@ mod encoding;
 mod error;
 mod exports;
 mod ignores;
+mod ipython;
 mod lines;
 mod module_guard;
 mod parse;

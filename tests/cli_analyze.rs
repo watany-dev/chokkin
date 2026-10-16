@@ -2030,6 +2030,33 @@ fn binary_unreadable_notebook_cell_is_reported() {
     assert!(!stdout.contains("CHK002"), "{stdout}");
 }
 
+/// A notebook with `IPython` magics and shell escapes is read, so the
+/// dependencies its cells import are used, and nothing warns (#962).
+#[test]
+fn binary_notebook_with_ipython_syntax_is_read() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"pandas\", \"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/demo.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install pandas\n", "!ls\n", "import pandas\n"]}, {"cell_type": "code", "source": "%%time\nimport requests\n"}]}"#,
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "github"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("parse:"), "{stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(!stdout.contains("CHK002"), "{stdout}");
+}
+
 /// A dropped cell may import anything, so a dependency only it imports is not
 /// certainly unused, nor is an orphan it may load (#902, ADR 0005).
 #[test]

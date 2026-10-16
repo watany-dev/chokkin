@@ -518,6 +518,71 @@ fn parse_project_sources_warns_about_unreadable_notebook_cells() {
     );
 }
 
+/// `IPython` syntax is rewritten into the Python it stands for, so a notebook
+/// with magics and shell escapes is read; a cell whose magic is not
+/// recognized, or that still does not parse, is dropped with a warning at its
+/// line and leaves a gap (#962).
+#[test]
+fn parse_project_sources_reads_notebook_cells_with_ipython_syntax() {
+    let module = parse_notebook(
+        r#"{"cells": [
+            {"cell_type": "code", "source": ["%pip install pandas\n", "!ls\n", "import pandas\n"]},
+            {"cell_type": "code", "source": "%%time\nimport torch\n"},
+            {"cell_type": "code", "source": "%load_ext ngql\nfiles = !ls\npandas?\n"},
+            {"cell_type": "code", "source": ["%%writefile app.py\n", "import streamlit\n"]},
+            {"cell_type": "code", "source": "import json\ndef broken(:\n"},
+            {"cell_type": "code", "source": "import os\n"}
+        ]}"#,
+    );
+
+    assert!(!module.skipped, "{module:?}");
+    assert!(module.has_unread_cells, "{module:?}");
+    let imports: Vec<(&str, u32)> = module
+        .imports
+        .iter()
+        .map(|import| (import.module.as_str(), import.line))
+        .collect();
+    assert_eq!(
+        imports,
+        [("pandas", 3), ("torch", 6), ("ngql", 8), ("os", 18)]
+    );
+    let warnings: Vec<(u32, &str)> = module
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.line, diagnostic.message.as_str()))
+        .collect();
+    assert_eq!(
+        warnings,
+        [
+            (
+                12,
+                "code cell not read: cell magic `%%writefile` is not recognized"
+            ),
+            (
+                16,
+                "code cell not read: syntax error: Expected a parameter or the end of the parameter list"
+            ),
+        ]
+    );
+}
+
+/// A notebook whose `IPython` syntax is all recognized is read whole, without a
+/// gap (#962).
+#[test]
+fn parse_project_sources_reads_notebook_magics_without_a_gap() {
+    let module = parse_notebook(
+        r#"{"cells": [
+            {"cell_type": "code", "source": "%matplotlib inline\nimport numpy\n"},
+            {"cell_type": "code", "source": "%%bash\npip install x\n"}
+        ]}"#,
+    );
+
+    assert!(!module.skipped, "{module:?}");
+    assert!(!module.has_unread_cells, "{module:?}");
+    assert!(module.diagnostics.is_empty(), "{module:?}");
+    assert_eq!(module.imports.len(), 1, "{module:?}");
+}
+
 /// A notebook none of whose code cells can be read is as unknown
 /// as one without cells, so it is skipped (#898, #893).
 #[test]

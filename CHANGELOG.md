@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are always first-party, so `from .api import get` in `scripts/requests/`
   no longer counts as using `requests`. Reachability follows them into the
   script's or test's own package (#896).
+- Notebooks with IPython syntax are read instead of skipped. Shell escapes
+  (`!ls`, `x = !ls`), help (`obj?`) and magics that neither run Python nor
+  import a module (`%pip`, `%matplotlib`, `%%bash`) are dropped, magics that
+  run Python keep it (`%time`, `%%time`, `%%capture`), and `%load_ext` /
+  `%aimport` count as imports. A cell with any other magic (`%run`,
+  `%%writefile`) or a syntax error is dropped on its own with a
+  `code cell not read` warning at its line, and the rest of the notebook is
+  still read (#962).
 
 ## [0.7.6] - 2026-10-16
 
