@@ -169,7 +169,6 @@ fn parse_requirements_file_path(
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 fn parse_requirements_line(
     ctx: &mut RequirementsParseContext<'_>,
     rel: &str,
@@ -181,97 +180,116 @@ fn parse_requirements_line(
     if trimmed.is_empty() {
         return Ok(());
     }
-
-    if let Some(include_path) = flag_value(trimmed, "-r", "--requirement", ShortAttachPolicy::Allow)
-    {
-        let resolved = resolve_requirements_include(
-            ctx.root,
-            ctx.path,
-            include_path,
-            &mut ctx.result.files_missing,
-        );
-        let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
-            path: include_path.to_owned(),
-        })?;
-        let include_context = requirements_path_context(&origin_rel(ctx.root, &resolved_path))
-            .unwrap_or_else(|| ctx.default_context.clone());
-        return parse_requirements_file_path(RequirementsParseContext {
-            root: ctx.root,
-            path: &resolved_path,
-            default_context: &include_context,
-            include_stack: ctx.include_stack,
-            result: ctx.result,
-            mode: RequirementsParseMode::Dependencies,
-        });
-    }
-
-    if let Some(constraint_path) =
-        flag_value(trimmed, "-c", "--constraint", ShortAttachPolicy::Allow)
-    {
-        if let Some(resolved) = resolve_requirements_include(
-            ctx.root,
-            ctx.path,
-            constraint_path,
-            &mut ctx.result.files_missing,
-        ) {
-            parse_requirements_file_path(RequirementsParseContext {
-                root: ctx.root,
-                path: &resolved,
-                default_context: ctx.default_context,
-                include_stack: ctx.include_stack,
-                result: ctx.result,
-                mode: RequirementsParseMode::Constraints,
-            })?;
-        } else {
-            ctx.result
-                .warnings
-                .push(ManifestWarning::RequirementsConstraintMissing {
-                    path: constraint_path.to_owned(),
-                });
-        }
-        return Ok(());
-    }
-
-    if matches!(ctx.mode, RequirementsParseMode::Dependencies)
-        && let Some(editable) = editable_flag_value(trimmed)
-    {
-        push_editable_dependency(ctx.result, editable, ctx.default_context, rel, line_no);
-        return Ok(());
-    }
-
-    if trimmed.starts_with('-') {
-        ctx.result
-            .warnings
-            .push(ManifestWarning::RequirementsOptionIgnored {
-                file: rel.to_owned(),
-                line: line_no,
-                raw: trimmed.to_owned(),
-            });
-        return Ok(());
-    }
-
-    let (parse, declared): (fn(&str, DependencyContext, DependencyOrigin) -> _, _) = match ctx.mode
-    {
-        RequirementsParseMode::Dependencies => (parse_requirement, &mut ctx.result.dependencies),
-        RequirementsParseMode::Constraints => {
-            (parse_pep508_requirement, &mut ctx.result.constraints)
-        },
-    };
-    let origin = DependencyOrigin {
+    let origin = || DependencyOrigin {
         file: rel.to_owned(),
         line: Some(line_no),
         label: rel.to_owned(),
     };
-    let Some(requirement) = requirement_args(trimmed) else {
-        ctx.result.warnings.push(invalid(trimmed, origin));
+
+    // pip reads every line as `break_args_options`, then `shlex.split` and
+    // `optparse` over the options (#927). A `-r` / `-c` / `-e` line is an
+    // option line whose flag takes one value, so `-r base.txt --pre` names
+    // `base.txt` (#964). A line pip rejects is an invalid requirement, as a
+    // requirement line with bad options is, and the rest of the file is read.
+    let (requirement, options) = break_args_options(trimmed);
+    let Some(options) = pip_line_options(options) else {
+        ctx.result.warnings.push(invalid(trimmed, origin()));
         return Ok(());
     };
-    match parse_pip_line(requirement, ctx.default_context.clone(), origin, parse) {
-        Ok(dep) => declared.push(dep),
-        Err(warning) => ctx.result.warnings.push(warning),
+
+    if !requirement.is_empty() {
+        let (parse, declared): (fn(&str, DependencyContext, DependencyOrigin) -> _, _) =
+            match ctx.mode {
+                RequirementsParseMode::Dependencies => {
+                    (parse_requirement, &mut ctx.result.dependencies)
+                },
+                RequirementsParseMode::Constraints => {
+                    (parse_pep508_requirement, &mut ctx.result.constraints)
+                },
+            };
+        match parse_pip_line(requirement, ctx.default_context.clone(), origin(), parse) {
+            Ok(dep) => declared.push(dep),
+            Err(warning) => ctx.result.warnings.push(warning),
+        }
+        return Ok(());
     }
 
+    // pip's `ParsedLine`: `-e` makes the line a requirement, so a `-r` or
+    // `-c` beside it is ignored; otherwise `-r` wins over `-c`.
+    if let Some(editable) = options.editable {
+        if matches!(ctx.mode, RequirementsParseMode::Dependencies) {
+            push_editable_dependency(ctx.result, &editable, ctx.default_context, rel, line_no);
+            return Ok(());
+        }
+    } else if let Some(include_path) = options.requirement {
+        return follow_requirements_include(ctx, &include_path);
+    } else if let Some(constraint_path) = options.constraint {
+        return follow_constraints_include(ctx, constraint_path);
+    }
+
+    ctx.result
+        .warnings
+        .push(ManifestWarning::RequirementsOptionIgnored {
+            file: rel.to_owned(),
+            line: line_no,
+            raw: trimmed.to_owned(),
+        });
     Ok(())
+}
+
+/// Read the file a `-r` names, with the context its path implies; its
+/// absence stops the file, as it does pip.
+fn follow_requirements_include(
+    ctx: &mut RequirementsParseContext<'_>,
+    include_path: &str,
+) -> Result<(), ManifestError> {
+    let resolved = resolve_requirements_include(
+        ctx.root,
+        ctx.path,
+        include_path,
+        &mut ctx.result.files_missing,
+    );
+    let resolved_path = resolved.ok_or_else(|| ManifestError::RequirementsIncludeMissing {
+        path: include_path.to_owned(),
+    })?;
+    let include_context = requirements_path_context(&origin_rel(ctx.root, &resolved_path))
+        .unwrap_or_else(|| ctx.default_context.clone());
+    parse_requirements_file_path(RequirementsParseContext {
+        root: ctx.root,
+        path: &resolved_path,
+        default_context: &include_context,
+        include_stack: ctx.include_stack,
+        result: ctx.result,
+        mode: RequirementsParseMode::Dependencies,
+    })
+}
+
+/// Read the file a `-c` names as constraints; its absence is a warning.
+fn follow_constraints_include(
+    ctx: &mut RequirementsParseContext<'_>,
+    constraint_path: String,
+) -> Result<(), ManifestError> {
+    let Some(resolved) = resolve_requirements_include(
+        ctx.root,
+        ctx.path,
+        &constraint_path,
+        &mut ctx.result.files_missing,
+    ) else {
+        ctx.result
+            .warnings
+            .push(ManifestWarning::RequirementsConstraintMissing {
+                path: constraint_path,
+            });
+        return Ok(());
+    };
+    parse_requirements_file_path(RequirementsParseContext {
+        root: ctx.root,
+        path: &resolved,
+        default_context: ctx.default_context,
+        include_stack: ctx.include_stack,
+        result: ctx.result,
+        mode: RequirementsParseMode::Constraints,
+    })
 }
 
 /// Read a requirements line the way pip's `parse_req_from_line` does: the
@@ -412,13 +430,12 @@ fn push_editable_dependency(
 /// reads it; `None` for blank, option, and opaque (nameless) lines.
 pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
     let trimmed = strip_python(strip_comment(line));
-    if let Some(editable) = editable_flag_value(trimmed) {
-        return extract_egg_name(editable);
+    let (requirement, options) = break_args_options(trimmed);
+    let options = pip_line_options(options)?;
+    if requirement.is_empty() {
+        return extract_egg_name(&options.editable?);
     }
-    if trimmed.is_empty() || trimmed.starts_with('-') {
-        return None;
-    }
-    let (requirement, _) = split_pip_marker(requirement_args(trimmed)?)?;
+    let (requirement, _) = split_pip_marker(requirement)?;
     requirement_name(requirement)
 }
 
@@ -490,14 +507,7 @@ pub(crate) fn join_continued_lines<'a>(
 pub(crate) fn requirements_line_hashed(line: &str) -> bool {
     let trimmed = strip_python(strip_comment(line));
     let (_, options) = break_args_options(trimmed);
-    pip_line_options(options).unwrap_or_else(|| trimmed.contains("--hash"))
-}
-
-/// The requirement of a requirements line whose options pip accepts, with the
-/// options cut off; `None` when pip rejects the options (#927).
-fn requirement_args(line: &str) -> Option<&str> {
-    let (requirement, options) = break_args_options(line);
-    pip_line_options(options).map(|_| requirement)
+    pip_line_options(options).map_or_else(|| trimmed.contains("--hash"), |options| options.hashed)
 }
 
 /// pip's `break_args_options`: the requirement is the `' '`-separated tokens
@@ -543,16 +553,30 @@ const PIP_LINE_OPTIONS: &[(&str, Option<char>, bool)] = &[
     ("config-settings", Some('C'), true),
 ];
 
-/// Whether `options` carries `--hash`, read as pip reads them
-/// (`shlex.split`, then `optparse`: `--name=value` or `--name value`, a
-/// unique prefix of a long name, `-xvalue` or `-x value`; positional tokens
-/// are ignored). `None` where pip fails the line: an unclosed quote, an
-/// unknown or ambiguous option, a missing or unexpected value, and a `--hash`
-/// or `--config-settings` value its callback rejects.
-fn pip_line_options(options: &str) -> Option<bool> {
+/// What the options of a requirements line say, read as pip reads them
+/// (`shlex.split`, then `optparse`). pip uses only the first value of a
+/// repeated `-r` / `-c` / `-e` (`opts.requirements[0]`).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct PipLineOptions {
+    /// The line carries `--hash`.
+    hashed: bool,
+    /// The first `-r` / `--requirement` value.
+    requirement: Option<String>,
+    /// The first `-c` / `--constraint` value.
+    constraint: Option<String>,
+    /// The first `-e` / `--editable` value.
+    editable: Option<String>,
+}
+
+/// pip's reading of a requirements line's options: `--name=value` or
+/// `--name value`, a unique prefix of a long name, `-xvalue` or `-x value`;
+/// positional tokens are ignored. `None` where pip fails the line: an
+/// unclosed quote, an unknown or ambiguous option, a missing or unexpected
+/// value, and a `--hash` or `--config-settings` value its callback rejects.
+fn pip_line_options(options: &str) -> Option<PipLineOptions> {
     let tokens = shlex_split(options)?;
     let mut tokens = tokens.iter();
-    let mut hashed = false;
+    let mut parsed = PipLineOptions::default();
     while let Some(token) = tokens.next() {
         if token == "--" {
             break;
@@ -600,9 +624,21 @@ fn pip_line_options(options: &str) -> Option<bool> {
         if !valid {
             return None;
         }
-        hashed |= name == "hash";
+        let first = match name {
+            "hash" => {
+                parsed.hashed = true;
+                continue;
+            },
+            "requirement" => &mut parsed.requirement,
+            "constraint" => &mut parsed.constraint,
+            "editable" => &mut parsed.editable,
+            _ => continue,
+        };
+        if first.is_none() {
+            *first = value;
+        }
     }
-    Some(hashed)
+    Some(parsed)
 }
 
 /// Python's `shlex.split` (POSIX mode, no comments); `None` on an unclosed
@@ -662,56 +698,6 @@ fn strip_comment(line: &str) -> &str {
         prev_is_space = is_python_whitespace(ch);
     }
     line
-}
-
-/// pip-compatible flag parsing: long form before short; long form requires `=` or whitespace.
-#[derive(Clone, Copy)]
-enum ShortAttachPolicy {
-    /// `-rfoo`, `-cfoo`, and spaced forms are accepted.
-    Allow,
-    /// `-efoo` is accepted only when the value looks like a path or URL.
-    EditablePath,
-}
-
-#[must_use]
-fn flag_value<'a>(
-    line: &'a str,
-    short: &str,
-    long: &str,
-    policy: ShortAttachPolicy,
-) -> Option<&'a str> {
-    if let Some(rest) = line.strip_prefix(long) {
-        return match rest.as_bytes().first() {
-            Some(b'=') => Some(rest[1..].trim()),
-            Some(b' ' | b'\t') | None => Some(rest.trim()),
-            _ => None,
-        };
-    }
-    let rest = line.strip_prefix(short)?;
-    let direct_attach =
-        line.len() > short.len() && !matches!(line.as_bytes().get(short.len()), Some(b' ' | b'\t'));
-    if direct_attach {
-        let value = rest.trim();
-        return match policy {
-            ShortAttachPolicy::Allow => Some(value),
-            ShortAttachPolicy::EditablePath if editable_short_attach_valid(value) => Some(value),
-            ShortAttachPolicy::EditablePath => None,
-        };
-    }
-    Some(rest.trim())
-}
-
-#[must_use]
-fn editable_short_attach_valid(value: &str) -> bool {
-    value.starts_with('.')
-        || value.starts_with('/')
-        || value.starts_with("git+")
-        || value.contains("://")
-}
-
-#[must_use]
-fn editable_flag_value(line: &str) -> Option<&str> {
-    flag_value(line, "-e", "--editable", ShortAttachPolicy::EditablePath)
 }
 
 #[must_use]
@@ -853,29 +839,62 @@ mod tests {
     }
 
     #[test]
-    fn flag_value_parses_long_requirement_form() {
+    fn pip_line_options_reads_flag_values_like_optparse() {
+        let read = |options: &str| pip_line_options(options).expect(options);
+        for options in [
+            "--requirement=dev.txt",
+            "--requirement dev.txt",
+            "--requirem dev.txt",
+            "-r dev.txt",
+            "-rdev.txt",
+            "-r 'dev.txt'",
+        ] {
+            assert_eq!(
+                read(options).requirement.as_deref(),
+                Some("dev.txt"),
+                "{options:?}"
+            );
+        }
+        assert_eq!(read("-cdev.txt").constraint.as_deref(), Some("dev.txt"));
+        assert_eq!(read("--editable ./pkg").editable.as_deref(), Some("./pkg"));
+        // pip uses only the first value of a repeated flag.
         assert_eq!(
-            flag_value(
-                "--requirement=dev.txt",
-                "-r",
-                "--requirement",
-                ShortAttachPolicy::Allow
-            ),
-            Some("dev.txt")
+            read("-r a.txt -r b.txt").requirement.as_deref(),
+            Some("a.txt")
         );
+        assert_eq!(
+            read("-r a.txt --pre -c pins.txt"),
+            PipLineOptions {
+                hashed: false,
+                requirement: Some("a.txt".to_owned()),
+                constraint: Some("pins.txt".to_owned()),
+                editable: None,
+            }
+        );
+        // optparse fails the line: a missing value, an unknown option, an
+        // ambiguous prefix (`--req` is `--requirement` and `--require-hashes`).
+        for options in [
+            "-r",
+            "--requirement",
+            "--requirementx dev.txt",
+            "--no- dev.txt",
+        ] {
+            assert_eq!(pip_line_options(options), None, "{options:?}");
+        }
     }
 
     #[test]
-    fn flag_value_parses_short_constraint_form() {
+    fn editable_short_form_is_read_like_pip_without_a_path_heuristic() {
+        // pip reads `-example-pkg` as `-e xample-pkg` (#964): an opaque
+        // editable, not a package named `example-pkg` and not an error.
+        let result = parse_requirements_text("-example-pkg\n");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(declared(&result), vec![("xample-pkg", Some(1))]);
+        assert!(result.dependencies[0].opaque);
         assert_eq!(
-            flag_value("-cdev.txt", "-c", "--constraint", ShortAttachPolicy::Allow),
-            Some("dev.txt")
+            result.dependencies[0].specifier.as_deref(),
+            Some("xample-pkg")
         );
-    }
-
-    #[test]
-    fn editable_flag_rejects_example_pkg_false_positive() {
-        assert_eq!(editable_flag_value("-example-pkg"), None);
     }
 
     #[test]
@@ -925,28 +944,6 @@ mod tests {
                 "{path}"
             );
         }
-    }
-
-    #[test]
-    fn editable_short_attach_accepts_paths_and_urls_only() {
-        for (value, expected) in [
-            (".", true),
-            ("./pkg", true),
-            ("../pkg", true),
-            ("/abs/pkg", true),
-            ("git+https://host/r.git", true),
-            ("https://host/p.zip", true),
-            ("file:///abs/pkg", true),
-            ("xample-pkg", false),
-            ("pkg", false),
-            ("hg+https", false),
-        ] {
-            assert_eq!(editable_short_attach_valid(value), expected, "{value:?}");
-            let line = format!("-e{value}");
-            assert_eq!(editable_flag_value(&line).is_some(), expected, "{line:?}");
-        }
-        // A bare flag is not an attached value, so the path check is skipped.
-        assert_eq!(editable_flag_value("-e"), Some(""));
     }
 
     #[test]
@@ -1145,6 +1142,103 @@ mod tests {
     }
 
     #[test]
+    fn flag_lines_take_only_the_flag_value() {
+        // #964: pip reads `-r` / `-c` / `-e` lines with `optparse` too, so an
+        // option after the value is not part of it, and quotes group a path.
+        let temp = tempfile::tempdir().expect("temp dir");
+        let write = |name: &str, text: &str| {
+            std::fs::write(temp.path().join(name), text).expect("write");
+        };
+        write(
+            "requirements.txt",
+            "-r base.txt --pre\n\
+             --requirement=more.txt --no-index\n\
+             -r \"my reqs.txt\"\n\
+             -c pins.txt --pre\n\
+             -e git+https://h/foo.git#egg=foo --config-settings=k=v\n\
+             -e ./pkg -r pins.txt\n",
+        );
+        write("base.txt", "a\n");
+        write("more.txt", "b\n");
+        write("my reqs.txt", "c\n");
+        write("pins.txt", "d==1\n");
+
+        let (result, outcome) = extract_requirements_path(
+            temp.path(),
+            &temp.path().join("requirements.txt"),
+            &DependencyContext::Runtime,
+        );
+        outcome.expect("every include resolves");
+        assert_eq!(result.warnings, []);
+        assert_eq!(
+            declared(&result),
+            [
+                ("a", Some(1)),
+                ("b", Some(1)),
+                ("c", Some(1)),
+                ("foo", Some(5)),
+                ("", Some(6)),
+            ]
+        );
+        assert_eq!(
+            result
+                .constraints
+                .iter()
+                .map(|dep| dep.name.as_str())
+                .collect::<Vec<_>>(),
+            ["d"]
+        );
+        assert_eq!(result.dependencies[4].specifier.as_deref(), Some("./pkg"));
+    }
+
+    #[test]
+    fn flag_lines_pip_rejects_are_invalid_and_do_not_stop_the_file() {
+        // #964: a `-r` line pip fails on is one invalid line, not exit 2.
+        for line in [
+            "-r base.txt --unknown",
+            "-r",
+            "-r 'base.txt",
+            "-c base.txt --hash=md5:x",
+            "-e ./pkg --no-index=1",
+        ] {
+            let result = parse_requirements_text(&format!("{line}\nrequests\n"));
+            assert_eq!(declared(&result), [("requests", Some(2))], "{line:?}");
+            assert_eq!(
+                result.warnings,
+                [ManifestWarning::InvalidRequirementLine {
+                    file: "requirements.txt".to_owned(),
+                    line: Some(1),
+                    label: "requirements.txt".to_owned(),
+                    raw: line.to_owned(),
+                }],
+                "{line:?}"
+            );
+            assert!(result.files_missing.is_empty(), "{line:?}");
+        }
+    }
+
+    #[test]
+    fn line_distribution_takes_only_the_editable_value() {
+        assert_eq!(
+            requirements_line_distribution(
+                "-e git+https://h/foo.git#egg=foo --config-settings=k=v"
+            )
+            .as_deref(),
+            Some("foo")
+        );
+        assert_eq!(
+            requirements_line_distribution("--editable=git+https://h/foo.git#egg=foo --pre")
+                .as_deref(),
+            Some("foo")
+        );
+        assert_eq!(requirements_line_distribution("-r base.txt --pre"), None);
+        assert_eq!(
+            requirements_line_distribution("-e git+https://h/foo.git#egg=foo --unknown"),
+            None
+        );
+    }
+
+    #[test]
     fn line_distribution_drops_requirement_options() {
         assert_eq!(
             requirements_line_distribution("rich==13.7.0 --hash=sha256:abc").as_deref(),
@@ -1231,57 +1325,51 @@ mod tests {
             }
 
             #[test]
-            fn flag_value_parses_long_forms(value in "[^\\r\\n=][^\\r\\n]{0,60}") {
-                let equals_form = format!("--requirement={value}");
-                prop_assert_eq!(
-                    flag_value(&equals_form, "-r", "--requirement", ShortAttachPolicy::Allow),
-                    Some(value.trim())
-                );
-                let space_form = format!("--requirement {value}");
-                prop_assert_eq!(
-                    flag_value(&space_form, "-r", "--requirement", ShortAttachPolicy::Allow),
-                    Some(value.trim())
-                );
+            fn pip_line_options_reads_every_flag_form(
+                value in "[A-Za-z0-9_./][A-Za-z0-9_./-]{0,40}",
+            ) {
+                for options in [
+                    format!("-r{value}"),
+                    format!("-r {value}"),
+                    format!("--requirement={value}"),
+                    format!("--requirement {value}"),
+                ] {
+                    let parsed = pip_line_options(&options);
+                    prop_assert_eq!(
+                        parsed.as_ref().and_then(|parsed| parsed.requirement.as_deref()),
+                        Some(value.as_str()),
+                        "{}",
+                        options
+                    );
+                }
+                let short_form = format!("-e ./{value}");
+                let long_form = format!("--editable=./{value}");
+                let expected = format!("./{value}");
+                for options in [short_form, long_form] {
+                    let parsed = pip_line_options(&options);
+                    prop_assert_eq!(
+                        parsed.as_ref().and_then(|parsed| parsed.editable.as_deref()),
+                        Some(expected.as_str()),
+                        "{}",
+                        options
+                    );
+                }
             }
 
             #[test]
-            fn flag_value_parses_short_forms(value in "[^\\r\\n]{0,60}") {
-                let attached_form = format!("-r{value}");
-                prop_assert_eq!(
-                    flag_value(&attached_form, "-r", "--requirement", ShortAttachPolicy::Allow),
-                    Some(value.trim())
-                );
-                let spaced_form = format!("-r {value}");
-                prop_assert_eq!(
-                    flag_value(&spaced_form, "-r", "--requirement", ShortAttachPolicy::Allow),
-                    Some(value.trim())
-                );
-            }
-
-            #[test]
-            fn flag_value_rejects_long_prefix_followed_by_ident(
+            fn pip_line_options_rejects_long_name_followed_by_ident(
                 ch in proptest::char::ranges(vec!['a'..='z', 'A'..='Z', '0'..='9'].into()),
                 rest in "[^\\r\\n]{0,30}",
             ) {
-                let line = format!("--requirement{ch}{rest}");
-                prop_assert_eq!(
-                    flag_value(&line, "-r", "--requirement", ShortAttachPolicy::Allow),
-                    None
-                );
+                let options = format!("--requirement{ch}{rest}");
+                prop_assert_eq!(pip_line_options(&options), None);
             }
 
             #[test]
-            fn editable_flag_value_never_panics(line in "\\PC{0,120}") {
-                let _ = editable_flag_value(&line);
-            }
-
-            #[test]
-            fn editable_flag_accepts_explicit_forms(path in "[a-z][a-z0-9/_.-]{0,30}") {
-                let expected = format!("./{path}");
-                let short_form = format!("-e ./{path}");
-                prop_assert_eq!(editable_flag_value(&short_form), Some(expected.as_str()));
-                let long_form = format!("--editable=./{path}");
-                prop_assert_eq!(editable_flag_value(&long_form), Some(expected.as_str()));
+            fn line_readers_never_panic(line in "\\PC{0,120}") {
+                let _ = pip_line_options(&line);
+                let _ = requirements_line_distribution(&line);
+                let _ = requirements_line_hashed(&line);
             }
         }
     }
