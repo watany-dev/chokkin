@@ -78,6 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--production` no longer walks the tree a second time for the dropped test
   files: a cold run is about 17% faster on llama_index and 11% on airflow,
   with identical output (#844).
+- Parsed ignore files are shared between the root and member walks, which now
+  run side by side: a cold `--probe` on llama_index takes about half as long,
+  with identical output (#757, #758).
+- The sdist ships only `src/`, `Cargo.toml`, `Cargo.lock`, `pyproject.toml`,
+  `README.md` and `LICENSE` (188 files instead of 1100), and no longer the
+  `.cargo/config.toml` that asked for `lld`, so building it no longer needs
+  `lld` installed (#701).
 
 ### Fixed
 - Python code after a backslash continuation (`python \` then `-c '...'` on the
@@ -162,6 +169,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extension's `from .core import setup`, a pytest plugin's `pytest_*` hook,
   a PEP 517 backend package's `build_wheel`) is no longer CHK007, since the
   host reads it from the package (#873).
+- A bare `celery -A proj.app` or `flask --app web` module is an entry root,
+  so it is no longer CHK001, and the app objects the tool looks up (`app`,
+  `celery`; `app`, `application`, `create_app`, `make_app`) are no longer
+  CHK006. Quoted values (`--app "web.factory:create_app()"`) are unquoted
+  and a factory call marks the factory as used (#851).
+- A setup.py subscript assignment whose base is not a dict
+  (`reqs[0] = ...`) marks setup.py as partially read, so the findings it
+  could hide are lowered, instead of being dropped silently; an unknown key
+  on a known extras dict keeps the other extras (#827).
+- Sphinx `extensions` / `html_theme`, Django `INSTALLED_APPS` /
+  `MIDDLEWARE` / `ROOT_URLCONF` / `WSGI_APPLICATION`, `DJANGO_SETTINGS_MODULE`
+  in `manage.py` and `pytest_plugins` references carry the line of the string
+  that names the module, so an inline ignore on that line works; CHK003 and
+  CHK010 messages name the setting instead of an `import` (#830).
 - An arbitrary-equality (`===`) value in a manifest requirement is read the
   way `packaging` reads it: up to whitespace, `;` or `)`, commas included,
   with empty items dropped. `foo===1.0,,>=1` is accepted, and
