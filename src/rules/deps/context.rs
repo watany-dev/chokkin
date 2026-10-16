@@ -455,4 +455,159 @@ mod tests {
             UsageContext::Test
         );
     }
+
+    /// Workspace members: `pkgs/m`, a member nested in it, and a member
+    /// under root `examples/` (pydantic-ai).
+    const MEMBERS: &[&str] = &["pkgs/m", "pkgs/m/plugins/p", "examples/demo"];
+
+    /// Where a path starts: the root, a member, or `pkgs/mx`, which only
+    /// shares a prefix with `pkgs/m`.
+    const PREFIXES: &[&str] = &["", "pkgs/m", "pkgs/m/plugins/p", "examples/demo", "pkgs/mx"];
+
+    const DIRS: &[&str] = &[
+        "tests", "test", "testing", "docs", "scripts", "examples", "src",
+    ];
+
+    const FILES: &[&str] = &[
+        "mod.py",
+        "__main__.py",
+        "conftest.py",
+        "noxfile.py",
+        "test_x.py",
+        "x_test.pyi",
+        "test_x.PY",
+        "Test_x.py",
+    ];
+
+    const IMPORT_CONTEXTS: &[ImportContext] = &[
+        ImportContext::Runtime,
+        ImportContext::Type,
+        ImportContext::Test,
+        ImportContext::Dev,
+    ];
+
+    /// The §10 file-context table. `prefix` is a member or the root (`""`
+    /// or a non-member directory), `dirs` the directories below it.
+    fn file_context_model(prefix: &str, dirs: &[&str], file: &str) -> FileContext {
+        let prefix_dirs: Vec<&str> = prefix.split('/').filter(|dir| !dir.is_empty()).collect();
+        let test_name = file == "conftest.py"
+            || file.rsplit_once('.').is_some_and(|(stem, ext)| {
+                (ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
+                    && (stem.starts_with("test_") || stem.ends_with("_test"))
+            });
+        if test_name || prefix_dirs.iter().chain(dirs).any(|dir| *dir == "tests") {
+            return FileContext::Test;
+        }
+        // In a member, its own `test/`, `docs/` and `examples/` stand in for
+        // the root's; root `scripts/` and `noxfile.py` have no member
+        // counterpart.
+        let member = MEMBERS.contains(&prefix);
+        let top = if member {
+            dirs.first().copied()
+        } else {
+            prefix_dirs.iter().chain(dirs).next().copied()
+        };
+        match top {
+            Some("test") => FileContext::Test,
+            Some("docs") => FileContext::Docs,
+            Some("examples") => FileContext::Dev,
+            Some("scripts") if !member => FileContext::Dev,
+            None if !member && file == "noxfile.py" => FileContext::Dev,
+            _ => FileContext::Runtime,
+        }
+    }
+
+    /// §10: a `TYPE_CHECKING` or test import keeps its own context; a
+    /// runtime import takes the file's; a `__main__` block import is dev
+    /// only in a runtime file (#681).
+    fn usage_model(import_context: ImportContext, file_context: FileContext) -> UsageContext {
+        match (import_context, file_context) {
+            (ImportContext::Type, _) => UsageContext::Type,
+            (ImportContext::Test, _) | (_, FileContext::Test) => UsageContext::Test,
+            (_, FileContext::Docs) => UsageContext::Docs,
+            (ImportContext::Dev, FileContext::Runtime) | (_, FileContext::Dev) => UsageContext::Dev,
+            (ImportContext::Runtime, FileContext::Runtime) => UsageContext::Runtime,
+        }
+    }
+
+    #[test]
+    fn usage_context_follows_the_spec_table() {
+        let mut dir_lists: Vec<Vec<&str>> = vec![Vec::new()];
+        for depth in 1..=3 {
+            let longer: Vec<Vec<&str>> = dir_lists
+                .iter()
+                .filter(|dirs| dirs.len() == depth - 1)
+                .flat_map(|dirs| {
+                    DIRS.iter()
+                        .map(move |dir| [dirs.as_slice(), &[*dir]].concat())
+                })
+                .collect();
+            dir_lists.extend(longer);
+        }
+        let mut cases: Vec<(String, FileContext)> = Vec::new();
+        for prefix in PREFIXES {
+            for dirs in &dir_lists {
+                for file in FILES {
+                    let path = std::iter::once(*prefix)
+                        .filter(|prefix| !prefix.is_empty())
+                        .chain(dirs.iter().copied())
+                        .chain([*file])
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    cases.push((path, file_context_model(prefix, dirs, file)));
+                }
+            }
+        }
+        cases.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(cases.len(), PREFIXES.len() * 400 * FILES.len());
+
+        let mut layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
+        layout.members = MEMBERS
+            .iter()
+            .map(|path| crate::sources::MemberLayout {
+                path: (*path).to_owned(),
+                layout: LayoutInfo::default(),
+            })
+            .collect();
+        let discovered = |production: bool| {
+            let mut sources = empty_sources();
+            sources.layout = layout.clone();
+            sources.files = cases
+                .iter()
+                .map(|(path, _)| crate::sources::DiscoveredFile {
+                    path: path.clone(),
+                    kind: crate::sources::FileKind::Python,
+                    context: crate::sources::assign_file_context(path),
+                })
+                .collect();
+            crate::sources::apply_member_context(&mut sources, production);
+            sources
+        };
+        // Every file discovered, `--production` dropping the non-runtime
+        // ones (so their context comes from the path again), and none
+        // discovered (an import seen in a file outside the inventory).
+        let (full, production) = (discovered(false), discovered(true));
+        let mut undiscovered = full.clone();
+        undiscovered.files.clear();
+        for (path, context) in &cases {
+            assert_eq!(
+                production
+                    .files
+                    .binary_search_by(|file| file.path.cmp(path))
+                    .is_ok(),
+                context.is_included_in_production(),
+                "production keeps {path}"
+            );
+            for sources in [&full, &production, &undiscovered] {
+                assert_eq!(file_context(path, sources), *context, "{path}");
+                for import_context in IMPORT_CONTEXTS {
+                    assert_eq!(
+                        usage_context_for_import(path, *import_context, sources),
+                        usage_model(*import_context, *context),
+                        "{path} {import_context:?}"
+                    );
+                }
+            }
+        }
+    }
 }
