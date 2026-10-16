@@ -668,6 +668,12 @@ mod tests {
         assert_eq!(modules, ["airflow.sdk", "airflow.sdk.definitions.dag"]);
     }
 
+    #[test]
+    fn within_keeps_every_path_that_starts_with_the_member_directory() {
+        let paths = ["pkg", "pkg-extra/a.py", "pkg/", "pkg/a.py", "pkgx/b.py"];
+        assert_eq!(within(&paths, |path| path, "pkg"), ["pkg/", "pkg/a.py"]);
+    }
+
     fn manifest_at(
         path: std::path::PathBuf,
         name: &str,

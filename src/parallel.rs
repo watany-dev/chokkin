@@ -127,7 +127,21 @@ mod tests {
     fn worker_count_stays_sequential_for_small_inputs() {
         assert_eq!(worker_count(0), 1);
         assert_eq!(worker_count(32), 1);
-        assert!(worker_count(10_000) >= 1);
+    }
+
+    #[test]
+    fn worker_count_uses_every_cpu_for_large_inputs() {
+        let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        assert_eq!(worker_count(32 * available), available);
+    }
+
+    #[test]
+    fn join_hands_the_first_stage_to_a_helper_only_for_large_inputs() {
+        let caller = std::thread::current().id();
+        let (small, ()) = join(1, || std::thread::current().id(), || ());
+        assert_eq!(small, caller);
+        let (large, ()) = join(10_000, || std::thread::current().id(), || ());
+        assert_eq!(large != caller, worker_count(10_000) > 1);
     }
 
     #[test]
