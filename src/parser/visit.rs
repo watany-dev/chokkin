@@ -885,6 +885,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 self.visit_body(&try_stmt.body);
                 self.caught_depth = self.caught_depth.saturating_sub(1);
                 let primaries = imported_roots(&try_stmt.body);
+                let imports = try_stmt
+                    .body
+                    .iter()
+                    .any(|stmt| matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)));
                 for handler in &try_stmt.handlers {
                     let ExceptHandler::ExceptHandler(handler) = handler;
                     if let Some(exc_type) = &handler.type_ {
@@ -892,7 +896,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     }
                     // A bare `except:` catches everything, a failed import included.
                     let import_failed = handler.type_.as_deref().is_none_or(catches_import_error);
-                    if self.module_level && import_failed {
+                    // A broad handler also catches whatever else the body
+                    // raises, so `x = None` there marks a missing package
+                    // only when the body imports one.
+                    let flags = import_failed
+                        && (imports || handler.type_.as_deref().is_some_and(names_import_error));
+                    if self.module_level && flags {
                         self.none_flags
                             .extend(assigned_flags(&handler.body, Expr::is_none_literal_expr));
                     }
@@ -1208,6 +1217,21 @@ fn catches_import_error(exc_type: &Expr) -> bool {
     match exc_type {
         Expr::Tuple(tuple) => tuple.elts.iter().any(is_import_error_class),
         _ => is_import_error_class(exc_type),
+    }
+}
+
+/// `except ImportError:` / `except (ModuleNotFoundError, ...):`, which only
+/// a failed import lands in.
+fn names_import_error(exc_type: &Expr) -> bool {
+    let named = |expr: &Expr| {
+        matches!(
+            subscript_name(expr),
+            Some("ImportError" | "ModuleNotFoundError")
+        )
+    };
+    match exc_type {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(named),
+        _ => named(exc_type),
     }
 }
 
@@ -2108,6 +2132,25 @@ def func(yaml):
                 ("yaml.a", true),
                 ("toml.c", false),
                 ("yaml.b", true),
+            ]
+        );
+    }
+
+    /// A broad handler also catches whatever else the body raises, so its
+    /// `x = None` is a flag only when the body imports something.
+    #[test]
+    fn broad_handler_flags_need_an_import_in_the_body() {
+        let parsed = visit_source(
+            "import os\ntry:\n    token = os.environ[\"TOKEN\"]\nexcept Exception:\n    token = None\ntry:\n    yaml = load()\nexcept ImportError:\n    yaml = None\ntry:\n    import toml\nexcept:\n    toml = None\n\nif token:\n    import requests\nif yaml is not None:\n    import yaml.a\nif toml is not None:\n    import toml.a\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("os", false),
+                ("toml", true),
+                ("requests", false),
+                ("yaml.a", true),
+                ("toml.a", true),
             ]
         );
     }

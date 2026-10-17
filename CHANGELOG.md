@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed import like `except ImportError:` does: the import they fall back
   from keeps its `fallback_for` link (so a dead fallback such as
   `dummy_threading` drops to info), and `x = None` in them sets an
-  availability flag (#967).
+  availability flag when the `try` body imports something; a broad handler
+  around `token = os.environ[...]` sets none (#967).
 - An import inside a function (or `lambda`) defined in a `try:` body or
   `with suppress(ImportError):` is no longer optional: the body runs when
   called, after the `try` stops catching, so a missing package there is
