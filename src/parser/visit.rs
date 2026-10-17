@@ -2508,6 +2508,28 @@ def f(name):
         assert_eq!(guarded, ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"]);
     }
 
+    /// A function importing its own platform module is found by the source
+    /// scan, an aliased one by the module scope's names.
+    #[test]
+    fn platform_tests_outside_the_plain_module_spelling() {
+        for source in [
+            "import sys as s\nif s.platform == \"win32\":\n    import winreg\n",
+            "def f():\n    import sys\n    if sys.platform == \"win32\":\n        import winreg\n",
+            "def f():\n    import os\n    if os.name == \"nt\":\n        import winreg\n",
+            "def f():\n    import platform\n    if platform.system() == \"Windows\":\n        import winreg\n",
+        ] {
+            let parsed = visit_source(source);
+            let winreg = parsed
+                .imports
+                .iter()
+                .find(|import| import.module == "winreg");
+            assert!(
+                winreg.is_some_and(|import| import.platform_guarded),
+                "{source}"
+            );
+        }
+    }
+
     #[test]
     fn walks_elif_branches_with_guards() {
         let parsed = visit_source(

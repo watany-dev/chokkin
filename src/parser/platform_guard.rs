@@ -292,6 +292,11 @@ mod tests {
             names("import sys\ndef f():\n    import os as sys\n"),
             [("sys".to_owned(), PlatformModule::Os)]
         );
+        // A class body binds the class's names, not the function's.
+        assert_eq!(
+            names("import sys\ndef f():\n    class C:\n        sys = 1\n"),
+            [("sys".to_owned(), PlatformModule::Sys)]
+        );
         for shadowed in [
             "import sys\ndef f(sys):\n    pass\n",
             "import sys\ndef f():\n    sys = 1\n",
@@ -299,6 +304,7 @@ mod tests {
             "import sys\ndef f():\n    from x import sys\n",
             "import sys\ndef f():\n    try:\n        pass\n    except E as sys:\n        pass\n",
             "import sys\ndef f():\n    def sys():\n        pass\n",
+            "import sys\ndef f():\n    class sys:\n        pass\n",
             "import sys\nsys = None\ndef f():\n    pass\n",
             "import os.path as sys\ndef f():\n    pass\n",
             "import sys\ndef f(x):\n    match x:\n        case sys:\n            pass\n",
@@ -308,5 +314,15 @@ mod tests {
         ] {
             assert_eq!(names(shadowed), [], "{shadowed}");
         }
+    }
+
+    #[test]
+    fn mentions_need_the_bound_name_and_attribute() {
+        let modules = PlatformModules::from([("s".to_owned(), PlatformModule::Sys)]);
+        assert!(mentions_platform_test(
+            "if s.platform == 'win32': pass",
+            &modules
+        ));
+        assert!(!mentions_platform_test("print(s.argv, platform)", &modules));
     }
 }
