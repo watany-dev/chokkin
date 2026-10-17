@@ -41,6 +41,9 @@ pub struct Gap {
     /// shows in place of the file: an unresolved import's module (#911), a
     /// command's target (#913).
     pub site: Option<(String, Option<u32>)>,
+    /// The root-relative project file the site names, whose findings alone
+    /// the gap lowers: a module a string literal names (#1026).
+    pub target: Option<String>,
 }
 
 /// A workspace member's manifest: what it could not read lowers only the
@@ -136,14 +139,23 @@ pub enum GapKind {
     /// project's target decided that a module only other minors ship is not
     /// stdlib (#936): that script's import of it may be wrong.
     AssumedScriptTargetVersion,
+    /// A string literal in any file is the dotted name of a module no entry
+    /// reaches (#1026): code may load it by that name (airflow's
+    /// `lazy_load_command("pkg.cli.x.cmd")`, gunicorn's `"python:pkg.config"`),
+    /// which the graph does not follow. It lowers that file's CHK001 alone,
+    /// to an info note at likely: a name is weaker evidence than a command
+    /// that runs the file.
+    StringModuleRef,
 }
 
 /// How a gap changes a finding in its scope.
 enum Lowering {
     /// Confidence falls to at most this level.
     Cap(Confidence),
-    /// The finding becomes an info hint at `Maybe`.
-    Hint,
+    /// The finding becomes an info hint, with confidence at most this level:
+    /// `Maybe` where the gap may hold what the finding says is missing,
+    /// `Likely` where a name may merely load the file it reports (#1026).
+    Hint(Confidence),
 }
 
 impl GapKind {
@@ -158,7 +170,9 @@ impl GapKind {
     /// `[project]` is both under its directory: its entries and its
     /// declaration list are unread (#1000). A script's own block is read
     /// separately, so no project manifest gap reaches its findings; what the
-    /// block itself could not read lowers that script's alone (#936).
+    /// block itself could not read lowers that script's alone (#936). A
+    /// string naming a module may load it, so it lowers that file's absence
+    /// finding to a note (#1026).
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
             (
@@ -232,7 +246,10 @@ impl GapKind {
                 | Self::InvalidScriptRequirement,
                 RuleId::Chk003,
                 IssueSubject::ScriptDistribution { .. },
-            ) => Some(Lowering::Hint),
+            ) => Some(Lowering::Hint(Confidence::Maybe)),
+            (Self::StringModuleRef, RuleId::Chk001, IssueSubject::File { .. }) => {
+                Some(Lowering::Hint(Confidence::Likely))
+            },
             _ => None,
         }
     }
@@ -285,6 +302,9 @@ impl GapKind {
                 "the script's `requires-python` could not be read, so the project's target \
                  decided the module is not stdlib"
             },
+            Self::StringModuleRef => {
+                "a string literal names the module, which may be loaded by name"
+            },
         }
     }
 }
@@ -294,8 +314,9 @@ impl Gap {
     /// member's findings, a script's import or block that script's alone, an
     /// assumed stdlib status the imports of that root in that file (and the
     /// script declarations they miss), an invalid requirement the findings
-    /// on the distribution it names, and an archive requirement those and the
-    /// unresolved imports whose root is that name.
+    /// on the distribution it names, an archive requirement those and the
+    /// unresolved imports whose root is that name, and a string naming a
+    /// module that file alone.
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
@@ -348,6 +369,9 @@ impl Gap {
                     |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, &self.file)),
                 )
             },
+            (GapKind::StringModuleRef, subject) => {
+                matches!(subject, IssueSubject::File { path } if self.target.as_deref() == Some(path))
+            },
             _ => true,
         };
         in_member && in_site
@@ -396,6 +420,7 @@ pub fn collect_gaps(
         file: path.clone(),
         kind: GapKind::SkippedEntry,
         member: None,
+        target: None,
         site: None,
     }));
     gaps.extend(unread_public_module_gaps(context.reachability));
@@ -404,6 +429,7 @@ pub fn collect_gaps(
         context,
         &plugins.config_command_targets,
     ));
+    gaps.extend(string_module_ref_gaps(context));
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(path_source_gaps(
         &context.resolution.imports,
@@ -471,6 +497,7 @@ fn module_gaps(
                 file: module.path.clone(),
                 kind,
                 member: None,
+                target: None,
                 site: None,
             });
         };
@@ -499,6 +526,7 @@ fn unread_public_module_gaps(reachability: &ReachabilityReport) -> Vec<Gap> {
             file: file.path.clone(),
             kind: GapKind::UnreadPublicModule,
             member: None,
+            target: None,
             site: None,
         })
         .collect()
@@ -556,6 +584,7 @@ fn unresolved_import_gaps(
                 GapKind::UnresolvedPublicImport
             },
             member: None,
+            target: None,
             site: Some((import.to_owned(), line)),
         })
         .collect()
@@ -617,9 +646,71 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
             file: file.to_owned(),
             kind: GapKind::UnreadCommandTarget,
             member: None,
+            target: None,
             site: Some((text, line)),
         })
         .collect()
+}
+
+/// A string literal that is a whole dotted module name may load the module
+/// it names (airflow's `lazy_load_command("airflow.cli.commands.x.cmd")`,
+/// gunicorn's `"python:pkg.config"`), which the graph does not follow: one
+/// gap per such literal, at its first line in each file, whose name or a
+/// shorter prefix of at least two segments (`pkg.mod.attr` names `pkg.mod`,
+/// never bare `pkg`) resolves to a project file no entry reaches, scoped to
+/// that file (#1026). A literal in any file counts, reached or not, since
+/// the lowering only says the file may be loaded; a file's own name lowers
+/// nothing. A name that resolves to nothing (a third-party module, a
+/// sentence of identifiers) hides no project file, so it is no gap.
+fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
+    let known_paths: BTreeSet<String> = context
+        .sources
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    let layout = &context.sources.layout;
+    let mut gaps = Vec::new();
+    for module in &context.parse.modules {
+        for reference in &module.module_refs {
+            let name = crate::parser::module_ref_name(&reference.text);
+            let Some(target) = resolve_dotted_prefix(name, layout, &known_paths) else {
+                continue;
+            };
+            if target == module.path || is_reached(&target, context.graph, context.reachability) {
+                continue;
+            }
+            gaps.push(Gap {
+                file: module.path.clone(),
+                kind: GapKind::StringModuleRef,
+                member: None,
+                site: Some((reference.text.clone(), Some(reference.line))),
+                target: Some(target),
+            });
+        }
+    }
+    gaps
+}
+
+/// The project file `module` names, or else the one its longest prefix of
+/// at least two segments names. A package's `__init__.py` is never a CHK001
+/// candidate, so a name that stops at a package lowers nothing.
+fn resolve_dotted_prefix(
+    module: &str,
+    layout: &crate::sources::LayoutInfo,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    let mut candidate = module;
+    loop {
+        if let Some(path) = resolve_module_to_path(candidate, layout, known_paths) {
+            return (!path.ends_with("__init__.py")).then_some(path);
+        }
+        let (prefix, _) = candidate.rsplit_once('.')?;
+        if !prefix.contains('.') {
+            return None;
+        }
+        candidate = prefix;
+    }
 }
 
 /// Whether root-relative `path` is below directory `dir`.
@@ -654,12 +745,14 @@ fn path_source_gaps(imports: &[ResolvedImport], dirs: &[String]) -> Vec<Gap> {
         file: dir.clone(),
         kind: GapKind::UnreadPathSource,
         member: None,
+        target: None,
         site: None,
     });
     let import_gaps = first.into_iter().map(|(distribution, (file, line))| Gap {
         file: file.to_owned(),
         kind: GapKind::UnreadPathSourceImport,
         member: None,
+        target: None,
         site: Some((distribution.to_owned(), line)),
     });
     dir_gaps.chain(import_gaps).collect()
@@ -672,6 +765,7 @@ fn settings_gap(unread: &UnreadSettings) -> Gap {
         file: unread.file.clone(),
         kind: GapKind::UnreadDjangoSettings,
         member: None,
+        target: None,
         site: unread.site.clone(),
     }
 }
@@ -711,6 +805,7 @@ fn assumed_target_gaps(
                     file: module.path.clone(),
                     kind: GapKind::AssumedTargetVersion,
                     member: None,
+                    target: None,
                     site: Some((root.to_owned(), Some(line))),
                 }),
         );
@@ -753,6 +848,7 @@ fn script_gaps(
                         file: script.path.clone(),
                         kind: GapKind::InvalidScriptRequirement,
                         member: None,
+                        target: None,
                         site: Some((invalid_requirement_name(raw)?, *line)),
                     })
                 }),
@@ -772,6 +868,7 @@ fn script_gaps(
             file: script.path.clone(),
             kind: GapKind::AssumedScriptTargetVersion,
             member: None,
+            target: None,
             site: Some((root.to_owned(), Some(line))),
         }));
     }
@@ -796,6 +893,7 @@ fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
         file,
         kind: GapKind::RuntimeDependenciesUnknown,
         member: None,
+        target: None,
         site: None,
     })
 }
@@ -828,6 +926,7 @@ fn extras_gap(manifest: &LoadedManifest) -> Option<Gap> {
         file,
         kind: GapKind::UnknownExtras,
         member: None,
+        target: None,
         site,
     })
 }
@@ -862,6 +961,7 @@ fn invalid_requirement_gaps(
                     DeclarationBucket::Dev | DeclarationBucket::Type => GapKind::InvalidRequirement,
                 },
                 member: None,
+                target: None,
                 site: Some((invalid_requirement_name(raw)?, *line)),
             }),
             _ => None,
@@ -901,6 +1001,7 @@ fn archive_requirement_gaps(
                     GapKind::ArchiveRequirement
                 },
                 member: None,
+                target: None,
                 site: Some((name, dep.origin.line)),
             })
         })
@@ -921,9 +1022,9 @@ pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
             };
             match lowering {
                 Lowering::Cap(cap) => candidate.confidence = candidate.confidence.min(cap),
-                Lowering::Hint => {
+                Lowering::Hint(cap) => {
                     candidate.severity = Severity::Info;
-                    candidate.confidence = Confidence::Maybe;
+                    candidate.confidence = candidate.confidence.min(cap);
                 },
             }
             candidate.explain.details.push(gap_detail(kind, &in_scope));
@@ -995,6 +1096,7 @@ mod tests {
             file: file.to_owned(),
             kind,
             member: None,
+            target: None,
             site: None,
         }
     }
@@ -1063,6 +1165,64 @@ mod tests {
         }
     }
 
+    /// A string naming a module turns only that file's CHK001 into a likely
+    /// hint; other files and distributions keep their level (#1026).
+    #[test]
+    fn string_module_ref_lowers_only_the_named_file() {
+        let mut gap = gap("acme/cli.py", GapKind::StringModuleRef);
+        gap.target = Some("acme/commands/cheat_sheet.py".to_owned());
+        gap.site = Some(("acme.commands.cheat_sheet.run".to_owned(), Some(2)));
+        let found = lowered(
+            &[gap],
+            vec![
+                candidate(RuleId::Chk001, file("acme/commands/cheat_sheet.py")),
+                candidate(RuleId::Chk001, file("acme/orphan.py")),
+                candidate(RuleId::Chk002, distribution("requests")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+    }
+
+    /// `pkg.mod.attr` resolves through its longest prefix that is a project
+    /// file; a bare package name never does, and a name that stops at a
+    /// package `__init__.py` resolves to nothing, since CHK001 never reports
+    /// one.
+    #[test]
+    fn dotted_prefixes_resolve_down_to_two_segments() {
+        let layout = crate::sources::LayoutInfo {
+            packages: vec!["acme".to_owned()],
+            ..Default::default()
+        };
+        let known: BTreeSet<String> = [
+            "acme/__init__.py",
+            "acme/commands/__init__.py",
+            "acme/commands/cheat_sheet.py",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let resolve = |module: &str| resolve_dotted_prefix(module, &layout, &known);
+        assert_eq!(
+            resolve("acme.commands.cheat_sheet.run").as_deref(),
+            Some("acme/commands/cheat_sheet.py")
+        );
+        assert_eq!(
+            resolve("acme.commands.cheat_sheet").as_deref(),
+            Some("acme/commands/cheat_sheet.py")
+        );
+        assert_eq!(resolve("acme.commands.missing.run"), None);
+        assert_eq!(resolve("acme.commands"), None);
+        assert_eq!(resolve("acme.missing.run"), None);
+        assert_eq!(resolve("other.mod"), None);
+    }
+
     /// A path source without `[project]` lowers findings only under its
     /// directory, and its imports cap only the distribution they name (#1000).
     #[test]
@@ -1105,6 +1265,7 @@ mod tests {
             file: "sub/tools/gen.py".to_owned(),
             kind: GapKind::UnreadPathSourceImport,
             member: None,
+            target: None,
             site: Some(("click".to_owned(), Some(1))),
         };
         let found = lowered(
@@ -1195,6 +1356,7 @@ mod tests {
             file: "pyproject.toml".to_owned(),
             kind,
             member: None,
+            target: None,
             site: Some(("rich".to_owned(), None)),
         };
         let candidates = || {
@@ -1232,6 +1394,7 @@ mod tests {
             file: "requirements.txt".to_owned(),
             kind,
             member: None,
+            target: None,
             site: Some(("foo-bar".to_owned(), Some(2))),
         };
         let resolved = |module: &str, distribution: &str| IssueSubject::Import {
@@ -1367,6 +1530,7 @@ mod tests {
             kind: GapKind::InvalidRequirement,
             member: member.map(str::to_owned),
             site: Some((name.to_owned(), Some(2))),
+            target: None,
         };
         let mut candidates = vec![
             candidate(RuleId::Chk003, resolved("yaml", "pyyaml")),
@@ -1595,6 +1759,7 @@ mod tests {
                     file: "tool.py".to_owned(),
                     kind: GapKind::InvalidScriptRequirement,
                     member: None,
+                    target: None,
                     site: Some(("rich".to_owned(), Some(2))),
                 },
             ],

@@ -473,28 +473,12 @@ mod tests {
         let mut parse = ParseSummary::default();
         parse.modules.push(crate::parser::ParsedModule {
             path: "src/acme/main.py".to_owned(),
-            imports: Vec::new(),
-            dynamic_imports: Vec::new(),
-            dynamic_import_prefixes: Vec::new(),
-            pytest_plugins: Vec::new(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            exports: crate::parser::Exports::Absent,
-            used_import_bindings: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
                 codes: vec!["CHK003".to_owned()],
                 line: 4,
             }],
-            has_opaque_dynamic_import: false,
-            runs_python_file: false,
-            deprecated_shim: false,
-            shell_commands: Vec::new(),
-            sys_path_hints: Vec::new(),
-            decorator_sites: Vec::new(),
-            diagnostics: Vec::new(),
-            skipped: false,
-            has_unread_cells: false,
+            ..crate::parser::ParsedModule::default()
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -528,28 +512,12 @@ mod tests {
         let mut parse = ParseSummary::default();
         parse.modules.push(crate::parser::ParsedModule {
             path: "src/acme/api.py".to_owned(),
-            imports: Vec::new(),
-            dynamic_imports: Vec::new(),
-            dynamic_import_prefixes: Vec::new(),
-            pytest_plugins: Vec::new(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            exports: crate::parser::Exports::Absent,
-            used_import_bindings: Vec::new(),
             ignores: vec![IgnoreDirective {
                 file_level: false,
                 codes: vec!["CHK006".to_owned()],
                 line: 12,
             }],
-            has_opaque_dynamic_import: false,
-            runs_python_file: false,
-            deprecated_shim: false,
-            shell_commands: Vec::new(),
-            sys_path_hints: Vec::new(),
-            decorator_sites: Vec::new(),
-            diagnostics: Vec::new(),
-            skipped: false,
-            has_unread_cells: false,
+            ..crate::parser::ParsedModule::default()
         });
         let matcher = IgnoreMatcher::build(&config, &parse, &ResolutionIndex::default());
         let candidate = IssueCandidate {
@@ -678,24 +646,8 @@ mod tests {
         let mut parse = ParseSummary::default();
         parse.modules.push(crate::parser::ParsedModule {
             path: path.to_owned(),
-            imports: Vec::new(),
-            dynamic_imports: Vec::new(),
-            dynamic_import_prefixes: Vec::new(),
-            pytest_plugins: Vec::new(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            exports: crate::parser::Exports::Absent,
-            used_import_bindings: Vec::new(),
             ignores,
-            has_opaque_dynamic_import: false,
-            runs_python_file: false,
-            deprecated_shim: false,
-            shell_commands: Vec::new(),
-            sys_path_hints: Vec::new(),
-            decorator_sites: Vec::new(),
-            diagnostics: Vec::new(),
-            skipped: false,
-            has_unread_cells: false,
+            ..crate::parser::ParsedModule::default()
         });
         IgnoreMatcher::build(&default_config(), &parse, &ResolutionIndex::default())
     }

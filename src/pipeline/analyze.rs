@@ -233,6 +233,7 @@ fn run_analysis_core(
     );
     crate::entry::add_script_roots(&mut entry, &probe.scripts, sources, production);
     crate::entry::add_build_backend_roots(&mut entry, &parse, &sources.files);
+    crate::entry::add_main_block_roots(&mut entry, &parse, &sources.files, production);
     let entry_warnings = entry_warnings(&entry, &probe.sources);
     let skipped_entries: Vec<String> = entry_warnings
         .iter()
@@ -395,6 +396,7 @@ fn run_analysis_core(
     warnings.extend(opaque_import_warning(&gaps));
     warnings.extend(archive_requirement_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));
+    warnings.extend(string_module_ref_warning(&gaps));
     let issues = emit_issues(
         &reachability,
         &deps,
@@ -503,6 +505,33 @@ fn command_target_warnings(gaps: &[Gap]) -> Vec<ProbeWarning> {
             })
         })
         .collect()
+}
+
+/// A string naming a module has no warning of its own either: one per run,
+/// at the first literal by file and line (#1026).
+fn string_module_ref_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
+    let mut sites: Vec<(&str, u32, &str, &str)> = gaps
+        .iter()
+        .filter(|gap| gap.kind == GapKind::StringModuleRef)
+        .filter_map(|gap| {
+            let (text, line) = gap.site.as_ref()?;
+            Some((
+                gap.file.as_str(),
+                (*line)?,
+                text.as_str(),
+                gap.target.as_deref()?,
+            ))
+        })
+        .collect();
+    sites.sort_unstable();
+    let (path, line, text, target) = *sites.first()?;
+    Some(ProbeWarning::StringModuleRef {
+        path: path.to_owned(),
+        line,
+        text: text.to_owned(),
+        target: target.to_owned(),
+        more: sites.len() - 1,
+    })
 }
 
 /// What the user needs to know about one parsed module: a skipped module is

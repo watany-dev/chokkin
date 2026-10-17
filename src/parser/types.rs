@@ -282,6 +282,16 @@ impl Exports {
     }
 }
 
+/// A string literal that names a module by its dotted name (#1026):
+/// `"pkg.mod"`, `"pkg.mod.attr"` or `"python:pkg.mod"`, as written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModuleRef {
+    /// The literal as written, `python:` prefix included.
+    pub text: String,
+    /// 1-based line of the literal's first occurrence in the module.
+    pub line: u32,
+}
+
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
@@ -340,6 +350,14 @@ pub struct ParsedModule {
     /// outside callers (#778).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub deprecated_shim: bool,
+    /// A module-level `if __name__ == "__main__":` block: the file is run as
+    /// a script, so it is an entry root (#1026).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_main_block: bool,
+    /// String literals that are whole dotted module names, which may load
+    /// the module they name (#1026): each distinct literal at its first line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub module_refs: Vec<ModuleRef>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,

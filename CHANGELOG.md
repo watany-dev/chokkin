@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A file with a module-level `if __name__ == "__main__":` block is an entry
+  root (`--trace` origin `auto: main-block`), at any depth and whatever its
+  name, since it is written to be run as a script. Its imports count as used
+  and it is no longer CHK001 (#1026).
+
+### Changed
+- A string literal anywhere in the project that is a whole dotted module name
+  (`"pkg.mod"`, `"pkg.mod.attr"`, `"python:pkg.mod"`) and names a project
+  file no entry reaches lowers that file's CHK001 to an info note at
+  `likely`, with the literal's site in `--explain`; one `parse:` warning per
+  run names the first such literal. Airflow's `lazy_load_command` targets and
+  gunicorn's `python:` config no longer report as unused files (#1026).
+
 ### Fixed
 - A bare `except:` and `except Exception:` / `except BaseException:` catch a
   failed import like `except ImportError:` does: the import they fall back
