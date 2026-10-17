@@ -6,6 +6,7 @@ use crate::config::{EntrySpec, PluginId};
 use crate::path_util::rel_to_root;
 use crate::sources::{DiscoveredSources, FileContext, path_to_module};
 
+use super::commands::is_dotted_identifier;
 use super::context::PluginContext;
 use super::types::{PluginContribution, PluginEntry, ReferenceOrigin};
 use super::util::{decorator_suffix, push_app_ref, push_binary, push_decorated_modules};
@@ -96,6 +97,7 @@ fn extract_scripts(root: &Path, sources: &DiscoveredSources, contrib: &mut Plugi
 /// reference as the module form, so the app names in it are used; a file the
 /// layout names no module for (a script at the root of a project without a
 /// package) is an entry root, as Flask imports it from its own directory.
+/// A module name of such a file (`--app hello`) is read as its path.
 ///
 /// A path naming no discovered file, an absolute one, one leaving the root,
 /// or one built from a variable adds nothing: like a command target naming
@@ -108,12 +110,24 @@ fn push_flask_app(
 ) {
     let value = value.trim().trim_matches(['"', '\'']);
     let (path, attr) = split_app_attr(value);
-    if !is_file_path(path) {
-        push_app_ref(contrib, value, origin, &APP_NAMES);
-        return;
-    }
-    let Some(file) = app_file(sources, path) else {
-        return;
+    let file = if is_file_path(path) {
+        let Some(file) = app_file(sources, path) else {
+            return;
+        };
+        file
+    } else {
+        // `prepare_import` puts the working directory on `sys.path` for a
+        // module name too, so `hello` is the root's `hello.py` even where
+        // the layout names no module for it.
+        let unnamed = is_dotted_identifier(path)
+            .then(|| app_file(sources, &path.replace('.', "/")))
+            .flatten()
+            .filter(|file| path_to_module(file, &sources.layout).is_none());
+        let Some(file) = unnamed else {
+            push_app_ref(contrib, value, origin, &APP_NAMES);
+            return;
+        };
+        file
     };
     let symbol = attr.map(|attr| attr.split_once('(').map_or(attr, |(name, _)| name).trim());
     if let Some(module) = path_to_module(file, &sources.layout) {

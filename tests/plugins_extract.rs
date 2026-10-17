@@ -836,15 +836,34 @@ fn flask_plugin_reads_app_file_paths() {
 
 /// A path to a file the layout names no module for, such as a script at the
 /// root of a project without a package, is an entry root: Flask imports it
-/// from its own directory (#866).
+/// from its own directory (#866). So is such a file named as a module, since
+/// Flask puts the working directory on `sys.path` for it too.
 #[test]
 fn flask_plugin_roots_app_files_without_module_names() {
     let hints = extract_fixture("flask_root_app");
     let contrib = plugin_contrib(&hints, PluginId::Flask);
-    assert_eq!(entry_paths(contrib), ["hello.py"]);
-    assert_eq!(contrib.entries[0].origin.file, "scripts/run.sh");
-    assert_eq!(contrib.entries[0].origin.label, "flask --app");
+    let mut entries: Vec<_> = contrib
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.spec.path.as_str(),
+                entry.spec.symbol.as_deref(),
+                entry.origin.file.as_str(),
+                entry.origin.label.as_str(),
+            )
+        })
+        .collect();
+    entries.sort_unstable();
+    assert_eq!(
+        entries,
+        [
+            ("admin.py", Some("app"), ".flaskenv", "FLASK_APP"),
+            ("hello.py", None, "scripts/run.sh", "flask --app"),
+        ]
+    );
     assert_eq!(module_ref_keys(contrib), []);
+    assert_eq!(symbol_ref_keys(contrib), []);
 }
 
 /// `celery -A pkg.mod` names the module Celery searches for `app` / `celery`,
