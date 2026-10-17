@@ -5540,7 +5540,8 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
 /// Apps named by `flask --app` / `celery -A` in `scripts/` and `bin/` shell
 /// scripts are entry roots, so only the control module is unused. The
 /// `*_bare_module` fixtures name a module without `:attr`, whose app the tool
-/// finds by name, so it is no unused export either (#851).
+/// finds by name, so it is no unused export either (#851); `flask_app_paths`
+/// and `flask_root_app` name them by file path (#866).
 #[test]
 fn binary_shell_script_apps_are_entry_roots() {
     for (fixture, unused) in [
@@ -5548,6 +5549,8 @@ fn binary_shell_script_apps_are_entry_roots() {
         ("celery_shell_scripts", "src/worker/orphan.py"),
         ("flask_bare_module", "src/web/orphan.py"),
         ("celery_bare_module", "src/worker/orphan.py"),
+        ("flask_app_paths", "src/web/orphan.py"),
+        ("flask_root_app", "orphan.py"),
     ] {
         let keys = issue_keys(&json_issues(
             &fixture_path(&["plugins", fixture]),

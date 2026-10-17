@@ -804,6 +804,49 @@ fn flask_plugin_reads_bare_app_modules() {
     );
 }
 
+/// A file path after `FLASK_APP=` / `--app` names the module Flask's
+/// `prepare_import` imports: a `.py` file or a package directory, with or
+/// without `:attr` (#866). A path naming no discovered file, leaving the
+/// root, or built from a variable is not read.
+#[test]
+fn flask_plugin_reads_app_file_paths() {
+    let hints = extract_fixture("flask_app_paths");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    assert_eq!(
+        module_ref_keys(contrib),
+        [
+            ("web.app", ".flaskenv", Some(1), "FLASK_APP"),
+            ("web.pkg", "bin/pkg.sh", Some(2), "flask --app"),
+            ("web.wsgi", "scripts/run.sh", Some(2), "flask --app"),
+        ]
+    );
+    assert_eq!(used_symbol_keys(contrib).len(), 12);
+    assert_eq!(
+        symbol_ref_keys(contrib),
+        [(
+            "web.factory",
+            "make_app",
+            "bin/serve.sh",
+            Some(2),
+            "flask --app"
+        )]
+    );
+    assert_eq!(entry_paths(contrib), Vec::<&str>::new());
+}
+
+/// A path to a file the layout names no module for, such as a script at the
+/// root of a project without a package, is an entry root: Flask imports it
+/// from its own directory (#866).
+#[test]
+fn flask_plugin_roots_app_files_without_module_names() {
+    let hints = extract_fixture("flask_root_app");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    assert_eq!(entry_paths(contrib), ["hello.py"]);
+    assert_eq!(contrib.entries[0].origin.file, "scripts/run.sh");
+    assert_eq!(contrib.entries[0].origin.label, "flask --app");
+    assert_eq!(module_ref_keys(contrib), []);
+}
+
 /// `celery -A pkg.mod` names the module Celery searches for `app` / `celery`,
 /// or the attribute `mod` of `pkg` (#851).
 #[test]
