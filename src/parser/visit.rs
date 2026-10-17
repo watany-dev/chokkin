@@ -2146,7 +2146,7 @@ def func(yaml):
     #[test]
     fn broad_handler_flags_need_an_import_in_the_body() {
         let parsed = visit_source(
-            "import os\ntry:\n    token = os.environ[\"TOKEN\"]\nexcept Exception:\n    token = None\ntry:\n    yaml = load()\nexcept ImportError:\n    yaml = None\ntry:\n    import toml\nexcept:\n    toml = None\n\nif token:\n    import requests\nif yaml is not None:\n    import yaml.a\nif toml is not None:\n    import toml.a\n",
+            "import os\ntry:\n    token = os.environ[\"TOKEN\"]\nexcept Exception:\n    token = None\ntry:\n    yaml = load()\nexcept ImportError:\n    yaml = None\ntry:\n    import toml\nexcept:\n    toml = None\ntry:\n    lxml = load()\nexcept (OSError, ModuleNotFoundError):\n    lxml = None\n\nif token:\n    import requests\nif yaml is not None:\n    import yaml.a\nif toml is not None:\n    import toml.a\nif lxml is not None:\n    import lxml.a\n",
         );
         assert_eq!(
             optional_by_module(&parsed),
@@ -2156,6 +2156,7 @@ def func(yaml):
                 ("requests", false),
                 ("yaml.a", true),
                 ("toml.a", true),
+                ("lxml.a", true),
             ]
         );
     }
