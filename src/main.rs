@@ -10,9 +10,9 @@ use std::process::ExitCode;
 
 use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, RenderContext, RuntimeOverrides, VERSION, analyze_project,
-    config_label_from_sources, explain_issue, init_project, parse_cli_args, probe_project,
-    render_fix_report, render_issues, trace_output, write_diagnostics, write_probe_report,
-    write_probe_warnings,
+    config_label_from_sources, escape_control, escape_control_lines, explain_issue, init_project,
+    parse_cli_args, probe_project, render_baseline_report, render_fix_report, render_issues,
+    trace_output, write_diagnostics, write_probe_report, write_probe_warnings,
 };
 
 const USAGE: &str = "\
@@ -95,7 +95,10 @@ fn main() -> ExitCode {
 fn run_init(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverrides) -> ExitCode {
     match init_project(start, project_root, overrides) {
         Ok(report) => {
-            println!("wrote starter [tool.chokkin] to {}", report.path.display());
+            println!(
+                "wrote starter [tool.chokkin] to {}",
+                escape_control(&report.path.display().to_string())
+            );
             ExitCode::from(ExitStatus::Success.code())
         },
         Err(error) => fail(&error, error.is_usage_error()),
@@ -132,7 +135,8 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
             None => {
                 let _ = writeln!(
                     std::io::stderr(),
-                    "explain: no matching issue for `{selector}`"
+                    "explain: no matching issue for `{}`",
+                    escape_control(selector)
                 );
             },
         }
@@ -172,8 +176,10 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
 
-    if let Some(baseline) = &report.baseline
-        && write_baseline_report(baseline, &mut std::io::stderr()).is_err()
+    if let Some(baseline_text) = report.baseline.as_ref().and_then(render_baseline_report)
+        && std::io::stderr()
+            .write_all(baseline_text.as_bytes())
+            .is_err()
     {
         return ExitCode::from(ExitStatus::InternalError.code());
     }
@@ -182,7 +188,7 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
 }
 
 fn fail(error: &dyn Display, usage: bool) -> ExitCode {
-    eprintln!("{error}");
+    eprintln!("{}", escape_control_lines(&error.to_string()));
     let status = if usage {
         ExitStatus::UsageError
     } else {
@@ -196,23 +202,6 @@ fn print_stdout(text: &str) -> std::io::Result<()> {
     stdout.write_all(text.as_bytes())?;
     if !text.ends_with('\n') {
         stdout.write_all(b"\n")?;
-    }
-    Ok(())
-}
-
-fn write_baseline_report(
-    report: &chokkin::BaselineReport,
-    out: &mut impl Write,
-) -> std::io::Result<()> {
-    let path = report.path.as_deref().unwrap_or("(unknown)");
-    if report.written > 0 {
-        writeln!(out, "Baseline: wrote {} issues to {path}", report.written)?;
-    } else if report.suppressed > 0 {
-        writeln!(
-            out,
-            "Baseline: suppressed {} existing issues from {path}",
-            report.suppressed
-        )?;
     }
     Ok(())
 }

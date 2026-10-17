@@ -6,6 +6,7 @@ use crate::ExitStatus;
 use crate::config::{ChokkinConfig, RuntimeOverrides};
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
+use crate::reporters::escape_control;
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::DependencyReport;
 use crate::rules::types::{
@@ -149,14 +150,16 @@ fn subject_key_matches(subject: &IssueSubject, key: &str) -> bool {
     }
 }
 
+/// The explanation, one line per detail, each with the analyzed project's
+/// control characters escaped as in the text reporters (#996).
 fn format_explain(issue: &Issue) -> String {
-    let mut lines = Vec::new();
-    if let Some(explain) = &issue.explain {
-        lines.push(explain.summary.clone());
-        lines.extend(explain.details.clone());
-    } else {
-        lines.push(issue.message.clone());
-    }
+    let lines: Vec<_> = match &issue.explain {
+        Some(explain) => std::iter::once(&explain.summary)
+            .chain(&explain.details)
+            .map(|line| escape_control(line))
+            .collect(),
+        None => vec![escape_control(&issue.message)],
+    };
     lines.join("\n")
 }
 

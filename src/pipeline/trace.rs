@@ -5,6 +5,7 @@ use std::fmt::Write;
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::graph::{FileId, GraphEdge, ProjectGraph};
 use crate::reachability::{ModuleIndex, ReachabilityReport, TracePath, TraceStep, trace_to_file};
+use crate::reporters::escape_control;
 use crate::sources::DiscoveredSources;
 
 /// Normalize a user-supplied path for graph lookup.
@@ -32,7 +33,7 @@ pub(super) fn format_trace(path: &TracePath) -> String {
             "├─ "
         };
         out.push_str(prefix);
-        out.push_str(&format_step(step));
+        out.push_str(&escape_control(&format_step(step)));
         out.push('\n');
     }
     out
@@ -59,7 +60,10 @@ pub fn trace_output(
     target: &str,
 ) -> String {
     let Some(file_id) = file_id_for_trace(graph, target) else {
-        return format!("trace: file `{target}` was not discovered in this project\n");
+        return format!(
+            "trace: file `{}` was not discovered in this project\n",
+            escape_control(target)
+        );
     };
     if let Some(path) = trace_to_file(report, file_id) {
         return format_trace(&path);
@@ -76,7 +80,7 @@ fn format_negative_trace(
     target: &str,
     file_id: FileId,
 ) -> String {
-    let mut out = format!("Negative trace for {target}:\n\n");
+    let mut out = format!("Negative trace for {}:\n\n", escape_control(target));
     out.push_str("  reason: not reachable from any entry root\n\n");
 
     out.push_str("  entry roots analyzed:\n");
@@ -93,7 +97,8 @@ fn format_negative_trace(
                 .origins
                 .first()
                 .map_or_else(|| "entry".to_owned(), format_entry_origin);
-            let _ = writeln!(out, "    {prefix}{} ({origin})", root.path);
+            let line = format!("{} ({origin})", root.path);
+            let _ = writeln!(out, "    {prefix}{}", escape_control(&line));
         }
     }
 
@@ -114,7 +119,8 @@ fn format_negative_trace(
             } else {
                 " (file also unreachable)".to_owned()
             };
-            let _ = writeln!(out, "    {prefix}{path}:{line} imports {module}{suffix}");
+            let import = format!("{path}:{line} imports {module}");
+            let _ = writeln!(out, "    {prefix}{}{suffix}", escape_control(&import));
         }
     }
 

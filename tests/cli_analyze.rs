@@ -5967,6 +5967,107 @@ fn binary_escapes_control_characters_from_the_project() {
     assert!(!issues.contains("\"CHK003\""), "{issues}");
 }
 
+/// A character the text outputs must spell out: controls other than the line
+/// break, bidi embedding/override/isolate and line/paragraph separators.
+fn unescaped(ch: char) -> bool {
+    ch != '\n'
+        && (ch.is_control()
+            || matches!(
+                ch,
+                '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}'
+            ))
+}
+
+/// The other outputs that echo the analyzed project — `--probe`, `--trace`,
+/// `--explain`, a fatal error quoting the manifest and the baseline message —
+/// escape control characters too, and bidi controls and line separators along
+/// with them, which reorder or break a terminal line (#996).
+#[cfg(unix)]
+#[test]
+fn binary_escapes_control_characters_outside_the_reporters() {
+    const FORGED: &str = "acme/bad\x1b[31m\nCHK001 forged.py";
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[build-system]\nrequires = []\nbuild-backend = \"evil\\u001b[31m\"\n\n\
+             [project]\nname = \"acme\\u2028Project : forged\"\nversion = \"0.1.0\"\n\
+             dependencies = []\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/__init__.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/orphan.py", ""),
+        (FORGED, "import acme.orphan\n"),
+        (
+            "scripts/run\u{202e}yp.py",
+            "# /// script\n# requires-python = \">=3.11\\u202e\"\n# dependencies = []\n# ///\n",
+        ),
+    ]);
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .args(args)
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        for text in [&stdout, &stderr] {
+            assert!(!text.chars().any(unescaped), "{args:?}: {text:?}");
+        }
+        (stdout, stderr)
+    };
+
+    let (probe, _) = run(&["--probe"]);
+    assert!(
+        probe.contains("Project : acme\\u{2028}Project : forged\n"),
+        "{probe}"
+    );
+    assert!(
+        probe.contains("build backend    : evil\\u{1b}[31m"),
+        "{probe}"
+    );
+    assert!(
+        probe.contains(
+            "scripts/run\\u{202e}yp.py (0 dependencies, requires-python >=3.11\\u{202e})"
+        ),
+        "{probe}"
+    );
+
+    let (_, trace) = run(&["--trace", FORGED]);
+    assert!(
+        trace.contains("Negative trace for acme/bad\\u{1b}[31m\\u{a}CHK001 forged.py:"),
+        "{trace}"
+    );
+    let (_, trace) = run(&["--trace", "acme/orphan.py"]);
+    assert!(
+        trace.contains("acme/bad\\u{1b}[31m\\u{a}CHK001 forged.py:1 imports acme.orphan"),
+        "{trace}"
+    );
+
+    let (_, explain) = run(&["--explain", &format!("CHK001:{FORGED}")]);
+    assert!(
+        explain.contains("acme/bad\\u{1b}[31m\\u{a}CHK001 forged.py"),
+        "{explain}"
+    );
+
+    let (_, explain) = run(&["--explain", "CHK001:none\u{1b}[31m.py"]);
+    assert!(
+        explain.contains("no matching issue for `CHK001:none\\u{1b}[31m.py`"),
+        "{explain}"
+    );
+
+    let (_, baseline) = run(&["--baseline", "base\u{1b}[31m.json", "--update-baseline"]);
+    assert!(baseline.contains("to base\\u{1b}[31m.json"), "{baseline}");
+
+    fs::write(
+        project.path().join("pyproject.toml"),
+        "[project]\nname = \"acme\"\n\x1b[31m = 1\n",
+    )
+    .expect("write pyproject");
+    let (_, error) = run(&["--probe"]);
+    assert!(error.contains("\\u{1b}[31m"), "{error}");
+    assert!(error.lines().count() > 1, "{error}");
+}
+
 /// locust's shape (#977): the wheel includes `pytest_locust/`, a namespace
 /// directory with only `plugin.py`, named by a `pytest11` entry point. It is
 /// a package, so the entry maps and the plugin is neither unused nor its
