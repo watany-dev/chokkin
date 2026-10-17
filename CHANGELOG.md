@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A dependency whose `python_version` / `python_full_version` marker holds
+  on every interpreter `requires-python` allows (intersected with Poetry's
+  `python` dependency, or a script block's own `requires-python`), such as
+  `foo; python_version >= "3.8"` under `>=3.9`, is unconditional for CHK002
+  and reported when unused; a marker with other variables or forms outside
+  the model stays conditional (#919).
 - In `setup.py`, `reqs[0] = "b"` and `del reqs[0]` with an integer literal
   index in range replace or remove that element, so the old requirement is
   no longer declared and reported as CHK002; other indexes still leave the

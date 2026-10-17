@@ -158,6 +158,7 @@ pub(super) fn extract_pyproject(
     }
 
     poetry_metadata_fallback(&table, &mut result.metadata);
+    result.metadata.poetry_python_marker = poetry_python_constraint(&table);
     extract_build_system(&table, &rel, &mut result);
 
     if let Some(groups) = table.get("dependency-groups").and_then(Value::as_table) {
@@ -309,6 +310,18 @@ fn poetry_metadata_fallback(table: &toml::Table, metadata: &mut ProjectMetadata)
     if metadata.version.is_none() {
         metadata.version = string("version");
     }
+}
+
+/// `[tool.poetry.dependencies].python` as a marker (#919). It is read even
+/// with `package-mode = false`: Poetry still refuses other interpreters.
+fn poetry_python_constraint(table: &toml::Table) -> Option<String> {
+    table
+        .get("tool")?
+        .get("poetry")?
+        .get("dependencies")?
+        .get("python")?
+        .as_str()
+        .and_then(poetry_python_marker)
 }
 
 /// `[build-system]` plus the wheel target tables it selects (R-05).
@@ -1099,6 +1112,11 @@ mod tests {
         .expect("valid pyproject");
         assert!(result.warnings.contains(&ManifestWarning::PoetryDetected));
         assert!(result.poetry_detected);
+        // `python` bounds the interpreters instead of declaring one (#919).
+        assert_eq!(
+            result.metadata.poetry_python_marker.as_deref(),
+            Some("python_version >= \"3.11\" and python_version < \"4\"")
+        );
         assert_eq!(result.dependencies.len(), 4);
         assert!(
             result

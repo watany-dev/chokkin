@@ -80,6 +80,11 @@ pub struct ProjectMetadata {
     pub version: Option<String>,
     /// `[project].requires-python`, else `python_requires` from setup.cfg or setup.py.
     pub requires_python: Option<String>,
+    /// `[tool.poetry.dependencies].python` as the PEP 508 marker Poetry
+    /// constraints are read into (§4); it bounds the interpreters like
+    /// `requires-python` (#919).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poetry_python_marker: Option<String>,
     /// `[project].dynamic` entries, e.g. `dependencies`.
     pub dynamic: Vec<String>,
     /// `[project].classifiers`.

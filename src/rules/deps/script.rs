@@ -2,10 +2,11 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use super::unused::is_conditional;
 use super::used::{sorted_paths, within};
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
-use crate::manifest::{InlineScript, normalize_distribution_name};
+use crate::manifest::{InlineScript, normalize_distribution_name, requires_python_range};
 use crate::parser::{ParseSummary, ParsedModule};
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
@@ -252,10 +253,14 @@ fn unused_in_script(
 ) -> Vec<IssueCandidate> {
     let mut seen = BTreeSet::new();
     let mut candidates = Vec::new();
+    let supported_python = script
+        .requires_python
+        .as_deref()
+        .and_then(requires_python_range);
     for dep in &script.dependencies {
         let name = normalize_distribution_name(&dep.name);
         if dep.opaque
-            || (!strict && dep.marker.is_some())
+            || (!strict && is_conditional(dep, supported_python.as_ref()))
             || used.contains(&name)
             || !seen.insert(name.clone())
         {
@@ -456,6 +461,38 @@ mod tests {
                 Confidence::Likely,
                 "pywin32".to_owned()
             )]
+        );
+    }
+
+    #[test]
+    fn marker_implied_by_the_script_requires_python_is_unconditional() {
+        // #919: every interpreter the block allows satisfies the first marker.
+        let script = InlineScript {
+            path: "scripts/tool.py".to_owned(),
+            dependencies: vec![
+                DeclaredDependency {
+                    marker: Some("python_version >= '3.8'".to_owned()),
+                    ..dependency("tomli-w", 3)
+                },
+                DeclaredDependency {
+                    marker: Some("python_version < '3.11'".to_owned()),
+                    ..dependency("tomli", 4)
+                },
+            ],
+            requires_python: Some(">=3.9".to_owned()),
+            target_version: None,
+            invalid_requirements: Vec::new(),
+        };
+        let names: Vec<_> = unused_in_script(&script, &BTreeSet::new(), false)
+            .into_iter()
+            .map(|candidate| candidate.subject)
+            .collect();
+        assert_eq!(
+            names,
+            [IssueSubject::ScriptDistribution {
+                script: "scripts/tool.py".to_owned(),
+                name: "tomli-w".to_owned(),
+            }]
         );
     }
 

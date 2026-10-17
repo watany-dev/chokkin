@@ -6,7 +6,7 @@ use indexmap::IndexSet;
 
 use crate::manifest::{
     DeclaredDependency, DependencyContext, InlineScript, LoadedManifest,
-    normalize_distribution_name,
+    normalize_distribution_name, supported_python,
 };
 use crate::plugins::PluginHints;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
@@ -117,6 +117,7 @@ fn reconcile_project(
         build_requires: &manifest.metadata.build_requires,
     };
 
+    let supported_python = supported_python(&manifest.metadata);
     let metapackage = ships_no_code(manifest, context.surface);
     let build_groups = build_environment_groups(manifest);
     for deps in declared.values() {
@@ -131,6 +132,7 @@ fn reconcile_project(
             &used,
             config,
             strict,
+            supported_python.as_ref(),
             Some(&evidence),
         ));
     }

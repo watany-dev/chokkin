@@ -947,6 +947,42 @@ fn binary_invalid_egg_is_an_invalid_requirement() {
 }
 
 #[test]
+fn binary_marker_implied_by_requires_python_is_unconditional() {
+    // #919: every interpreter `requires-python` allows satisfies the markers
+    // of `foo` and `bar`, so CHK002 reports them; `baz` and `qux` may still
+    // be skipped on a supported interpreter, so they stay conditional.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"app\"\nversion = \"0\"\nrequires-python = \">=3.9\"\ndependencies = [\n  \"foo; python_version >= '3.8'\",\n  \"bar; python_full_version >= '3.9.0'\",\n  \"baz; python_version < '3.12'\",\n  \"qux; python_version >= '3.8' and sys_platform == 'linux'\",\n]\n",
+    )
+    .expect("write fixture");
+    fs::write(temp.path().join("main.py"), "").expect("write fixture");
+    let issues = json_issues(temp.path(), &["--no-cache"]);
+    assert_eq!(
+        issue_keys(&issues),
+        [
+            ("CHK002".to_owned(), "bar".to_owned()),
+            ("CHK002".to_owned(), "foo".to_owned()),
+        ]
+    );
+    assert!(issues.iter().all(|issue| issue["confidence"] == "certain"));
+
+    // Poetry's `python` dependency bounds the interpreters the same way.
+    let poetry = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        poetry.path().join("pyproject.toml"),
+        "[tool.poetry]\nname = \"app\"\nversion = \"0\"\n[tool.poetry.dependencies]\npython = \"^3.9\"\nfoo = { version = \"*\", python = \">=3.8\" }\nbar = { version = \"*\", python = \"<3.12\" }\n",
+    )
+    .expect("write fixture");
+    fs::write(poetry.path().join("main.py"), "").expect("write fixture");
+    assert_eq!(
+        issue_keys(&json_issues(poetry.path(), &["--no-cache"])),
+        [("CHK002".to_owned(), "foo".to_owned())]
+    );
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
