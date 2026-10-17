@@ -17,7 +17,9 @@ use crate::parser::{ImportContext, ParseSummary, ParsedModule};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
-use crate::resolver::{ResolveWarning, StdlibRange, import_root, is_first_party_import};
+use crate::resolver::{
+    ResolveWarning, ResolvedImport, StdlibRange, import_root, is_first_party_import,
+};
 use crate::rules::RuleContext;
 use crate::rules::deps::{
     DeclarationBucket, declaration_bucket, declaration_buckets, file_context,
@@ -403,7 +405,10 @@ pub fn collect_gaps(
         &plugins.config_command_targets,
     ));
     gaps.extend(plugins.unread_settings().map(settings_gap));
-    gaps.extend(path_source_gaps(context, unread_path_sources));
+    gaps.extend(path_source_gaps(
+        &context.resolution.imports,
+        unread_path_sources,
+    ));
     gaps.extend(manifest_gap(manifest));
     gaps.extend(extras_gap(manifest));
     gaps.extend(invalid_requirement_gaps(manifest, groups));
@@ -626,9 +631,9 @@ fn is_under(path: &str, dir: &str) -> bool {
 /// One gap per unread path source directory, and one per distribution a file
 /// under one imports, at its first import: an entry of the source may run
 /// any file under it, reached from the root or not.
-fn path_source_gaps(context: &RuleContext<'_>, dirs: &[String]) -> Vec<Gap> {
+fn path_source_gaps(imports: &[ResolvedImport], dirs: &[String]) -> Vec<Gap> {
     let mut first: BTreeMap<&str, (&str, Option<u32>)> = BTreeMap::new();
-    for import in &context.resolution.imports {
+    for import in imports {
         let Some(distribution) = import.distribution.as_deref() else {
             continue;
         };
@@ -636,11 +641,14 @@ fn path_source_gaps(context: &RuleContext<'_>, dirs: &[String]) -> Vec<Gap> {
             continue;
         }
         let site = (import.file.as_str(), import.line);
-        let kept = first.entry(distribution).or_insert(site);
-        let line = |line: Option<u32>| line.unwrap_or(u32::MAX);
-        if (site.0, line(site.1)) < (kept.0, line(kept.1)) {
-            *kept = site;
-        }
+        // A plugin reference without a line sorts last in its file.
+        let order = |a: &(&str, Option<u32>), b: &(&str, Option<u32>)| {
+            (a.0, a.1.is_none(), a.1).cmp(&(b.0, b.1.is_none(), b.1))
+        };
+        first
+            .entry(distribution)
+            .and_modify(|kept| *kept = std::cmp::min_by(*kept, site, order))
+            .or_insert(site);
     }
     let dir_gaps = dirs.iter().map(|dir| Gap {
         file: dir.clone(),
@@ -1108,6 +1116,50 @@ mod tests {
             ],
         );
         assert_eq!(found, [likely, kept, kept]);
+    }
+
+    /// Plugin references follow the statements, so the first import site is
+    /// the least by file and line, not the first seen.
+    #[test]
+    fn path_source_import_gap_names_the_first_site_under_the_directory() {
+        let import = |distribution: Option<&str>, file: &str, line| ResolvedImport {
+            import_root: "click".to_owned(),
+            full_module: "click".to_owned(),
+            file: file.to_owned(),
+            workspace_member: None,
+            line,
+            reference: None,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            origin: crate::graph::ModuleOrigin::ThirdParty,
+            distribution: distribution.map(str::to_owned),
+            confidence: crate::resolver::ResolveConfidence::Certain,
+        };
+        let imports = [
+            import(Some("click"), "sub/tools/gen.py", Some(5)),
+            import(Some("click"), "sub/a.py", None),
+            import(Some("click"), "sub/a.py", Some(3)),
+            import(Some("click"), "sub/a.py", Some(7)),
+            import(Some("click"), "sub2/a.py", Some(1)),
+            import(Some("rich"), "sub2/a.py", Some(1)),
+            import(None, "sub/a.py", Some(1)),
+        ];
+        let sites: Vec<_> = path_source_gaps(&imports, &["sub".to_owned()])
+            .into_iter()
+            .map(|gap| (gap.kind, gap.file, gap.site))
+            .collect();
+        assert_eq!(
+            sites,
+            [
+                (GapKind::UnreadPathSource, "sub".to_owned(), None),
+                (
+                    GapKind::UnreadPathSourceImport,
+                    "sub/a.py".to_owned(),
+                    Some(("click".to_owned(), Some(3)))
+                ),
+            ]
+        );
     }
 
     #[test]

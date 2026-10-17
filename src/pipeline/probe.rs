@@ -953,6 +953,50 @@ mod tests {
         assert!(text.contains("scripts/run.py (1 dependencies, requires-python >=3.12)"));
     }
 
+    /// Of the root's path sources only a directory that exists, is no member
+    /// and has no `[project]` goes unread; the root itself, an archive and a
+    /// member without `[project]` are read (#1000).
+    #[test]
+    fn probe_names_only_unread_path_sources() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\
+             [tool.uv.sources]\n\
+             acme = { path = \".\" }\n\
+             whl = { path = \"dist/whl-1.0-py3-none-any.whl\" }\n\
+             cfg = { path = \"cfg\" }\n\
+             sub = { path = \"sub\" }\n\
+             gone = { path = \"gone\" }\n\
+             [tool.chokkin.workspaces.cfg]\npath = \"cfg\"\n",
+        )
+        .expect("write");
+        for file in [
+            "dist/whl-1.0-py3-none-any.whl",
+            "cfg/setup.py",
+            "sub/setup.py",
+        ] {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            fs::write(path, "").expect("write");
+        }
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        assert_eq!(report.unread_path_sources, ["sub"]);
+        let fields: Vec<_> = report
+            .warnings
+            .iter()
+            .filter_map(|warning| match warning {
+                ProbeWarning::Manifest(
+                    ManifestWarning::PathSourceMissing { field, .. }
+                    | ManifestWarning::PathSourceNotProject { field, .. },
+                ) => Some(field.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fields, ["tool.uv.sources.gone", "tool.uv.sources.sub"]);
+    }
+
     #[test]
     fn broken_pyproject_returns_manifest_error() {
         let temp = TempDir::new().expect("tempdir");
