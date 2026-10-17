@@ -65,7 +65,7 @@ fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
         Some(FileContext::Test)
     } else if rest.starts_with("docs/") {
         Some(FileContext::Docs)
-    } else if rest.starts_with("examples/") {
+    } else if rest == "setup.py" || rest.starts_with("examples/") {
         Some(FileContext::Dev)
     } else {
         None
@@ -366,12 +366,18 @@ mod tests {
                 format!("{member}/main.py"),
                 format!("{member}/examples/demo.py"),
                 format!("{member}/tests/test_main.py"),
+                format!("{member}/setup.py"),
             ];
             let paths = paths.each_ref().map(String::as_str);
             let (all, root_layout) = sources_with_member(member, &paths, false);
             assert_eq!(
                 contexts(&all),
-                [FileContext::Runtime, FileContext::Dev, FileContext::Test]
+                [
+                    FileContext::Runtime,
+                    FileContext::Dev,
+                    FileContext::Test,
+                    FileContext::Dev
+                ]
             );
             assert_eq!(
                 assign_layout_file_context(paths[0], &root_layout),

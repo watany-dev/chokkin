@@ -442,6 +442,7 @@ manage.py
 asgi.py
 wsgi.py
 noxfile.py
+setup.py（root と各 workspace member 直下）
 conftest.py
 docs/conf.py
 alembic/env.py
@@ -454,6 +455,8 @@ module top-level に `if __name__ == "__main__":` を持つ file
 ```
 
 単独ファイル名でのentry推定(`main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` / `noxfile.py`)は**project root直下、およびsrc layoutのpackage直下のみ**を対象にする。任意の深さで同名ファイルをentry扱いすると、unused file検出が事実上無効化されるため。`__main__.py` と `conftest.py` は全階層で有効。`docs/conf.py`（root と各 workspace member 直下）と `alembic/env.py` は記載のpathに限定する。
+
+root と各 workspace member 直下の `setup.py` は setuptools がビルド時に実行するため、origin `auto: setup.py` の dev entry にする (#1031)。既定の discovery glob にも root の `setup.py` を含め、src / flat layout でも読む。package 内や任意の子 directory の同名 file は対象外。hatchling の build script と同じく、import はその manifest の `[build-system].requires` で解決し、`--production` では file ごと外す。`setup.py` だけの project でも entry にするが、backend と build requires が未指定なら frontend の既定の build 環境として `setuptools` を使う。これは `setup.py` の import にだけ効き、runtime 依存の宣言には加えない。`project` / `exclude` / gitignore により走査から外れた file は追加せず、構文や文字コードが読めない場合は既存の parse warning / gap に従う。解析のために `setup.py` を実行することはない。
 
 `examples/**` と `docs/**` の `.py` は root 直下と各 workspace member 直下を entry にする（rule `examples/**` / `docs/**`、#666）。どちらも `python examples/foo.py` や `fastmcp run docs/demo.py` で直接実行する単体スクリプトの置き場で、どこからも import されないため。これらは docs / dev context なので、依存の判定には使わず (#694)、解決できない import (CHK010) も info にする。その layout の package 内（flat layout の `examples` package など）は対象外。
 
@@ -619,7 +622,7 @@ contextは依存だけでなく**file側にも割り当てる**。CHK005(misplac
 src/** / flat layoutのpackage/** / [project.scripts]到達file -> runtime
 **/tests/** / root・workspace member直下の test/** / conftest.py / *_test.py / test_*.py -> test
 docs/** / workspace member直下の docs/**                    -> docs
-noxfile.py / 各tool設定が参照するscript (hatch の build hook 等) -> dev
+noxfile.py / root・member 直下の setup.py / 各tool設定が参照するscript (hatch の build hook 等) -> dev
 scripts/**                                                  -> dev (設定で変更可)
 examples/** / workspace member直下の examples/**          -> dev
 plugin / [tool.chokkin] のcontext指定が上記を上書きする

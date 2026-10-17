@@ -36,6 +36,13 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
         let path = file.path.as_str();
         let file_name = path.rsplit('/').next().unwrap_or(path);
 
+        if file_name == "setup.py"
+            && layout.member_for(path).map_or(path, |(_, rest)| rest) == "setup.py"
+        {
+            candidates.push(candidate(path, FileContext::Dev, "setup.py".to_owned()));
+            continue;
+        }
+
         if ALL_DEPTH_ENTRY_NAMES.contains(&file_name) {
             candidates.push(candidate(path, file.context, file_name.to_owned()));
             continue;

@@ -68,7 +68,7 @@ pub struct ProbeReport {
     pub unread_path_sources: Vec<String>,
     /// PEP 723 scripts among the discovered Python files.
     pub scripts: Vec<InlineScript>,
-    /// Build scripts hatchling runs (#735), root-relative, with the normalized
+    /// Build scripts (#735, #1031), root-relative, with the normalized
     /// `[build-system].requires` names of the manifest naming each: the build
     /// environment installs those for the script.
     pub build_scripts: BTreeMap<String, BTreeSet<String>>,
@@ -310,8 +310,8 @@ fn member_sources_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<Pr
         .collect()
 }
 
-/// hatchling runs its build hooks while building and never ships them, so
-/// they are dev files, which `--production` then drops (#735). Returns each
+/// Build hooks and root `setup.py` run while building, so they are dev
+/// files, which `--production` then drops (#735, #1031). Returns each
 /// root-relative build script with its manifest's `[build-system].requires`.
 fn mark_build_scripts_dev(
     sources: &mut DiscoveredSources,
@@ -329,7 +329,19 @@ fn mark_build_scripts_dev(
             .metadata
             .build_scripts
             .iter()
-            .map(|script| (join_rel(member, &script.path), requires.clone()))
+            .map(|script| script.path.as_str())
+            .chain(std::iter::once("setup.py"))
+            .map(|path| {
+                let mut requires = requires.clone();
+                // Frontends use setuptools for legacy projects without build metadata.
+                if path == "setup.py"
+                    && manifest.metadata.build_backend.is_none()
+                    && requires.is_empty()
+                {
+                    requires.insert("setuptools".to_owned());
+                }
+                (join_rel(member, path), requires)
+            })
             .collect::<Vec<_>>()
     };
     let build_scripts: BTreeMap<_, _> = scripts(manifest, "")

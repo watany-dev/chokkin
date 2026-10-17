@@ -5412,6 +5412,151 @@ fn binary_github_scripts_are_entry_roots() {
     assert_eq!(certain_chk001(&issues), ["acme/orphan.py"], "{issues:#?}");
 }
 
+#[test]
+fn binary_setup_py_is_a_dev_entry_root() {
+    for package_dir in ["", "acme/", "src/acme/"] {
+        let helper_module = if package_dir.is_empty() {
+            "_build"
+        } else {
+            "acme._build"
+        };
+        let setup = format!(
+            "from setuptools import setup\nfrom {helper_module} import configure\nconfigure()\nsetup()\n"
+        );
+        let helper = format!("{package_dir}_build.py");
+        let orphan = format!("{package_dir}orphan.py");
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n\
+                 [build-system]\nrequires = [\"setuptools\"]\nbuild-backend = \"setuptools.build_meta\"\n\n\
+                 [tool.chokkin]\nmode = \"app\"\n",
+            ),
+            ("setup.py", &setup),
+            (&helper, "def configure():\n    pass\n"),
+            (&orphan, ""),
+            ("main.py", "print(1)\n"),
+        ]);
+        if !package_dir.is_empty() {
+            let package = project.path().join(package_dir);
+            fs::write(package.join("__init__.py"), "").expect("package");
+        }
+        let probe =
+            chokkin::probe_project(project.path(), None, &chokkin::RuntimeOverrides::default())
+                .expect("probe");
+        assert!(probe.sources.files.iter().any(|file| {
+            file.path == "setup.py" && file.context == chokkin::internals::FileContext::Dev
+        }));
+        for mode in [&[][..], &["--strict"]] {
+            let issues = json_issues(project.path(), mode);
+            assert_eq!(
+                issue_keys(&issues),
+                [("CHK001".to_owned(), orphan.clone())],
+                "{package_dir} {mode:?}: {issues:#?}"
+            );
+        }
+        let production = chokkin::probe_project(
+            project.path(),
+            None,
+            &chokkin::RuntimeOverrides {
+                production: Some(true),
+                ..Default::default()
+            },
+        )
+        .expect("production probe");
+        assert!(
+            production
+                .sources
+                .files
+                .iter()
+                .all(|file| file.path != "setup.py")
+        );
+    }
+}
+
+#[test]
+fn binary_legacy_setup_py_and_workspace_setup_py_are_entry_roots() {
+    let legacy = write_project(&[
+        (
+            "setup.py",
+            "from setuptools import setup\nfrom _build import configure\nconfigure()\nsetup(name='x', py_modules=['main'])\n",
+        ),
+        ("_build.py", "def configure():\n    pass\n"),
+        ("main.py", "print(1)\n"),
+        ("orphan.py", ""),
+    ]);
+    for mode in [&[][..], &["--strict"]] {
+        let issues = json_issues(legacy.path(), mode);
+        assert_eq!(
+            issue_keys(&issues),
+            [("CHK001".to_owned(), "orphan.py".to_owned())],
+            "{mode:?}: {issues:#?}"
+        );
+    }
+
+    let workspace = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"root\"\nversion = \"0\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n\n\
+             [tool.uv.workspace]\nmembers = [\"core\"]\n",
+        ),
+        (
+            "core/pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n\
+             [build-system]\nrequires = [\"setuptools\"]\nbuild-backend = \"setuptools.build_meta\"\n",
+        ),
+        (
+            "core/setup.py",
+            "from setuptools import setup\nfrom acme._build import configure\nconfigure()\nsetup()\n",
+        ),
+        ("core/src/acme/__init__.py", ""),
+        ("core/src/acme/_build.py", "def configure():\n    pass\n"),
+        ("core/src/acme/orphan.py", ""),
+        ("core/src/acme/setup.py", ""),
+    ]);
+    for mode in [&[][..], &["--strict"]] {
+        let issues = json_issues(workspace.path(), mode);
+        assert_eq!(
+            issue_keys(&issues),
+            [
+                ("CHK001".to_owned(), "core/src/acme/orphan.py".to_owned()),
+                ("CHK001".to_owned(), "core/src/acme/setup.py".to_owned()),
+            ],
+            "{mode:?}: {issues:#?}"
+        );
+    }
+    assert!(
+        json_issues(workspace.path(), &["--production"])
+            .iter()
+            .all(|issue| issue["target"] != "core/setup.py")
+    );
+}
+
+#[test]
+fn binary_setup_py_does_not_infer_setuptools_for_explicit_build_metadata() {
+    for build_system in [
+        "[build-system]\nrequires = []\nbuild-backend = \"setuptools.build_meta\"\n",
+        "[build-system]\nrequires = [\"wheel\"]\n",
+    ] {
+        let manifest = format!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n\
+             {build_system}\n[tool.chokkin]\nmode = \"app\"\n"
+        );
+        let project = write_project(&[
+            ("pyproject.toml", &manifest),
+            ("setup.py", "from setuptools import setup\nsetup()\n"),
+            ("main.py", "print(1)\n"),
+        ]);
+        let issues = json_issues(project.path(), &["--strict"]);
+        assert_eq!(
+            issue_keys(&issues),
+            [("CHK003".to_owned(), "setup.py:setuptools".to_owned())],
+            "{build_system}: {issues:#?}"
+        );
+    }
+}
+
 /// airflow's `[tool.hatch.build.targets.custom] path = "./hatch_build.py"`
 /// in the root and in members, and the default hook path (#735).
 #[test]

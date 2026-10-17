@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gunicorn's `python:` config no longer report as unused files (#1026).
 
 ### Fixed
+- Root and workspace-member `setup.py` files are dev entry roots, including
+  in src and flat layouts, so build scripts and the helpers they import are
+  no longer reported as unused files. Their imports use the build environment's
+  requirements (or the legacy setuptools default), and `--production` leaves
+  the scripts out (#1031).
 - The bundled binary map names `zensical`, so a declared `zensical` that a
   task runner calls (`[tool.pdm.scripts] doc = "zensical serve"`) is used
   instead of reported as CHK002.
