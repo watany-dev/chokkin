@@ -1,10 +1,11 @@
 ---
 name: cleanup-comments
 description: >
-  Manual-only. Sweep every code comment, delete what restates the code,
+  Sweep every code comment, delete what restates the code,
   keep only "why" that cannot be reconstructed from the code, and turn
-  TODO-like comments into GitHub issues. Fire only when the user invokes
-  /cleanup-comments or says "cleanup-comments".
+  TODO-like comments into GitHub issues. Fire only on an explicit
+  $cleanup-comments (Codex) or /cleanup-comments (Claude Code) invocation,
+  when the user says "cleanup-comments", or when wrapup delegates this step.
 ---
 
 # cleanup-comments
@@ -27,6 +28,10 @@ chokkin 固有:
   削除しない
 
 ## TODO
+
+呼び出し元に issue 起票の制限がある場合はそちらを優先する。特に `kick` からの
+実行では、手順 6 の例外に該当しない TODO は新規 issue にせず、コメントを残して
+PR の「Found, not fixed」に記録する。既存 issue への参照は使ってよい。
 
 `TODO` / `not yet` / `follow-up` / `未対応` / `暫定` など未完了の作業や保留中の判断を示すコメントは、
 既存 issue を探した上で無ければ issue を作り、コメントを issue 番号参照に書き換える。
