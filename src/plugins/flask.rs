@@ -285,6 +285,7 @@ mod tests {
             "src/web/__init__.py",
             "src/web/app.py",
             "src/web/pkg/__init__.py",
+            "{{name}}/app.py",
         ]);
         assert_eq!(
             app_path(&sources, r"src\web\app.py"),
@@ -307,6 +308,8 @@ mod tests {
             "/src/web/app.py",
             "../src/web/app.py",
             "$DIR/app.py",
+            // A template placeholder names no file, even one discovered.
+            "{{name}}/app.py",
             "src/web/missing.py",
             "__init__.py",
             ".",
