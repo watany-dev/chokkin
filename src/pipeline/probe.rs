@@ -9,8 +9,8 @@ use crate::VERSION;
 use crate::cache::CacheOptions;
 use crate::config::{
     ChokkinConfig, ConfigSources, DependencyGroupsConfig, LoadedConfig, ResolvedWorkspaceMember,
-    RuntimeOverrides, TargetVersion, apply_overrides, load_config, load_root_config,
-    nested_projects,
+    RuntimeOverrides, TargetVersion, apply_overrides, declares_project, load_config,
+    load_root_config, nested_projects,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
@@ -18,7 +18,7 @@ use crate::manifest::{
     discover_inline_scripts, extract_manifest_with_cache, lockfile_candidates,
     normalize_distribution_name, resolve_target_version,
 };
-use crate::path_util::{join_rel, resolve_under_root};
+use crate::path_util::{join_rel, rel_to_root, resolve_under_root};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
@@ -61,6 +61,10 @@ pub struct ProbeReport {
     pub auto_workspace: bool,
     /// The members and `[tool.uv.sources]` trees the root imports locally.
     pub local_trees: LocalTrees,
+    /// Root-relative directories of root `[tool.uv.sources]` paths without a
+    /// `[project]` table: their code is analyzed as the root's, but their own
+    /// entries and declarations are not read (#1000).
+    pub unread_path_sources: Vec<String>,
     /// PEP 723 scripts among the discovered Python files.
     pub scripts: Vec<InlineScript>,
     /// Build scripts hatchling runs (#735), root-relative, with the normalized
@@ -114,28 +118,53 @@ fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &B
     });
 }
 
-/// Root `[tool.uv.sources]` paths that resolve outside the root: their
-/// projects are not scanned as members (#499), so say so instead of dropping
-/// them (#981). A member's path sources are not scanned either way, and its
-/// siblings sit outside the member, so only the root's are reported.
-fn outside_path_sources<'a>(
-    root: &'a Path,
-    manifest: &'a LoadedManifest,
-) -> impl Iterator<Item = ManifestWarning> + 'a {
-    manifest.uv.sources.iter().filter_map(move |source| {
+/// Root `[tool.uv.sources]` paths that are no member say why instead of
+/// being dropped (#981, #1000). Returns the warnings and the root-relative
+/// directories without a `[project]` table, whose code is analyzed as the
+/// root's although their own entries and declarations are not read. A
+/// member's path sources are not scanned either way, and its siblings sit
+/// outside the member, so only the root's are reported.
+fn unread_path_sources(
+    root: &Path,
+    manifest: &LoadedManifest,
+    members: &[ResolvedWorkspaceMember],
+) -> (Vec<ManifestWarning>, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut dirs = BTreeSet::new();
+    for source in &manifest.uv.sources {
         let UvSourceKind::Path(path) = &source.kind else {
-            return None;
+            continue;
         };
-        // An `Err` is a path that does not resolve (`..` below a missing
-        // directory); it names no file to warn about yet (#1000).
-        matches!(resolve_under_root(root, &root.join(path)), Ok(None)).then(|| {
-            ManifestWarning::PathOutsideRoot {
-                file: "pyproject.toml".to_owned(),
-                field: format!("tool.uv.sources.{}", source.name),
-                path: path.clone(),
-            }
-        })
-    })
+        let file = "pyproject.toml".to_owned();
+        let field = format!("tool.uv.sources.{}", source.name);
+        let path = path.clone();
+        let dir = match resolve_under_root(root, &root.join(&path)) {
+            Ok(None) => {
+                warnings.push(ManifestWarning::PathOutsideRoot { file, field, path });
+                continue;
+            },
+            Ok(Some(dir)) if dir.exists() => dir,
+            // An `Err` is a `..` below a missing directory.
+            Ok(Some(_)) | Err(_) => {
+                warnings.push(ManifestWarning::PathSourceMissing { file, field, path });
+                continue;
+            },
+        };
+        let rel = rel_to_root(root, &dir);
+        // The root itself is the project analyzed; an archive installs a
+        // built distribution, so no code under the root runs as part of it;
+        // a `[project]` directory that is no member is a nested project the
+        // root walk already drops and reports.
+        let read = rel.is_empty()
+            || !dir.is_dir()
+            || members.iter().any(|member| member.path == rel)
+            || declares_project(&dir.join("pyproject.toml"));
+        if !read {
+            warnings.push(ManifestWarning::PathSourceNotProject { file, field, path });
+            dirs.insert(rel);
+        }
+    }
+    (warnings, dirs.into_iter().collect())
 }
 
 /// Run pipeline steps 1–4 with optional manifest cache support.
@@ -173,6 +202,9 @@ pub(super) fn probe_project_with_cache(
         )
     };
     drop_nested_projects(&root.path, &mut sources, &nested);
+    // Before `drop_dev_only_members`: a dropped member is read, just not analyzed.
+    let (path_source_warnings, unread_path_sources) =
+        unread_path_sources(&root.path, &manifest, &loaded.workspace_members);
     let member_count = loaded.workspace_members.len();
     if loaded.effective.production {
         drop_dev_only_members(
@@ -197,7 +229,7 @@ pub(super) fn probe_project_with_cache(
         sources.python_files().map(|file| file.path.as_str()),
     );
     let mut warnings = collect_warnings(&manifest, &sources);
-    warnings.extend(outside_path_sources(&root.path, &manifest).map(ProbeWarning::Manifest));
+    warnings.extend(path_source_warnings.into_iter().map(ProbeWarning::Manifest));
     // After `drop_dev_only_members`: a dropped member is not analyzed.
     warnings.extend(member_manifest_warnings(&workspace_inputs));
     warnings.extend(member_sources_warnings(&workspace_inputs));
@@ -225,6 +257,7 @@ pub(super) fn probe_project_with_cache(
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,
         local_trees,
+        unread_path_sources,
         scripts,
         build_scripts,
         plugin_activations,
@@ -918,6 +951,50 @@ mod tests {
         let text = String::from_utf8(output).expect("utf8");
         assert!(text.contains("inline scripts   : 1"));
         assert!(text.contains("scripts/run.py (1 dependencies, requires-python >=3.12)"));
+    }
+
+    /// Of the root's path sources only a directory that exists, is no member
+    /// and has no `[project]` goes unread; the root itself, an archive and a
+    /// member without `[project]` are read (#1000).
+    #[test]
+    fn probe_names_only_unread_path_sources() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\n\
+             [tool.uv.sources]\n\
+             acme = { path = \".\" }\n\
+             whl = { path = \"dist/whl-1.0-py3-none-any.whl\" }\n\
+             cfg = { path = \"cfg\" }\n\
+             sub = { path = \"sub\" }\n\
+             gone = { path = \"gone\" }\n\
+             [tool.chokkin.workspaces.cfg]\npath = \"cfg\"\n",
+        )
+        .expect("write");
+        for file in [
+            "dist/whl-1.0-py3-none-any.whl",
+            "cfg/setup.py",
+            "sub/setup.py",
+        ] {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            fs::write(path, "").expect("write");
+        }
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        assert_eq!(report.unread_path_sources, ["sub"]);
+        let fields: Vec<_> = report
+            .warnings
+            .iter()
+            .filter_map(|warning| match warning {
+                ProbeWarning::Manifest(
+                    ManifestWarning::PathSourceMissing { field, .. }
+                    | ManifestWarning::PathSourceNotProject { field, .. },
+                ) => Some(field.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fields, ["tool.uv.sources.gone", "tool.uv.sources.sub"]);
     }
 
     #[test]

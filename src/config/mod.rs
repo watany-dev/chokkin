@@ -19,4 +19,4 @@ pub use types::{
     RuntimeOverrides, SeverityLevel, TargetVersion,
 };
 pub(crate) use types::{DependencyGroupsConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
-pub(crate) use workspace::nested_projects;
+pub(crate) use workspace::{declares_project, nested_projects};

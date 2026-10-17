@@ -277,7 +277,7 @@ pub(crate) fn nested_projects<'a>(
 
 /// A `pyproject.toml` that only configures tools (ruff, pytest) is not a
 /// distribution; unreadable ones are skipped rather than failing the run.
-fn declares_project(pyproject: &Path) -> bool {
+pub(crate) fn declares_project(pyproject: &Path) -> bool {
     std::fs::read_to_string(pyproject)
         .ok()
         .and_then(|text| text.parse::<toml::Table>().ok())

@@ -115,6 +115,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         &[],
         &plugins,
         &[],
+        &[],
         &loaded.effective.dependencies,
         StdlibRange::new(&TargetVersion::default_py311(), None),
     );

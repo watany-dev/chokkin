@@ -388,6 +388,7 @@ fn run_analysis_core(
         &probe.scripts,
         &plugins,
         &skipped_entries,
+        &probe.unread_path_sources,
         &probe.effective_config.dependencies,
         stdlib,
     );
