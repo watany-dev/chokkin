@@ -35,7 +35,10 @@ pub use pipeline::{
     AnalysisReport, analyze_project, probe_project, trace_output, write_diagnostics,
     write_probe_report, write_probe_warnings,
 };
-pub use reporters::{RenderContext, config_label_from_sources, render_fix_report, render_issues};
+pub use reporters::{
+    RenderContext, config_label_from_sources, escape_control_lines, render_baseline_report,
+    render_fix_report, render_issues,
+};
 pub use rules::explain_issue;
 
 /// Items re-exported only for `tests/` and `benches/`; not a stable API.

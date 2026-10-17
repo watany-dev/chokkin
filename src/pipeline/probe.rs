@@ -22,6 +22,7 @@ use crate::path_util::{join_rel, resolve_under_root};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
 };
+use crate::reporters::escape_control;
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, LocalTrees, MemberLayout,
@@ -548,11 +549,11 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         .name
         .as_deref()
         .unwrap_or("(unknown)");
-    writeln!(out, "Project : {project_name}")?;
+    writeln!(out, "Project : {}", escape_control(project_name))?;
     writeln!(
         out,
         "Root    : {} ({})",
-        crate::path_util::display_path(&report.root.path),
+        escape_control(&crate::path_util::display_path(&report.root.path)),
         report.root.marker
     )?;
     writeln!(
@@ -565,13 +566,17 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
         "Mode    : {} (unresolved)",
         report.effective_config.mode
     )?;
-    writeln!(out, "Layout  : {}", format_layout(&report.sources))?;
+    writeln!(
+        out,
+        "Layout  : {}",
+        escape_control(&format_layout(&report.sources))
+    )?;
     let unpackaged = unpackaged_module_dirs(&report.root.path, &report.sources.layout);
     if !unpackaged.is_empty() {
         writeln!(
             out,
             "Unpackaged: {} (modules without `__init__.py`, not taken as packages)",
-            unpackaged.join(", ")
+            escape_control(&unpackaged.join(", "))
         )?;
     }
     if !report.workspace_members.is_empty() {
@@ -607,12 +612,12 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     writeln!(
         out,
         "  lockfile         : {}",
-        format_lockfile(&report.manifest)
+        escape_control(&format_lockfile(&report.manifest))
     )?;
     writeln!(
         out,
         "  build backend    : {}",
-        format_build_system(&report.manifest)
+        escape_control(&format_build_system(&report.manifest))
     )?;
     writeln!(out)?;
 
@@ -634,7 +639,12 @@ pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Res
     for activation in report.plugin_activations.iter().filter(|activation| {
         activation.enabled || activation.reason != PluginActivationReason::Default
     }) {
-        writeln!(out, "  {:<17}: {activation}", activation.plugin.as_key())?;
+        writeln!(
+            out,
+            "  {:<17}: {}",
+            activation.plugin.as_key(),
+            escape_control(&activation.to_string())
+        )?;
     }
     writeln!(out)?;
 
@@ -658,9 +668,9 @@ fn write_scripts(scripts: &[InlineScript], out: &mut impl Write) -> io::Result<(
         writeln!(
             out,
             "    {} ({} dependencies, requires-python {})",
-            script.path,
+            escape_control(&script.path),
             script.dependencies.len(),
-            script.requires_python.as_deref().unwrap_or("unset")
+            escape_control(script.requires_python.as_deref().unwrap_or("unset"))
         )?;
     }
     Ok(())
