@@ -202,15 +202,18 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
 /// option (`-r` alone, `-example-pkg`) and a PEP 508 name cannot start on:
 /// such a line names nothing to lower. A line with an `#egg=` fragment is
 /// read by the same rule on the egg value (`#egg=acme;python_version<"3"`
-/// names `acme`, #929), and a URL line without one names nothing.
+/// names `acme`, #929), and a URL line without one names nothing; `name @
+/// url` names `name` whatever the URL holds, as pip reads it.
 #[must_use]
 pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    if let Some(egg) = egg_fragment(trimmed) {
-        return leading_requirement_name(egg);
-    }
-    if is_url_like(trimmed) {
-        return None;
+    if !is_direct_reference(trimmed) {
+        if let Some(egg) = egg_fragment(trimmed) {
+            return leading_requirement_name(egg);
+        }
+        if is_url_like(trimmed) {
+            return None;
+        }
     }
     leading_requirement_name(trimmed)
 }
@@ -787,6 +790,18 @@ mod tests {
             Some("acme")
         );
         assert_eq!(invalid_requirement_name("git+https://h/r.git"), None);
+        // `name @ url` names `name`, as pip reads it, whatever the URL holds.
+        for line in [
+            "foo @ https://h/a b.whl",
+            "foo @ https://h/a;b",
+            "foo @ git+https://h/r b#egg=bar",
+        ] {
+            assert_eq!(
+                invalid_requirement_name(line).as_deref(),
+                Some("foo"),
+                "{line}"
+            );
+        }
     }
 
     #[test]
