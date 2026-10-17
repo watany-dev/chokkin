@@ -25,7 +25,9 @@ use super::module_guard::{
     async_library_names, availability_test, first_availability_check, guarded_roots,
     imported_module_guard, is_main_guard_test, raises_import_error, runs_as_main,
 };
-use super::platform_guard::is_platform_guard_test;
+use super::platform_guard::{
+    PlatformModules, is_platform_guard_test, mentions_platform_test, platform_modules,
+};
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
 use super::types::{
@@ -40,12 +42,13 @@ struct SysPathHints {
     literals: BTreeSet<String>,
 }
 
-/// Whether the source can hold what [`async_library_names`] and
-/// [`first_availability_check`] look for. Most modules cannot, and the scans
+/// Whether the source can hold what [`async_library_names`],
+/// [`first_availability_check`] and [`platform_modules`] look for. Most modules cannot, and the scans
 /// rewalk every scope's body.
 struct SourceMentions {
     async_library: bool,
     availability: bool,
+    platform: bool,
 }
 
 impl SourceMentions {
@@ -59,6 +62,11 @@ impl SourceMentions {
         Self {
             async_library: mentions("current_async_library"),
             availability: mentions("find_spec") || mentions("_available"),
+            // An aliased module (`import sys as s`) is checked once the
+            // module scope's names are known.
+            platform: mentions("sys.platform")
+                || mentions("os.name")
+                || mentions("platform.system"),
         }
     }
 }
@@ -83,6 +91,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// imports (#721).
     fallback_for: Vec<String>,
     platform_guard_depth: u32,
+    /// Names the current scope binds to `sys` / `os` / `platform` (#957);
+    /// empty when the source tests none of them.
+    platform_modules: PlatformModules,
     /// Top-level modules an enclosing branch checked are already imported
     /// (`"x" in sys.modules`); imports of them are optional (#681).
     imported_guards: Vec<String>,
@@ -140,11 +151,13 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
+            platform_modules: PlatformModules::new(),
             imported_guards: Vec::new(),
             async_library_names: HashSet::new(),
             mentions: SourceMentions {
                 async_library: true,
                 availability: true,
+                platform: true,
             },
             in_main_block: false,
             availability_checked_at: None,
@@ -240,6 +253,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.async_library_names = self.scope_async_library_names(None, stmts);
+        let modules = platform_modules(None, None, stmts);
+        if self.mentions.platform || mentions_platform_test(source, &modules) {
+            self.platform_modules = modules;
+            self.mentions.platform = true;
+        }
         self.visit_body(stmts);
         self.parsed.deprecated_shim = warns_deprecated_on_import(stmts, &self.parsed.imports);
     }
@@ -253,6 +271,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             async_library_names(parameters, body)
         } else {
             HashSet::new()
+        }
+    }
+
+    fn scope_platform_modules(
+        &self,
+        parameters: Option<&Parameters>,
+        body: &[Stmt],
+    ) -> PlatformModules {
+        if self.mentions.platform {
+            platform_modules(Some(&self.platform_modules), parameters, body)
+        } else {
+            PlatformModules::new()
         }
     }
 
@@ -272,7 +302,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let excluded = |leaf: &dyn Fn(&Expr) -> Leaf| condition::excluded(earlier, test, leaf);
         let type_checking = excluded(&|expr| self.type_checking_leaf(expr));
         let platform_guard = excluded(&|expr| {
-            if is_platform_guard_test(expr) {
+            if is_platform_guard_test(expr, &self.platform_modules) {
                 Leaf::Free
             } else {
                 Leaf::Opaque
@@ -738,6 +768,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 let names = self.scope_async_library_names(Some(&def.parameters), &def.body);
                 let outer_names = std::mem::replace(&mut self.async_library_names, names);
+                let modules = self.scope_platform_modules(Some(&def.parameters), &def.body);
+                let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
@@ -745,6 +777,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     SymbolKind::Function,
                 );
                 self.async_library_names = outer_names;
+                self.platform_modules = outer_modules;
             },
             Stmt::ClassDef(def) => {
                 self.visit_decorators(&def.decorator_list);
@@ -756,8 +789,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 let names = self.scope_async_library_names(None, &def.body);
                 let outer_names = std::mem::replace(&mut self.async_library_names, names);
+                let modules = self.scope_platform_modules(None, &def.body);
+                let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
                 self.async_library_names = outer_names;
+                self.platform_modules = outer_modules;
             },
             Stmt::Assign(assign) => {
                 if self.module_level {
@@ -2403,6 +2439,24 @@ def f(name):
             .map(|prefix| (prefix.module.as_str(), prefix.deferred))
             .collect();
         assert_eq!(flags, [("top", false), ("func", true)]);
+    }
+
+    /// `sys.platform.startswith(...)`, `os.name` and `platform.system()` are
+    /// platform tests like a `sys.platform` comparison (#957), read through
+    /// `not` and `elif` / `else`. The receiver must be the stdlib module the
+    /// module imported; a local of the same name is an unknown test.
+    #[test]
+    fn platform_tests_read_every_stdlib_spelling() {
+        let parsed = visit_source(
+            "import os\nimport platform as plat\nimport sys\n\nif sys.platform.startswith(\"win\"):\n    import a1\nif not sys.platform.startswith((\"linux\", \"darwin\")):\n    import a2\nif os.name == \"nt\":\n    import a3\nelif os.name != \"posix\":\n    import a4\nelse:\n    import a5\nif plat.system() == \"Windows\":\n    import a6\nif sys.platform in (\"win32\", \"cygwin\"):\n    import a7\n\ndef local(platform, sys):\n    if platform.system() == \"Windows\":\n        import b1\n    if sys.platform == \"win32\":\n        import b2\n    import os\n    if os.name == \"nt\":\n        import a8\n\ndef rebound():\n    os = make_os()\n    if os.name == \"nt\":\n        import b3\n\nif platform.system() == \"Windows\":\n    import b4\nif os.name.upper() == \"NT\":\n    import b5\n",
+        );
+        let guarded: Vec<_> = parsed
+            .imports
+            .iter()
+            .filter(|import| import.platform_guarded)
+            .map(|import| import.module.as_str())
+            .collect();
+        assert_eq!(guarded, ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"]);
     }
 
     #[test]

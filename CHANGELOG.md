@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optional. A flag set to `True` in the `try` body is `False` without the
   package, not `None`, so `has_x is not None` no longer makes its body
   optional.
+- `sys.platform.startswith(...)`, `os.name == ...`, `platform.system() == ...`
+  and `in` / `not in` against them are platform guards like
+  `sys.platform == ...`, so an import under `if os.name == "nt":` is
+  platform-guarded. The receiver must be the stdlib module in that scope: a
+  parameter or other binding named `sys` makes the test an unknown leaf
+  (#957).
 
 ## [0.7.7] - 2026-10-17
 
