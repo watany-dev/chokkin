@@ -1046,17 +1046,19 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             },
             _ => {},
         }
-        let lambda = matches!(expr, Expr::Lambda(_));
-        let caught_depth = self.caught_depth;
-        if lambda {
-            self.function_depth += 1;
-            self.caught_depth = 0;
+        let Expr::Lambda(lambda) = expr else {
+            walk_expr(self, expr);
+            return;
+        };
+        // The defaults are evaluated where the lambda is defined.
+        if let Some(parameters) = &lambda.parameters {
+            self.visit_parameters(parameters);
         }
-        walk_expr(self, expr);
-        if lambda {
-            self.function_depth -= 1;
-            self.caught_depth = caught_depth;
-        }
+        let caught_depth = std::mem::take(&mut self.caught_depth);
+        self.function_depth += 1;
+        self.visit_expr(&lambda.body);
+        self.function_depth -= 1;
+        self.caught_depth = caught_depth;
     }
 }
 
@@ -1901,7 +1903,7 @@ g = lambda x=utils.G: x
     #[test]
     fn caught_imports_stop_at_the_function_boundary() {
         let parsed = visit_source(
-            "import importlib\n\ntry:\n    import yaml\n    import yaml_a\n\n    def load():\n        import requests\n\n    class Loader:\n        import yaml_b\n\n        def run(self):\n            import yaml_c\n\n    caller = lambda: importlib.import_module(\"yaml_d\")\nexcept ImportError:\n    yaml = None\n\n    def fallback():\n        import fallback_dep\nelse:\n    def dump():\n        import yaml_e\n\nwith suppress(ImportError):\n    def suppressed():\n        import yaml_f\n\nif yaml is not None:\n    def flagged():\n        import yaml_g\n\nif find_spec(\"yaml\") is None:\n    raise ImportError(\"yaml\")\n\ndef checked():\n    import yaml_h\n",
+            "import importlib\n\ntry:\n    import yaml\n    import yaml_a\n\n    def load():\n        import requests\n\n    class Loader:\n        import yaml_b\n\n        def run(self):\n            import yaml_c\n\n    caller = lambda: importlib.import_module(\"yaml_d\")\n    eager = lambda m=importlib.import_module(\"yaml_i\"): m\nexcept ImportError:\n    yaml = None\n\n    def fallback():\n        import fallback_dep\nelse:\n    def dump():\n        import yaml_e\n\nwith suppress(ImportError):\n    def suppressed():\n        import yaml_f\n\nif yaml is not None:\n    def flagged():\n        import yaml_g\n\nif find_spec(\"yaml\") is None:\n    raise ImportError(\"yaml\")\n\ndef checked():\n    import yaml_h\n",
         );
         assert_eq!(
             optional_by_module(&parsed),
@@ -1925,10 +1927,13 @@ g = lambda x=utils.G: x
             "try:\n    import threading\nexcept ImportError:\n    def start():\n        import dummy_threading\n",
         );
         assert_eq!(handler.imports[1].fallback_for, ["threading"]);
-        let [lambda] = parsed.dynamic_imports.as_slice() else {
-            panic!("{:?}", parsed.dynamic_imports);
-        };
-        assert_eq!((lambda.module.as_str(), lambda.optional), ("yaml_d", false));
+        // A lambda's defaults are evaluated where it is defined.
+        let lambdas: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect();
+        assert_eq!(lambdas, [("yaml_d", false), ("yaml_i", true)]);
     }
 
     /// A bare `except:` and `except Exception:` / `BaseException` catch a
