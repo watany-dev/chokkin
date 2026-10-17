@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use ruff_python_ast::visitor::{Visitor, walk_except_handler, walk_expr, walk_stmt};
-use ruff_python_ast::{CmpOp, ExceptHandler, Expr, ExprContext, Parameters, Stmt};
+use ruff_python_ast::visitor::{Visitor, walk_except_handler, walk_expr, walk_pattern, walk_stmt};
+use ruff_python_ast::{CmpOp, ExceptHandler, Expr, ExprContext, Parameters, Pattern, Stmt};
 
 /// A stdlib module whose attributes tell the platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,6 +120,19 @@ impl<'a> Visitor<'a> for Bindings<'a> {
             self.bind(name.as_str(), None);
         }
         walk_except_handler(self, handler);
+    }
+
+    fn visit_pattern(&mut self, pattern: &'a Pattern) {
+        let name = match pattern {
+            Pattern::MatchAs(pattern) => pattern.name.as_ref(),
+            Pattern::MatchStar(pattern) => pattern.name.as_ref(),
+            Pattern::MatchMapping(pattern) => pattern.rest.as_ref(),
+            _ => None,
+        };
+        if let Some(name) = name {
+            self.bind(name.as_str(), None);
+        }
+        walk_pattern(self, pattern);
     }
 
     fn visit_expr(&mut self, expr: &'a Expr) {
@@ -289,6 +302,10 @@ mod tests {
             "import sys\ndef f():\n    def sys():\n        pass\n",
             "import sys\nsys = None\ndef f():\n    pass\n",
             "import os.path as sys\ndef f():\n    pass\n",
+            "import sys\ndef f(x):\n    match x:\n        case sys:\n            pass\n",
+            "import sys\ndef f(x):\n    match x:\n        case [*sys]:\n            pass\n",
+            "import sys\ndef f(x):\n    match x:\n        case {**sys}:\n            pass\n",
+            "import sys\ndef f(x):\n    match x:\n        case X() as sys:\n            pass\n",
         ] {
             assert_eq!(names(shadowed), [], "{shadowed}");
         }
