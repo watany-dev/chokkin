@@ -277,6 +277,11 @@ fn parse_expr(tokens: &[Token<'_>], pos: &mut usize, depth: usize) -> Option<Pyt
         },
         _ => return None,
     };
+    // A marker compares against one specifier; `packaging` rejects a
+    // comma, which `parse_version_specifiers` reads as a set.
+    if value.contains(',') {
+        return None;
+    }
     let specifier = parse_version_specifiers(&format!("{op}{value}"))?;
     let [specifier] = specifier.as_slice() else {
         return None;
@@ -357,6 +362,9 @@ mod tests {
             "python_version >= '3.8' or sys_platform == 'win32'",
             "python_version in '3.9 3.10 3.11'",
             "python_version === '3.9'",
+            // One specifier, not a set: `packaging` rejects the comma.
+            "python_version >= '3.8,'",
+            "python_version >= '3.8,<4'",
             "python_version >= '3.8rc1'",
             "python_full_version >= '3.8.0.1'",
             "'3.8' == python_version",
