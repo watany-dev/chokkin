@@ -60,3 +60,30 @@ pub fn render_baseline_report(report: &BaselineReport) -> Option<String> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn baseline(written: u32, suppressed: u32) -> BaselineReport {
+        BaselineReport {
+            path: Some("base\x1b[31m.json".to_owned()),
+            suppressed,
+            written,
+        }
+    }
+
+    /// Writing wins over suppressing; neither prints nothing (#996).
+    #[test]
+    fn baseline_report_picks_the_message_by_count() {
+        assert_eq!(render_baseline_report(&baseline(0, 0)), None);
+        assert_eq!(
+            render_baseline_report(&baseline(0, 2)).as_deref(),
+            Some("Baseline: suppressed 2 existing issues from base\\u{1b}[31m.json\n")
+        );
+        assert_eq!(
+            render_baseline_report(&baseline(3, 2)).as_deref(),
+            Some("Baseline: wrote 3 issues to base\\u{1b}[31m.json\n")
+        );
+    }
+}
