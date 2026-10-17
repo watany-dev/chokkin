@@ -70,7 +70,15 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     lines: &'a LineIndex,
     default_context: ImportContext,
     in_type_checking: bool,
-    try_depth: u32,
+    /// Inside a `try:` body or `with suppress(ImportError):`, which catch a
+    /// failed import only while they run, so a nested function's body is
+    /// outside them (#968).
+    caught_depth: u32,
+    /// Inside code that runs only once some package imported: a `try`'s
+    /// `else:`, a branch a flag or availability check rules out, or the
+    /// statements after `if not is_x_available(): raise ImportError`. A
+    /// function defined there exists only then, so it stays inside.
+    gated_depth: u32,
     /// Inside an `except ImportError:` handler: the roots its `try` body
     /// imports (#721).
     fallback_for: Vec<String>,
@@ -126,7 +134,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             lines,
             default_context,
             in_type_checking: false,
-            try_depth: 0,
+            caught_depth: 0,
+            gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
             imported_guards: Vec::new(),
@@ -254,7 +263,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     ) {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
-        let was_try_depth = self.try_depth;
+        let was_gated_depth = self.gated_depth;
         let was_main_block = self.in_main_block;
         let guard_count = self.imported_guards.len();
         let excluded = |leaf: &dyn Fn(&Expr) -> Leaf| condition::excluded(earlier, test, leaf);
@@ -298,7 +307,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         // An import placed before the check in the same `and` is read as
         // optional too: real code checks first.
         if optional {
-            self.try_depth = self.try_depth.saturating_add(1);
+            self.gated_depth = self.gated_depth.saturating_add(1);
         }
         if let Some(test) = test {
             self.visit_expr(test);
@@ -312,7 +321,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.visit_body(body);
         self.in_type_checking = was_type_checking;
         self.platform_guard_depth = was_platform_guard;
-        self.try_depth = was_try_depth;
+        self.gated_depth = was_gated_depth;
         self.in_main_block = was_main_block;
         self.imported_guards.truncate(guard_count);
     }
@@ -341,7 +350,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
 
     /// Whether an import at `node` runs only when some package is installed.
     fn is_optional_at<R: Ranged>(&self, node: &R) -> bool {
-        self.try_depth > 0
+        self.caught_depth > 0
+            || self.gated_depth > 0
             || self
                 .availability_checked_at
                 .is_some_and(|at| at < node.start())
@@ -380,9 +390,13 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let saved_function_depth = self.function_depth;
         let saved_checked_at = self.availability_checked_at;
         let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
+        let saved_caught_depth = self.caught_depth;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
+            // The body runs when called, after the enclosing `try` is gone.
+            // `fallback_for` stays: a handler that never runs defines nothing.
+            self.caught_depth = 0;
             // A function that asks whether a package is installed treats the
             // packages it imports after the check as optional (#695, #713).
             // A nested function runs when called, possibly after the outer
@@ -401,6 +415,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.function_depth = saved_function_depth;
         self.availability_checked_at = saved_checked_at;
         self.prefix_modules = saved_prefix_modules;
+        self.caught_depth = saved_caught_depth;
     }
 
     /// Track `name = import_module("pkg." + x)` for a later
@@ -687,17 +702,17 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
     /// Statements after `if not is_x_available(): raise ImportError(...)`
     /// only run with `x` installed (#695).
     fn visit_body(&mut self, body: &'ast [Stmt]) {
-        let try_depth = self.try_depth;
+        let gated_depth = self.gated_depth;
         for stmt in body {
             self.visit_stmt(stmt);
             if let Stmt::If(if_stmt) = stmt
                 && availability_test(&if_stmt.test) == Some(false)
                 && raises_import_error(&if_stmt.body)
             {
-                self.try_depth = try_depth.saturating_add(1);
+                self.gated_depth = gated_depth.saturating_add(1);
             }
         }
-        self.try_depth = try_depth;
+        self.gated_depth = gated_depth;
     }
 
     #[allow(clippy::too_many_lines)]
@@ -823,9 +838,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                         |value| matches!(value, Expr::BooleanLiteral(literal) if literal.value),
                     ));
                 }
-                self.try_depth = self.try_depth.saturating_add(1);
+                self.caught_depth = self.caught_depth.saturating_add(1);
                 self.visit_body(&try_stmt.body);
-                self.try_depth = self.try_depth.saturating_sub(1);
+                self.caught_depth = self.caught_depth.saturating_sub(1);
                 let primaries = imported_roots(&try_stmt.body);
                 for handler in &try_stmt.handlers {
                     let ExceptHandler::ExceptHandler(handler) = handler;
@@ -851,9 +866,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 // `else:` runs only when the `try` body raised nothing, so its
                 // imports are as optional as the body's.
-                self.try_depth = self.try_depth.saturating_add(1);
+                self.gated_depth = self.gated_depth.saturating_add(1);
                 self.visit_body(&try_stmt.orelse);
-                self.try_depth = self.try_depth.saturating_sub(1);
+                self.gated_depth = self.gated_depth.saturating_sub(1);
                 self.visit_body(&try_stmt.finalbody);
             },
             Stmt::With(with_stmt) => {
@@ -865,11 +880,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     .iter()
                     .any(|item| suppresses_import_error(&item.context_expr));
                 if suppresses {
-                    self.try_depth = self.try_depth.saturating_add(1);
+                    self.caught_depth = self.caught_depth.saturating_add(1);
                 }
                 self.visit_body(&with_stmt.body);
                 if suppresses {
-                    self.try_depth = self.try_depth.saturating_sub(1);
+                    self.caught_depth = self.caught_depth.saturating_sub(1);
                 }
             },
             Stmt::Match(match_stmt) => {
@@ -980,12 +995,15 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             _ => {},
         }
         let lambda = matches!(expr, Expr::Lambda(_));
+        let caught_depth = self.caught_depth;
         if lambda {
             self.function_depth += 1;
+            self.caught_depth = 0;
         }
         walk_expr(self, expr);
         if lambda {
             self.function_depth -= 1;
+            self.caught_depth = caught_depth;
         }
     }
 }
@@ -1800,6 +1818,44 @@ g = lambda x=utils.G: x
             assert!(fallback_for(module).is_empty(), "{module}");
         }
         assert_eq!(fallback_for("missing_fallback"), vec!["b".to_owned()]);
+    }
+
+    /// A function body runs when called, after the `try` / `suppress` that
+    /// wrapped its definition has finished, so its imports are not caught
+    /// there (#968). A guard that only lets the definition happen when a
+    /// package is installed (`else:`, a flag, an availability check) still
+    /// holds when it is called, and so does a class body, which runs at once.
+    #[test]
+    fn caught_imports_stop_at_the_function_boundary() {
+        let parsed = visit_source(
+            "import importlib\n\ntry:\n    import yaml\n    import yaml_a\n\n    def load():\n        import requests\n\n    class Loader:\n        import yaml_b\n\n        def run(self):\n            import yaml_c\n\n    caller = lambda: importlib.import_module(\"yaml_d\")\nexcept ImportError:\n    yaml = None\n\n    def fallback():\n        import fallback_dep\nelse:\n    def dump():\n        import yaml_e\n\nwith suppress(ImportError):\n    def suppressed():\n        import yaml_f\n\nif yaml is not None:\n    def flagged():\n        import yaml_g\n\nif find_spec(\"yaml\") is None:\n    raise ImportError(\"yaml\")\n\ndef checked():\n    import yaml_h\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("importlib", false),
+                ("yaml", true),
+                ("yaml_a", true),
+                ("requests", false),
+                ("yaml_b", true),
+                ("yaml_c", false),
+                ("fallback_dep", false),
+                ("yaml_e", true),
+                ("yaml_f", false),
+                ("yaml_g", true),
+                ("yaml_h", true),
+            ]
+        );
+        // A handler that never runs defines nothing, so a function there
+        // keeps the fallback link.
+        let handler = visit_source(
+            "try:\n    import threading\nexcept ImportError:\n    def start():\n        import dummy_threading\n",
+        );
+        assert_eq!(handler.imports[1].fallback_for, ["threading"]);
+        let [lambda] = parsed.dynamic_imports.as_slice() else {
+            panic!("{:?}", parsed.dynamic_imports);
+        };
+        assert_eq!((lambda.module.as_str(), lambda.optional), ("yaml_d", false));
     }
 
     /// A bare `except:` and `except Exception:` / `BaseException` catch a
@@ -2652,9 +2708,12 @@ value = t\"{utils.C}\"
         #[allow(clippy::struct_excessive_bools)]
         #[derive(Clone, Default)]
         struct Frame {
-            /// Inside a `try` body or `else:`, a suppressing `with`, or after
-            /// a sibling check that raises `ImportError` (#614, #695).
-            optional: bool,
+            /// Inside a `try` body or a suppressing `with` (#614), up to the
+            /// nearest function (#968).
+            caught: bool,
+            /// Inside a `try`'s `else:` or after a sibling check that raises
+            /// `ImportError` (#695), nested functions included.
+            gated: bool,
             platform: bool,
             type_checking: bool,
             main_block: bool,
@@ -2707,7 +2766,7 @@ value = t\"{utils.C}\"
                 for block in blocks {
                     self.block(block, depth, &frame);
                     if matches!(block, Block::Check) {
-                        frame.optional = true;
+                        frame.gated = true;
                     }
                 }
             }
@@ -2732,7 +2791,7 @@ value = t\"{utils.C}\"
                     self.default_context
                 };
                 let flags = Flags {
-                    optional: frame.optional || checked,
+                    optional: frame.caught || frame.gated || checked,
                     platform_guarded: frame.platform,
                     deferred: !self.functions.is_empty(),
                     context,
@@ -2749,13 +2808,17 @@ value = t\"{utils.C}\"
                     orelse,
                     finalbody,
                 } = block;
-                let guarded = Frame {
-                    optional: true,
+                let caught = Frame {
+                    caught: true,
+                    ..frame.clone()
+                };
+                let gated = Frame {
+                    gated: true,
                     ..frame.clone()
                 };
                 self.line(depth, "try:");
                 let first = self.names + 1;
-                self.body(body, depth + 1, &guarded);
+                self.body(body, depth + 1, &caught);
                 let primaries = (!body.is_empty()
                     && body
                         .iter()
@@ -2776,7 +2839,7 @@ value = t\"{utils.C}\"
                 self.body(handled, depth + 1, &handling);
                 if !orelse.is_empty() {
                     self.line(depth, "else:");
-                    self.body(orelse, depth + 1, &guarded);
+                    self.body(orelse, depth + 1, &gated);
                 }
                 if !finalbody.is_empty() {
                     self.line(depth, "finally:");
@@ -2801,7 +2864,7 @@ value = t\"{utils.C}\"
                         let mut inner = frame.clone();
                         if *suppress {
                             self.line(depth, "with suppress(ImportError):");
-                            inner.optional = true;
+                            inner.caught = true;
                         } else {
                             self.line(depth, "with nullcontext():");
                         }
@@ -2840,6 +2903,7 @@ value = t\"{utils.C}\"
                             seen: false,
                         });
                         let inner = Frame {
+                            caught: false,
                             function_scope: true,
                             ..frame.clone()
                         };

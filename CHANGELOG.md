@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from keeps its `fallback_for` link (so a dead fallback such as
   `dummy_threading` drops to info), and `x = None` in them sets an
   availability flag (#967).
+- An import inside a function (or `lambda`) defined in a `try:` body or
+  `with suppress(ImportError):` is no longer optional: the body runs when
+  called, after the `try` stops catching, so a missing package there is
+  reported at full severity again. A function defined under `else:`, a flag,
+  or an availability check keeps its imports optional, since it exists only
+  when the package is installed (#968).
 
 ## [0.7.7] - 2026-10-17
 
