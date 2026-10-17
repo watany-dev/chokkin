@@ -428,4 +428,36 @@ mod tests {
         assert!(!a.is_subset_of(&b));
         assert!(PythonRange::all().complement().0.is_empty());
     }
+
+    #[test]
+    fn requires_python_specifiers_map_to_exact_intervals() {
+        let interval = |low, high| Some(PythonRange(vec![(low, high)]));
+        assert_eq!(
+            requires_python_range("~=3.10"),
+            interval([3, 10, 0], [4, 0, 0])
+        );
+        assert_eq!(
+            requires_python_range("~=3.8.1"),
+            interval([3, 8, 1], [3, 9, 0])
+        );
+        assert_eq!(requires_python_range("~=3.8.1.2"), None);
+        assert_eq!(
+            requires_python_range("==3.11.*"),
+            interval([3, 11, 0], [3, 12, 0])
+        );
+        assert_eq!(
+            requires_python_range("==3.8.1.*"),
+            interval([3, 8, 1], [3, 8, 2])
+        );
+        assert_eq!(requires_python_range("==3.8.1.2.*"), None);
+        let max = [3, MAX_SEGMENT, 0];
+        assert_eq!(
+            requires_python_range(&format!(">=3.{MAX_SEGMENT}")),
+            interval(max, TOP)
+        );
+        assert_eq!(
+            requires_python_range(&format!(">=3.{}", MAX_SEGMENT + 1)),
+            None
+        );
+    }
 }
