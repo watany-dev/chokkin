@@ -56,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`rich  # pretty output` declares `rich`) and a line ending in `\` joins
   the next one (`requests \` + `>=2` declares `requests>=2`), instead of
   being reported as invalid requirement lines (#965).
+- A root `[tool.uv.sources]` path source inside the root that is not read as
+  a member now says why: a missing directory warns that it does not exist,
+  and a directory with no `pyproject.toml` `[project]` table (a `setup.py`
+  sub-project) warns that its code is analyzed as the root's without its own
+  entries or dependencies. Findings under such a directory are lowered:
+  unused files and unused declarations of what its files import to `likely`,
+  undeclared and misplaced imports from it to hints (#1000).
 
 ## [0.7.6] - 2026-10-16
 

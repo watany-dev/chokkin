@@ -110,6 +110,14 @@ pub enum GapKind {
     /// computed or unread target, or a file or module it names that nothing
     /// else reaches (#913). What that code imports is unknown.
     UnreadCommandTarget,
+    /// A root `[tool.uv.sources]` directory without a `[project]` table: its
+    /// code is analyzed as the root's, but its own entries, which may reach
+    /// any file under it, and declarations, which may declare any import
+    /// there, are not read (#1000).
+    UnreadPathSource,
+    /// A distribution a file under such a directory imports, at its first
+    /// import: an entry of the source may run that file (#1000).
+    UnreadPathSourceImport,
     /// A Django project's settings could not be found or read, or star-import
     /// a module that is not a project file (#914): the apps, middleware and
     /// URL configuration they name are unknown.
@@ -144,7 +152,9 @@ impl GapKind {
     /// so it lowers the missing-declaration findings to hints; an unread extra
     /// may declare one only as optional, beside a runtime list that was read,
     /// so it caps them and the misplaced ones (#975); an unresolved import may
-    /// name what an unused declaration provides. A script's own block is read
+    /// name what an unused declaration provides. A uv path source without
+    /// `[project]` is both under its directory: its entries and its
+    /// declaration list are unread (#1000). A script's own block is read
     /// separately, so no project manifest gap reaches its findings; what the
     /// block itself could not read lowers that script's alone (#936).
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
@@ -179,7 +189,9 @@ impl GapKind {
                 IssueSubject::ScriptDistribution { .. },
             )
             | (Self::UnknownExtras, RuleId::Chk003 | RuleId::Chk004, IssueSubject::Import { .. })
-            | (Self::UnknownExtras, RuleId::Chk005, IssueSubject::Distribution { .. }) => {
+            | (Self::UnknownExtras, RuleId::Chk005, IssueSubject::Distribution { .. })
+            | (Self::UnreadPathSource, RuleId::Chk001, IssueSubject::File { .. })
+            | (Self::UnreadPathSourceImport, RuleId::Chk002, IssueSubject::Distribution { .. }) => {
                 Some(Lowering::Cap(Confidence::Likely))
             },
             (
@@ -197,9 +209,15 @@ impl GapKind {
             | (
                 Self::RuntimeDependenciesUnknown
                 | Self::InvalidRuntimeRequirement
-                | Self::ArchiveRuntimeRequirement,
+                | Self::ArchiveRuntimeRequirement
+                | Self::UnreadPathSource,
                 RuleId::Chk005,
                 IssueSubject::Distribution { .. },
+            )
+            | (
+                Self::UnreadPathSource,
+                RuleId::Chk003 | RuleId::Chk004,
+                IssueSubject::Import { .. },
             )
             | (
                 Self::AssumedTargetVersion | Self::AssumedScriptTargetVersion,
@@ -246,6 +264,14 @@ impl GapKind {
                 "an import in the script could not be resolved to a distribution"
             },
             Self::UnreadCommandTarget => "a command runs Python code no entry reaches",
+            Self::UnreadPathSource => {
+                "a uv path source has no `[project]` table, so its entries and dependencies were \
+                 not read"
+            },
+            Self::UnreadPathSourceImport => {
+                "a file under a uv path source with no `[project]` table imports the \
+                 distribution, and the source's entries were not read"
+            },
             Self::UnreadDjangoSettings => "the Django settings could not be found or read",
             Self::AssumedTargetVersion => {
                 "`requires-python` could not be read, so py311 decided the module is not stdlib"
@@ -306,9 +332,20 @@ impl Gap {
                 IssueSubject::Import { distribution, .. },
             ) => distribution.as_deref().is_some_and(|name| self.site_is(name)),
             (
-                GapKind::InvalidRuntimeRequirement | GapKind::ArchiveRuntimeRequirement,
+                GapKind::InvalidRuntimeRequirement
+                | GapKind::ArchiveRuntimeRequirement
+                | GapKind::UnreadPathSourceImport,
                 IssueSubject::Distribution { name },
             ) => self.site_is(name),
+            (
+                GapKind::UnreadPathSource,
+                IssueSubject::File { path: file } | IssueSubject::Import { file, .. },
+            ) => is_under(file, &self.file),
+            (GapKind::UnreadPathSource, IssueSubject::Distribution { .. }) => {
+                candidate.origins.iter().any(
+                    |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, &self.file)),
+                )
+            },
             _ => true,
         };
         in_member && in_site
@@ -348,6 +385,7 @@ pub fn collect_gaps(
     scripts: &[InlineScript],
     plugins: &PluginHints,
     skipped_entries: &[String],
+    unread_path_sources: &[String],
     groups: &DependencyGroupsConfig,
     project_range: StdlibRange,
 ) -> Vec<Gap> {
@@ -365,6 +403,7 @@ pub fn collect_gaps(
         &plugins.config_command_targets,
     ));
     gaps.extend(plugins.unread_settings().map(settings_gap));
+    gaps.extend(path_source_gaps(context, unread_path_sources));
     gaps.extend(manifest_gap(manifest));
     gaps.extend(extras_gap(manifest));
     gaps.extend(invalid_requirement_gaps(manifest, groups));
@@ -576,6 +615,46 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
             site: Some((text, line)),
         })
         .collect()
+}
+
+/// Whether root-relative `path` is below directory `dir`.
+fn is_under(path: &str, dir: &str) -> bool {
+    path.strip_prefix(dir)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// One gap per unread path source directory, and one per distribution a file
+/// under one imports, at its first import: an entry of the source may run
+/// any file under it, reached from the root or not.
+fn path_source_gaps(context: &RuleContext<'_>, dirs: &[String]) -> Vec<Gap> {
+    let mut first: BTreeMap<&str, (&str, Option<u32>)> = BTreeMap::new();
+    for import in &context.resolution.imports {
+        let Some(distribution) = import.distribution.as_deref() else {
+            continue;
+        };
+        if !dirs.iter().any(|dir| is_under(&import.file, dir)) {
+            continue;
+        }
+        let site = (import.file.as_str(), import.line);
+        let kept = first.entry(distribution).or_insert(site);
+        let line = |line: Option<u32>| line.unwrap_or(u32::MAX);
+        if (site.0, line(site.1)) < (kept.0, line(kept.1)) {
+            *kept = site;
+        }
+    }
+    let dir_gaps = dirs.iter().map(|dir| Gap {
+        file: dir.clone(),
+        kind: GapKind::UnreadPathSource,
+        member: None,
+        site: None,
+    });
+    let import_gaps = first.into_iter().map(|(distribution, (file, line))| Gap {
+        file: file.to_owned(),
+        kind: GapKind::UnreadPathSourceImport,
+        member: None,
+        site: Some((distribution.to_owned(), line)),
+    });
+    dir_gaps.chain(import_gaps).collect()
 }
 
 /// Settings decide what Django runs in every member, so the gap lowers the
@@ -974,6 +1053,61 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A path source without `[project]` lowers findings only under its
+    /// directory, and its imports cap only the distribution they name (#1000).
+    #[test]
+    fn unread_path_source_lowers_findings_under_its_directory() {
+        let under = |module: &str, file: &str| IssueSubject::Import {
+            module: module.to_owned(),
+            file: file.to_owned(),
+            line: Some(1),
+            distribution: None,
+        };
+        let imported_from = |mut candidate: IssueCandidate, file: &str| {
+            candidate.origins.push(Origin::Import {
+                file: file.to_owned(),
+                line: Some(1),
+                module: "httpx".to_owned(),
+            });
+            candidate
+        };
+        let found = lowered(
+            &[gap("sub", GapKind::UnreadPathSource)],
+            vec![
+                candidate(RuleId::Chk001, file("sub/a.py")),
+                candidate(RuleId::Chk001, file("sub2/a.py")),
+                candidate(RuleId::Chk003, under("httpx", "sub/x.py")),
+                candidate(RuleId::Chk003, under("httpx", "sub2/x.py")),
+                imported_from(candidate(RuleId::Chk005, distribution("httpx")), "sub/x.py"),
+                imported_from(
+                    candidate(RuleId::Chk005, distribution("httpx")),
+                    "sub2/x.py",
+                ),
+                candidate(RuleId::Chk002, distribution("click")),
+            ],
+        );
+        let likely = (Severity::Error, Confidence::Likely);
+        let hint = (Severity::Info, Confidence::Maybe);
+        let kept = (Severity::Error, Confidence::Certain);
+        assert_eq!(found, [likely, kept, hint, kept, hint, kept, kept]);
+
+        let import = Gap {
+            file: "sub/tools/gen.py".to_owned(),
+            kind: GapKind::UnreadPathSourceImport,
+            member: None,
+            site: Some(("click".to_owned(), Some(1))),
+        };
+        let found = lowered(
+            &[import],
+            vec![
+                candidate(RuleId::Chk002, distribution("click")),
+                candidate(RuleId::Chk002, distribution("rich")),
+                candidate(RuleId::Chk001, file("sub/tools/other.py")),
+            ],
+        );
+        assert_eq!(found, [likely, kept, kept]);
     }
 
     #[test]

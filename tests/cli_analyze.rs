@@ -2,6 +2,7 @@
 
 #![allow(clippy::expect_used)]
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{fs, io};
@@ -1577,6 +1578,95 @@ fn paths_outside_the_root_are_reported_as_such() {
         assert!(!stderr.contains("not found"), "{text}: {stderr}");
         assert!(!stderr.contains("missing constraints"), "{text}: {stderr}");
         assert_eq!(output.status.code(), Some(exit.into()), "{text}: {stderr}");
+    }
+}
+
+/// A root `[tool.uv.sources]` path inside the root that is not a member says
+/// why (#1000). Without a `[project]` table its code is analyzed as the
+/// root's, but its own entries and declarations are not read: what it may
+/// run or declare lowers the findings under it, and only those.
+#[test]
+fn binary_path_source_without_project_table_is_a_gap() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"subpkg\", \"requests\", \"rich\", \"click\", \"attrs\"]\n\n[tool.uv.sources]\nsubpkg = { path = \"sub\" }\ngone = { path = \"missing-dir\" }\n",
+        ),
+        (
+            "main.py",
+            "import requests\nimport subpkg\nimport tomlkit\n",
+        ),
+        ("other.py", "import rich\n"),
+        (
+            "sub/setup.py",
+            "from setuptools import setup\n\nsetup(name=\"subpkg\", install_requires=[\"httpx\"])\n",
+        ),
+        ("sub/subpkg/__init__.py", ""),
+        ("sub/subpkg/__main__.py", "import httpx\n"),
+        ("sub/subpkg/cli.py", "import rich\n"),
+        ("sub/tools/gen.py", "import click\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--confidence", "maybe", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for expected in [
+        "manifest: `sub` (`tool.uv.sources.subpkg` in `pyproject.toml`) has no `pyproject.toml` with a `[project]` table, so its code is analyzed as the root's without its own entries or dependencies",
+        "manifest: `missing-dir` (`tool.uv.sources.gone` in `pyproject.toml`) does not exist",
+    ] {
+        assert!(stderr.contains(expected), "{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: BTreeSet<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default().to_owned(),
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let expected: BTreeSet<_> = [
+        ("CHK001", "other.py", "certain"),
+        ("CHK001", "sub/setup.py", "likely"),
+        ("CHK001", "sub/subpkg/cli.py", "likely"),
+        ("CHK001", "sub/tools/gen.py", "likely"),
+        // `rich` is imported by an unreached root file too, but also under
+        // the source, whose entries may reach it.
+        ("CHK002", "rich", "likely"),
+        ("CHK002", "click", "likely"),
+        ("CHK002", "attrs", "certain"),
+        ("CHK003", "main.py:tomlkit", "certain"),
+        ("CHK003", "sub/subpkg/__main__.py:httpx", "maybe"),
+    ]
+    .into_iter()
+    .map(|(code, target, confidence)| (code.to_owned(), target.to_owned(), confidence.to_owned()))
+    .collect();
+    assert_eq!(issues, expected, "{parsed}");
+
+    for (target, reason) in [
+        (
+            "CHK002:click",
+            "a file under a uv path source with no `[project]` table imports the distribution, and the source's entries were not read: `click` in `sub/tools/gen.py:1`",
+        ),
+        (
+            "CHK001:sub/tools/gen.py",
+            "a uv path source has no `[project]` table, so its entries and dependencies were not read: `sub`",
+        ),
+    ] {
+        let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", target])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(explain.stderr).expect("utf8");
+        assert!(stderr.contains(reason), "{target}: {stderr}");
     }
 }
 

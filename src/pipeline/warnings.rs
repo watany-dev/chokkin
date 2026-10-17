@@ -220,6 +220,8 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::SetupPyPartiallyStatic { file, .. }
         | ManifestWarning::RequirementsUnreadable { file, .. }
         | ManifestWarning::PathOutsideRoot { file, .. }
+        | ManifestWarning::PathSourceMissing { file, .. }
+        | ManifestWarning::PathSourceNotProject { file, .. }
         | ManifestWarning::LockfileSkipped { file, .. }
         | ManifestWarning::DependencyGroupIncludeUndefined { file, .. }
         | ManifestWarning::DependencyGroupIncludeCycle { file, .. }
@@ -491,6 +493,14 @@ fn write_manifest_warning(
         ManifestWarning::PathOutsideRoot { file, field, path } => write!(
             formatter,
             "manifest: `{path}` (`{field}` in `{file}`) resolves outside the project root and was not read"
+        ),
+        ManifestWarning::PathSourceMissing { file, field, path } => write!(
+            formatter,
+            "manifest: `{path}` (`{field}` in `{file}`) does not exist"
+        ),
+        ManifestWarning::PathSourceNotProject { file, field, path } => write!(
+            formatter,
+            "manifest: `{path}` (`{field}` in `{file}`) has no `pyproject.toml` with a `[project]` table, so its code is analyzed as the root's without its own entries or dependencies; findings under it are lowered"
         ),
         ManifestWarning::RequirementsUnreadable { file, reason } => {
             write!(formatter, "manifest: stopped reading `{file}`: {reason}")

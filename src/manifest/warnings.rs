@@ -80,6 +80,28 @@ pub enum ManifestWarning {
         /// The path as written.
         path: String,
     },
+    /// A root `[tool.uv.sources]` path inside the root names no directory,
+    /// so it is no member (#1000).
+    PathSourceMissing {
+        /// Root-relative manifest that names the path.
+        file: String,
+        /// `tool.uv.sources.<name>`.
+        field: String,
+        /// The path as written.
+        path: String,
+    },
+    /// A root `[tool.uv.sources]` directory inside the root has no
+    /// `pyproject.toml` with a `[project]` table, so it is no member: its code
+    /// is analyzed as the root's, without its own entries or declarations
+    /// (#1000).
+    PathSourceNotProject {
+        /// Root-relative manifest that names the path.
+        file: String,
+        /// `tool.uv.sources.<name>`.
+        field: String,
+        /// The path as written.
+        path: String,
+    },
     /// A `-c` constraints file reference could not be resolved.
     RequirementsConstraintMissing {
         /// Missing constraints file path as written.
@@ -166,6 +188,8 @@ impl ManifestWarning {
             | Self::SetupPyPartiallyStatic { file, .. }
             | Self::RequirementsOptionIgnored { file, .. }
             | Self::PathOutsideRoot { file, .. }
+            | Self::PathSourceMissing { file, .. }
+            | Self::PathSourceNotProject { file, .. }
             | Self::RequirementsUnreadable { file, .. }
             | Self::DependencyGroupIncludeUndefined { file, .. }
             | Self::DependencyGroupIncludeCycle { file, .. }
