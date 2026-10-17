@@ -1,0 +1,10 @@
+[project]
+name = "flask-app-paths"
+version = "0.1.0"
+dependencies = ["flask"]
+
+[tool.chokkin]
+mode = "app"
+
+[tool.chokkin.plugins]
+flask = true
