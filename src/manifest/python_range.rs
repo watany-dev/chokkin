@@ -337,6 +337,10 @@ mod tests {
             ">=3.9",
             "python_version >= '2.7' and python_version != '3.8'"
         ));
+        assert!(implied(
+            ">=3.9",
+            "python_version < '3.0' or python_version >= '3.6'"
+        ));
     }
 
     #[test]
