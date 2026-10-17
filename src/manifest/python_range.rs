@@ -211,13 +211,15 @@ fn tokenize(input: &str) -> Option<Vec<Token<'_>>> {
                 let len = rest
                     .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.')))
                     .unwrap_or(rest.len());
-                if len == 0 {
-                    return None;
-                }
                 tokens.push(Token::Word(&rest[..len]));
                 len
             },
         };
+        // A token that consumes nothing (a character no arm reads) would
+        // loop forever; the input is outside the model instead.
+        if len == 0 {
+            return None;
+        }
         rest = rest[len..].trim_start_matches([' ', '\t']);
     }
     Some(tokens)
