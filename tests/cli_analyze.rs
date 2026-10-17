@@ -5863,6 +5863,17 @@ fn binary_escapes_control_characters_from_the_project() {
     assert!(!issues.contains("\"CHK003\""), "{issues}");
 }
 
+/// A character the text outputs must spell out: controls other than the line
+/// break, bidi embedding/override/isolate and line/paragraph separators.
+fn unescaped(ch: char) -> bool {
+    ch != '\n'
+        && (ch.is_control()
+            || matches!(
+                ch,
+                '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}'
+            ))
+}
+
 /// The other outputs that echo the analyzed project — `--probe`, `--trace`,
 /// `--explain`, a fatal error quoting the manifest and the baseline message —
 /// escape control characters too, and bidi controls and line separators along
@@ -5896,13 +5907,7 @@ fn binary_escapes_control_characters_outside_the_reporters() {
         let stdout = String::from_utf8(output.stdout).expect("utf8");
         let stderr = String::from_utf8(output.stderr).expect("utf8");
         for text in [&stdout, &stderr] {
-            assert!(
-                !text.chars().any(|ch| ch != '\n'
-                    && (ch.is_control()
-                        || matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
-                        || matches!(ch, '\u{2028}' | '\u{2029}'))),
-                "{args:?}: {text:?}"
-            );
+            assert!(!text.chars().any(unescaped), "{args:?}: {text:?}");
         }
         (stdout, stderr)
     };
@@ -5937,6 +5942,12 @@ fn binary_escapes_control_characters_outside_the_reporters() {
     let (_, explain) = run(&["--explain", &format!("CHK001:{FORGED}")]);
     assert!(
         explain.contains("acme/bad\\u{1b}[31m\\u{a}CHK001 forged.py"),
+        "{explain}"
+    );
+
+    let (_, explain) = run(&["--explain", "CHK001:none\u{1b}[31m.py"]);
+    assert!(
+        explain.contains("no matching issue for `CHK001:none\\u{1b}[31m.py`"),
         "{explain}"
     );
 

@@ -132,7 +132,8 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
             None => {
                 let _ = writeln!(
                     std::io::stderr(),
-                    "explain: no matching issue for `{selector}`"
+                    "explain: no matching issue for `{}`",
+                    escape_control_lines(selector)
                 );
             },
         }
