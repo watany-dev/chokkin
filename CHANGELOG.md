@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A bare `except:` and `except Exception:` / `except BaseException:` catch a
+  failed import like `except ImportError:` does: the import they fall back
+  from keeps its `fallback_for` link (so a dead fallback such as
+  `dummy_threading` drops to info), and `x = None` in them sets an
+  availability flag (#967).
+
 ## [0.7.7] - 2026-10-17
 
 v0.7.7 closes the v0.7.6 `uvx` findings and the remaining gaps of the

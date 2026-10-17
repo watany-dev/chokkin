@@ -832,7 +832,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     if let Some(exc_type) = &handler.type_ {
                         self.visit_expr(exc_type);
                     }
-                    let import_failed = handler.type_.as_deref().is_some_and(catches_import_error);
+                    // A bare `except:` catches everything, a failed import included.
+                    let import_failed = handler.type_.as_deref().is_none_or(catches_import_error);
                     if self.module_level && import_failed {
                         self.try_flags
                             .extend(assigned_flags(&handler.body, Expr::is_none_literal_expr));
@@ -1133,18 +1134,21 @@ fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
     Some(roots)
 }
 
-/// `except ImportError:` / `except (ModuleNotFoundError, ...):`.
+/// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class
+/// a failed import also lands in: `Exception` / `BaseException` (#967).
+/// Any other name, or an expression that is not a name, does not catch it.
 fn catches_import_error(exc_type: &Expr) -> bool {
-    let is_import_error = |expr: &Expr| {
-        matches!(
-            subscript_name(expr),
-            Some("ImportError" | "ModuleNotFoundError")
-        )
-    };
     match exc_type {
-        Expr::Tuple(tuple) => tuple.elts.iter().any(is_import_error),
-        _ => is_import_error(exc_type),
+        Expr::Tuple(tuple) => tuple.elts.iter().any(is_import_error_class),
+        _ => is_import_error_class(exc_type),
     }
+}
+
+fn is_import_error_class(expr: &Expr) -> bool {
+    matches!(
+        subscript_name(expr),
+        Some("ImportError" | "ModuleNotFoundError" | "Exception" | "BaseException")
+    )
 }
 
 /// `suppress(...)` / `contextlib.suppress(...)` swallowing a failed import
@@ -1164,12 +1168,7 @@ fn suppresses_import_error(expr: &Expr) -> bool {
     if !is_suppress {
         return false;
     }
-    call.arguments.args.iter().any(|arg| {
-        matches!(
-            subscript_name(arg),
-            Some("ImportError" | "ModuleNotFoundError" | "Exception" | "BaseException")
-        )
-    })
+    call.arguments.args.iter().any(is_import_error_class)
 }
 
 fn alias_as_name(alias: &Alias) -> Option<String> {
@@ -1801,6 +1800,34 @@ g = lambda x=utils.G: x
             assert!(fallback_for(module).is_empty(), "{module}");
         }
         assert_eq!(fallback_for("missing_fallback"), vec!["b".to_owned()]);
+    }
+
+    /// A bare `except:` and `except Exception:` / `BaseException` catch a
+    /// failed import too, so they fall back and set flags like
+    /// `except ImportError:` (#967). Any other class does not.
+    #[test]
+    fn broad_handlers_catch_a_failed_import() {
+        let parsed = visit_source(
+            "try:\n    import threading\nexcept:\n    import dummy_threading\n\ntry:\n    import json\nexcept Exception:\n    import simplejson\n\ntry:\n    import pickle\nexcept (OSError, builtins.BaseException):\n    import cPickle\n\ntry:\n    import zlib\nexcept OSError:\n    import zlib_fallback\n\ntry:\n    import yaml\nexcept:\n    yaml = None\n\nif yaml is not None:\n    import yaml.nodes\n",
+        );
+        let fallback_for = |module: &str| {
+            parsed
+                .imports
+                .iter()
+                .find(|import| import.module == module)
+                .map(|import| import.fallback_for.clone())
+                .expect(module)
+        };
+        assert_eq!(fallback_for("dummy_threading"), ["threading"]);
+        assert_eq!(fallback_for("simplejson"), ["json"]);
+        assert_eq!(fallback_for("cPickle"), ["pickle"]);
+        assert!(fallback_for("zlib_fallback").is_empty());
+        assert!(
+            parsed
+                .imports
+                .iter()
+                .any(|import| import.module == "yaml.nodes" && import.optional)
+        );
     }
 
     #[test]
@@ -2508,8 +2535,10 @@ value = t\"{utils.C}\"
             Tuple,
             /// `except ValueError:`, which a missing module does not raise.
             Other,
-            /// A bare `except:`, which names no import error.
+            /// A bare `except:`, which catches a failed import too.
             Bare,
+            /// `except Exception:`, a base class of `ImportError`.
+            Broad,
         }
 
         /// The test of a generated `if`; `condition::tests` covers how
@@ -2558,6 +2587,7 @@ value = t\"{utils.C}\"
                     Just(Handler::Tuple),
                     Just(Handler::Other),
                     Just(Handler::Bare),
+                    Just(Handler::Broad),
                 ];
                 let guard = prop_oneof![
                     Just(Guard::TypeChecking),
@@ -2735,7 +2765,8 @@ value = t\"{utils.C}\"
                     Handler::ImportError => ("except ImportError:", true),
                     Handler::Tuple => ("except (ValueError, ModuleNotFoundError):", true),
                     Handler::Other => ("except ValueError:", false),
-                    Handler::Bare => ("except:", false),
+                    Handler::Bare => ("except:", true),
+                    Handler::Broad => ("except Exception:", true),
                 };
                 self.line(depth, clause);
                 let mut handling = frame.clone();
