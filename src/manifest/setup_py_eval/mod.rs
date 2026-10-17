@@ -125,6 +125,39 @@ impl Value {
     }
 }
 
+/// The element an integer literal index (`0`, `-1`) names in `items`, as
+/// `CPython` counts it. `None` for any other index, one out of range (`CPython`
+/// raises), or one counted over an element that may stand for any number of
+/// them (an unknown spread `*more`, a requirements file), which may shift it.
+fn list_position(items: &[Value], index: &Expr) -> Option<usize> {
+    let (negative, operand) = match index {
+        Expr::UnaryOp(ruff_python_ast::ExprUnaryOp {
+            op: ruff_python_ast::UnaryOp::USub,
+            operand,
+            ..
+        }) => (true, &**operand),
+        _ => (false, index),
+    };
+    let Expr::NumberLiteral(ruff_python_ast::ExprNumberLiteral {
+        value: ruff_python_ast::Number::Int(int),
+        ..
+    }) = operand
+    else {
+        return None;
+    };
+    let offset = int.as_usize()?;
+    let (position, counted) = if negative {
+        let position = items.len().checked_sub(offset).filter(|_| offset > 0)?;
+        (position, &items[position..])
+    } else {
+        (offset, items.get(..=offset)?)
+    };
+    counted
+        .iter()
+        .all(|item| matches!(item, Value::Str(_) | Value::List(..) | Value::Dict { .. }))
+        .then_some(position)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DependencyItem {
     Requirement(String),
@@ -502,6 +535,14 @@ impl<'a> Evaluator<'a> {
                         (Value::Dict { items, .. }, Value::Str(key)) => {
                             items.retain(|(existing, _)| existing != key);
                         },
+                        (Value::List(items, _), _) => {
+                            match list_position(items, &subscript.slice) {
+                                Some(position) => {
+                                    items.remove(position);
+                                },
+                                None => items.push(Value::Unknown),
+                            }
+                        },
                         (base, _) => base.taint(),
                     });
                     if !found {
@@ -668,11 +709,16 @@ impl<'a> Evaluator<'a> {
             },
             // A key that is not a string leaves the dict partial as in a dict
             // literal: an added entry cannot undeclare the known ones (#827,
-            // #869). Any other base leaves it partial.
+            // #869). A list's element is replaced only where `list_position`
+            // reads the index (#868). Any other base leaves it partial.
             Expr::Subscript(subscript) => {
                 let key = self.eval(&subscript.slice);
                 let found = self.mutate(&subscript.value, |base| match (base, key) {
                     (Value::Dict { items, .. }, Value::Str(key)) => insert_entry(items, key, value),
+                    (Value::List(items, _), _) => match list_position(items, &subscript.slice) {
+                        Some(position) => items[position] = value,
+                        None => items.push(Value::Unknown),
+                    },
                     (base, _) => base.taint(),
                 });
                 if !found {
@@ -1732,7 +1778,7 @@ mod props {
         ".insert(0, 'z')",
         ".clear()",
         ".remove('a')",
-        "[0] = 'z'",
+        "[0:0] = ['z']",
     ];
 
     /// Statements outside the modelled subset, applied to a variable of any kind.
@@ -2107,11 +2153,55 @@ table = {'other': 'y', **opaque()}
     }
 
     #[test]
-    fn index_assignment_marks_the_list_partial() {
-        let call = evaluate("reqs = ['a']\nreqs[0] = 'b'\nsetup(install_requires=reqs)\n")
-            .expect("setup() call");
-        let value = call.keyword("install_requires").expect("install_requires");
-        assert!(!dependency_items(value).complete);
+    fn literal_index_assignment_and_del_replace_the_element() {
+        // #868: a literal index in range names one element, so the old one
+        // is no longer declared.
+        for (source, expected) in [
+            ("reqs = ['a']\nreqs[0] = 'b'\n", strings(&["b"])),
+            ("reqs = ['a', 'b']\nreqs[-1] = 'c'\n", strings(&["a", "c"])),
+            ("reqs = ['a', 'b']\ndel reqs[0]\n", strings(&["b"])),
+            ("reqs = ['a', 'b']\ndel reqs[-2]\n", strings(&["b"])),
+            ("reqs = ['a']\nalias = reqs\ndel alias[0]\n", strings(&[])),
+            (
+                "reqs = ['a', 'b']\nreqs[0] = ['c', 'd']\n",
+                Py::List(vec![strings(&["c", "d"]), Py::Str("b".to_owned())]),
+            ),
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            assert_eq!(
+                known(call.keyword("install_requires")),
+                Some(expected),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_index_assignment_and_del_mark_the_list_partial() {
+        // An index we cannot read, one out of range (CPython raises), or one
+        // counted over a spread of unknown length may name any element.
+        for source in [
+            "reqs = ['a']\nreqs[i] = 'b'\n",
+            "reqs = ['a']\nreqs[1] = 'b'\n",
+            "reqs = ['a']\ndel reqs[-2]\n",
+            "reqs = ['a']\nreqs[0:1] = ['b']\n",
+            "reqs = [*more, 'a']\nreqs[1] = 'b'\n",
+            "reqs = ['a', *more]\ndel reqs[-1]\n",
+            "reqs = ['a', 'b']\nreqs[True] = 'c'\n",
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            let value = call.keyword("install_requires").expect("install_requires");
+            let items = dependency_items(value);
+            assert!(!items.complete, "{source}");
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement("a".to_owned())),
+                "{source}"
+            );
+        }
     }
 
     #[test]
@@ -2123,66 +2213,34 @@ table = {'other': 'y', **opaque()}
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        let Some(Value::Dict { items, .. }) = call.keyword("extras_require") else {
-            panic!("extras_require is not a dict");
-        };
-        let list = |texts: &[&str]| {
-            Value::List(
-                texts
-                    .iter()
-                    .map(|text| Value::Str((*text).to_owned()))
-                    .collect(),
-                Identity(None),
-            )
-        };
         assert_eq!(
-            items,
-            &vec![
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![
                 (
                     "dev".to_owned(),
-                    Value::Dict {
-                        items: vec![
-                            ("lint".to_owned(), list(&["ruff"])),
-                            ("type".to_owned(), list(&["mypy"])),
-                        ],
-                        partial: false,
-                        id: Identity(None),
-                    }
+                    Py::Dict(vec![
+                        ("lint".to_owned(), strings(&["ruff"])),
+                        ("type".to_owned(), strings(&["mypy"])),
+                    ])
                 ),
-                (
-                    "test".to_owned(),
-                    Value::List(
-                        vec![Value::Str("pytest".to_owned()), Value::Unknown],
-                        Identity(None)
-                    )
-                ),
-            ]
+                ("test".to_owned(), strings(&["nose"])),
+            ]))
         );
     }
 
     #[test]
-    fn del_by_index_marks_only_that_entry_partial() {
+    fn del_by_index_removes_only_that_element() {
         let call = evaluate(
-            "extras = {'dev': ['ruff'], 'test': ['pytest']}\ndel extras['dev'][0]\n\
+            "extras = {'dev': ['ruff', 'mypy'], 'test': ['pytest']}\ndel extras['dev'][0]\n\
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        let Some(Value::Dict { items, .. }) = call.keyword("extras_require") else {
-            panic!("extras_require is not a dict");
-        };
         assert_eq!(
-            items[0],
-            (
-                "dev".to_owned(),
-                Value::List(
-                    vec![Value::Str("ruff".to_owned()), Value::Unknown],
-                    Identity(None)
-                )
-            )
-        );
-        assert_eq!(
-            known(Some(&items[1].1)),
-            Some(Py::List(vec![Py::Str("pytest".to_owned())]))
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![
+                ("dev".to_owned(), strings(&["mypy"])),
+                ("test".to_owned(), strings(&["pytest"])),
+            ]))
         );
     }
 
