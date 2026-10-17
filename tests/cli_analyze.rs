@@ -5564,6 +5564,17 @@ fn binary_shell_script_apps_are_entry_roots() {
     }
 }
 
+/// A `FLASK_APP` file under `scripts/` is a dev entry root, so a library
+/// serving a dev app stays a library and keeps its exports (#866).
+#[test]
+fn binary_flask_dev_app_paths_keep_library_mode() {
+    let keys = issue_keys(&json_issues(
+        &fixture_path(&["plugins", "flask_dev_app"]),
+        &["--strict"],
+    ));
+    assert_eq!(keys, [], "{keys:?}");
+}
+
 /// stderr of `--trace <target>` on the `trace_origins` fixture, which has an
 /// entry root of every origin kind.
 fn trace_stderr(target: &str) -> String {

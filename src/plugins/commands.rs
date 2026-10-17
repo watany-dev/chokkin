@@ -323,7 +323,7 @@ fn module_runner(word: &str) -> Option<&'static str> {
     MODULE_RUNNERS.into_iter().find(|runner| *runner == name)
 }
 
-fn is_computed(word: &str) -> bool {
+pub(super) fn is_computed(word: &str) -> bool {
     word.contains(['$', '{', '}', '%', '*'])
 }
 

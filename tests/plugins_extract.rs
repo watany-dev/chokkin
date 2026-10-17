@@ -866,6 +866,19 @@ fn flask_plugin_roots_app_files_without_module_names() {
     assert_eq!(symbol_ref_keys(contrib), []);
 }
 
+/// An app file keeps the context of the directory it is in (#866).
+#[test]
+fn flask_plugin_app_file_entries_keep_their_context() {
+    let hints = extract_fixture("flask_dev_app");
+    let contrib = plugin_contrib(&hints, PluginId::Flask);
+    let entries: Vec<_> = contrib
+        .entries
+        .iter()
+        .map(|entry| (entry.spec.path.as_str(), entry.context))
+        .collect();
+    assert_eq!(entries, [("scripts/app.py", FileContext::Dev)]);
+}
+
 /// `celery -A pkg.mod` names the module Celery searches for `app` / `celery`,
 /// or the attribute `mod` of `pkg` (#851).
 #[test]

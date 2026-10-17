@@ -11,7 +11,7 @@ use crate::sources::{FileContext, path_to_module};
 use super::config_text::{ini_value, toml_key_line};
 use super::context::PluginContext;
 use super::types::{PluginContribution, PluginEntry, ReferenceOrigin};
-use super::util::{origin_for_file, push_binary};
+use super::util::{join_lexical, origin_for_file, push_binary};
 
 /// Entry used when no config names a `script_location`.
 const DEFAULT_ENV: &str = "alembic/env.py";
@@ -248,22 +248,6 @@ fn is_identifier(part: &str) -> bool {
         && part.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// `rel` appended to root-relative `base`, with `.` and `..` folded; `None`
-/// when it climbs out of the root.
-fn join_lexical(base: &str, rel: &str) -> Option<String> {
-    let mut parts: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
-    for part in rel.split(['/', '\\']) {
-        match part {
-            "" | "." => {},
-            ".." => {
-                parts.pop()?;
-            },
-            _ => parts.push(part),
-        }
-    }
-    Some(parts.join("/"))
-}
-
 fn push_entry(
     contrib: &mut PluginContribution,
     path: String,
@@ -280,20 +264,6 @@ fn push_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn join_lexical_folds_dots_and_stays_under_root() {
-        assert_eq!(
-            join_lexical("pkg/db", "./migrations").as_deref(),
-            Some("pkg/db/migrations")
-        );
-        assert_eq!(
-            join_lexical("pkg/db", "..\\alembic").as_deref(),
-            Some("pkg/alembic")
-        );
-        assert_eq!(join_lexical("pkg", ".").as_deref(), Some("pkg"));
-        assert_eq!(join_lexical("", "../x"), None);
-    }
 
     #[test]
     fn location_separators_follow_setting() {

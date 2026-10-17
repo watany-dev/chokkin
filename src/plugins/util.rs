@@ -396,6 +396,23 @@ pub(super) fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -
     globs
 }
 
+/// `rel` appended to root-relative `base`, with `.` and `..` folded; `None`
+/// when it climbs out of the root. Either separator is read, as a Windows
+/// config or script may use `\`.
+pub(super) fn join_lexical(base: &str, rel: &str) -> Option<String> {
+    let mut parts: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
+    for part in rel.split(['/', '\\']) {
+        match part {
+            "" | "." => {},
+            ".." => {
+                parts.pop()?;
+            },
+            _ => parts.push(part),
+        }
+    }
+    Some(parts.join("/"))
+}
+
 /// Convert a dotted module path to a root-relative `.py` file path.
 pub(super) fn module_to_py_path(module: &str) -> String {
     format!("{}.py", module.replace('.', "/"))
@@ -590,6 +607,20 @@ pub(super) fn choose_settings_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn join_lexical_folds_dots_and_stays_under_root() {
+        assert_eq!(
+            join_lexical("pkg/db", "./migrations").as_deref(),
+            Some("pkg/db/migrations")
+        );
+        assert_eq!(
+            join_lexical("pkg/db", "..\\alembic").as_deref(),
+            Some("pkg/alembic")
+        );
+        assert_eq!(join_lexical("pkg", ".").as_deref(), Some("pkg"));
+        assert_eq!(join_lexical("", "../x"), None);
+    }
 
     #[test]
     fn text_decorator_normalizes_like_parse_path() {

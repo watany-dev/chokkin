@@ -4,12 +4,14 @@ use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
 use crate::path_util::rel_to_root;
-use crate::sources::{DiscoveredSources, FileContext, path_to_module};
+use crate::sources::{DiscoveredFile, DiscoveredSources, path_to_module};
 
-use super::commands::is_dotted_identifier;
+use super::commands::{is_computed, is_dotted_identifier};
 use super::context::PluginContext;
 use super::types::{PluginContribution, PluginEntry, ReferenceOrigin};
-use super::util::{decorator_suffix, push_app_ref, push_binary, push_decorated_modules};
+use super::util::{
+    decorator_suffix, join_lexical, push_app_ref, push_binary, push_decorated_modules,
+};
 
 /// Attributes and factories Flask looks up in the module `--app` names.
 const APP_NAMES: [&str; 4] = ["app", "application", "create_app", "make_app"];
@@ -110,11 +112,11 @@ fn push_flask_app(
 ) {
     let value = value.trim().trim_matches(['"', '\'']);
     let (path, attr) = split_app_attr(value);
-    let file = if is_file_path(path) {
+    let (file, module) = if is_file_path(path) {
         let Some(file) = app_file(sources, path) else {
             return;
         };
-        file
+        (file, path_to_module(&file.path, &sources.layout))
     } else {
         // `prepare_import` puts the working directory on `sys.path` for a
         // module name too, so `hello` is the root's `hello.py` even where
@@ -122,27 +124,28 @@ fn push_flask_app(
         let unnamed = is_dotted_identifier(path)
             .then(|| app_file(sources, &path.replace('.', "/")))
             .flatten()
-            .filter(|file| path_to_module(file, &sources.layout).is_none());
+            .filter(|file| path_to_module(&file.path, &sources.layout).is_none());
         let Some(file) = unnamed else {
             push_app_ref(contrib, value, origin, &APP_NAMES);
             return;
         };
-        file
+        (file, None)
     };
-    let symbol = attr.map(|attr| attr.split_once('(').map_or(attr, |(name, _)| name).trim());
-    if let Some(module) = path_to_module(file, &sources.layout) {
+    // Flask rejects an empty attribute; reading it as none hides nothing.
+    let symbol = attr
+        .map(|attr| attr.split_once('(').map_or(attr, |(name, _)| name).trim())
+        .filter(|symbol| !symbol.is_empty());
+    if let Some(module) = module {
         let target = symbol.map_or_else(|| module.clone(), |symbol| format!("{module}:{symbol}"));
         push_app_ref(contrib, &target, origin, &APP_NAMES);
         return;
     }
     contrib.entries.push(PluginEntry {
         spec: EntrySpec {
-            path: file.to_owned(),
-            symbol: symbol
-                .filter(|symbol| !symbol.is_empty())
-                .map(str::to_owned),
+            path: file.path.clone(),
+            symbol: symbol.map(str::to_owned),
         },
-        context: FileContext::Runtime,
+        context: file.context,
         origin: origin.clone(),
     });
 }
@@ -166,34 +169,20 @@ fn is_file_path(value: &str) -> bool {
 
 /// The discovered `.py` file a root-relative path names: the package
 /// `__init__.py` first, as Python's import prefers it, then the module file.
-/// Either separator is read, as a Windows script may use `\`.
-fn app_file<'s>(sources: &'s DiscoveredSources, path: &str) -> Option<&'s str> {
-    if path.starts_with(['/', '\\']) || path.contains(['$', '%', '`', '{', '}', '*', ':']) {
+fn app_file<'s>(sources: &'s DiscoveredSources, path: &str) -> Option<&'s DiscoveredFile> {
+    if path.starts_with(['/', '\\']) || path.contains(['`', ':']) || is_computed(path) {
         return None;
     }
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split(['/', '\\']) {
-        match part {
-            "" | "." => {},
-            ".." => {
-                parts.pop()?;
-            },
-            _ => parts.push(part),
-        }
-    }
-    let joined = parts.join("/");
+    let joined = join_lexical("", path)?;
     let stem = joined.strip_suffix(".py").unwrap_or(&joined);
     let stem = stem.strip_suffix("/__init__").unwrap_or(stem);
     if stem.is_empty() || stem == "__init__" {
         return None;
     }
     let candidates = [format!("{stem}/__init__.py"), format!("{stem}.py")];
-    candidates.iter().find_map(|candidate| {
-        sources
-            .python_files()
-            .find(|file| file.path == *candidate)
-            .map(|file| file.path.as_str())
-    })
+    candidates
+        .iter()
+        .find_map(|candidate| sources.python_files().find(|file| file.path == *candidate))
 }
 
 /// Route decorator test shared by the parse path and its syntax-error text
@@ -238,7 +227,7 @@ fn flask_app_arg(line: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
-    use crate::sources::{DiscoveredFile, FileKind, LayoutInfo};
+    use crate::sources::{FileContext, FileKind, LayoutInfo};
 
     fn sources(paths: &[&str]) -> DiscoveredSources {
         DiscoveredSources {
@@ -260,6 +249,10 @@ mod tests {
         }
     }
 
+    fn app_path<'s>(sources: &'s DiscoveredSources, path: &str) -> Option<&'s str> {
+        app_file(sources, path).map(|file| file.path.as_str())
+    }
+
     #[test]
     fn app_paths_split_attr_after_a_drive() {
         assert_eq!(
@@ -267,34 +260,47 @@ mod tests {
             ("src/app.py", Some("app"))
         );
         assert_eq!(split_app_attr(r"C:\src\app.py"), (r"C:\src\app.py", None));
+        // Drive-relative: Flask splits it the same way and fails the import.
+        assert_eq!(split_app_attr(r"C:src\app.py"), ("C", Some(r"src\app.py")));
         assert_eq!(
             split_app_attr("web.app:create_app()"),
             ("web.app", Some("create_app()"))
         );
     }
 
+    #[test]
+    fn app_paths_need_a_py_extension_or_a_separator() {
+        for path in ["hello.py", "src/hello", r"src\hello", "./hello"] {
+            assert!(is_file_path(path), "{path}");
+        }
+        for module in ["hello", "web.app", "hello.PY"] {
+            assert!(!is_file_path(module), "{module}");
+        }
+    }
+
     /// A Windows script names the file with `\` (#866).
     #[test]
     fn app_paths_read_either_separator() {
         let sources = sources(&[
+            "__init__.py",
             "src/web/__init__.py",
             "src/web/app.py",
             "src/web/pkg/__init__.py",
         ]);
         assert_eq!(
-            app_file(&sources, r"src\web\app.py"),
+            app_path(&sources, r"src\web\app.py"),
             Some("src/web/app.py")
         );
         assert_eq!(
-            app_file(&sources, r".\src\web\pkg"),
+            app_path(&sources, r".\src\web\pkg"),
             Some("src/web/pkg/__init__.py")
         );
         assert_eq!(
-            app_file(&sources, "src/web/x/../app"),
+            app_path(&sources, "src/web/x/../app"),
             Some("src/web/app.py")
         );
         assert_eq!(
-            app_file(&sources, "src/web/__init__.py"),
+            app_path(&sources, "src/web/__init__.py"),
             Some("src/web/__init__.py")
         );
         for unread in [
@@ -303,8 +309,55 @@ mod tests {
             "../src/web/app.py",
             "$DIR/app.py",
             "src/web/missing.py",
+            "__init__.py",
+            ".",
         ] {
-            assert_eq!(app_file(&sources, unread), None, "{unread}");
+            assert_eq!(app_path(&sources, unread), None, "{unread}");
         }
+    }
+
+    fn pushed(sources: &DiscoveredSources, value: &str) -> PluginContribution {
+        let mut contrib = PluginContribution::empty(PluginId::Flask);
+        let origin = ReferenceOrigin {
+            file: ".flaskenv".to_owned(),
+            line: Some(1),
+            label: "FLASK_APP".to_owned(),
+        };
+        push_flask_app(sources, &mut contrib, value, &origin);
+        contrib
+    }
+
+    #[test]
+    fn app_values_name_the_module_or_root_the_file() {
+        let sources = sources(&["src/web/__init__.py", "src/web/app.py", "tools/serve.py"]);
+        // An empty attribute is read as none, in both branches.
+        let named = pushed(&sources, "src/web/app.py:");
+        let modules: Vec<_> = named
+            .module_refs
+            .iter()
+            .map(|r| r.module.as_str())
+            .collect();
+        assert_eq!(modules, ["web.app"]);
+        assert!(named.symbol_refs.is_empty() && named.entries.is_empty());
+
+        for value in [
+            "tools.serve:app",
+            "tools/serve.py:app",
+            "tools\\serve:app()",
+        ] {
+            let unnamed = pushed(&sources, value);
+            let entries: Vec<_> = unnamed
+                .entries
+                .iter()
+                .map(|entry| (entry.spec.path.as_str(), entry.spec.symbol.as_deref()))
+                .collect();
+            assert_eq!(entries, [("tools/serve.py", Some("app"))], "{value}");
+            assert!(unnamed.module_refs.is_empty(), "{value}");
+        }
+        let entries = pushed(&sources, "tools/serve.py:").entries;
+        assert_eq!(
+            entries.first().map(|entry| entry.spec.symbol.clone()),
+            Some(None)
+        );
     }
 }
