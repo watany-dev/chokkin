@@ -7,7 +7,7 @@
 
 mod idioms;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use ruff_python_ast::{
@@ -125,6 +125,39 @@ impl Value {
     }
 }
 
+/// The element an integer literal index (`0`, `-1`) names in `items`, as
+/// `CPython` counts it. `None` for any other index, one out of range (`CPython`
+/// raises), or one counted over an element that may stand for any number of
+/// them (an unknown spread `*more`, a requirements file), which may shift it.
+fn list_position(items: &[Value], index: &Expr) -> Option<usize> {
+    let (negative, operand) = match index {
+        Expr::UnaryOp(ruff_python_ast::ExprUnaryOp {
+            op: ruff_python_ast::UnaryOp::USub,
+            operand,
+            ..
+        }) => (true, &**operand),
+        _ => (false, index),
+    };
+    let Expr::NumberLiteral(ruff_python_ast::ExprNumberLiteral {
+        value: ruff_python_ast::Number::Int(int),
+        ..
+    }) = operand
+    else {
+        return None;
+    };
+    let offset = int.as_usize()?;
+    let (position, counted) = if negative {
+        let position = items.len().checked_sub(offset).filter(|_| offset > 0)?;
+        (position, &items[position..])
+    } else {
+        (offset, items.get(..=offset)?)
+    };
+    counted
+        .iter()
+        .all(|item| matches!(item, Value::Str(_) | Value::List(..) | Value::Dict { .. }))
+        .then_some(position)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum DependencyItem {
     Requirement(String),
@@ -170,6 +203,7 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
         objects: 0,
         probed_missing: Vec::new(),
         table_requirements: BTreeSet::new(),
+        ordered: HashSet::new(),
     };
     let call = evaluator.exec_block(stmts)?;
     let unpacked = call.arguments.keywords.iter().any(|kw| kw.arg.is_none())
@@ -248,6 +282,11 @@ struct Evaluator<'a> {
     /// in, read at lookup time: a later rebinding does not change what was
     /// looked up.
     table_requirements: BTreeSet<String>,
+    /// The list objects whose element order we know, so that an index
+    /// names one element (#868): built by a list literal and since changed
+    /// only in ways we follow exactly. A copy (`list(x)`, `x + y`, a
+    /// comprehension) gets a new object outside it.
+    ordered: HashSet<usize>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -329,7 +368,15 @@ impl<'a> Evaluator<'a> {
         let target = self.eval(&assign.target);
         let object = target.object();
         let value = if assign.op == Operator::Add && !matches!(target, Value::Dict { .. }) {
-            let sum = add(target, self.eval(&assign.value), Identity(object));
+            let added = self.eval(&assign.value);
+            if !added
+                .object()
+                .is_some_and(|added| self.ordered.contains(&added))
+                && let Some(object) = object
+            {
+                self.ordered.remove(&object);
+            }
+            let sum = add(target, added, Identity(object));
             self.checked(sum)
         } else {
             Value::Unknown
@@ -400,6 +447,13 @@ impl<'a> Evaluator<'a> {
         match (left, right) {
             (left, right) if left == right && identity.is_none() => left,
             (Value::List(mut left, kept), Value::List(right, _)) => {
+                // Either branch's order may hold, so neither does; a new
+                // object is outside `ordered` already.
+                if identity.is_none()
+                    && let Some(object) = kept.0
+                {
+                    self.ordered.remove(&object);
+                }
                 for item in right {
                     if !left.contains(&item) {
                         left.push(item);
@@ -498,9 +552,16 @@ impl<'a> Evaluator<'a> {
                 },
                 Expr::Subscript(subscript) => {
                     let key = self.eval(&subscript.slice);
+                    let position = self.list_index(&subscript.value, &subscript.slice);
                     let found = self.mutate(&subscript.value, |base| match (base, &key) {
                         (Value::Dict { items, .. }, Value::Str(key)) => {
                             items.retain(|(existing, _)| existing != key);
+                        },
+                        (Value::List(items, _), _) => match position {
+                            Some(position) => {
+                                items.remove(position);
+                            },
+                            None => items.push(Value::Unknown),
                         },
                         (base, _) => base.taint(),
                     });
@@ -513,6 +574,21 @@ impl<'a> Evaluator<'a> {
                 _ => {},
             }
         }
+    }
+
+    /// The element `place[index]` names in a list of known order, as
+    /// [`list_position`] reads it. `None` otherwise, and the list's order
+    /// is then lost: the caller adds an element we cannot place.
+    fn list_index(&mut self, place: &Expr, index: &Expr) -> Option<usize> {
+        let Some(Value::List(items, Identity(Some(object)))) = self.place_mut(place) else {
+            return None;
+        };
+        let object = *object;
+        let position = list_position(items, index).filter(|_| self.ordered.contains(&object));
+        if position.is_none() {
+            self.ordered.remove(&object);
+        }
+        position
     }
 
     /// The stored value a name or string-key subscript chain refers to.
@@ -538,6 +614,9 @@ impl<'a> Evaluator<'a> {
     /// A change we cannot follow to the object `place` names, or failing
     /// that to the dict holding it.
     fn taint_place(&mut self, place: &Expr) {
+        if let Some(object) = self.place_mut(place).and_then(|value| value.object()) {
+            self.ordered.remove(&object);
+        }
         if !self.mutate(place, Value::taint)
             && let Expr::Subscript(subscript) = place
         {
@@ -668,11 +747,27 @@ impl<'a> Evaluator<'a> {
             },
             // A key that is not a string leaves the dict partial as in a dict
             // literal: an added entry cannot undeclare the known ones (#827,
-            // #869). Any other base leaves it partial.
+            // #869). A list's element is replaced only where `list_index` reads
+            // the index (#868). Any other base leaves it partial.
             Expr::Subscript(subscript) => {
                 let key = self.eval(&subscript.slice);
+                let position = self.list_index(&subscript.value, &subscript.slice);
                 let found = self.mutate(&subscript.value, |base| match (base, key) {
                     (Value::Dict { items, .. }, Value::Str(key)) => insert_entry(items, key, value),
+                    (Value::List(items, _), _) => {
+                        if let Some(position) = position {
+                            items[position] = value;
+                        } else {
+                            // Whichever element it replaced, the value is in
+                            // the list. A slice spreads it (`'ab'` as `a`,
+                            // `b`), which we do not model. `Unknown` first so
+                            // the value does not join a `\` continuation.
+                            items.push(Value::Unknown);
+                            if !matches!(&*subscript.slice, Expr::Slice(_)) {
+                                items.push(value);
+                            }
+                        }
+                    },
                     (base, _) => base.taint(),
                 });
                 if !found {
@@ -716,7 +811,11 @@ impl<'a> Evaluator<'a> {
             Expr::List(ruff_python_ast::ExprList { elts, .. })
             | Expr::Set(ruff_python_ast::ExprSet { elts, .. }) => {
                 let items = self.eval_elements(elts);
-                Value::List(items, self.fresh())
+                let identity = self.fresh();
+                if let (Expr::List(_), Identity(Some(object))) = (expr, identity) {
+                    self.ordered.insert(object);
+                }
+                Value::List(items, identity)
             },
             Expr::Tuple(tuple) => Value::List(self.eval_elements(&tuple.elts), Identity(None)),
             Expr::Dict(dict) => self.eval_dict(dict),
@@ -1732,7 +1831,7 @@ mod props {
         ".insert(0, 'z')",
         ".clear()",
         ".remove('a')",
-        "[0] = 'z'",
+        "[0:0] = ['z']",
     ];
 
     /// Statements outside the modelled subset, applied to a variable of any kind.
@@ -2107,11 +2206,136 @@ table = {'other': 'y', **opaque()}
     }
 
     #[test]
-    fn index_assignment_marks_the_list_partial() {
-        let call = evaluate("reqs = ['a']\nreqs[0] = 'b'\nsetup(install_requires=reqs)\n")
+    fn literal_index_assignment_and_del_replace_the_element() {
+        // #868: a literal index in range names one element, so the old one
+        // is no longer declared.
+        for (source, expected) in [
+            ("reqs = ['a']\nreqs[0] = 'b'\n", strings(&["b"])),
+            ("reqs = ['a', 'b']\nreqs[-1] = 'c'\n", strings(&["a", "c"])),
+            ("reqs = ['a', 'b']\ndel reqs[0]\n", strings(&["b"])),
+            ("reqs = ['a', 'b']\ndel reqs[-2]\n", strings(&["b"])),
+            ("reqs = ['a']\nalias = reqs\ndel alias[0]\n", strings(&[])),
+            (
+                "reqs = ['a']\nreqs += ['b']\nreqs[1] = 'c'\n",
+                strings(&["a", "c"]),
+            ),
+            (
+                "reqs = ['a', 'b']\nif C:\n    alias = reqs\ndel reqs[0]\nreqs += ['c']\n",
+                strings(&["b", "c"]),
+            ),
+            (
+                "reqs = ['a', 'b']\nreqs[0] = ['c', 'd']\n",
+                Py::List(vec![strings(&["c", "d"]), Py::Str("b".to_owned())]),
+            ),
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            assert_eq!(
+                known(call.keyword("install_requires")),
+                Some(expected),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_index_assignment_and_del_mark_the_list_partial() {
+        // An index we cannot read, one out of range (CPython raises), or one
+        // counted over a spread of unknown length may name any element.
+        for source in [
+            "reqs = ['a']\nreqs[i] = 'b'\n",
+            "reqs = ['a']\nreqs[1] = 'b'\n",
+            "reqs = ['a']\ndel reqs[-2]\n",
+            "reqs = ['a']\nreqs[-0] = 'b'\n",
+            "reqs = ['a']\nreqs[0:1] = ['b']\n",
+            "reqs = [*more, 'a']\nreqs[1] = 'b'\n",
+            "reqs = ['a', *more]\ndel reqs[-1]\n",
+            "reqs = ['a', 'b']\nreqs[True] = 'c'\n",
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            let value = call.keyword("install_requires").expect("install_requires");
+            let items = dependency_items(value);
+            assert!(!items.complete, "{source}");
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement("a".to_owned())),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn index_into_a_list_of_unknown_order_keeps_every_element() {
+        // A change we cannot follow, or a branch merge, keeps the elements
+        // but not their order, so an index may name any of them.
+        for (source, kept) in [
+            ("reqs = ['a', 'b']\nreqs.reverse()\nreqs[0] = 'c'\n", "a"),
+            (
+                "reqs = ['a', 'b']\nreqs.insert(0, 'z')\nreqs[1] = 'c'\n",
+                "b",
+            ),
+            (
+                "reqs = ['a', 'b']\nreqs.sort(reverse=True)\ndel reqs[0]\n",
+                "a",
+            ),
+            (
+                "reqs = ['a', 'b']\nfor x in X:\n    reqs.insert(0, x)\ndel reqs[0]\n",
+                "a",
+            ),
+            (
+                "if C:\n    reqs = ['a', 'b']\nelse:\n    reqs = ['b', 'a']\ndel reqs[0]\n",
+                "a",
+            ),
+            (
+                "reqs = ['a', 'b']\nif C:\n    del reqs[0]\ndel reqs[-1]\n",
+                "a",
+            ),
+            ("reqs = ['a']\nreqs += more\nreqs[-1] = 'c'\n", "a"),
+            ("reqs = sorted(['b', 'a'])\ndel reqs[0]\n", "a"),
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            let value = call.keyword("install_requires").expect("install_requires");
+            let items = dependency_items(value);
+            assert!(!items.complete, "{source}");
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement(kept.to_owned())),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn assignment_at_an_unread_index_declares_the_value() {
+        // Whichever element `reqs[i]` names, the value is in the list.
+        for source in [
+            "reqs = ['a']\nreqs[i] = 'b'\n",
+            "reqs = ['a']\nreqs.reverse()\nreqs[0] = 'b'\n",
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            let value = call.keyword("install_requires").expect("install_requires");
+            let items = dependency_items(value);
+            assert!(!items.complete, "{source}");
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement("b".to_owned())),
+                "{source}"
+            );
+        }
+        let call = evaluate("reqs = ['a']\nreqs[0:1] = 'ab'\nsetup(install_requires=reqs)\n")
             .expect("setup() call");
         let value = call.keyword("install_requires").expect("install_requires");
-        assert!(!dependency_items(value).complete);
+        assert!(
+            !dependency_items(value)
+                .items
+                .contains(&DependencyItem::Requirement("ab".to_owned()))
+        );
     }
 
     #[test]
@@ -2123,66 +2347,34 @@ table = {'other': 'y', **opaque()}
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        let Some(Value::Dict { items, .. }) = call.keyword("extras_require") else {
-            panic!("extras_require is not a dict");
-        };
-        let list = |texts: &[&str]| {
-            Value::List(
-                texts
-                    .iter()
-                    .map(|text| Value::Str((*text).to_owned()))
-                    .collect(),
-                Identity(None),
-            )
-        };
         assert_eq!(
-            items,
-            &vec![
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![
                 (
                     "dev".to_owned(),
-                    Value::Dict {
-                        items: vec![
-                            ("lint".to_owned(), list(&["ruff"])),
-                            ("type".to_owned(), list(&["mypy"])),
-                        ],
-                        partial: false,
-                        id: Identity(None),
-                    }
+                    Py::Dict(vec![
+                        ("lint".to_owned(), strings(&["ruff"])),
+                        ("type".to_owned(), strings(&["mypy"])),
+                    ])
                 ),
-                (
-                    "test".to_owned(),
-                    Value::List(
-                        vec![Value::Str("pytest".to_owned()), Value::Unknown],
-                        Identity(None)
-                    )
-                ),
-            ]
+                ("test".to_owned(), strings(&["nose"])),
+            ]))
         );
     }
 
     #[test]
-    fn del_by_index_marks_only_that_entry_partial() {
+    fn del_by_index_removes_only_that_element() {
         let call = evaluate(
-            "extras = {'dev': ['ruff'], 'test': ['pytest']}\ndel extras['dev'][0]\n\
+            "extras = {'dev': ['ruff', 'mypy'], 'test': ['pytest']}\ndel extras['dev'][0]\n\
              setup(extras_require=extras)\n",
         )
         .expect("setup() call");
-        let Some(Value::Dict { items, .. }) = call.keyword("extras_require") else {
-            panic!("extras_require is not a dict");
-        };
         assert_eq!(
-            items[0],
-            (
-                "dev".to_owned(),
-                Value::List(
-                    vec![Value::Str("ruff".to_owned()), Value::Unknown],
-                    Identity(None)
-                )
-            )
-        );
-        assert_eq!(
-            known(Some(&items[1].1)),
-            Some(Py::List(vec![Py::Str("pytest".to_owned())]))
+            known(call.keyword("extras_require")),
+            Some(Py::Dict(vec![
+                ("dev".to_owned(), strings(&["mypy"])),
+                ("test".to_owned(), strings(&["pytest"])),
+            ]))
         );
     }
 
@@ -2523,6 +2715,7 @@ table = {'other': 'y', **opaque()}
             objects: 0,
             probed_missing: Vec::new(),
             table_requirements: BTreeSet::new(),
+            ordered: HashSet::new(),
         };
         assert!(evaluator.spend(MAX_STEPS));
         assert!(!evaluator.exhausted());

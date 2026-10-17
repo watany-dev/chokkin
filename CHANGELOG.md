@@ -22,6 +22,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gunicorn's `python:` config no longer report as unused files (#1026).
 
 ### Fixed
+- The bundled binary map names `zensical`, so a declared `zensical` that a
+  task runner calls (`[tool.pdm.scripts] doc = "zensical serve"`) is used
+  instead of reported as CHK002.
+- A dependency whose `python_version` / `python_full_version` marker holds
+  on every interpreter `requires-python` allows (intersected with Poetry's
+  `python` dependency, or a script block's own `requires-python`), such as
+  `foo; python_version >= "3.8"` under `>=3.9`, is unconditional for CHK002
+  and reported when unused; a marker with other variables or forms outside
+  the model stays conditional (#919).
+- In `setup.py`, `reqs[0] = "b"` and `del reqs[0]` with an integer literal
+  index in range replace or remove that element, so the old requirement is
+  no longer declared and reported as CHK002; other indexes, and lists whose
+  order a method call, a loop or a branch merge may have changed, still
+  leave the list partial (#868) and now also declare the assigned value,
+  so `reqs[i] = "c"` no longer leaves `import c` unresolved.
+- A URL requirement whose `#egg=` is not a project name
+  (`#egg=acme;python_version<"3"`, `#egg=name[extra]`, a quoted
+  `-e "...#egg=with space"`) is an invalid requirement, as pip 25 reads it,
+  instead of a dependency named `acme;python-version<"3"` reported as
+  CHK002; the egg's leading name lowers its CHK003 to a hint (#929).
+- A declared backport of a removed stdlib module (`legacy-cgi` for `cgi` /
+  `cgitb`, `standard-imghdr`, `standard-telnetlib` and the other PEP 594
+  `standard-*` packages, `audioop-lts`) counts as used by the module's
+  import on every target, instead of CHK002; on 3.13+ an undeclared one is
+  a CHK003 naming the backport rather than a CHK010 (#939).
+- `requires-python = ">=3.8"` (or `>=3.9`) makes the modules 3.10 removed,
+  such as `formatter`, `parser`, `symbol` and `_bootlocale` (and
+  `dummy_threading` on 3.8), stdlib instead of CHK010 / CHK003: the stdlib
+  table now covers 3.8 and 3.9 (#940).
 - A bare `except:` and `except Exception:` / `except BaseException:` catch a
   failed import like `except ImportError:` does: the import they fall back
   from keeps its `fallback_for` link (so a dead fallback such as

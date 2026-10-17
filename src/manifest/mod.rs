@@ -11,6 +11,7 @@ mod pep508_util;
 mod poetry_lock;
 mod pylock;
 mod pyproject;
+mod python_range;
 mod requirements;
 mod script;
 mod setup_cfg;
@@ -34,6 +35,9 @@ pub(crate) use pep508_util::pep508_distribution_name;
 pub(crate) use pep508_util::{
     archive_distribution_name, invalid_requirement_name, is_project_name,
     normalize_distribution_name,
+};
+pub(crate) use python_range::{
+    PythonRange, marker_always_holds, requires_python_range, supported_python,
 };
 pub(crate) use requirements::{
     extra_requirements_candidates, join_continued_lines, requirements_line_distribution,

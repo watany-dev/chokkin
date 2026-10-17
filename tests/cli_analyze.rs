@@ -863,6 +863,140 @@ fn binary_version_guarded_stdlib_import_is_not_chk010() {
 }
 
 #[test]
+fn binary_module_removed_in_py310_is_stdlib_for_a_py38_project() {
+    // #940: `formatter` and `parser` ship in 3.8 and 3.9 only.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"legacy\"\nversion = \"0.1.0\"\nrequires-python = \">=3.8\"\ndependencies = []\n\n[project.scripts]\nlegacy = \"legacy:main\"\n",
+        ),
+        (
+            "legacy.py",
+            "import sys\n\nif sys.version_info < (3, 10):\n    import formatter\n    import parser\n\n\ndef main() -> None:\n    pass\n",
+        ),
+    ] {
+        fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    assert!(keys.is_empty(), "{keys:?}");
+}
+
+#[test]
+fn binary_declared_backport_of_a_removed_stdlib_module_is_used() {
+    // #939: PEP 594 backports provide the module on every target, whether
+    // the target's stdlib still ships it or not.
+    for requires in [">=3.9", ">=3.13"] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let pyproject = format!(
+            "[project]\nname = \"legacy\"\nversion = \"0.1.0\"\nrequires-python = \"{requires}\"\ndependencies = [\"legacy-cgi\", \"standard-imghdr\", \"audioop-lts\"]\n\n[project.scripts]\nlegacy = \"legacy:main\"\n"
+        );
+        fs::write(temp.path().join("pyproject.toml"), pyproject).expect("write fixture");
+        fs::write(
+            temp.path().join("legacy.py"),
+            "import audioop\nimport cgi\nimport cgitb\nimport imghdr\n\n\ndef main() -> None:\n    pass\n",
+        )
+        .expect("write fixture");
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--strict", "--reporter", "json"])
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        // `standard-cgi` also provides `cgi`, but only `legacy-cgi` is declared.
+        assert!(
+            !stderr.contains("several distributions"),
+            "{requires}: {stderr}"
+        );
+        let keys = issue_keys(&json_issues(temp.path(), &["--strict"]));
+        assert!(keys.is_empty(), "{requires}: {keys:?}");
+    }
+}
+
+#[test]
+fn binary_invalid_egg_is_an_invalid_requirement() {
+    // #929: pip 25 rejects these eggs, so they declare no
+    // `requests;python-version<"3"` to report unused, and the egg's leading
+    // name lowers the missing `requests` to a hint.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("requirements.txt"),
+        "git+https://h/r.git#egg=requests;python_version<\"3\"\n-e \"git+https://h/r3.git#egg=with space\"\n",
+    )
+    .expect("write fixture");
+    fs::write(temp.path().join("main.py"), "import requests\n").expect("write fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("invalid requirement at `requirements.txt:1`")
+            && stderr.contains("invalid requirement at `requirements.txt:2`")
+            && stderr.contains("misplaced imports of `requests` are reported as hints"),
+        "{stderr}"
+    );
+    assert!(issue_keys(&json_issues(temp.path(), &["--no-cache"])).is_empty());
+    let strict = json_issues(temp.path(), &["--no-cache", "--strict"]);
+    assert_eq!(
+        issue_keys(&strict),
+        [("CHK003".to_owned(), "main.py:requests".to_owned())]
+    );
+    assert_eq!(strict[0]["confidence"], "maybe");
+}
+
+#[test]
+fn binary_marker_implied_by_requires_python_is_unconditional() {
+    // #919: every interpreter `requires-python` allows satisfies the markers
+    // of `foo` and `bar`, so CHK002 reports them; `baz` and `qux` may still
+    // be skipped on a supported interpreter, so they stay conditional.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"app\"\nversion = \"0\"\nrequires-python = \">=3.9\"\ndependencies = [\n  \"foo; python_version >= '3.8'\",\n  \"bar; python_full_version >= '3.9.0'\",\n  \"baz; python_version < '3.12'\",\n  \"qux; python_version >= '3.8' and sys_platform == 'linux'\",\n]\n",
+    )
+    .expect("write fixture");
+    fs::write(temp.path().join("main.py"), "").expect("write fixture");
+    let issues = json_issues(temp.path(), &["--no-cache"]);
+    assert_eq!(
+        issue_keys(&issues),
+        [
+            ("CHK002".to_owned(), "bar".to_owned()),
+            ("CHK002".to_owned(), "foo".to_owned()),
+        ]
+    );
+    assert!(issues.iter().all(|issue| issue["confidence"] == "certain"));
+
+    // Poetry's `python` dependency bounds the interpreters the same way.
+    let poetry = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        poetry.path().join("pyproject.toml"),
+        "[tool.poetry]\nname = \"app\"\nversion = \"0\"\n[tool.poetry.dependencies]\npython = \"^3.9\"\nfoo = { version = \"*\", python = \">=3.8\" }\nbar = { version = \"*\", python = \"<3.12\" }\n",
+    )
+    .expect("write fixture");
+    fs::write(poetry.path().join("main.py"), "").expect("write fixture");
+    assert_eq!(
+        issue_keys(&json_issues(poetry.path(), &["--no-cache"])),
+        [("CHK002".to_owned(), "foo".to_owned())]
+    );
+}
+
+#[test]
+fn binary_zensical_run_by_a_pdm_script_is_used() {
+    // pdm runs its docs with `zensical serve`; the bundled binary map has to
+    // name the CLI, or the declared doc dependency reads as unused.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"app\"\nversion = \"0\"\n[dependency-groups]\ndoc = [\"zensical\"]\n[tool.pdm.scripts]\ndoc = { cmd = \"zensical serve\" }\n",
+    )
+    .expect("write fixture");
+    fs::write(temp.path().join("main.py"), "").expect("write fixture");
+    assert!(json_issues(temp.path(), &["--no-cache", "--strict"]).is_empty());
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))

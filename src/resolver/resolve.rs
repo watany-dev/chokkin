@@ -588,6 +588,23 @@ fn resolve_import_root(
     venv_imports: &BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<ResolveWarning>,
 ) -> RootResolution {
+    // A declared backport (`legacy-cgi` for `cgi`) provides the module on the
+    // minors that dropped it, so the import is its use on any target, and
+    // the other backports of that module do not make it ambiguous (#939).
+    if stdlib.contains(root_name) || stdlib.ships_only_outside(root_name) {
+        let backport =
+            root_candidates(root_name, venv_imports, import_map).and_then(|(candidates, _)| {
+                candidates.into_iter().find(|name| declared.declares(name))
+            });
+        if backport.is_some() {
+            return RootResolution {
+                origin: ModuleOrigin::ThirdParty,
+                distribution: backport,
+                confidence: ResolveConfidence::Certain,
+            };
+        }
+    }
+
     if stdlib.contains(root_name) {
         return RootResolution {
             origin: ModuleOrigin::Stdlib,

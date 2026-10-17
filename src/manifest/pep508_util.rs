@@ -27,19 +27,31 @@ pub(crate) fn normalize_distribution_name(name: &str) -> String {
     normalized
 }
 
-/// Extract a distribution name from a URL fragment `#egg=name`.
+/// Extract a distribution name from a URL fragment `#egg=name`; `None` when
+/// there is none or it is not a project name ([`has_invalid_egg`]).
 #[must_use]
 pub(super) fn extract_egg_name(spec: &str) -> Option<String> {
-    let fragment = spec.split('#').nth(1)?;
-    for part in fragment.split('&') {
-        if let Some(egg) = part.strip_prefix("egg=") {
-            let trimmed = strip_python(egg);
-            if !trimmed.is_empty() {
-                return Some(normalize_distribution_name(trimmed));
-            }
-        }
-    }
-    None
+    egg_fragment(spec)
+        .filter(|egg| is_project_name(egg))
+        .map(normalize_distribution_name)
+}
+
+/// The URL has an `#egg=` value that is not a project name. pip 25 raises
+/// `InvalidEggFragment` for it (`Link._project_name_re`: no extras, marker or
+/// whitespace, and not empty), so the line is invalid rather than a
+/// dependency named `acme;python_version<"3"` (#929).
+#[must_use]
+pub(super) fn has_invalid_egg(spec: &str) -> bool {
+    egg_fragment(spec).is_some_and(|egg| !is_project_name(egg))
+}
+
+/// The first `egg=` value of the fragment, unvalidated.
+fn egg_fragment(spec: &str) -> Option<&str> {
+    let fragment = spec.split_once('#')?.1;
+    fragment
+        .split('&')
+        .find_map(|part| part.strip_prefix("egg="))
+        .map(strip_python)
 }
 
 /// Parse a requirements-file line into a declared dependency, the way pip reads it.
@@ -91,9 +103,10 @@ fn parse_with(
             requirement.version_or_url,
             false,
         )
-    } else if is_direct_reference(trimmed) {
-        // `name @ url` that failed the grammar (e.g. a space in the URL) is
-        // invalid, not an opaque URL line.
+    } else if is_direct_reference(trimmed) || has_invalid_egg(trimmed) {
+        // `name @ url` that failed the grammar (e.g. a space in the URL), or
+        // an `#egg=` that is not a project name (#929), is invalid, not an
+        // opaque URL line.
         return Err(invalid(raw, context, origin));
     } else if let Some(name) = extract_egg_name(trimmed) {
         (name, Vec::new(), None, Some(trimmed.to_owned()), false)
@@ -187,10 +200,25 @@ pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
 /// (`not a requirement`), which no requirement has, or a `:` follows it, as
 /// in a URL (`file:../other`), or it starts with `-`, which pip reads as an
 /// option (`-r` alone, `-example-pkg`) and a PEP 508 name cannot start on:
-/// such a line names nothing to lower.
+/// such a line names nothing to lower. A line with an `#egg=` fragment is
+/// read by the same rule on the egg value (`#egg=acme;python_version<"3"`
+/// names `acme`, #929), and a URL line without one names nothing; `name @
+/// url` names `name` whatever the URL holds, as pip reads it.
 #[must_use]
 pub(crate) fn invalid_requirement_name(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
+    if !is_direct_reference(trimmed) {
+        if let Some(egg) = egg_fragment(trimmed) {
+            return leading_requirement_name(egg);
+        }
+        if is_url_like(trimmed) {
+            return None;
+        }
+    }
+    leading_requirement_name(trimmed)
+}
+
+fn leading_requirement_name(trimmed: &str) -> Option<String> {
     let token = leading_name_token(trimmed);
     let after = &trimmed[token.len()..];
     let name = token.trim_matches(['-', '_', '.']);
@@ -722,6 +750,58 @@ mod tests {
 
         assert_eq!(dep.name, "my-package");
         assert!(!dep.opaque);
+    }
+
+    #[test]
+    fn egg_that_is_not_a_project_name_is_invalid_like_pip() {
+        // pip 25 raises `InvalidEggFragment` unless the value matches its
+        // project-name regex: no extras, marker, or whitespace (#929).
+        for (line, name) in [
+            (
+                "git+https://h/r.git#egg=acme;python_version<\"3\"",
+                Some("acme"),
+            ),
+            ("git+https://h/r.git#egg=acme[tests]", Some("acme")),
+            ("git+https://h/r.git#egg=with space", None),
+            ("git+https://h/r.git#egg=", None),
+            ("git+https://h/r.git#egg=_acme", Some("acme")),
+        ] {
+            assert!(
+                matches!(
+                    parse_requirement(
+                        line,
+                        DependencyContext::Runtime,
+                        DependencyOrigin {
+                            file: "requirements.txt".to_owned(),
+                            line: Some(1),
+                            label: "requirements.txt".to_owned(),
+                        },
+                    ),
+                    Err(ManifestWarning::InvalidRequirementLine { .. })
+                ),
+                "{line}"
+            );
+            assert_eq!(extract_egg_name(line), None, "{line}");
+            assert_eq!(requirement_name(line), None, "{line}");
+            assert_eq!(invalid_requirement_name(line).as_deref(), name, "{line}");
+        }
+        assert_eq!(
+            invalid_requirement_name("-e git+https://h/r.git#egg=acme;x").as_deref(),
+            Some("acme")
+        );
+        assert_eq!(invalid_requirement_name("git+https://h/r.git"), None);
+        // `name @ url` names `name`, as pip reads it, whatever the URL holds.
+        for line in [
+            "foo @ https://h/a b.whl",
+            "foo @ https://h/a;b",
+            "foo @ git+https://h/r b#egg=bar",
+        ] {
+            assert_eq!(
+                invalid_requirement_name(line).as_deref(),
+                Some("foo"),
+                "{line}"
+            );
+        }
     }
 
     #[test]

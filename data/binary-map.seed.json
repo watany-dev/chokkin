@@ -39,6 +39,7 @@
     { "binary": "dotenv", "distribution": "python-dotenv" },
     { "binary": "mkdocs", "distribution": "mkdocs" },
     { "binary": "mkdocs-material", "distribution": "mkdocs-material" },
+    { "binary": "zensical", "distribution": "zensical" },
     { "binary": "sphinx", "distribution": "sphinx" },
     { "binary": "cogapp", "distribution": "cogapp" },
     { "binary": "towncrier", "distribution": "towncrier" },

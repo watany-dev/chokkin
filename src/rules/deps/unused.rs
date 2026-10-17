@@ -4,8 +4,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::GraphEdge;
-use crate::manifest::DeclaredDependency;
 use crate::manifest::normalize_distribution_name;
+use crate::manifest::{DeclaredDependency, PythonRange, marker_always_holds};
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{ResolvedImport, import_root};
 use crate::rules::RuleContext;
@@ -27,17 +27,19 @@ pub(super) struct UnusedEvidenceContext<'a> {
 }
 
 /// Detect declared dependencies with no matching usage.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn detect_unused_dependencies(
     declared: &[&DeclaredDependency],
     used: &indexmap::IndexSet<String>,
     config: &ChokkinConfig,
     strict: bool,
+    supported_python: Option<&PythonRange>,
     evidence: Option<&UnusedEvidenceContext<'_>>,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    for dep in report_order(declared, config) {
+    for dep in report_order(declared, config, supported_python) {
         if dep.opaque {
             continue;
         }
@@ -50,11 +52,12 @@ pub(super) fn detect_unused_dependencies(
         if should_suppress_unused_report(dep, config, strict) {
             continue;
         }
-        if !strict && dep.marker.is_some() {
+        let conditional = is_conditional(dep, supported_python);
+        if !strict && conditional {
             continue;
         }
 
-        let (confidence, severity) = unused_confidence(dep, strict);
+        let (confidence, severity) = unused_confidence(conditional, strict);
         let mut details = vec![
             format!("declaration: {}", dep.origin.label),
             "no import, plugin module ref, or binary usage resolved to this distribution"
@@ -95,15 +98,29 @@ pub(super) fn detect_unused_dependencies(
 fn report_order<'a>(
     declared: &[&'a DeclaredDependency],
     config: &ChokkinConfig,
+    supported_python: Option<&PythonRange>,
 ) -> Vec<&'a DeclaredDependency> {
     let mut ordered = declared.to_vec();
     ordered.sort_by_key(|dep| {
         (
             should_suppress_unused_report(dep, config, false),
-            dep.marker.is_some(),
+            is_conditional(dep, supported_python),
         )
     });
     ordered
+}
+
+/// Whether the marker may leave the dependency uninstalled on an
+/// interpreter the project supports; one every supported interpreter
+/// satisfies (`python_version >= "3.8"` under `requires-python = ">=3.9"`)
+/// is unconditional (#919).
+pub(super) fn is_conditional(
+    dep: &DeclaredDependency,
+    supported_python: Option<&PythonRange>,
+) -> bool {
+    dep.marker.as_deref().is_some_and(|marker| {
+        supported_python.is_none_or(|supported| !marker_always_holds(marker, supported))
+    })
 }
 
 fn build_requires_note(distribution: &str, context: &UnusedEvidenceContext<'_>) -> Option<String> {
@@ -263,8 +280,8 @@ fn should_suppress_unused_report(
     )
 }
 
-fn unused_confidence(dep: &DeclaredDependency, strict: bool) -> (Confidence, Severity) {
-    if dep.marker.is_some() {
+fn unused_confidence(conditional: bool, strict: bool) -> (Confidence, Severity) {
+    if conditional {
         let severity = if strict {
             Severity::Error
         } else {
@@ -331,6 +348,7 @@ mod tests {
             &config,
             false,
             None,
+            None,
         );
         assert_eq!(candidates, []);
     }
@@ -344,6 +362,7 @@ mod tests {
             &indexmap::IndexSet::new(),
             &config,
             true,
+            None,
             None,
         );
         assert_eq!(candidates.len(), 1);
@@ -360,6 +379,7 @@ mod tests {
             &config,
             false,
             None,
+            None,
         );
         assert_eq!(candidates.len(), 1);
     }
@@ -374,6 +394,7 @@ mod tests {
             &indexmap::IndexSet::new(),
             &config,
             false,
+            None,
             None,
         );
         assert_eq!(candidates.len(), 1);
@@ -397,6 +418,7 @@ mod tests {
             &config,
             false,
             None,
+            None,
         );
         assert_eq!(candidates, []);
     }
@@ -410,6 +432,7 @@ mod tests {
             &indexmap::IndexSet::new(),
             &config,
             false,
+            None,
             None,
         );
         assert_eq!(candidates, []);
@@ -461,6 +484,7 @@ mod tests {
             &indexmap::IndexSet::new(),
             &default_config(),
             false,
+            None,
             Some(&evidence),
         );
         candidates[0].explain.details.clone()
@@ -579,6 +603,7 @@ mod tests {
             &indexmap::IndexSet::new(),
             &config,
             false,
+            None,
             Some(&evidence),
         );
         let explain = &candidates[0].explain;

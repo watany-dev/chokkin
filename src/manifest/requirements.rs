@@ -8,8 +8,8 @@ use crate::path_util::rel_to_root;
 use super::error::ManifestError;
 use super::pep508::{is_python_whitespace, is_valid_marker, strip_python};
 use super::pep508_util::{
-    extract_egg_name, invalid, is_url_like, normalize_distribution_name, parse_pep508_requirement,
-    parse_requirement, requirement_name,
+    extract_egg_name, has_invalid_egg, invalid, is_url_like, normalize_distribution_name,
+    parse_pep508_requirement, parse_requirement, requirement_name,
 };
 use super::types::{DeclaredDependency, DependencyContext, DependencyOrigin};
 use super::util::{path_is_within_root, read_text};
@@ -220,7 +220,15 @@ fn parse_requirements_line(
     // `-c` beside it is ignored; otherwise `-r` wins over `-c`.
     if let Some(editable) = options.editable {
         if matches!(ctx.mode, RequirementsParseMode::Dependencies) {
-            push_editable_dependency(ctx.result, &editable, ctx.default_context, rel, line_no);
+            // pip builds a `Link` from a non-path `-e` value, which rejects
+            // an `#egg=` that is not a project name (#929).
+            if !is_local_path(&editable) && has_invalid_egg(&editable) {
+                ctx.result
+                    .warnings
+                    .push(invalid(trimmed, ctx.default_context.clone(), origin()));
+            } else {
+                push_editable_dependency(ctx.result, &editable, ctx.default_context, rel, line_no);
+            }
             return Ok(());
         }
     } else if let Some(include_path) = options.requirement {
@@ -1176,6 +1184,35 @@ mod tests {
                 "{line:?}"
             );
         }
+    }
+
+    #[test]
+    fn invalid_egg_keeps_the_line_invalid() {
+        // #929: pip 25 rejects an egg that is not a project name, on `-e`
+        // lines too; a valid egg still names the dependency.
+        for line in [
+            "git+https://h/r.git#egg=acme;python_version<\"3\"",
+            "-e \"git+https://h/r.git#egg=with space\"",
+            "-e git+https://h/r.git#egg=acme[tests]",
+        ] {
+            let result = parse_requirements_text(line);
+            assert_eq!(result.dependencies.len(), 0, "{line:?}");
+            assert_eq!(
+                result.warnings,
+                [ManifestWarning::InvalidRequirementLine {
+                    file: "requirements.txt".to_owned(),
+                    line: Some(1),
+                    label: "requirements.txt".to_owned(),
+                    raw: line.to_owned(),
+                    context: DependencyContext::Runtime,
+                }],
+                "{line:?}"
+            );
+            assert_eq!(requirements_line_distribution(line), None, "{line:?}");
+        }
+        let result = parse_requirements_text("-e git+https://h/r.git#egg=good-name");
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.dependencies[0].name, "good-name");
     }
 
     #[test]

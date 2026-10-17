@@ -8,22 +8,8 @@ use crate::manifest::{infer_target_version_from_requires_python, requires_python
 
 static STDLIB_MODULES: OnceLock<HashMap<&'static str, Shipped>> = OnceLock::new();
 
-const OLDEST_BUNDLED_MINOR: u32 = 10;
+const OLDEST_BUNDLED_MINOR: u32 = 8;
 const NEWEST_BUNDLED_MINOR: u32 = 14;
-
-/// Oldest `requires-python` floor [`StdlibRange::always_contains`] judges:
-/// the 3.10 set stands in for 3.8 and 3.9 once [`ADDED_IN_PY39`] is set aside,
-/// which was checked against `CPython` 3.8.20 and 3.9.25.
-const OLDEST_FLOOR_MINOR: u32 = 8;
-
-/// 3.10 stdlib roots that 3.8 lacks.
-const ADDED_IN_PY39: [&str; 5] = [
-    "_aix_support",
-    "_bootsubprocess",
-    "_zoneinfo",
-    "graphlib",
-    "zoneinfo",
-];
 
 /// Stdlib roots that a given interpreter may still lack: platform-only
 /// modules and those built on an optional library or split out by distros.
@@ -132,15 +118,13 @@ impl StdlibRange {
     /// fallback for it never runs (#721). `false` without a lower bound.
     #[must_use]
     pub fn always_contains(self, import_root: &str) -> bool {
-        let Some(floor) = self.floor.filter(|floor| *floor >= OLDEST_FLOOR_MINOR) else {
+        let Some(floor) = self.floor.filter(|floor| *floor >= OLDEST_BUNDLED_MINOR) else {
             return false;
         };
-        if NOT_ALWAYS_BUILT.contains(&import_root)
-            || (floor == OLDEST_FLOOR_MINOR && ADDED_IN_PY39.contains(&import_root))
-        {
+        if NOT_ALWAYS_BUILT.contains(&import_root) {
             return false;
         }
-        let low = floor.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR);
+        let low = floor.min(NEWEST_BUNDLED_MINOR);
         let high = self.max.clamp(low, NEWEST_BUNDLED_MINOR);
         stdlib_modules()
             .get(import_root)
@@ -238,6 +222,30 @@ mod tests {
     }
 
     #[test]
+    fn modules_removed_before_py310_are_stdlib_for_older_targets() {
+        // `parser` is a builtin module in 3.8 and 3.9, gone in 3.10 (#940).
+        for module in ["formatter", "parser", "symbol", "_bootlocale"] {
+            assert!(exact("py308").contains(module), "{module}");
+            assert!(exact("py309").contains(module), "{module}");
+            assert!(!exact("py310").contains(module), "{module}");
+        }
+        assert!(exact("py308").contains("dummy_threading"));
+        assert!(!exact("py309").contains("dummy_threading"));
+        assert!(!exact("py308").contains("_peg_parser"));
+        assert!(exact("py309").contains("_peg_parser"));
+        assert!(!exact("py308").contains("zoneinfo"));
+        assert!(exact("py309").contains("zoneinfo"));
+    }
+
+    #[test]
+    fn modules_only_older_minors_ship_are_version_dependent() {
+        let assumed = StdlibRange::new(&TargetVersion::default_py311(), None);
+        assert!(assumed.ships_only_outside("formatter"));
+        assert!(assumed.ships_only_outside("dummy_threading"));
+        assert!(!assumed.ships_only_outside("os"));
+    }
+
+    #[test]
     fn compression_is_stdlib_only_from_py314() {
         assert!(!exact("py313").contains("compression"));
         assert!(exact("py314").contains("compression"));
@@ -278,7 +286,7 @@ mod tests {
 
     #[test]
     fn always_contains_sets_aside_modules_older_floors_lack() {
-        // The 3.10 set stands in for 3.8 and 3.9, which lack `zoneinfo`.
+        // 3.8 lacks `zoneinfo`, and nothing older than 3.8 is bundled.
         assert!(!floor(Some(">=3.8")).always_contains("zoneinfo"));
         assert!(floor(Some(">=3.9")).always_contains("zoneinfo"));
         assert!(!floor(Some(">=3.7")).always_contains("threading"));
@@ -303,7 +311,7 @@ mod tests {
         let table = parse_modules("# comment\n\nos\ntomllib 11-\nasynchat 10-11\n");
         let shipped = |name| (table[name].first, table[name].last);
         assert_eq!(table.len(), 3);
-        assert_eq!(shipped("os"), (10, 14));
+        assert_eq!(shipped("os"), (8, 14));
         assert_eq!(shipped("tomllib"), (11, 14));
         assert_eq!(shipped("asynchat"), (10, 11));
     }
