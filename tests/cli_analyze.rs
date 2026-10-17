@@ -3146,12 +3146,19 @@ fn binary_unread_django_settings_lower_unused_files_and_distributions() {
     ];
     for (manage, warning, explain) in cases {
         let project = django_settings_package(manage);
+        // `ROOT_URLCONF = "mysite.urls"` in the unread settings names the
+        // URLconf by its dotted name, so that file falls to info (#1026).
         assert_eq!(
             issue_levels(project.path()),
             [
                 level("CHK001", "mysite/settings/base.py"),
                 level("CHK001", "mysite/settings/dev.py"),
-                level("CHK001", "mysite/urls.py"),
+                (
+                    "CHK001".to_owned(),
+                    "mysite/urls.py".to_owned(),
+                    "info".to_owned(),
+                    "likely".to_owned(),
+                ),
                 level("CHK002", "django"),
             ],
             "{manage}"
@@ -3320,11 +3327,18 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
     for (settings, call, line) in cases {
         let project = discovered_manage_django_project();
         fs::write(project.path().join("mysite/settings/dev.py"), settings).expect("write settings");
+        // `ROOT_URLCONF = "mysite.urls"` in `base.py` names the URLconf by
+        // its dotted name, so that file falls to info (#1026).
         assert_eq!(
             levels(project.path()),
             [
                 level("CHK001", "mysite/settings/base.py", "likely"),
-                level("CHK001", "mysite/urls.py", "likely"),
+                (
+                    "CHK001".to_owned(),
+                    "mysite/urls.py".to_owned(),
+                    "info".to_owned(),
+                    "likely".to_owned(),
+                ),
                 level("CHK002", "django", "likely"),
             ],
             "{settings}"
@@ -6246,4 +6260,173 @@ fn pytest_testpaths_inside_a_package_keeps_the_package_runtime() {
         .expect("run chokkin");
     let stdout = String::from_utf8(output.stdout).expect("utf8");
     assert!(stdout.contains("packages: core"), "{stdout}");
+}
+
+/// A file with an `if __name__ == "__main__":` block is run as a script, so
+/// it and what it imports there are reachable, wherever it sits (#1026).
+/// `--trace` names the rule. A guard the parser does not read
+/// (`__name__ in (...)`) leaves the file an orphan.
+#[test]
+fn binary_main_block_files_are_entry_roots() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "src/acme/contrib/example.py",
+            "def run():\n    pass\n\n\nif __name__ == \"__main__\":\n    \
+             from acme.contrib.support import helper\n\n    helper()\n    run()\n",
+        ),
+        ("src/acme/contrib/support.py", "def helper():\n    pass\n"),
+        (
+            "src/acme/contrib/odd_guard.py",
+            "if __name__ in (\"__main__\",):\n    pass\n",
+        ),
+        (
+            "src/acme/contrib/nested.py",
+            "def main():\n    if __name__ == \"__main__\":\n        pass\n",
+        ),
+        ("src/acme/contrib/orphan.py", "def unused():\n    pass\n"),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(
+        issue_keys(&issues),
+        [
+            ("CHK001".to_owned(), "src/acme/contrib/nested.py".to_owned()),
+            (
+                "CHK001".to_owned(),
+                "src/acme/contrib/odd_guard.py".to_owned()
+            ),
+            ("CHK001".to_owned(), "src/acme/contrib/orphan.py".to_owned()),
+        ],
+        "{issues:#?}"
+    );
+
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", "src/acme/contrib/orphan.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    assert!(
+        stderr.contains("src/acme/contrib/example.py (auto: main-block)"),
+        "{stderr}"
+    );
+}
+
+/// A `__main__` block in a deep `app.py` does not make a library an app:
+/// the rule joins after mode resolution, which reads file names only (#1026).
+#[test]
+fn binary_main_block_does_not_change_project_mode() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        ("src/acme/__init__.py", "from acme import core\n"),
+        ("src/acme/core.py", "def api():\n    pass\n"),
+        (
+            "src/acme/tools/app.py",
+            "if __name__ == \"__main__\":\n    print(1)\n",
+        ),
+        ("src/acme/tools/spare.py", "def spare():\n    pass\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    assert_eq!(report["mode"], "library", "{stdout}");
+    // A library's orphans are `maybe`, below the default floor.
+    let orphans: Vec<_> = json_issues(project.path(), &["--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .map(|issue| issue["target"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(orphans, ["src/acme/tools/spare.py"]);
+}
+
+/// A dotted string literal that resolves to a project file may load it by
+/// name (airflow's `lazy_load_command("airflow.cli.commands.x.y")`,
+/// gunicorn's `"python:pkg.config"`), so that file's CHK001 falls to an info
+/// note at likely, and `--explain` names the string (#1026). A computed
+/// string is not recognized and lowers nothing.
+#[test]
+fn binary_dotted_string_literal_lowers_the_named_file() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "from acme.loader import lazy_load\nCOMMANDS = {\"cheat\": lazy_load(\"acme.commands.cheat_sheet.run\")}\nGUNICORN = {\"config\": \"python:acme.gunicorn_config\"}\nNAME = \"computed\"\nDYNAMIC = f\"acme.commands.{NAME}\"\n\n\ndef main():\n    return COMMANDS, GUNICORN, DYNAMIC\n",
+        ),
+        ("acme/loader.py", "def lazy_load(path):\n    return path\n"),
+        ("acme/commands/__init__.py", ""),
+        ("acme/commands/cheat_sheet.py", "def run():\n    pass\n"),
+        ("acme/commands/computed.py", "WIDTH = 80\n"),
+        ("acme/gunicorn_config.py", "workers = 2\n"),
+        ("acme/orphan.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let unused: Vec<(String, String, String, String)> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK001")
+        .collect();
+    let level = |target: &str, severity: &str, confidence: &str| {
+        (
+            "CHK001".to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    assert_eq!(
+        unused,
+        [
+            level("acme/commands/cheat_sheet.py", "info", "likely"),
+            level("acme/commands/computed.py", "error", "certain"),
+            level("acme/gunicorn_config.py", "info", "likely"),
+            level("acme/orphan.py", "error", "certain"),
+        ]
+    );
+    // The gap reaches the user without `--explain` (ADR 0005 §3).
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "parse: `acme/cli.py:2` names `acme.commands.cheat_sheet.run` and 1 more module in strings that may load files no entry reaches; those files are reported as unused at info, if at all"
+        ),
+        "{stderr}"
+    );
+
+    for (target, reason) in [
+        (
+            "CHK001:acme/commands/cheat_sheet.py",
+            "a string literal names the module, which may be loaded by name: `acme.commands.cheat_sheet.run` in `acme/cli.py:2`",
+        ),
+        (
+            "CHK001:acme/gunicorn_config.py",
+            "a string literal names the module, which may be loaded by name: `python:acme.gunicorn_config` in `acme/cli.py:3`",
+        ),
+    ] {
+        let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", target])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(explain.stderr).expect("utf8");
+        assert!(stderr.contains(reason), "{target}: {stderr}");
+    }
 }

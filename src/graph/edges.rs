@@ -101,22 +101,7 @@ mod tests {
                     ..DynamicImport::default()
                 },
             ],
-            dynamic_import_prefixes: Vec::new(),
-            pytest_plugins: Vec::new(),
-            attribute_accesses: Vec::new(),
-            symbols: Vec::new(),
-            exports: crate::parser::Exports::Absent,
-            used_import_bindings: Vec::new(),
-            ignores: Vec::new(),
-            has_opaque_dynamic_import: false,
-            runs_python_file: false,
-            deprecated_shim: false,
-            shell_commands: Vec::new(),
-            sys_path_hints: Vec::new(),
-            decorator_sites: Vec::new(),
-            diagnostics: Vec::new(),
-            skipped: false,
-            has_unread_cells: false,
+            ..ParsedModule::default()
         };
         add_parsed_imports(&mut graph, file_id, &parsed).expect("edges");
 

@@ -1,6 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
@@ -17,7 +17,7 @@ use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
     LiteralTarget, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
-    module_prefix, pytest_plugin_names, python_run, sys_path_hint,
+    module_prefix, module_ref_literal, pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -29,7 +29,7 @@ use super::platform_guard::is_platform_guard_test;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
 use super::types::{
-    AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef,
+    AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef, ModuleRef,
     ParsedModule, SymbolDef, SymbolKind, import_context_for_file,
 };
 
@@ -103,6 +103,8 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     prefix_modules: HashMap<String, usize>,
     command_words: BTreeSet<String>,
     sys_path: SysPathHints,
+    /// Each distinct dotted-name literal at its first line (#1026).
+    module_refs: BTreeMap<String, u32>,
     loaded_names: HashSet<String>,
     /// Every `x.attr` the walk meets; [`Self::into_parsed`] keeps
     /// the ones read through an import binding, which only the whole
@@ -146,6 +148,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             prefix_modules: HashMap::new(),
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
+            module_refs: BTreeMap::new(),
             loaded_names: HashSet::new(),
             attribute_sites: Vec::new(),
             parsed: ParsedModule {
@@ -172,6 +175,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         if self.sys_path.edited {
             self.parsed.sys_path_hints = self.sys_path.literals.into_iter().collect();
         }
+        self.parsed.module_refs = self
+            .module_refs
+            .into_iter()
+            .map(|(text, line)| ModuleRef { text, line })
+            .collect();
         let used: BTreeSet<String> = self
             .parsed
             .imports
@@ -277,6 +285,16 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     self.type_checking_leaf(expr)
                 }
             });
+        // Only the guard itself marks a script: `TYPE_CHECKING` also rules a
+        // branch out, but says nothing about how the file is run.
+        let main_guard = main_block
+            && excluded(&|expr| {
+                if is_main_guard_test(expr) {
+                    Leaf::Fixed(false)
+                } else {
+                    Leaf::Opaque
+                }
+            });
         let optional = excluded(&|expr| self.installed_leaf(expr));
         let mut guards: Vec<String> = condition::leaves(earlier.iter().copied().chain(test))
             .into_iter()
@@ -308,6 +326,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
         }
         self.in_main_block |= main_block;
+        // A guard inside a function or class body says nothing about how the
+        // file is run.
+        if main_guard && self.module_level {
+            self.parsed.has_main_block = true;
+        }
         self.imported_guards.extend(guards);
         self.visit_body(body);
         self.in_type_checking = was_type_checking;
@@ -975,6 +998,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 {
                     self.sys_path.literals.insert(hint.into_owned());
                 }
+                if let Some(text) = module_ref_literal(expr)
+                    && !self.module_refs.contains_key(text)
+                {
+                    let line = self.line_number(expr);
+                    self.module_refs.insert(text.to_owned(), line);
+                }
             },
             _ => {},
         }
@@ -1195,6 +1224,21 @@ mod tests {
         let mut visitor = ModuleVisitor::new(path, &layout, file_context, &lines);
         visitor.visit_module(source, module.suite());
         visitor.into_parsed()
+    }
+
+    /// Dotted string literals are kept once each at their first line,
+    /// wherever they appear; computed strings are not seen (#1026).
+    #[test]
+    fn collects_dotted_string_literals_once_at_their_first_line() {
+        let parsed = visit_source(
+            "\"\"\"Loads pkg.cli.run by name.\"\"\"\nX = {\"a\": \"pkg.cli.run\"}\ndef load(name):\n    return [\"pkg.cli.run\", \"python:pkg.config\", f\"pkg.{name}\", \"json\", \"pkg.mod:attr\"]\n",
+        );
+        let refs: Vec<(&str, u32)> = parsed
+            .module_refs
+            .iter()
+            .map(|reference| (reference.text.as_str(), reference.line))
+            .collect();
+        assert_eq!(refs, [("pkg.cli.run", 2), ("python:pkg.config", 4),]);
     }
 
     #[test]
@@ -2383,6 +2427,49 @@ if library == \"trio\":
             ]
         );
         assert_eq!(contexts("pkg/__main__.py"), [ImportContext::Runtime; 3]);
+    }
+
+    /// #1026: a module-level `__main__` block marks the file as a script;
+    /// one inside a function, an unread guard form, and `__main__.py` do not.
+    #[test]
+    fn module_level_main_block_marks_the_file() {
+        let has_block = |path, source| visit_source_at(path, source).has_main_block;
+        assert!(has_block(
+            "pkg/example.py",
+            "def run():\n    pass\n\nif __name__ == \"__main__\":\n    run()\n"
+        ));
+        assert!(has_block(
+            "pkg/example.py",
+            "if DEBUG:\n    pass\nelif '__main__' == __name__:\n    pass\n"
+        ));
+        assert!(!has_block(
+            "pkg/example.py",
+            "def main():\n    if __name__ == \"__main__\":\n        pass\n"
+        ));
+        assert!(!has_block(
+            "pkg/example.py",
+            "class Tool:\n    if __name__ == \"__main__\":\n        DEBUG = True\n"
+        ));
+        assert!(!has_block(
+            "pkg/example.py",
+            "if __name__ in (\"__main__\",):\n    pass\n"
+        ));
+        assert!(has_block(
+            "pkg/example.py",
+            "if __name__ == \"__main__\" and not TYPE_CHECKING:\n    pass\n"
+        ));
+        assert!(!has_block(
+            "pkg/example.py",
+            "if __name__ == \"__main__\" or DEBUG:\n    pass\n"
+        ));
+        assert!(!has_block(
+            "pkg/example.py",
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\n"
+        ));
+        assert!(!has_block(
+            "pkg/__main__.py",
+            "if __name__ == \"__main__\":\n    pass\n"
+        ));
     }
 
     #[test]

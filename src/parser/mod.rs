@@ -19,6 +19,7 @@ mod type_checking;
 mod types;
 mod visit;
 
+pub(crate) use dynamic::module_ref_name;
 pub(crate) use encoding::decode_python_source;
 pub(crate) use error::ParseError;
 pub use ignores::extract_ignores;
