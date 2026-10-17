@@ -883,6 +883,37 @@ fn binary_module_removed_in_py310_is_stdlib_for_a_py38_project() {
 }
 
 #[test]
+fn binary_declared_backport_of_a_removed_stdlib_module_is_used() {
+    // #939: PEP 594 backports provide the module on every target, whether
+    // the target's stdlib still ships it or not.
+    for requires in [">=3.9", ">=3.13"] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let pyproject = format!(
+            "[project]\nname = \"legacy\"\nversion = \"0.1.0\"\nrequires-python = \"{requires}\"\ndependencies = [\"legacy-cgi\", \"standard-imghdr\", \"audioop-lts\"]\n\n[project.scripts]\nlegacy = \"legacy:main\"\n"
+        );
+        fs::write(temp.path().join("pyproject.toml"), pyproject).expect("write fixture");
+        fs::write(
+            temp.path().join("legacy.py"),
+            "import audioop\nimport cgi\nimport cgitb\nimport imghdr\n\n\ndef main() -> None:\n    pass\n",
+        )
+        .expect("write fixture");
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--strict", "--reporter", "json"])
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        // `standard-cgi` also provides `cgi`, but only `legacy-cgi` is declared.
+        assert!(
+            !stderr.contains("several distributions"),
+            "{requires}: {stderr}"
+        );
+        let keys = issue_keys(&json_issues(temp.path(), &["--strict"]));
+        assert!(keys.is_empty(), "{requires}: {keys:?}");
+    }
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))

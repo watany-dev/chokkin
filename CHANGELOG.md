@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A declared backport of a removed stdlib module (`legacy-cgi` for `cgi` /
+  `cgitb`, `standard-imghdr`, `standard-telnetlib` and the other PEP 594
+  `standard-*` packages, `audioop-lts`) counts as used by the module's
+  import on every target, instead of CHK002; on 3.13+ an undeclared one is
+  a CHK003 naming the backport rather than a CHK010 (#939).
 - `requires-python = ">=3.8"` (or `>=3.9`) makes the modules 3.10 removed,
   such as `formatter`, `parser`, `symbol` and `_bootlocale` (and
   `dummy_threading` on 3.8), stdlib instead of CHK010 / CHK003: the stdlib

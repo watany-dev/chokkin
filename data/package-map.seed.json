@@ -1060,6 +1060,121 @@
       "imports": [
         "permissionedforms"
       ]
+    },
+    {
+      "distribution": "legacy-cgi",
+      "imports": [
+        "cgi",
+        "cgitb"
+      ]
+    },
+    {
+      "distribution": "audioop-lts",
+      "imports": [
+        "audioop"
+      ]
+    },
+    {
+      "distribution": "standard-aifc",
+      "imports": [
+        "aifc"
+      ]
+    },
+    {
+      "distribution": "standard-asynchat",
+      "imports": [
+        "asynchat"
+      ]
+    },
+    {
+      "distribution": "standard-asyncore",
+      "imports": [
+        "asyncore"
+      ]
+    },
+    {
+      "distribution": "standard-cgi",
+      "imports": [
+        "cgi"
+      ]
+    },
+    {
+      "distribution": "standard-cgitb",
+      "imports": [
+        "cgitb"
+      ]
+    },
+    {
+      "distribution": "standard-chunk",
+      "imports": [
+        "chunk"
+      ]
+    },
+    {
+      "distribution": "standard-crypt",
+      "imports": [
+        "crypt"
+      ]
+    },
+    {
+      "distribution": "standard-imghdr",
+      "imports": [
+        "imghdr"
+      ]
+    },
+    {
+      "distribution": "standard-mailcap",
+      "imports": [
+        "mailcap"
+      ]
+    },
+    {
+      "distribution": "standard-nntplib",
+      "imports": [
+        "nntplib"
+      ]
+    },
+    {
+      "distribution": "standard-pipes",
+      "imports": [
+        "pipes"
+      ]
+    },
+    {
+      "distribution": "standard-smtpd",
+      "imports": [
+        "smtpd"
+      ]
+    },
+    {
+      "distribution": "standard-sndhdr",
+      "imports": [
+        "sndhdr"
+      ]
+    },
+    {
+      "distribution": "standard-sunau",
+      "imports": [
+        "sunau"
+      ]
+    },
+    {
+      "distribution": "standard-telnetlib",
+      "imports": [
+        "telnetlib"
+      ]
+    },
+    {
+      "distribution": "standard-uu",
+      "imports": [
+        "uu"
+      ]
+    },
+    {
+      "distribution": "standard-xdrlib",
+      "imports": [
+        "xdrlib"
+      ]
     }
   ],
   "auto_packages": [
