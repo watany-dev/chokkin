@@ -1,6 +1,6 @@
 ---
 name: update-docs
-description: src/ の実装変更を README.md / README.ja.md / docs/dev/ / CLAUDE.md / AGENTS.md に同期する。コード変更後やドキュメントの陳腐化が疑われるとき、user が「$update-docs」（Codex）または「/update-docs」（Claude Code）と言ったときに発動する。
+description: src/ の実装変更を README.md / README.ja.md / docs/dev/ / CLAUDE.md / AGENTS.md に同期する。コード変更後やドキュメントの陳腐化が疑われるとき、user が「/update-docs」と言ったときに発動する。
 ---
 
 # update-docs

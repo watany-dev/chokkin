@@ -4,8 +4,7 @@ description: >
   Post-work review gate. Run after a task's implementation is done and before
   handing it off: correctness review, over-engineering review, take in only the
   findings worth taking, then sweep comments. Fire when the user invokes
-  $wrapup (Codex) or /wrapup (Claude Code), says "作業後レビュー", "wrapup",
-  "仕上げて", or when an
+  /wrapup or says "作業後レビュー", "wrapup", "仕上げて", or when an
   implementation task is finished and about to be committed or pushed.
 ---
 
@@ -14,22 +13,17 @@ description: >
 実装が終わった後の仕上げ。レビュー2本を回し、**有用な指摘だけ**を取り込み、
 最後にコメントを掃除する。
 
-依存スキルはリンク先の `SKILL.md` を読んで手順を実行する。Codex では
-slash command の実行を必要としない。呼び出し元の作業範囲・issue 起票方針を
-依存先にも引き継ぐ。
-
 ## 手順
 
 1. **CI**: `make check` (fmt-check → lint (clippy + doc) → test → deny →
    machete) が通っていること。落ちていたらここで直す
 2. **正しさのレビュー**: Claude Code なら `/code-review`。それ以外のエージェント
    （Codex / Cursor）は同等のレビューを自分で行う —
-   PR の base branch（PR 作成前なら対象 branch）と `git merge-base` で分岐点を確かめ、
-   `git diff <merge-base> HEAD` と未コミット差分（staged / unstaged / 新規ファイル）
-   を読み、バグ・エラー処理漏れ・境界条件・テスト欠落を指摘として列挙する
-3. **過剰設計のレビュー**: [ponytail-review](../ponytail-review/SKILL.md) を差分に適用する
+   `git diff <base>...HEAD` を読み、バグ・エラー処理漏れ・境界条件・
+   テスト欠落を指摘として列挙する
+3. **過剰設計のレビュー**: `ponytail-review` スキルを差分に適用する
 4. **取り込み**: 下の基準で選別し、採用したものだけ直す
-5. **コメント掃除**: [cleanup-comments](../cleanup-comments/SKILL.md) を適用する
+5. **コメント掃除**: `cleanup-comments` スキルを適用する
 6. **CI を通してコミット**。1〜5 で入った修正は実装と同じコミットでよいが、
    コメントのみの変更は別コミットにする
 
@@ -57,6 +51,6 @@ slash command の実行を必要としない。呼び出し元の作業範囲・
 
 - ドキュメント同期は wrapup の手順に含めない。`README.md` / `README.ja.md` /
   `docs/dev/spec.ja.md` / `CLAUDE.md` / `AGENTS.md` を更新する必要があるときは
-  [update-docs](../update-docs/SKILL.md) を個別に適用する。
+  `update-docs` を個別に呼ぶ。
 - chokkin は Python コードを実行しない静的解析ツール。レビューや検証のために
   解析対象プロジェクトのコードを実行することは絶対にない。
