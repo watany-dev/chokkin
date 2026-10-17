@@ -402,6 +402,8 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     globs.extend(default_scanned_dirs().map(|dir| format!("{dir}/**/*.{{py,pyi,ipynb}}")));
     // pytest always loads the rootdir conftest, wherever the suite lives.
     globs.push("conftest.py".to_owned());
+    // setuptools runs this at build time, outside the distributed package.
+    globs.push("setup.py".to_owned());
     globs
 }
 
@@ -833,6 +835,7 @@ mod tests {
                 "test/**/*.{py,pyi,ipynb}".to_owned(),
                 "scripts/**/*.{py,pyi,ipynb}".to_owned(),
                 "conftest.py".to_owned(),
+                "setup.py".to_owned(),
             ]
         );
     }
