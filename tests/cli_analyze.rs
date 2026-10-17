@@ -914,6 +914,39 @@ fn binary_declared_backport_of_a_removed_stdlib_module_is_used() {
 }
 
 #[test]
+fn binary_invalid_egg_is_an_invalid_requirement() {
+    // #929: pip 25 rejects these eggs, so they declare no
+    // `requests;python-version<"3"` to report unused, and the egg's leading
+    // name lowers the missing `requests` to a hint.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("requirements.txt"),
+        "git+https://h/r.git#egg=requests;python_version<\"3\"\n-e \"git+https://h/r3.git#egg=with space\"\n",
+    )
+    .expect("write fixture");
+    fs::write(temp.path().join("main.py"), "import requests\n").expect("write fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("invalid requirement at `requirements.txt:1`")
+            && stderr.contains("invalid requirement at `requirements.txt:2`")
+            && stderr.contains("misplaced imports of `requests` are reported as hints"),
+        "{stderr}"
+    );
+    assert!(issue_keys(&json_issues(temp.path(), &["--no-cache"])).is_empty());
+    let strict = json_issues(temp.path(), &["--no-cache", "--strict"]);
+    assert_eq!(
+        issue_keys(&strict),
+        [("CHK003".to_owned(), "main.py:requests".to_owned())]
+    );
+    assert_eq!(strict[0]["confidence"], "maybe");
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))

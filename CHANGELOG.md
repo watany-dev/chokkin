@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A URL requirement whose `#egg=` is not a project name
+  (`#egg=acme;python_version<"3"`, `#egg=name[extra]`, a quoted
+  `-e "...#egg=with space"`) is an invalid requirement, as pip 25 reads it,
+  instead of a dependency named `acme;python-version<"3"` reported as
+  CHK002; the egg's leading name lowers its CHK003 to a hint (#929).
 - A declared backport of a removed stdlib module (`legacy-cgi` for `cgi` /
   `cgitb`, `standard-imghdr`, `standard-telnetlib` and the other PEP 594
   `standard-*` packages, `audioop-lts`) counts as used by the module's
