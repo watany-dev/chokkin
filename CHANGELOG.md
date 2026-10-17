@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `requires-python = ">=3.8"` (or `>=3.9`) makes the modules 3.10 removed,
+  such as `formatter`, `parser`, `symbol` and `_bootlocale` (and
+  `dummy_threading` on 3.8), stdlib instead of CHK010 / CHK003: the stdlib
+  table now covers 3.8 and 3.9 (#940).
 - A bare `except:` and `except Exception:` / `except BaseException:` catch a
   failed import like `except ImportError:` does: the import they fall back
   from keeps its `fallback_for` link (so a dead fallback such as

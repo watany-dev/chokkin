@@ -863,6 +863,26 @@ fn binary_version_guarded_stdlib_import_is_not_chk010() {
 }
 
 #[test]
+fn binary_module_removed_in_py310_is_stdlib_for_a_py38_project() {
+    // #940: `formatter` and `parser` ship in 3.8 and 3.9 only.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"legacy\"\nversion = \"0.1.0\"\nrequires-python = \">=3.8\"\ndependencies = []\n\n[project.scripts]\nlegacy = \"legacy:main\"\n",
+        ),
+        (
+            "legacy.py",
+            "import sys\n\nif sys.version_info < (3, 10):\n    import formatter\n    import parser\n\n\ndef main() -> None:\n    pass\n",
+        ),
+    ] {
+        fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let keys = issue_keys(&json_issues(temp.path(), &[]));
+    assert!(keys.is_empty(), "{keys:?}");
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
