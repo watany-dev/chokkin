@@ -99,9 +99,11 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     function_depth: u32,
     module_level: bool,
     /// Module-level names that are truthy only when a `try` import succeeded:
-    /// set to `True` in the body (`has_x = True`) or to `None` in its
-    /// `except ImportError:` handler (`x = None`, #730).
+    /// set to `True` in the body (`has_x = True`, #730).
     try_flags: HashSet<String>,
+    /// Module-level names set to `None` in an `except ImportError:` handler
+    /// (`x = None`), which `x is None` also reads.
+    none_flags: HashSet<String>,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
@@ -149,6 +151,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
+            none_flags: HashSet::new(),
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
@@ -341,8 +344,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn installed_leaf(&self, expr: &Expr) -> Leaf {
         if let Some(installed) = availability_test(expr) {
             Leaf::Fixed(!installed)
-        } else if self.module_level && tests_flag(expr, &self.try_flags) {
-            Leaf::Fixed(false)
+        } else if self.module_level
+            && let Some(value) = flag_test(expr, &self.try_flags, &self.none_flags)
+        {
+            Leaf::Fixed(value)
         } else {
             Leaf::Opaque
         }
@@ -852,7 +857,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     // A bare `except:` catches everything, a failed import included.
                     let import_failed = handler.type_.as_deref().is_none_or(catches_import_error);
                     if self.module_level && import_failed {
-                        self.try_flags
+                        self.none_flags
                             .extend(assigned_flags(&handler.body, Expr::is_none_literal_expr));
                     }
                     let enclosing = match &primaries {
@@ -1122,16 +1127,22 @@ fn assigned_flags(body: &[Stmt], is_flag: fn(&Expr) -> bool) -> impl Iterator<It
     })
 }
 
-/// Whether `test` is false when a flag is: `x` or `x is not None`.
-fn tests_flag(test: &Expr, flags: &HashSet<String>) -> bool {
-    let is_flag =
-        |expr: &Expr| matches!(expr, Expr::Name(name) if flags.contains(name.id.as_str()));
+/// What `test` is when the flags are unset: `x` is false, and for an
+/// `x = None` flag `x is not None` is false and `x is None` true. `None` for
+/// anything else, which includes `is` tests of a `has_x = True` flag: it is
+/// `False` there, not `None`.
+fn flag_test(test: &Expr, flags: &HashSet<String>, none_flags: &HashSet<String>) -> Option<bool> {
+    let named = |expr: &Expr, names: &HashSet<String>| matches!(expr, Expr::Name(name) if names.contains(name.id.as_str()));
     match test {
-        Expr::Compare(compare) => matches!(
-            (&*compare.ops, &*compare.operands),
-            ([CmpOp::IsNot], [flag, Expr::NoneLiteral(_)]) if is_flag(flag)
-        ),
-        _ => is_flag(test),
+        Expr::Compare(compare) => match (&*compare.ops, &*compare.operands) {
+            ([op @ (CmpOp::Is | CmpOp::IsNot)], [flag, Expr::NoneLiteral(_)])
+                if named(flag, none_flags) =>
+            {
+                Some(*op == CmpOp::Is)
+            },
+            _ => None,
+        },
+        _ => (named(test, flags) || named(test, none_flags)).then_some(false),
     }
 }
 
@@ -2042,6 +2053,27 @@ def func(yaml):
             .collect();
         assert_eq!(optional, ["yaml", "ujson"]);
         assert_eq!(parsed.imports.len(), 11);
+    }
+
+    /// `x = None` in the handler makes `x is None` true without the package,
+    /// so its `else:` and the statements after `if x is None: raise
+    /// ImportError` are optional. A `has_x = True` flag is `False` there, not
+    /// `None`, so `has_x is not None` guards nothing.
+    #[test]
+    fn none_flags_read_is_none_both_ways() {
+        let parsed = visit_source(
+            "try:\n    import yaml\nexcept ImportError:\n    yaml = None\ntry:\n    import toml\n    HAS_TOML = True\nexcept ImportError:\n    HAS_TOML = False\n\nif yaml is None:\n    pass\nelse:\n    import yaml.a\nif HAS_TOML is not None:\n    import toml.c\nif yaml is None:\n    raise ImportError(\"yaml\")\nimport yaml.b\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("yaml", true),
+                ("toml", true),
+                ("yaml.a", true),
+                ("toml.c", false),
+                ("yaml.b", true),
+            ]
+        );
     }
 
     /// #614: mlflow registers optional dataset constructors under

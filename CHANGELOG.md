@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the statements after it optional, like `if not is_x_available():` does.
   The test is read like an `if` body's, through `not` / `and` / `or`; one
   that can be true with the package installed still guards nothing (#958).
+- A flag set to `None` in an `except ImportError:` handler reads
+  `x is None` as true without the package, so the `else:` of `if x is None:`
+  and the statements after `if x is None: raise ImportError(...)` are
+  optional. A flag set to `True` in the `try` body is `False` without the
+  package, not `None`, so `has_x is not None` no longer makes its body
+  optional.
 
 ## [0.7.7] - 2026-10-17
 
