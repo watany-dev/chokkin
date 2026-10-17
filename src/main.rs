@@ -10,9 +10,9 @@ use std::process::ExitCode;
 
 use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, RenderContext, RuntimeOverrides, VERSION, analyze_project,
-    config_label_from_sources, escape_control_lines, explain_issue, init_project, parse_cli_args,
-    probe_project, render_baseline_report, render_fix_report, render_issues, trace_output,
-    write_diagnostics, write_probe_report, write_probe_warnings,
+    config_label_from_sources, escape_control, escape_control_lines, explain_issue, init_project,
+    parse_cli_args, probe_project, render_baseline_report, render_fix_report, render_issues,
+    trace_output, write_diagnostics, write_probe_report, write_probe_warnings,
 };
 
 const USAGE: &str = "\
@@ -95,7 +95,10 @@ fn main() -> ExitCode {
 fn run_init(start: &Path, project_root: Option<&Path>, overrides: &RuntimeOverrides) -> ExitCode {
     match init_project(start, project_root, overrides) {
         Ok(report) => {
-            println!("wrote starter [tool.chokkin] to {}", report.path.display());
+            println!(
+                "wrote starter [tool.chokkin] to {}",
+                escape_control(&report.path.display().to_string())
+            );
             ExitCode::from(ExitStatus::Success.code())
         },
         Err(error) => fail(&error, error.is_usage_error()),
@@ -133,7 +136,7 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
                 let _ = writeln!(
                     std::io::stderr(),
                     "explain: no matching issue for `{}`",
-                    escape_control_lines(selector)
+                    escape_control(selector)
                 );
             },
         }

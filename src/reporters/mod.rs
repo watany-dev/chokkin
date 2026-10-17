@@ -13,8 +13,8 @@ mod types;
 pub(crate) use default::config_label;
 pub use default::config_label_from_sources;
 pub use fix::{render_baseline_report, render_fix_report};
-pub use format::escape_control_lines;
-pub(crate) use format::{condense_diagnostics, escape_control};
+pub(crate) use format::condense_diagnostics;
+pub use format::{escape_control, escape_control_lines};
 pub use types::{Diagnostic, FileCounts, RenderContext, ReporterId};
 
 use crate::rules::IssueReport;

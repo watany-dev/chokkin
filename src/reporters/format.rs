@@ -11,13 +11,16 @@ use crate::rules::{
 
 use super::types::Diagnostic;
 
-/// `text` with each control character (`U+0000`–`U+001F`, `U+007F`–`U+009F`),
-/// bidi embedding/override/isolate (`U+202A`–`U+202E`, `U+2066`–`U+2069`) and
-/// line/paragraph separator (`U+2028`, `U+2029`) written as `\u{..}`. File
-/// names, venv METADATA and manifest values come from the analyzed project;
-/// printed raw they could colour the terminal, forge a report line (#973) or
-/// reorder one (#996). JSON and SARIF escape through serde instead.
-pub(crate) fn escape_control(text: &str) -> Cow<'_, str> {
+/// `text` with control, bidi and line-separator characters written as `\u{..}`.
+///
+/// That is `U+0000`–`U+001F`, `U+007F`–`U+009F`, bidi embedding/override/
+/// isolate (`U+202A`–`U+202E`, `U+2066`–`U+2069`) and line/paragraph
+/// separator (`U+2028`, `U+2029`).
+/// File names, venv METADATA and manifest values come from the analyzed
+/// project; printed raw they could colour the terminal, forge a report line
+/// (#973) or reorder one (#996). JSON and SARIF go through serde, which
+/// escapes only the control characters.
+pub fn escape_control(text: &str) -> Cow<'_, str> {
     if !text.chars().any(needs_escape) {
         return Cow::Borrowed(text);
     }
@@ -33,13 +36,25 @@ pub(crate) fn escape_control(text: &str) -> Cow<'_, str> {
 }
 
 /// `escape_control` for multi-line text, such as an error that quotes a
-/// TOML snippet: each `\n` is kept as a line break, the rest is escaped.
+/// TOML snippet: each `\n` or `\r\n` is kept as a line break, the rest is
+/// escaped.
 pub fn escape_control_lines(text: &str) -> Cow<'_, str> {
-    if !text.chars().any(|ch| ch != '\n' && needs_escape(ch)) {
-        return Cow::Borrowed(text);
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    for line in text.split_inclusive('\n') {
+        let body = line
+            .strip_suffix('\n')
+            .map_or(line, |body| body.strip_suffix('\r').unwrap_or(body));
+        let escaped = escape_control(body);
+        changed |= matches!(escaped, Cow::Owned(_));
+        out.push_str(&escaped);
+        out.push_str(&line[body.len()..]);
     }
-    let lines: Vec<Cow<'_, str>> = text.split('\n').map(escape_control).collect();
-    Cow::Owned(lines.join("\n"))
+    if changed {
+        Cow::Owned(out)
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 fn needs_escape(ch: char) -> bool {
@@ -225,6 +240,11 @@ mod tests {
             escape_control_lines("a\x1b[31m\n\r\u{202e}b\n"),
             "a\\u{1b}[31m\n\\u{d}\\u{202e}b\n"
         );
+        assert!(matches!(
+            escape_control_lines("a\r\n  |\r\n"),
+            Cow::Borrowed("a\r\n  |\r\n")
+        ));
+        assert_eq!(escape_control_lines("a\r\nb\r"), "a\r\nb\\u{d}");
     }
 
     #[test]
