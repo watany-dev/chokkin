@@ -124,7 +124,7 @@ impl StdlibRange {
         if NOT_ALWAYS_BUILT.contains(&import_root) {
             return false;
         }
-        let low = floor.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR);
+        let low = floor.min(NEWEST_BUNDLED_MINOR);
         let high = self.max.clamp(low, NEWEST_BUNDLED_MINOR);
         stdlib_modules()
             .get(import_root)

@@ -103,11 +103,10 @@ fn parse_with(
             requirement.version_or_url,
             false,
         )
-    } else if is_direct_reference(trimmed) {
-        // `name @ url` that failed the grammar (e.g. a space in the URL) is
-        // invalid, not an opaque URL line.
-        return Err(invalid(raw, context, origin));
-    } else if has_invalid_egg(trimmed) {
+    } else if is_direct_reference(trimmed) || has_invalid_egg(trimmed) {
+        // `name @ url` that failed the grammar (e.g. a space in the URL), or
+        // an `#egg=` that is not a project name (#929), is invalid, not an
+        // opaque URL line.
         return Err(invalid(raw, context, origin));
     } else if let Some(name) = extract_egg_name(trimmed) {
         (name, Vec::new(), None, Some(trimmed.to_owned()), false)

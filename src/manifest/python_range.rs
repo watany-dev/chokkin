@@ -277,9 +277,6 @@ fn parse_expr(tokens: &[Token<'_>], pos: &mut usize, depth: usize) -> Option<Pyt
         },
         _ => return None,
     };
-    if matches!(op, "===") {
-        return None;
-    }
     let specifier = parse_version_specifiers(&format!("{op}{value}"))?;
     let [specifier] = specifier.as_slice() else {
         return None;
