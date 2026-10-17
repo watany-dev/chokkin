@@ -19,8 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the model stays conditional (#919).
 - In `setup.py`, `reqs[0] = "b"` and `del reqs[0]` with an integer literal
   index in range replace or remove that element, so the old requirement is
-  no longer declared and reported as CHK002; other indexes still leave the
-  list partial (#868).
+  no longer declared and reported as CHK002; other indexes, and lists whose
+  order a method call, a loop or a branch merge may have changed, still
+  leave the list partial (#868).
 - A URL requirement whose `#egg=` is not a project name
   (`#egg=acme;python_version<"3"`, `#egg=name[extra]`, a quoted
   `-e "...#egg=with space"`) is an invalid requirement, as pip 25 reads it,

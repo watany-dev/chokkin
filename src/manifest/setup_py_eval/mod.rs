@@ -7,7 +7,7 @@
 
 mod idioms;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use ruff_python_ast::{
@@ -203,6 +203,7 @@ pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCal
         objects: 0,
         probed_missing: Vec::new(),
         table_requirements: BTreeSet::new(),
+        ordered: HashSet::new(),
     };
     let call = evaluator.exec_block(stmts)?;
     let unpacked = call.arguments.keywords.iter().any(|kw| kw.arg.is_none())
@@ -281,6 +282,11 @@ struct Evaluator<'a> {
     /// in, read at lookup time: a later rebinding does not change what was
     /// looked up.
     table_requirements: BTreeSet<String>,
+    /// The list objects whose element order we know, so that an index
+    /// names one element (#868): built by a list literal and since changed
+    /// only in ways we follow exactly. A copy (`list(x)`, `x + y`, a
+    /// comprehension) gets a new object outside it.
+    ordered: HashSet<usize>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -362,7 +368,15 @@ impl<'a> Evaluator<'a> {
         let target = self.eval(&assign.target);
         let object = target.object();
         let value = if assign.op == Operator::Add && !matches!(target, Value::Dict { .. }) {
-            let sum = add(target, self.eval(&assign.value), Identity(object));
+            let added = self.eval(&assign.value);
+            if !added
+                .object()
+                .is_some_and(|added| self.ordered.contains(&added))
+                && let Some(object) = object
+            {
+                self.ordered.remove(&object);
+            }
+            let sum = add(target, added, Identity(object));
             self.checked(sum)
         } else {
             Value::Unknown
@@ -433,6 +447,13 @@ impl<'a> Evaluator<'a> {
         match (left, right) {
             (left, right) if left == right && identity.is_none() => left,
             (Value::List(mut left, kept), Value::List(right, _)) => {
+                // Either branch's order may hold, so neither does; a new
+                // object is outside `ordered` already.
+                if identity.is_none()
+                    && let Some(object) = kept.0
+                {
+                    self.ordered.remove(&object);
+                }
                 for item in right {
                     if !left.contains(&item) {
                         left.push(item);
@@ -531,17 +552,16 @@ impl<'a> Evaluator<'a> {
                 },
                 Expr::Subscript(subscript) => {
                     let key = self.eval(&subscript.slice);
+                    let position = self.list_index(&subscript.value, &subscript.slice);
                     let found = self.mutate(&subscript.value, |base| match (base, &key) {
                         (Value::Dict { items, .. }, Value::Str(key)) => {
                             items.retain(|(existing, _)| existing != key);
                         },
-                        (Value::List(items, _), _) => {
-                            match list_position(items, &subscript.slice) {
-                                Some(position) => {
-                                    items.remove(position);
-                                },
-                                None => items.push(Value::Unknown),
-                            }
+                        (Value::List(items, _), _) => match position {
+                            Some(position) => {
+                                items.remove(position);
+                            },
+                            None => items.push(Value::Unknown),
                         },
                         (base, _) => base.taint(),
                     });
@@ -554,6 +574,21 @@ impl<'a> Evaluator<'a> {
                 _ => {},
             }
         }
+    }
+
+    /// The element `place[index]` names in a list of known order, as
+    /// [`list_position`] reads it. `None` otherwise, and the list's order
+    /// is then lost: the caller adds an element we cannot place.
+    fn list_index(&mut self, place: &Expr, index: &Expr) -> Option<usize> {
+        let Some(Value::List(items, Identity(Some(object)))) = self.place_mut(place) else {
+            return None;
+        };
+        let object = *object;
+        let position = list_position(items, index).filter(|_| self.ordered.contains(&object));
+        if position.is_none() {
+            self.ordered.remove(&object);
+        }
+        position
     }
 
     /// The stored value a name or string-key subscript chain refers to.
@@ -579,6 +614,9 @@ impl<'a> Evaluator<'a> {
     /// A change we cannot follow to the object `place` names, or failing
     /// that to the dict holding it.
     fn taint_place(&mut self, place: &Expr) {
+        if let Some(object) = self.place_mut(place).and_then(|value| value.object()) {
+            self.ordered.remove(&object);
+        }
         if !self.mutate(place, Value::taint)
             && let Expr::Subscript(subscript) = place
         {
@@ -709,13 +747,14 @@ impl<'a> Evaluator<'a> {
             },
             // A key that is not a string leaves the dict partial as in a dict
             // literal: an added entry cannot undeclare the known ones (#827,
-            // #869). A list's element is replaced only where `list_position`
-            // reads the index (#868). Any other base leaves it partial.
+            // #869). A list's element is replaced only where `list_index` reads
+            // the index (#868). Any other base leaves it partial.
             Expr::Subscript(subscript) => {
                 let key = self.eval(&subscript.slice);
+                let position = self.list_index(&subscript.value, &subscript.slice);
                 let found = self.mutate(&subscript.value, |base| match (base, key) {
                     (Value::Dict { items, .. }, Value::Str(key)) => insert_entry(items, key, value),
-                    (Value::List(items, _), _) => match list_position(items, &subscript.slice) {
+                    (Value::List(items, _), _) => match position {
                         Some(position) => items[position] = value,
                         None => items.push(Value::Unknown),
                     },
@@ -762,7 +801,11 @@ impl<'a> Evaluator<'a> {
             Expr::List(ruff_python_ast::ExprList { elts, .. })
             | Expr::Set(ruff_python_ast::ExprSet { elts, .. }) => {
                 let items = self.eval_elements(elts);
-                Value::List(items, self.fresh())
+                let identity = self.fresh();
+                if let (Expr::List(_), Identity(Some(object))) = (expr, identity) {
+                    self.ordered.insert(object);
+                }
+                Value::List(items, identity)
             },
             Expr::Tuple(tuple) => Value::List(self.eval_elements(&tuple.elts), Identity(None)),
             Expr::Dict(dict) => self.eval_dict(dict),
@@ -2163,6 +2206,10 @@ table = {'other': 'y', **opaque()}
             ("reqs = ['a', 'b']\ndel reqs[-2]\n", strings(&["b"])),
             ("reqs = ['a']\nalias = reqs\ndel alias[0]\n", strings(&[])),
             (
+                "reqs = ['a', 'b']\nif C:\n    alias = reqs\ndel reqs[0]\nreqs += ['c']\n",
+                strings(&["b", "c"]),
+            ),
+            (
                 "reqs = ['a', 'b']\nreqs[0] = ['c', 'd']\n",
                 Py::List(vec![strings(&["c", "d"]), Py::Str("b".to_owned())]),
             ),
@@ -2199,6 +2246,49 @@ table = {'other': 'y', **opaque()}
                 items
                     .items
                     .contains(&DependencyItem::Requirement("a".to_owned())),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn index_into_a_list_of_unknown_order_keeps_every_element() {
+        // A change we cannot follow, or a branch merge, keeps the elements
+        // but not their order, so an index may name any of them.
+        for (source, kept) in [
+            ("reqs = ['a', 'b']\nreqs.reverse()\nreqs[0] = 'c'\n", "a"),
+            (
+                "reqs = ['a', 'b']\nreqs.insert(0, 'z')\nreqs[1] = 'c'\n",
+                "b",
+            ),
+            (
+                "reqs = ['a', 'b']\nreqs.sort(reverse=True)\ndel reqs[0]\n",
+                "a",
+            ),
+            (
+                "reqs = ['a', 'b']\nfor x in X:\n    reqs.insert(0, x)\ndel reqs[0]\n",
+                "a",
+            ),
+            (
+                "if C:\n    reqs = ['a', 'b']\nelse:\n    reqs = ['b', 'a']\ndel reqs[0]\n",
+                "a",
+            ),
+            (
+                "reqs = ['a', 'b']\nif C:\n    del reqs[0]\ndel reqs[-1]\n",
+                "a",
+            ),
+            ("reqs = ['a']\nreqs += more\nreqs[-1] = 'c'\n", "a"),
+            ("reqs = sorted(['b', 'a'])\ndel reqs[0]\n", "a"),
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            let value = call.keyword("install_requires").expect("install_requires");
+            let items = dependency_items(value);
+            assert!(!items.complete, "{source}");
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement(kept.to_owned())),
                 "{source}"
             );
         }
@@ -2581,6 +2671,7 @@ table = {'other': 'y', **opaque()}
             objects: 0,
             probed_missing: Vec::new(),
             table_requirements: BTreeSet::new(),
+            ordered: HashSet::new(),
         };
         assert!(evaluator.spend(MAX_STEPS));
         assert!(!evaluator.exhausted());
