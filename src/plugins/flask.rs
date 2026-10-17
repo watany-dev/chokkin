@@ -99,7 +99,6 @@ fn extract_scripts(root: &Path, sources: &DiscoveredSources, contrib: &mut Plugi
 /// reference as the module form, so the app names in it are used; a file the
 /// layout names no module for (a script at the root of a project without a
 /// package) is an entry root, as Flask imports it from its own directory.
-/// A module name of such a file (`--app hello`) is read as its path.
 ///
 /// A path naming no discovered file, an absolute one, one leaving the root,
 /// or one built from a variable adds nothing: like a command target naming
