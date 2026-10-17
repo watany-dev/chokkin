@@ -48,4 +48,5 @@ pub(crate) static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
     ("watchmedo", "watchdog"),
     ("wheel", "wheel"),
     ("yamllint", "yamllint"),
+    ("zensical", "zensical"),
 ];

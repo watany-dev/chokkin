@@ -983,6 +983,20 @@ fn binary_marker_implied_by_requires_python_is_unconditional() {
 }
 
 #[test]
+fn binary_zensical_run_by_a_pdm_script_is_used() {
+    // pdm runs its docs with `zensical serve`; the bundled binary map has to
+    // name the CLI, or the declared doc dependency reads as unused.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"app\"\nversion = \"0\"\n[dependency-groups]\ndoc = [\"zensical\"]\n[tool.pdm.scripts]\ndoc = { cmd = \"zensical serve\" }\n",
+    )
+    .expect("write fixture");
+    fs::write(temp.path().join("main.py"), "").expect("write fixture");
+    assert!(json_issues(temp.path(), &["--no-cache", "--strict"]).is_empty());
+}
+
+#[test]
 fn binary_pep723_script_findings_in_sarif() {
     let project = pep723_project();
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))

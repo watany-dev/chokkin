@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The bundled binary map names `zensical`, so a declared `zensical` that a
+  task runner calls (`[tool.pdm.scripts] doc = "zensical serve"`) is used
+  instead of reported as CHK002.
 - A dependency whose `python_version` / `python_full_version` marker holds
   on every interpreter `requires-python` allows (intersected with Poetry's
   `python` dependency, or a script block's own `requires-python`), such as
