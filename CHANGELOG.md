@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A bare `except:` and `except Exception:` / `except BaseException:` catch a
+  failed import like `except ImportError:` does: the import they fall back
+  from keeps its `fallback_for` link (so a dead fallback such as
+  `dummy_threading` drops to info), and `x = None` in them sets an
+  availability flag when the `try` body imports something; a broad handler
+  around `token = os.environ[...]` sets none (#967).
+- An import inside a function (or `lambda`) defined in a `try:` body or
+  `with suppress(ImportError):` is no longer optional: the body runs when
+  called, after the `try` stops catching, so a missing package there is
+  reported at full severity again. A function defined under `else:`, a flag,
+  or an availability check keeps its imports optional, since it exists only
+  when the package is installed (#968).
+- `if not HAS_X: raise ImportError(...)` with a module-level try flag makes
+  the statements after it optional, like `if not is_x_available():` does.
+  The test is read like an `if` body's, through `not` / `and` / `or`; one
+  that can be true with the package installed still guards nothing (#958).
+- A flag set to `None` in an `except ImportError:` handler reads
+  `x is None` as true without the package, so the `else:` of `if x is None:`
+  and the statements after `if x is None: raise ImportError(...)` are
+  optional. A flag set to `True` in the `try` body is `False` without the
+  package, not `None`, so `has_x is not None` no longer makes its body
+  optional.
+- `sys.platform.startswith(...)`, `os.name == ...`, `platform.system() == ...`
+  and `in` / `not in` against them are platform guards like
+  `sys.platform == ...`, so an import under `if os.name == "nt":` is
+  platform-guarded. The receiver must be the stdlib module in that scope: a
+  parameter or other binding named `sys` makes the test an unknown leaf
+  (#957).
+
 ## [0.7.7] - 2026-10-17
 
 v0.7.7 closes the v0.7.6 `uvx` findings and the remaining gaps of the

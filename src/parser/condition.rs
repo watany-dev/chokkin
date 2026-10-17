@@ -194,7 +194,7 @@ if is_psycopg3 and settings.DEBUG:
         enum Atom {
             /// `TYPE_CHECKING`: false whenever the code runs.
             TypeChecking,
-            /// A `sys.platform` comparison: true on some platform, false on another.
+            /// A platform test (#957): true on some platform, false on another.
             Platform,
             /// A flag, `sys.version_info` comparison or call the analysis cannot read.
             Opaque,
@@ -226,7 +226,7 @@ if is_psycopg3 and settings.DEBUG:
 
         const ROOTS: [&str; 3] = ["zzma", "zzmb", "zzmc"];
 
-        const HEADER: &str = "import importlib.util\nimport os\nimport sys\nimport typing\n\
+        const HEADER: &str = "import importlib.util\nimport os\nimport platform\nimport sys\nimport typing\n\
                               from typing import TYPE_CHECKING\n";
 
         fn atom() -> impl Strategy<Value = Atom> {
@@ -344,10 +344,13 @@ if is_psycopg3 and settings.DEBUG:
             match atom {
                 Atom::TypeChecking if id.is_multiple_of(2) => "TYPE_CHECKING".to_owned(),
                 Atom::TypeChecking => "typing.TYPE_CHECKING".to_owned(),
-                Atom::Platform => match id % 3 {
+                Atom::Platform => match id % 6 {
                     0 => format!("sys.platform == \"p{id}\""),
                     1 => format!("sys.platform != \"p{id}\""),
-                    _ => format!("\"p{id}\" <= sys.platform"),
+                    2 => format!("\"p{id}\" <= sys.platform"),
+                    3 => format!("sys.platform.startswith(\"p{id}\")"),
+                    4 => format!("os.name in (\"p{id}\", \"q{id}\")"),
+                    _ => format!("platform.system() == \"P{id}\""),
                 },
                 Atom::Opaque => match id % 3 {
                     0 => format!("zzflag{id}"),

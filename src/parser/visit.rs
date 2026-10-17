@@ -25,7 +25,9 @@ use super::module_guard::{
     async_library_names, availability_test, first_availability_check, guarded_roots,
     imported_module_guard, is_main_guard_test, raises_import_error, runs_as_main,
 };
-use super::platform_guard::is_platform_guard_test;
+use super::platform_guard::{
+    PlatformModules, is_platform_guard_test, mentions_platform_test, platform_modules,
+};
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::type_checking::is_type_checking_test;
 use super::types::{
@@ -40,12 +42,13 @@ struct SysPathHints {
     literals: BTreeSet<String>,
 }
 
-/// Whether the source can hold what [`async_library_names`] and
-/// [`first_availability_check`] look for. Most modules cannot, and the scans
-/// rewalk every scope's body.
+/// Whether the source can hold what [`async_library_names`],
+/// [`first_availability_check`] and [`platform_modules`] look for. Most
+/// modules cannot, and the scans rewalk every scope's body.
 struct SourceMentions {
     async_library: bool,
     availability: bool,
+    platform: bool,
 }
 
 impl SourceMentions {
@@ -59,6 +62,11 @@ impl SourceMentions {
         Self {
             async_library: mentions("current_async_library"),
             availability: mentions("find_spec") || mentions("_available"),
+            // An aliased module (`import sys as s`) is checked once the
+            // module scope's names are known.
+            platform: mentions("sys.platform")
+                || mentions("os.name")
+                || mentions("platform.system"),
         }
     }
 }
@@ -70,11 +78,22 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     lines: &'a LineIndex,
     default_context: ImportContext,
     in_type_checking: bool,
-    try_depth: u32,
+    /// Inside a `try:` body or `with suppress(ImportError):`, which catch a
+    /// failed import only while they run, so a nested function's body is
+    /// outside them (#968).
+    caught_depth: u32,
+    /// Inside code that runs only once some package imported: a `try`'s
+    /// `else:`, a branch a flag or availability check rules out, or the
+    /// statements after `if not is_x_available(): raise ImportError`. A
+    /// function defined there exists only then, so it stays inside.
+    gated_depth: u32,
     /// Inside an `except ImportError:` handler: the roots its `try` body
     /// imports (#721).
     fallback_for: Vec<String>,
     platform_guard_depth: u32,
+    /// Names the current scope binds to `sys` / `os` / `platform` (#957);
+    /// empty when the source tests none of them.
+    platform_modules: PlatformModules,
     /// Top-level modules an enclosing branch checked are already imported
     /// (`"x" in sys.modules`); imports of them are optional (#681).
     imported_guards: Vec<String>,
@@ -91,9 +110,11 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     function_depth: u32,
     module_level: bool,
     /// Module-level names that are truthy only when a `try` import succeeded:
-    /// set to `True` in the body (`has_x = True`) or to `None` in its
-    /// `except ImportError:` handler (`x = None`, #730).
+    /// set to `True` in the body (`has_x = True`, #730).
     try_flags: HashSet<String>,
+    /// Module-level names set to `None` in an `except ImportError:` handler
+    /// (`x = None`), which `x is None` also reads.
+    none_flags: HashSet<String>,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
@@ -126,20 +147,24 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             lines,
             default_context,
             in_type_checking: false,
-            try_depth: 0,
+            caught_depth: 0,
+            gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
+            platform_modules: PlatformModules::new(),
             imported_guards: Vec::new(),
             async_library_names: HashSet::new(),
             mentions: SourceMentions {
                 async_library: true,
                 availability: true,
+                platform: true,
             },
             in_main_block: false,
             availability_checked_at: None,
             function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
+            none_flags: HashSet::new(),
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
@@ -228,6 +253,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.async_library_names = self.scope_async_library_names(None, stmts);
+        let modules = platform_modules(None, None, stmts);
+        if self.mentions.platform || mentions_platform_test(source, &modules) {
+            self.platform_modules = modules;
+            self.mentions.platform = true;
+        }
         self.visit_body(stmts);
         self.parsed.deprecated_shim = warns_deprecated_on_import(stmts, &self.parsed.imports);
     }
@@ -244,6 +274,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    fn scope_platform_modules(
+        &self,
+        parameters: Option<&Parameters>,
+        body: &[Stmt],
+    ) -> PlatformModules {
+        if self.mentions.platform {
+            platform_modules(Some(&self.platform_modules), parameters, body)
+        } else {
+            PlatformModules::new()
+        }
+    }
+
     /// Visit one `if`/`elif`/`else` branch; `test` is `None` for `else`, and
     /// `earlier` holds the tests of the chain's branches before it.
     fn visit_branch(
@@ -254,13 +296,13 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     ) {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
-        let was_try_depth = self.try_depth;
+        let was_gated_depth = self.gated_depth;
         let was_main_block = self.in_main_block;
         let guard_count = self.imported_guards.len();
         let excluded = |leaf: &dyn Fn(&Expr) -> Leaf| condition::excluded(earlier, test, leaf);
         let type_checking = excluded(&|expr| self.type_checking_leaf(expr));
         let platform_guard = excluded(&|expr| {
-            if is_platform_guard_test(expr) {
+            if is_platform_guard_test(expr, &self.platform_modules) {
                 Leaf::Free
             } else {
                 Leaf::Opaque
@@ -298,7 +340,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         // An import placed before the check in the same `and` is read as
         // optional too: real code checks first.
         if optional {
-            self.try_depth = self.try_depth.saturating_add(1);
+            self.gated_depth = self.gated_depth.saturating_add(1);
         }
         if let Some(test) = test {
             self.visit_expr(test);
@@ -312,7 +354,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.visit_body(body);
         self.in_type_checking = was_type_checking;
         self.platform_guard_depth = was_platform_guard;
-        self.try_depth = was_try_depth;
+        self.gated_depth = was_gated_depth;
         self.in_main_block = was_main_block;
         self.imported_guards.truncate(guard_count);
     }
@@ -332,8 +374,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn installed_leaf(&self, expr: &Expr) -> Leaf {
         if let Some(installed) = availability_test(expr) {
             Leaf::Fixed(!installed)
-        } else if self.module_level && tests_flag(expr, &self.try_flags) {
-            Leaf::Fixed(false)
+        } else if self.module_level
+            && let Some(value) = flag_test(expr, &self.try_flags, &self.none_flags)
+        {
+            Leaf::Fixed(value)
         } else {
             Leaf::Opaque
         }
@@ -341,7 +385,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
 
     /// Whether an import at `node` runs only when some package is installed.
     fn is_optional_at<R: Ranged>(&self, node: &R) -> bool {
-        self.try_depth > 0
+        self.caught_depth > 0
+            || self.gated_depth > 0
             || self
                 .availability_checked_at
                 .is_some_and(|at| at < node.start())
@@ -380,9 +425,13 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let saved_function_depth = self.function_depth;
         let saved_checked_at = self.availability_checked_at;
         let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
+        let saved_caught_depth = self.caught_depth;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
+            // The body runs when called, after the enclosing `try` is gone.
+            // `fallback_for` stays: a handler that never runs defines nothing.
+            self.caught_depth = 0;
             // A function that asks whether a package is installed treats the
             // packages it imports after the check as optional (#695, #713).
             // A nested function runs when called, possibly after the outer
@@ -401,6 +450,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.function_depth = saved_function_depth;
         self.availability_checked_at = saved_checked_at;
         self.prefix_modules = saved_prefix_modules;
+        self.caught_depth = saved_caught_depth;
     }
 
     /// Track `name = import_module("pkg." + x)` for a later
@@ -687,17 +737,19 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
     /// Statements after `if not is_x_available(): raise ImportError(...)`
     /// only run with `x` installed (#695).
     fn visit_body(&mut self, body: &'ast [Stmt]) {
-        let try_depth = self.try_depth;
+        let gated_depth = self.gated_depth;
         for stmt in body {
             self.visit_stmt(stmt);
+            // The statements after run only when the test was false, which
+            // it cannot be with the package missing (#695, #958).
             if let Stmt::If(if_stmt) = stmt
-                && availability_test(&if_stmt.test) == Some(false)
                 && raises_import_error(&if_stmt.body)
+                && condition::excluded(&[&*if_stmt.test], None, &|expr| self.installed_leaf(expr))
             {
-                self.try_depth = try_depth.saturating_add(1);
+                self.gated_depth = gated_depth.saturating_add(1);
             }
         }
-        self.try_depth = try_depth;
+        self.gated_depth = gated_depth;
     }
 
     #[allow(clippy::too_many_lines)]
@@ -716,6 +768,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 let names = self.scope_async_library_names(Some(&def.parameters), &def.body);
                 let outer_names = std::mem::replace(&mut self.async_library_names, names);
+                let modules = self.scope_platform_modules(Some(&def.parameters), &def.body);
+                let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
@@ -723,6 +777,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     SymbolKind::Function,
                 );
                 self.async_library_names = outer_names;
+                self.platform_modules = outer_modules;
             },
             Stmt::ClassDef(def) => {
                 self.visit_decorators(&def.decorator_list);
@@ -734,8 +789,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 let names = self.scope_async_library_names(None, &def.body);
                 let outer_names = std::mem::replace(&mut self.async_library_names, names);
+                let modules = self.scope_platform_modules(None, &def.body);
+                let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
                 self.async_library_names = outer_names;
+                self.platform_modules = outer_modules;
             },
             Stmt::Assign(assign) => {
                 if self.module_level {
@@ -823,18 +881,28 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                         |value| matches!(value, Expr::BooleanLiteral(literal) if literal.value),
                     ));
                 }
-                self.try_depth = self.try_depth.saturating_add(1);
+                self.caught_depth = self.caught_depth.saturating_add(1);
                 self.visit_body(&try_stmt.body);
-                self.try_depth = self.try_depth.saturating_sub(1);
+                self.caught_depth = self.caught_depth.saturating_sub(1);
                 let primaries = imported_roots(&try_stmt.body);
+                let imports = try_stmt
+                    .body
+                    .iter()
+                    .any(|stmt| matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)));
                 for handler in &try_stmt.handlers {
                     let ExceptHandler::ExceptHandler(handler) = handler;
                     if let Some(exc_type) = &handler.type_ {
                         self.visit_expr(exc_type);
                     }
-                    let import_failed = handler.type_.as_deref().is_some_and(catches_import_error);
-                    if self.module_level && import_failed {
-                        self.try_flags
+                    // A bare `except:` catches everything, a failed import included.
+                    let import_failed = handler.type_.as_deref().is_none_or(catches_import_error);
+                    // A broad handler also catches whatever else the body
+                    // raises, so `x = None` there marks a missing package
+                    // only when the body imports one.
+                    let flags = import_failed
+                        && (imports || handler.type_.as_deref().is_some_and(names_import_error));
+                    if self.module_level && flags {
+                        self.none_flags
                             .extend(assigned_flags(&handler.body, Expr::is_none_literal_expr));
                     }
                     let enclosing = match &primaries {
@@ -850,9 +918,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 // `else:` runs only when the `try` body raised nothing, so its
                 // imports are as optional as the body's.
-                self.try_depth = self.try_depth.saturating_add(1);
+                self.gated_depth = self.gated_depth.saturating_add(1);
                 self.visit_body(&try_stmt.orelse);
-                self.try_depth = self.try_depth.saturating_sub(1);
+                self.gated_depth = self.gated_depth.saturating_sub(1);
                 self.visit_body(&try_stmt.finalbody);
             },
             Stmt::With(with_stmt) => {
@@ -864,11 +932,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     .iter()
                     .any(|item| suppresses_import_error(&item.context_expr));
                 if suppresses {
-                    self.try_depth = self.try_depth.saturating_add(1);
+                    self.caught_depth = self.caught_depth.saturating_add(1);
                 }
                 self.visit_body(&with_stmt.body);
                 if suppresses {
-                    self.try_depth = self.try_depth.saturating_sub(1);
+                    self.caught_depth = self.caught_depth.saturating_sub(1);
                 }
             },
             Stmt::Match(match_stmt) => {
@@ -978,14 +1046,19 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             },
             _ => {},
         }
-        let lambda = matches!(expr, Expr::Lambda(_));
-        if lambda {
-            self.function_depth += 1;
+        let Expr::Lambda(lambda) = expr else {
+            walk_expr(self, expr);
+            return;
+        };
+        // The defaults are evaluated where the lambda is defined.
+        if let Some(parameters) = &lambda.parameters {
+            self.visit_parameters(parameters);
         }
-        walk_expr(self, expr);
-        if lambda {
-            self.function_depth -= 1;
-        }
+        let caught_depth = std::mem::take(&mut self.caught_depth);
+        self.function_depth += 1;
+        self.visit_expr(&lambda.body);
+        self.function_depth -= 1;
+        self.caught_depth = caught_depth;
     }
 }
 
@@ -1101,16 +1174,22 @@ fn assigned_flags(body: &[Stmt], is_flag: fn(&Expr) -> bool) -> impl Iterator<It
     })
 }
 
-/// Whether `test` is false when a flag is: `x` or `x is not None`.
-fn tests_flag(test: &Expr, flags: &HashSet<String>) -> bool {
-    let is_flag =
-        |expr: &Expr| matches!(expr, Expr::Name(name) if flags.contains(name.id.as_str()));
+/// What `test` is when the flags are unset: `x` is false, and for an
+/// `x = None` flag `x is not None` is false and `x is None` true. `None` for
+/// anything else, which includes `is` tests of a `has_x = True` flag: it is
+/// `False` there, not `None`.
+fn flag_test(test: &Expr, flags: &HashSet<String>, none_flags: &HashSet<String>) -> Option<bool> {
+    let named = |expr: &Expr, names: &HashSet<String>| matches!(expr, Expr::Name(name) if names.contains(name.id.as_str()));
     match test {
-        Expr::Compare(compare) => matches!(
-            (&*compare.ops, &*compare.operands),
-            ([CmpOp::IsNot], [flag, Expr::NoneLiteral(_)]) if is_flag(flag)
-        ),
-        _ => is_flag(test),
+        Expr::Compare(compare) => match (&*compare.ops, &*compare.operands) {
+            ([op @ (CmpOp::Is | CmpOp::IsNot)], [flag, Expr::NoneLiteral(_)])
+                if named(flag, none_flags) =>
+            {
+                Some(*op == CmpOp::Is)
+            },
+            _ => None,
+        },
+        _ => (named(test, flags) || named(test, none_flags)).then_some(false),
     }
 }
 
@@ -1133,18 +1212,36 @@ fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
     Some(roots)
 }
 
-/// `except ImportError:` / `except (ModuleNotFoundError, ...):`.
+/// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class
+/// a failed import also lands in: `Exception` / `BaseException` (#967).
+/// Any other name, or an expression that is not a name, does not catch it.
 fn catches_import_error(exc_type: &Expr) -> bool {
-    let is_import_error = |expr: &Expr| {
+    match exc_type {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(is_import_error_class),
+        _ => is_import_error_class(exc_type),
+    }
+}
+
+/// `except ImportError:` / `except (ModuleNotFoundError, ...):`, which only
+/// a failed import lands in.
+fn names_import_error(exc_type: &Expr) -> bool {
+    let named = |expr: &Expr| {
         matches!(
             subscript_name(expr),
             Some("ImportError" | "ModuleNotFoundError")
         )
     };
     match exc_type {
-        Expr::Tuple(tuple) => tuple.elts.iter().any(is_import_error),
-        _ => is_import_error(exc_type),
+        Expr::Tuple(tuple) => tuple.elts.iter().any(named),
+        _ => named(exc_type),
     }
+}
+
+fn is_import_error_class(expr: &Expr) -> bool {
+    matches!(
+        subscript_name(expr),
+        Some("ImportError" | "ModuleNotFoundError" | "Exception" | "BaseException")
+    )
 }
 
 /// `suppress(...)` / `contextlib.suppress(...)` swallowing a failed import
@@ -1164,12 +1261,7 @@ fn suppresses_import_error(expr: &Expr) -> bool {
     if !is_suppress {
         return false;
     }
-    call.arguments.args.iter().any(|arg| {
-        matches!(
-            subscript_name(arg),
-            Some("ImportError" | "ModuleNotFoundError" | "Exception" | "BaseException")
-        )
-    })
+    call.arguments.args.iter().any(is_import_error_class)
 }
 
 fn alias_as_name(alias: &Alias) -> Option<String> {
@@ -1803,6 +1895,75 @@ g = lambda x=utils.G: x
         assert_eq!(fallback_for("missing_fallback"), vec!["b".to_owned()]);
     }
 
+    /// A function body runs when called, after the `try` / `suppress` that
+    /// wrapped its definition has finished, so its imports are not caught
+    /// there (#968). A guard that only lets the definition happen when a
+    /// package is installed (`else:`, a flag, an availability check) still
+    /// holds when it is called, and so does a class body, which runs at once.
+    #[test]
+    fn caught_imports_stop_at_the_function_boundary() {
+        let parsed = visit_source(
+            "import importlib\n\ntry:\n    import yaml\n    import yaml_a\n\n    def load():\n        import requests\n\n    class Loader:\n        import yaml_b\n\n        def run(self):\n            import yaml_c\n\n    caller = lambda: importlib.import_module(\"yaml_d\")\n    eager = lambda m=importlib.import_module(\"yaml_i\"): m\nexcept ImportError:\n    yaml = None\n\n    def fallback():\n        import fallback_dep\nelse:\n    def dump():\n        import yaml_e\n\nwith suppress(ImportError):\n    def suppressed():\n        import yaml_f\n\nif yaml is not None:\n    def flagged():\n        import yaml_g\n\nif find_spec(\"yaml\") is None:\n    raise ImportError(\"yaml\")\n\ndef checked():\n    import yaml_h\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("importlib", false),
+                ("yaml", true),
+                ("yaml_a", true),
+                ("requests", false),
+                ("yaml_b", true),
+                ("yaml_c", false),
+                ("fallback_dep", false),
+                ("yaml_e", true),
+                ("yaml_f", false),
+                ("yaml_g", true),
+                ("yaml_h", true),
+            ]
+        );
+        // A handler that never runs defines nothing, so a function there
+        // keeps the fallback link.
+        let handler = visit_source(
+            "try:\n    import threading\nexcept ImportError:\n    def start():\n        import dummy_threading\n",
+        );
+        assert_eq!(handler.imports[1].fallback_for, ["threading"]);
+        // A lambda's defaults are evaluated where it is defined.
+        let lambdas: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|import| (import.module.as_str(), import.optional))
+            .collect();
+        assert_eq!(lambdas, [("yaml_d", false), ("yaml_i", true)]);
+    }
+
+    /// A bare `except:` and `except Exception:` / `BaseException` catch a
+    /// failed import too, so they fall back and set flags like
+    /// `except ImportError:` (#967). Any other class does not.
+    #[test]
+    fn broad_handlers_catch_a_failed_import() {
+        let parsed = visit_source(
+            "try:\n    import threading\nexcept:\n    import dummy_threading\n\ntry:\n    import json\nexcept Exception:\n    import simplejson\n\ntry:\n    import pickle\nexcept (OSError, builtins.BaseException):\n    import cPickle\n\ntry:\n    import zlib\nexcept OSError:\n    import zlib_fallback\n\ntry:\n    import yaml\nexcept:\n    yaml = None\n\nif yaml is not None:\n    import yaml.nodes\n",
+        );
+        let fallback_for = |module: &str| {
+            parsed
+                .imports
+                .iter()
+                .find(|import| import.module == module)
+                .map(|import| import.fallback_for.clone())
+                .expect(module)
+        };
+        assert_eq!(fallback_for("dummy_threading"), ["threading"]);
+        assert_eq!(fallback_for("simplejson"), ["json"]);
+        assert_eq!(fallback_for("cPickle"), ["pickle"]);
+        assert!(fallback_for("zlib_fallback").is_empty());
+        assert!(
+            parsed
+                .imports
+                .iter()
+                .any(|import| import.module == "yaml.nodes" && import.optional)
+        );
+    }
+
     #[test]
     fn walks_try_star_body_handlers_else_and_finally() {
         let parsed = visit_source(
@@ -1959,6 +2120,47 @@ def func(yaml):
         assert_eq!(parsed.imports.len(), 11);
     }
 
+    /// `x = None` in the handler makes `x is None` true without the package,
+    /// so its `else:` and the statements after `if x is None: raise
+    /// ImportError` are optional. A `has_x = True` flag is `False` there, not
+    /// `None`, so `has_x is not None` guards nothing.
+    #[test]
+    fn none_flags_read_is_none_both_ways() {
+        let parsed = visit_source(
+            "try:\n    import yaml\nexcept ImportError:\n    yaml = None\ntry:\n    import toml\n    HAS_TOML = True\nexcept ImportError:\n    HAS_TOML = False\n\nif yaml is None:\n    pass\nelse:\n    import yaml.a\nif HAS_TOML is not None:\n    import toml.c\nif yaml is None:\n    raise ImportError(\"yaml\")\nimport yaml.b\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("yaml", true),
+                ("toml", true),
+                ("yaml.a", true),
+                ("toml.c", false),
+                ("yaml.b", true),
+            ]
+        );
+    }
+
+    /// A broad handler also catches whatever else the body raises, so its
+    /// `x = None` is a flag only when the body imports something.
+    #[test]
+    fn broad_handler_flags_need_an_import_in_the_body() {
+        let parsed = visit_source(
+            "import os\ntry:\n    token = os.environ[\"TOKEN\"]\nexcept Exception:\n    token = None\ntry:\n    yaml = load()\nexcept ImportError:\n    yaml = None\ntry:\n    import toml\nexcept:\n    toml = None\ntry:\n    lxml = load()\nexcept (OSError, ModuleNotFoundError):\n    lxml = None\n\nif token:\n    import requests\nif yaml is not None:\n    import yaml.a\nif toml is not None:\n    import toml.a\nif lxml is not None:\n    import lxml.a\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("os", false),
+                ("toml", true),
+                ("requests", false),
+                ("yaml.a", true),
+                ("toml.a", true),
+                ("lxml.a", true),
+            ]
+        );
+    }
+
     /// #614: mlflow registers optional dataset constructors under
     /// `with suppress(ImportError):`.
     #[test]
@@ -1977,6 +2179,40 @@ def func(yaml):
                 ("tomli", false),
                 ("toml", false),
             ]
+        );
+    }
+
+    /// A `raise ImportError` reads its test like an `if` body does (#958):
+    /// a module-level try flag counts, through `not` / `and` / `or`, and a
+    /// test that can be true with the package installed guards nothing.
+    #[test]
+    fn raise_guards_read_flags_like_branches() {
+        let parsed = visit_source(
+            "try:\n    import yaml\n    HAS_YAML = True\nexcept ImportError:\n    HAS_YAML = False\n\nif not HAS_YAML:\n    raise ImportError(\"pip install pyyaml\")\nimport yaml.representer\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [("yaml", true), ("yaml.representer", true)]
+        );
+
+        let parsed = visit_source(
+            "try:\n    import yaml\nexcept ImportError:\n    yaml = None\n\nif not yaml or os.environ.get(\"NO_YAML\"):\n    raise ModuleNotFoundError(\"yaml\")\nimport yaml.a\n",
+        );
+        assert_eq!(optional_by_module(&parsed)[1], ("yaml.a", true));
+
+        // `and` with an unknown leaf can be false with the package missing.
+        let parsed = visit_source(
+            "try:\n    import yaml\n    HAS_YAML = True\nexcept ImportError:\n    HAS_YAML = False\n\nif not HAS_YAML and os.environ.get(\"STRICT\"):\n    raise ImportError(\"yaml\")\nimport yaml.b\n",
+        );
+        assert_eq!(optional_by_module(&parsed)[1], ("yaml.b", false));
+
+        // An unknown test, and a flag inside a function, guard nothing.
+        let parsed = visit_source(
+            "if not os.environ.get(\"YAML\"):\n    raise ImportError(\"yaml\")\nimport yaml\n\ndef load():\n    HAS_YAML = False\n    if not HAS_YAML:\n        raise ImportError(\"yaml\")\n    import yaml.c\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [("yaml", false), ("yaml.c", false)]
         );
     }
 
@@ -2254,6 +2490,46 @@ def f(name):
         assert_eq!(flags, [("top", false), ("func", true)]);
     }
 
+    /// `sys.platform.startswith(...)`, `os.name` and `platform.system()` are
+    /// platform tests like a `sys.platform` comparison (#957), read through
+    /// `not` and `elif` / `else`. The receiver must be the stdlib module the
+    /// module imported; a local of the same name is an unknown test.
+    #[test]
+    fn platform_tests_read_every_stdlib_spelling() {
+        let parsed = visit_source(
+            "import os\nimport platform as plat\nimport sys\n\nif sys.platform.startswith(\"win\"):\n    import a1\nif not sys.platform.startswith((\"linux\", \"darwin\")):\n    import a2\nif os.name == \"nt\":\n    import a3\nelif os.name != \"posix\":\n    import a4\nelse:\n    import a5\nif plat.system() == \"Windows\":\n    import a6\nif sys.platform in (\"win32\", \"cygwin\"):\n    import a7\n\ndef local(platform, sys):\n    if platform.system() == \"Windows\":\n        import b1\n    if sys.platform == \"win32\":\n        import b2\n    import os\n    if os.name == \"nt\":\n        import a8\n\ndef rebound():\n    os = make_os()\n    if os.name == \"nt\":\n        import b3\n\nif platform.system() == \"Windows\":\n    import b4\nif os.name.upper() == \"NT\":\n    import b5\n",
+        );
+        let guarded: Vec<_> = parsed
+            .imports
+            .iter()
+            .filter(|import| import.platform_guarded)
+            .map(|import| import.module.as_str())
+            .collect();
+        assert_eq!(guarded, ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"]);
+    }
+
+    /// A function importing its own platform module is found by the source
+    /// scan, an aliased one by the module scope's names.
+    #[test]
+    fn platform_tests_outside_the_plain_module_spelling() {
+        for source in [
+            "import sys as s\nif s.platform == \"win32\":\n    import winreg\n",
+            "def f():\n    import sys\n    if sys.platform == \"win32\":\n        import winreg\n",
+            "def f():\n    import os\n    if os.name == \"nt\":\n        import winreg\n",
+            "def f():\n    import platform\n    if platform.system() == \"Windows\":\n        import winreg\n",
+        ] {
+            let parsed = visit_source(source);
+            let winreg = parsed
+                .imports
+                .iter()
+                .find(|import| import.module == "winreg");
+            assert!(
+                winreg.is_some_and(|import| import.platform_guarded),
+                "{source}"
+            );
+        }
+    }
+
     #[test]
     fn walks_elif_branches_with_guards() {
         let parsed = visit_source(
@@ -2508,8 +2784,10 @@ value = t\"{utils.C}\"
             Tuple,
             /// `except ValueError:`, which a missing module does not raise.
             Other,
-            /// A bare `except:`, which names no import error.
+            /// A bare `except:`, which catches a failed import too.
             Bare,
+            /// `except Exception:`, a base class of `ImportError`.
+            Broad,
         }
 
         /// The test of a generated `if`; `condition::tests` covers how
@@ -2558,6 +2836,7 @@ value = t\"{utils.C}\"
                     Just(Handler::Tuple),
                     Just(Handler::Other),
                     Just(Handler::Bare),
+                    Just(Handler::Broad),
                 ];
                 let guard = prop_oneof![
                     Just(Guard::TypeChecking),
@@ -2622,9 +2901,12 @@ value = t\"{utils.C}\"
         #[allow(clippy::struct_excessive_bools)]
         #[derive(Clone, Default)]
         struct Frame {
-            /// Inside a `try` body or `else:`, a suppressing `with`, or after
-            /// a sibling check that raises `ImportError` (#614, #695).
-            optional: bool,
+            /// Inside a `try` body or a suppressing `with` (#614), up to the
+            /// nearest function (#968).
+            caught: bool,
+            /// Inside a `try`'s `else:` or after a sibling check that raises
+            /// `ImportError` (#695), nested functions included.
+            gated: bool,
             platform: bool,
             type_checking: bool,
             main_block: bool,
@@ -2677,7 +2959,7 @@ value = t\"{utils.C}\"
                 for block in blocks {
                     self.block(block, depth, &frame);
                     if matches!(block, Block::Check) {
-                        frame.optional = true;
+                        frame.gated = true;
                     }
                 }
             }
@@ -2702,7 +2984,7 @@ value = t\"{utils.C}\"
                     self.default_context
                 };
                 let flags = Flags {
-                    optional: frame.optional || checked,
+                    optional: frame.caught || frame.gated || checked,
                     platform_guarded: frame.platform,
                     deferred: !self.functions.is_empty(),
                     context,
@@ -2719,13 +3001,17 @@ value = t\"{utils.C}\"
                     orelse,
                     finalbody,
                 } = block;
-                let guarded = Frame {
-                    optional: true,
+                let caught = Frame {
+                    caught: true,
+                    ..frame.clone()
+                };
+                let gated = Frame {
+                    gated: true,
                     ..frame.clone()
                 };
                 self.line(depth, "try:");
                 let first = self.names + 1;
-                self.body(body, depth + 1, &guarded);
+                self.body(body, depth + 1, &caught);
                 let primaries = (!body.is_empty()
                     && body
                         .iter()
@@ -2735,7 +3021,8 @@ value = t\"{utils.C}\"
                     Handler::ImportError => ("except ImportError:", true),
                     Handler::Tuple => ("except (ValueError, ModuleNotFoundError):", true),
                     Handler::Other => ("except ValueError:", false),
-                    Handler::Bare => ("except:", false),
+                    Handler::Bare => ("except:", true),
+                    Handler::Broad => ("except Exception:", true),
                 };
                 self.line(depth, clause);
                 let mut handling = frame.clone();
@@ -2745,7 +3032,7 @@ value = t\"{utils.C}\"
                 self.body(handled, depth + 1, &handling);
                 if !orelse.is_empty() {
                     self.line(depth, "else:");
-                    self.body(orelse, depth + 1, &guarded);
+                    self.body(orelse, depth + 1, &gated);
                 }
                 if !finalbody.is_empty() {
                     self.line(depth, "finally:");
@@ -2770,7 +3057,7 @@ value = t\"{utils.C}\"
                         let mut inner = frame.clone();
                         if *suppress {
                             self.line(depth, "with suppress(ImportError):");
-                            inner.optional = true;
+                            inner.caught = true;
                         } else {
                             self.line(depth, "with nullcontext():");
                         }
@@ -2809,6 +3096,7 @@ value = t\"{utils.C}\"
                             seen: false,
                         });
                         let inner = Frame {
+                            caught: false,
                             function_scope: true,
                             ..frame.clone()
                         };
