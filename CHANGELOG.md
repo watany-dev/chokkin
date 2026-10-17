@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index in range replace or remove that element, so the old requirement is
   no longer declared and reported as CHK002; other indexes, and lists whose
   order a method call, a loop or a branch merge may have changed, still
-  leave the list partial (#868).
+  leave the list partial (#868) and now also declare the assigned value,
+  so `reqs[i] = "c"` no longer leaves `import c` unresolved.
 - A URL requirement whose `#egg=` is not a project name
   (`#egg=acme;python_version<"3"`, `#egg=name[extra]`, a quoted
   `-e "...#egg=with space"`) is an invalid requirement, as pip 25 reads it,

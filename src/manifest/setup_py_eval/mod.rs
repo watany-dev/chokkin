@@ -754,9 +754,19 @@ impl<'a> Evaluator<'a> {
                 let position = self.list_index(&subscript.value, &subscript.slice);
                 let found = self.mutate(&subscript.value, |base| match (base, key) {
                     (Value::Dict { items, .. }, Value::Str(key)) => insert_entry(items, key, value),
-                    (Value::List(items, _), _) => match position {
-                        Some(position) => items[position] = value,
-                        None => items.push(Value::Unknown),
+                    (Value::List(items, _), _) => {
+                        if let Some(position) = position {
+                            items[position] = value;
+                        } else {
+                            // Whichever element it replaced, the value is in
+                            // the list. A slice spreads it (`'ab'` as `a`,
+                            // `b`), which we do not model. `Unknown` first so
+                            // the value does not join a `\` continuation.
+                            items.push(Value::Unknown);
+                            if !matches!(&*subscript.slice, Expr::Slice(_)) {
+                                items.push(value);
+                            }
+                        }
                     },
                     (base, _) => base.taint(),
                 });
@@ -2292,6 +2302,35 @@ table = {'other': 'y', **opaque()}
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn assignment_at_an_unread_index_declares_the_value() {
+        // Whichever element `reqs[i]` names, the value is in the list.
+        for source in [
+            "reqs = ['a']\nreqs[i] = 'b'\n",
+            "reqs = ['a']\nreqs.reverse()\nreqs[0] = 'b'\n",
+        ] {
+            let call =
+                evaluate(&format!("{source}setup(install_requires=reqs)\n")).expect("setup() call");
+            let value = call.keyword("install_requires").expect("install_requires");
+            let items = dependency_items(value);
+            assert!(!items.complete, "{source}");
+            assert!(
+                items
+                    .items
+                    .contains(&DependencyItem::Requirement("b".to_owned())),
+                "{source}"
+            );
+        }
+        let call = evaluate("reqs = ['a']\nreqs[0:1] = 'ab'\nsetup(install_requires=reqs)\n")
+            .expect("setup() call");
+        let value = call.keyword("install_requires").expect("install_requires");
+        assert!(
+            !dependency_items(value)
+                .items
+                .contains(&DependencyItem::Requirement("ab".to_owned()))
+        );
     }
 
     #[test]
