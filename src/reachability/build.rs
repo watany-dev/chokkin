@@ -740,6 +740,7 @@ mod tests {
                     kind: crate::rules::GapKind::OpaqueDynamicImport,
                     member: None,
                     site: None,
+                    target: None,
                 })
                 .into_iter()
                 .collect();

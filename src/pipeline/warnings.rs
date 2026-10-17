@@ -90,6 +90,21 @@ pub enum ProbeWarning {
         /// How many other targets in the file do the same.
         more: usize,
     },
+    /// A string literal names a module no entry reaches, which may be loaded
+    /// by that name, so that file's unused-file finding, where one is shown,
+    /// is an info note (#1026). One per run, at the first such literal.
+    StringModuleRef {
+        /// Root-relative path of the file with the literal.
+        path: String,
+        /// Line of the literal.
+        line: u32,
+        /// The literal as written.
+        text: String,
+        /// Root-relative path of the file it names.
+        target: String,
+        /// How many other such literals there are in the project.
+        more: usize,
+    },
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -142,7 +157,8 @@ impl ProbeWarning {
             | Self::NestedProjectsSkipped { .. }
             | Self::OpaqueDynamicImport { .. }
             | Self::ArchiveRequirement { .. }
-            | Self::UnreadCommandTarget { .. } => {},
+            | Self::UnreadCommandTarget { .. }
+            | Self::StringModuleRef { .. } => {},
         }
         hasher.finish()
     }
@@ -194,6 +210,7 @@ impl ProbeWarning {
             Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
             Self::ArchiveRequirement { path, line, .. }
             | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
+            Self::StringModuleRef { path, line, .. } => (Some(path), Some(*line)),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -311,7 +328,35 @@ impl fmt::Display for ProbeWarning {
                 target,
                 more,
             } => write_command_target(formatter, path, *line, target, *more),
+            Self::StringModuleRef {
+                path,
+                line,
+                text,
+                target,
+                more,
+            } => write_string_module_ref(formatter, (path, *line), text, target, *more),
         }
+    }
+}
+
+fn write_string_module_ref(
+    formatter: &mut fmt::Formatter<'_>,
+    (path, line): (&str, u32),
+    text: &str,
+    target: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, Some(line));
+    match more {
+        0 => write!(
+            formatter,
+            "parse: `{site}` names `{text}` in a string that may load `{target}`, which no entry reaches; that file is reported as unused at info, if at all"
+        ),
+        more => write!(
+            formatter,
+            "parse: `{site}` names `{text}` and {more} more module{} in strings that may load files no entry reaches; those files are reported as unused at info, if at all",
+            if more == 1 { "" } else { "s" }
+        ),
     }
 }
 

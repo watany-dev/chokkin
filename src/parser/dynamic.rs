@@ -269,6 +269,26 @@ pub(super) fn command_word(expr: &Expr) -> Option<&str> {
     valid.then_some(first)
 }
 
+/// A string literal that is a whole dotted module name, which the code may
+/// load by name (airflow's `lazy_load_command("pkg.cli.x.cmd")`, gunicorn's
+/// `"python:pkg.config"`): identifier segments joined by `.`, two or more,
+/// with an optional `python:` prefix (#1026). One segment (`"json"`), a
+/// `module:attr` form, a path (`"a/b.py"`) or a sentence is not one; a
+/// computed string (an f-string or a concatenation with a name) is not a
+/// literal, so a module loaded that way is not seen and its finding is not
+/// lowered.
+#[must_use]
+pub(super) fn module_ref_literal(expr: &Expr) -> Option<&str> {
+    let text = str_constant(expr)?;
+    let module = module_ref_name(text);
+    (module.contains('.') && is_dotted_identifier(module)).then_some(text)
+}
+
+#[must_use]
+pub(crate) fn module_ref_name(text: &str) -> &str {
+    text.strip_prefix("python:").unwrap_or(text)
+}
+
 /// Whether a call adds a directory to `sys.path`: `sys.path.insert` /
 /// `append` / `extend`, `site.addsitedir`, or pytest's
 /// `monkeypatch.syspath_prepend`.
@@ -337,7 +357,8 @@ mod tests {
 
     use super::{
         LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path,
-        literal_target, module_prefix, python_run, sys_path_hint,
+        literal_target, module_prefix, module_ref_literal, module_ref_name, python_run,
+        sys_path_hint,
     };
 
     fn expr(source: &str) -> Expr {
@@ -367,6 +388,50 @@ mod tests {
             panic!("expected a call");
         };
         literal_target(&call, loader, || Some("acme.core".to_owned()))
+    }
+
+    /// A whole dotted name, with or without `python:`, is a module reference;
+    /// one segment, `module:attr`, a path, a sentence or a computed string
+    /// is not (#1026).
+    #[test]
+    fn module_ref_literals_are_whole_dotted_names() {
+        let module_ref = |source: &str| module_ref_literal(&expr(source)).map(str::to_owned);
+        assert_eq!(
+            module_ref(r#""pkg.cli.cheat_sheet.cheat_sheet""#),
+            Some("pkg.cli.cheat_sheet.cheat_sheet".to_owned())
+        );
+        assert_eq!(
+            module_ref(r#""python:pkg.gunicorn_config""#),
+            Some("python:pkg.gunicorn_config".to_owned())
+        );
+        assert_eq!(
+            module_ref_name("python:pkg.gunicorn_config"),
+            "pkg.gunicorn_config"
+        );
+        assert_eq!(
+            module_ref(r#""paket.größe""#),
+            Some("paket.größe".to_owned())
+        );
+        assert_eq!(
+            module_ref(r#""_private.mod2""#),
+            Some("_private.mod2".to_owned())
+        );
+        for source in [
+            r#""json""#,
+            r#""pkg.mod:attr""#,
+            r#""pkg/mod.py""#,
+            r#""pkg.mod.""#,
+            r#"".pkg.mod""#,
+            r#""pkg..mod""#,
+            r#""1pkg.mod""#,
+            r#""pkg.mod is loaded.""#,
+            r#""python:""#,
+            r#"f"pkg.{name}""#,
+            r#""pkg." + name"#,
+            r#"b"pkg.mod""#,
+        ] {
+            assert_eq!(module_ref(source), None, "{source}");
+        }
     }
 
     #[test]
