@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-10-17
+
+v0.7.7 closes the v0.7.6 `uvx` findings and the remaining gaps of the
+unknown-input contract (ADR 0005). The JSON / baseline `schema_version`
+stays `"1"`, and fingerprints are unchanged, so baselines keep matching.
+Django projects, pytest `testpaths`, lockfiles, notebooks with IPython
+syntax, `__all__` built in blocks and loops, and requirements lines that pip
+accepts are read more fully, and the cold run is about 28% faster.
+
+### Changed
+- The cold run is about 28% faster on the validation corpus: module
+  resolution, symbol analysis and the dependency and symbol rules run in
+  parallel, attribute accesses not bound by an import are dropped at parse
+  time, and PEP 723 blocks are looked for only in files with a `# /// script`
+  marker. Output is unchanged (#944–#948, #761).
+
 ### Fixed
 - `__all__ = __all__ + [...]`, `__all__ = [...] + __all__` and
   `__all__.insert(i, "name")` add their literal names to `__all__` like `+=`
@@ -63,6 +79,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries or dependencies. Findings under such a directory are lowered:
   unused files and unused declarations of what its files import to `likely`,
   undeclared and misplaced imports from it to hints (#1000).
+- Django projects whose settings live outside `DJANGO_SETTINGS_MODULE`'s
+  usual setters are read: `runtests.py`, `conftest.py` and pytest-django's
+  `DJANGO_SETTINGS_MODULE` ini option set the module, a template placeholder
+  (`{{ project_name }}.settings`) no longer hides later setters, `examples/`
+  directories are skipped, and a fallback candidate must assign
+  `INSTALLED_APPS` / `ROOT_URLCONF` (also in a django-configurations class),
+  star-import the module that does, or call django-split-settings'
+  `include(...)`. A reusable app's `migrations/**` is used whenever Django is
+  declared, with or without settings (#979).
+- Imports of common Django packages (`rest_framework`, `django_filters`,
+  `taggit`, `mptt`, `ninja`, `phonenumbers`, `graphql` and more) map to their
+  distributions; when an import can come from two distributions
+  (`phonenumbers` / `phonenumberslite`, `ninja` / `django-ninja`), the
+  declared one is used (#971).
+- A lockfile that lists no packages (a stub `uv.lock` beside `poetry.lock`)
+  is skipped with a warning for the next candidate, and `--probe` lists the
+  candidates not used. A lockfile over 32 MiB or 20,000 packages is skipped
+  with a warning instead of slowing the run, and each lock closure is walked
+  once per declaration scope instead of once per import (#972, #976).
+- Names with control characters are escaped in the `default`, `compact`,
+  `markdown` and `github` output, and a dist-info whose `Name:` is not a
+  PEP 508 name credits nothing and warns (#973).
+- `[tool.poetry]` `name` / `version` are read when `[project]` has none,
+  unless `package-mode = false` (#974).
+- An extra that could not be read caps CHK003 and CHK004 at `likely` (#975).
+- A wheel-declared directory holding `.py` files directly is read as a PEP 420
+  package, and `from sibling import X` in a script counts as a reference to
+  the sibling module for CHK006. `--probe` lists undeclared module directories
+  without `__init__.py` on an `Unpackaged:` line (#977).
+- pytest `testpaths` entries widen to the top of their `__init__.py` chain
+  (celery's `t/unit` makes `t/integration` test code too), and root-level
+  suites become local packages, so `t.*` imports resolve (#978).
+- `--fix --dry-run` applies the same root containment check as the real
+  write, and `--init` through a symlink that leaves the root is an error
+  (exit 2) (#980).
+- chokkin config paths that leave the project root are validation errors;
+  manifest paths that do (`-c`, root `[tool.uv.sources]` paths) warn that they
+  were not read, and `-r` outside the root says so instead of "not found"
+  (#981).
+- The warning for a relative import that cannot be resolved names which case
+  applies: no module name in the layout, a top-level module with no parent
+  package, or a `level` past the top-level package (#982).
+- CHK002 names the distribution and points at its line in `pyproject.toml`
+  (#983).
+- CHK002 from a PEP 723 script block is `likely`: the block lists the
+  environment `uv run` builds, including runtime peers the script never
+  imports (#984).
+- A symlink that leaves the root, loops or leads nowhere is named once in a
+  warning when it could have held code; the walk still follows no link
+  (#986).
+- A `project.scripts` / `[tool.chokkin] entry` target in a file that exists
+  but is left out of discovery (by `exclude`, or a member entry the root does
+  not walk) is a skipped entry that lowers the findings it could hide, instead
+  of being dropped; a target that names no file still lowers nothing (#933,
+  #934).
+- An invalid dev or type requirement line no longer lowers CHK005, and a
+  PEP 723 block's gaps reach only that script's findings (#935, #936).
+- `runpy.run_path()` and `globals()` / `vars()` / `locals()` `.update()` in
+  Django settings are treated as unread settings, like `include()` and
+  `exec()` (#937).
+- An unresolved import in a public orphan module lowers that distribution's
+  CHK002 (#942).
+- A requirements line naming a wheel or sdist archive
+  (`wheels/bar-1.0-py3-none-any.whl`) lowers the findings of that
+  distribution, read from the archive's file name (#988).
+- `setup.py` evaluation keeps list and dict aliases in sync: `reqs = base`
+  followed by `base += ["click"]` declares `click` through `reqs` too, and
+  `extras = {"all": base}` sees later additions to `base` (#565).
 
 ## [0.7.6] - 2026-10-16
 
