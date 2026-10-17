@@ -35,7 +35,6 @@ impl PlatformModule {
     }
 }
 
-/// Names bound to a [`PlatformModule`] in one scope.
 pub(super) type PlatformModules = HashMap<String, PlatformModule>;
 
 /// The names `body` binds to a platform module, starting from `outer`, the

@@ -43,8 +43,8 @@ struct SysPathHints {
 }
 
 /// Whether the source can hold what [`async_library_names`],
-/// [`first_availability_check`] and [`platform_modules`] look for. Most modules cannot, and the scans
-/// rewalk every scope's body.
+/// [`first_availability_check`] and [`platform_modules`] look for. Most
+/// modules cannot, and the scans rewalk every scope's body.
 struct SourceMentions {
     async_library: bool,
     availability: bool,
