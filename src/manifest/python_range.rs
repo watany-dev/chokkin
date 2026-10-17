@@ -89,12 +89,10 @@ pub(crate) fn supported_python(metadata: &ProjectMetadata) -> Option<PythonRange
     ranges.into_iter().flatten().reduce(|a, b| a.intersect(&b))
 }
 
-/// Whether `marker` holds on every interpreter in `supported`.
 pub(crate) fn marker_always_holds(marker: &str, supported: &PythonRange) -> bool {
     marker_range(marker).is_some_and(|range| supported.is_subset_of(&range))
 }
 
-/// The versions a `requires-python` specifier set allows.
 pub(crate) fn requires_python_range(specifier: &str) -> Option<PythonRange> {
     parse_version_specifiers(specifier)?
         .iter()
@@ -104,7 +102,6 @@ pub(crate) fn requires_python_range(specifier: &str) -> Option<PythonRange> {
         })
 }
 
-/// The versions one PEP 440 specifier allows.
 fn specifier_range(specifier: &VersionSpecifier) -> Option<PythonRange> {
     let version = specifier.text.trim_start_matches(['<', '>', '=', '!', '~']);
     let digits = version.strip_suffix(".*").unwrap_or(version);
@@ -152,7 +149,6 @@ fn pad(release: &[u64]) -> Version {
     version
 }
 
-/// The next 3-segment version.
 fn successor([major, minor, patch]: Version) -> Version {
     [major, minor, patch + 1]
 }
