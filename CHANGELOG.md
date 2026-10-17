@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported at full severity again. A function defined under `else:`, a flag,
   or an availability check keeps its imports optional, since it exists only
   when the package is installed (#968).
+- `if not HAS_X: raise ImportError(...)` with a module-level try flag makes
+  the statements after it optional, like `if not is_x_available():` does.
+  The test is read like an `if` body's, through `not` / `and` / `or`; one
+  that can be true with the package installed still guards nothing (#958).
 
 ## [0.7.7] - 2026-10-17
 

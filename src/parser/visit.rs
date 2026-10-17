@@ -705,9 +705,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
         let gated_depth = self.gated_depth;
         for stmt in body {
             self.visit_stmt(stmt);
+            // The statements after run only when the test was false, which
+            // it cannot be with the package missing (#695, #958).
             if let Stmt::If(if_stmt) = stmt
-                && availability_test(&if_stmt.test) == Some(false)
                 && raises_import_error(&if_stmt.body)
+                && condition::excluded(&[&*if_stmt.test], None, &|expr| self.installed_leaf(expr))
             {
                 self.gated_depth = gated_depth.saturating_add(1);
             }
@@ -2060,6 +2062,40 @@ def func(yaml):
                 ("tomli", false),
                 ("toml", false),
             ]
+        );
+    }
+
+    /// A `raise ImportError` reads its test like an `if` body does (#958):
+    /// a module-level try flag counts, through `not` / `and` / `or`, and a
+    /// test that can be true with the package installed guards nothing.
+    #[test]
+    fn raise_guards_read_flags_like_branches() {
+        let parsed = visit_source(
+            "try:\n    import yaml\n    HAS_YAML = True\nexcept ImportError:\n    HAS_YAML = False\n\nif not HAS_YAML:\n    raise ImportError(\"pip install pyyaml\")\nimport yaml.representer\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [("yaml", true), ("yaml.representer", true)]
+        );
+
+        let parsed = visit_source(
+            "try:\n    import yaml\nexcept ImportError:\n    yaml = None\n\nif not yaml or os.environ.get(\"NO_YAML\"):\n    raise ModuleNotFoundError(\"yaml\")\nimport yaml.a\n",
+        );
+        assert_eq!(optional_by_module(&parsed)[1], ("yaml.a", true));
+
+        // `and` with an unknown leaf can be false with the package missing.
+        let parsed = visit_source(
+            "try:\n    import yaml\n    HAS_YAML = True\nexcept ImportError:\n    HAS_YAML = False\n\nif not HAS_YAML and os.environ.get(\"STRICT\"):\n    raise ImportError(\"yaml\")\nimport yaml.b\n",
+        );
+        assert_eq!(optional_by_module(&parsed)[1], ("yaml.b", false));
+
+        // An unknown test, and a flag inside a function, guard nothing.
+        let parsed = visit_source(
+            "if not os.environ.get(\"YAML\"):\n    raise ImportError(\"yaml\")\nimport yaml\n\ndef load():\n    HAS_YAML = False\n    if not HAS_YAML:\n        raise ImportError(\"yaml\")\n    import yaml.c\n",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [("yaml", false), ("yaml.c", false)]
         );
     }
 
