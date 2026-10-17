@@ -430,6 +430,34 @@ mod tests {
     }
 
     #[test]
+    fn a_version_on_the_left_flips_the_ordering_operator() {
+        for (flipped, direct) in [
+            ("'3.8' < python_version", "python_version > '3.8'"),
+            ("'3.8' <= python_version", "python_version >= '3.8'"),
+            ("'3.8' > python_version", "python_version < '3.8'"),
+            ("'3.8' >= python_version", "python_version <= '3.8'"),
+        ] {
+            let range = marker_range(flipped);
+            assert!(range.is_some(), "{flipped}");
+            assert_eq!(range, marker_range(direct), "{flipped}");
+        }
+        assert_eq!(marker_range("'3.8' == python_version"), None);
+    }
+
+    #[test]
+    fn nesting_past_the_depth_limit_is_outside_the_model() {
+        let nested = |depth| {
+            format!(
+                "{}python_version >= '3.8'{}",
+                "(".repeat(depth),
+                ")".repeat(depth)
+            )
+        };
+        assert!(marker_range(&nested(MAX_DEPTH)).is_some());
+        assert_eq!(marker_range(&nested(MAX_DEPTH + 1)), None);
+    }
+
+    #[test]
     fn requires_python_specifiers_map_to_exact_intervals() {
         let interval = |low, high| Some(PythonRange(vec![(low, high)]));
         assert_eq!(

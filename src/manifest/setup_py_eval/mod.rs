@@ -2216,6 +2216,10 @@ table = {'other': 'y', **opaque()}
             ("reqs = ['a', 'b']\ndel reqs[-2]\n", strings(&["b"])),
             ("reqs = ['a']\nalias = reqs\ndel alias[0]\n", strings(&[])),
             (
+                "reqs = ['a']\nreqs += ['b']\nreqs[1] = 'c'\n",
+                strings(&["a", "c"]),
+            ),
+            (
                 "reqs = ['a', 'b']\nif C:\n    alias = reqs\ndel reqs[0]\nreqs += ['c']\n",
                 strings(&["b", "c"]),
             ),
@@ -2242,6 +2246,7 @@ table = {'other': 'y', **opaque()}
             "reqs = ['a']\nreqs[i] = 'b'\n",
             "reqs = ['a']\nreqs[1] = 'b'\n",
             "reqs = ['a']\ndel reqs[-2]\n",
+            "reqs = ['a']\nreqs[-0] = 'b'\n",
             "reqs = ['a']\nreqs[0:1] = ['b']\n",
             "reqs = [*more, 'a']\nreqs[1] = 'b'\n",
             "reqs = ['a', *more]\ndel reqs[-1]\n",
