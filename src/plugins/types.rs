@@ -90,7 +90,7 @@ pub struct SysPathImport {
 }
 
 /// `module:symbol` reference (uvicorn, gunicorn, etc.).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolReference {
     /// Dotted module name.
     pub module: String,
@@ -202,8 +202,10 @@ pub struct PluginHints {
     /// by path (#797).
     pub config_script_entries: Vec<ScriptReference>,
     /// Python code task files and tool configs run (#913); the gap stage
-    /// reads it, since none of it is an entry yet.
+    /// reads targets not covered by entries.
     pub config_command_targets: Vec<CommandTargetRef>,
+    /// Server apps named by deployment commands (#1004).
+    pub config_server_refs: Vec<SymbolReference>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
 }

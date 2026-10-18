@@ -24,6 +24,7 @@ mod types;
 mod util;
 mod warnings;
 
+pub(crate) use commands::parse_server_target;
 pub(crate) use django::SETTINGS_LABEL as DJANGO_SETTINGS_LABEL;
 pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};
 pub(crate) use enablers::{PluginActivation, PluginActivationReason};

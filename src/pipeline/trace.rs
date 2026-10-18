@@ -66,7 +66,16 @@ pub fn trace_output(
         );
     };
     if let Some(path) = trace_to_file(report, file_id) {
-        return format_trace(&path);
+        let mut out = format_trace(&path);
+        if let Some(TraceStep::File { path, .. }) = path.steps.first()
+            && let Some(root) = entry.roots.iter().find(|root| root.path == *path)
+        {
+            out.push_str("  entry root origins:\n");
+            for origin in &root.origins {
+                let _ = writeln!(out, "    {}", escape_control(&format_entry_origin(origin)));
+            }
+        }
+        return out;
     }
     format_negative_trace(report, graph, entry, sources, target, file_id)
 }
@@ -95,8 +104,10 @@ fn format_negative_trace(
             };
             let origin = root
                 .origins
-                .first()
-                .map_or_else(|| "entry".to_owned(), format_entry_origin);
+                .iter()
+                .map(format_entry_origin)
+                .collect::<Vec<_>>()
+                .join(", ");
             let line = format!("{} ({origin})", root.path);
             let _ = writeln!(out, "    {prefix}{}", escape_control(&line));
         }

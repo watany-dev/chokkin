@@ -282,8 +282,8 @@ impl Exports {
     }
 }
 
-/// A string literal that names a module by its dotted name (#1026):
-/// `"pkg.mod"`, `"pkg.mod.attr"` or `"python:pkg.mod"`, as written.
+/// A string literal naming code by module: a dotted name (#1026),
+/// `python:pkg.mod`, or a server's `module:attr` target (#1004), as written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleRef {
     /// The literal as written, `python:` prefix included.
@@ -358,6 +358,9 @@ pub struct ParsedModule {
     /// the module they name (#1026): each distinct literal at its first line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub module_refs: Vec<ModuleRef>,
+    /// Literal first arguments of imported `uvicorn.run` calls (#1004).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uvicorn_apps: Vec<ModuleRef>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,

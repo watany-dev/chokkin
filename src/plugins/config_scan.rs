@@ -19,6 +19,7 @@ use super::config_text::{
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, CommandTargetRef, ModuleReference, ReferenceOrigin, ScriptReference,
+    SymbolReference,
 };
 use super::{ci_installs, script_entries, task_files, tool_plugins};
 
@@ -48,6 +49,8 @@ pub(super) struct ConfigScanResult {
     /// Python code task files and tool configs run (#913).
     #[serde(default)]
     pub command_targets: Vec<CommandTargetRef>,
+    #[serde(default)]
+    pub server_refs: Vec<SymbolReference>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
@@ -164,6 +167,7 @@ fn merge_hits(
     }
     result.module_refs.extend(hits.module_refs);
     result.command_targets.extend(hits.command_targets);
+    result.server_refs.extend(hits.server_refs);
 }
 
 fn scan_mkdocs_config(

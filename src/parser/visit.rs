@@ -548,6 +548,35 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    fn uvicorn_app<'b>(&self, call: &'b ExprCall) -> Option<&'b str> {
+        let Expr::StringLiteral(value) = call.arguments.args.first()? else {
+            return None;
+        };
+        if !value.value.to_str().contains(':') {
+            return None;
+        }
+        let is_run = self.parsed.imports.iter().any(|import| {
+            if import.module != "uvicorn" || import.context == ImportContext::Type {
+                return false;
+            }
+            match (import.kind, import.name.as_deref(), &*call.func) {
+                (ImportKind::Import, None, Expr::Attribute(attr)) => {
+                    attr.attr.as_str() == "run"
+                        && matches!(&*attr.value, Expr::Name(name)
+                        if Some(name.id.as_str()) == import.bound_name())
+                },
+                (ImportKind::ImportFrom, Some("run"), Expr::Name(name)) => {
+                    Some(name.id.as_str()) == import.bound_name()
+                },
+                _ => false,
+            }
+        });
+        if !is_run {
+            return None;
+        }
+        Some(value.value.to_str())
+    }
+
     fn dynamic_import(&self, module: String, call: &ExprCall) -> DynamicImport {
         DynamicImport {
             module,
@@ -1019,6 +1048,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
             Expr::Attribute(attribute) => self.attribute_sites.push(attribute),
             Expr::Call(call) => {
+                if !self.in_type_checking
+                    && let Some(text) = self.uvicorn_app(call)
+                {
+                    self.parsed.uvicorn_apps.push(ModuleRef {
+                        text: text.to_owned(),
+                        line: self.line_number(call),
+                    });
+                }
                 for argument in type_expression_arguments(call, &self.typing_aliases) {
                     AnnotationNames(&mut self.loaded_names).visit_expr(argument);
                 }

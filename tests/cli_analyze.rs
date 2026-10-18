@@ -3022,9 +3022,367 @@ fn binary_unresolved_script_import_lowers_only_its_block() {
 
 const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
 
-/// A command may be the only thing that runs a file, and commands add no
-/// entries yet (#912): one that runs Python no entry reaches lowers unused
-/// files to likely and is warned once per file (#913).
+#[test]
+#[allow(clippy::too_many_lines)]
+fn binary_server_commands_are_production_entries_with_origins() {
+    for (file, command, origin) in [
+        (
+            "Dockerfile",
+            "FROM python:3.12\nCMD [\"uvicorn\", \"mypkg.served:factory\", \"--factory\"]\n",
+            "Dockerfile:2",
+        ),
+        (
+            "Dockerfile",
+            "FROM python:3.12\nENTRYPOINT exec gunicorn --bind localhost:8000 mypkg.served:factory()\n",
+            "Dockerfile:2",
+        ),
+        (
+            "Containerfile",
+            "CMD hypercorn mypkg.served:factory\n",
+            "Containerfile:1",
+        ),
+        (
+            "Dockerfile.web",
+            "ENTRYPOINT [\"daphne\", \"mypkg.served:factory\"]\n",
+            "Dockerfile.web:1",
+        ),
+        (
+            "Procfile",
+            "web: granian --interface asgi mypkg.served:factory\n",
+            "Procfile:1",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.poe.tasks]\nstart = \"uvicorn mypkg.served:factory\"\n",
+            "pyproject.toml:12",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.poe.tasks]\nstart.envfile = \".env\"\nstart.cmd = \"uvicorn mypkg.served:factory\"\n",
+            "pyproject.toml:13",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.poe.tasks]\nstart = { shell = \"uv run uvicorn mypkg.served:factory\" }\n",
+            "pyproject.toml:12",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.poe.tasks]\nstart = [{ cmd = \"uvicorn mypkg.served:factory\" }]\n",
+            "pyproject.toml:12",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.pdm.scripts]\nstart = { cmd = [\"python\", \"-m\", \"uvicorn\", \"mypkg.served:factory\"] }\n",
+            "pyproject.toml:12",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.pdm.scripts]\nstart = { composite = [\"serve\"] }\nserve = \"gunicorn mypkg.served:factory\"\n",
+            "pyproject.toml:13",
+        ),
+        (
+            "pyproject.toml",
+            "\n[tool.hatch.envs.default.scripts]\nstart = [\"echo ready\", \"hypercorn mypkg.served:factory\"]\n",
+            "pyproject.toml:12",
+        ),
+    ] {
+        let manifest = if file == "pyproject.toml" {
+            format!("{COMMAND_PYPROJECT}{command}")
+        } else {
+            COMMAND_PYPROJECT.to_owned()
+        };
+        let mut files = vec![
+            ("pyproject.toml", manifest.as_str()),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", "def main():\n    pass\n"),
+            (
+                "mypkg/served.py",
+                "from .leaf import handler\ndef factory():\n    return handler\n",
+            ),
+            ("mypkg/leaf.py", "def handler():\n    pass\n"),
+            ("mypkg/orphan.py", "unused = 1\n"),
+        ];
+        if file != "pyproject.toml" {
+            files.push((file, command));
+        }
+        let project = write_project(&files);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args([
+                "--production",
+                "--no-cache",
+                "--reporter",
+                "json",
+                "--trace",
+                "mypkg/served.py",
+            ])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        let unused: Vec<_> = report["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .map(|issue| {
+                (
+                    issue["target"].as_str().expect("target"),
+                    issue["confidence"].as_str().expect("confidence"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            unused,
+            [("mypkg/orphan.py", "certain")],
+            "{file}: {command}\n{report}"
+        );
+        assert!(
+            !report["issues"]
+                .as_array()
+                .expect("issues")
+                .iter()
+                .any(|issue| issue["code"] == "CHK006"
+                    && issue["target"] == "mypkg/served.py:factory"),
+            "{report}"
+        );
+        let trace = String::from_utf8(output.stderr).expect("utf8");
+        assert!(trace.contains(origin), "{file}: {command}\n{trace}");
+        assert!(
+            !trace.contains("runs `mypkg.served` as Python code no entry reaches"),
+            "{trace}"
+        );
+    }
+}
+
+#[test]
+fn binary_uvicorn_run_literals_are_entries_without_a_fastapi_dependency() {
+    for source in [
+        "import uvicorn\nuvicorn.run(\"mypkg.served:factory\")\n",
+        "import uvicorn as server\nserver.run(\"mypkg.served:factory\")\n",
+        "from uvicorn import run as serve\nserve(\"mypkg.served:factory\")\n",
+    ] {
+        let project = write_project(&[
+            ("pyproject.toml", COMMAND_PYPROJECT),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", "def main():\n    pass\n"),
+            ("mypkg/__main__.py", source),
+            (
+                "mypkg/served.py",
+                "from .leaf import handler\ndef factory():\n    return handler\n",
+            ),
+            ("mypkg/leaf.py", "def handler():\n    pass\n"),
+            ("mypkg/orphan.py", "unused = 1\n"),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args([
+                "--production",
+                "--reporter",
+                "json",
+                "--trace",
+                "mypkg/served.py",
+            ])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        let unused: Vec<_> = report["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .map(|issue| issue["target"].as_str().expect("target"))
+            .collect();
+        assert_eq!(unused, ["mypkg/orphan.py"], "{source}\n{report}");
+        let trace = String::from_utf8(output.stderr).expect("utf8");
+        assert!(trace.contains("mypkg/__main__.py:2"), "{trace}");
+    }
+}
+
+#[test]
+fn binary_server_entries_ignore_external_targets_and_keep_symbol_unions() {
+    let project = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        (
+            "mypkg/served.py",
+            "def factory():\n    pass\ndef other():\n    pass\n",
+        ),
+        ("mypkg/orphan.py", "unused = 1\n"),
+        (
+            "Procfile",
+            "web: gunicorn mypkg.served:factory\nworker: uvicorn mypkg.served:other\nexternal: hypercorn third_party.api:app\n",
+        ),
+    ]);
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args([
+                "--production",
+                "--reporter",
+                "json",
+                "--trace",
+                "mypkg/served.py",
+            ])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin")
+    };
+    let cold = run();
+    let warm = run();
+    assert_eq!(cold.stdout, warm.stdout);
+    assert_eq!(cold.stderr, warm.stderr);
+    let report: serde_json::Value = serde_json::from_slice(&warm.stdout).expect("json");
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+    assert!(
+        !report["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .any(|issue| issue["target"]
+                .as_str()
+                .is_some_and(|target| target.contains("served"))),
+        "{report}"
+    );
+    let trace = String::from_utf8(warm.stderr).expect("utf8");
+    assert!(
+        trace.contains("Procfile:1") && trace.contains("Procfile:2"),
+        "{trace}"
+    );
+}
+
+#[test]
+fn binary_uvicorn_unread_calls_do_not_invent_entries() {
+    for source in [
+        "import uvicorn\nTARGET = 'mypkg.served:factory'\nuvicorn.run(TARGET)\n",
+        "import uvicorn\nuvicorn.run(f\"mypkg.served:{'factory'}\")\n",
+        "import client\nclient.run('mypkg.served:factory')\n",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import uvicorn\n    uvicorn.run('mypkg.served:factory')\n",
+        "import uvicorn\nuvicorn.Config('mypkg.served:factory')\n",
+    ] {
+        let project = write_project(&[
+            ("pyproject.toml", COMMAND_PYPROJECT),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", source),
+            ("mypkg/served.py", "def factory():\n    pass\n"),
+        ]);
+        assert!(
+            issue_levels(project.path())
+                .iter()
+                .any(|(code, target, _, _)| code == "CHK001" && target == "mypkg/served.py"),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn binary_uvicorn_test_calls_are_not_production_entries() {
+    let project = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/served.py", "def factory():\n    pass\n"),
+        (
+            "tests/test_server.py",
+            "import uvicorn\ndef test_serve():\n    uvicorn.run('mypkg.served:factory')\n",
+        ),
+    ]);
+    assert!(
+        !issue_levels(project.path())
+            .iter()
+            .any(|(code, target, _, _)| code == "CHK001" && target == "mypkg/served.py")
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--production", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    assert!(
+        report["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .any(|issue| issue["code"] == "CHK001" && issue["target"] == "mypkg/served.py"),
+        "{report}"
+    );
+}
+
+#[test]
+fn binary_computed_server_commands_and_excluded_apps_keep_gaps() {
+    for (config, command, expected) in [
+        ("", "CMD uvicorn $APP\n", "runs `$APP`"),
+        (
+            "exclude = [\"mypkg/served.py\"]\n",
+            "CMD uvicorn mypkg.served:factory\n",
+            "skipped entry `mypkg/served.py`",
+        ),
+        (
+            "",
+            "RUN uvicorn mypkg.served:factory\n",
+            "runs `mypkg.served`",
+        ),
+    ] {
+        let manifest = format!("{COMMAND_PYPROJECT}{config}");
+        let project = write_project(&[
+            ("pyproject.toml", &manifest),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", "def main():\n    pass\n"),
+            ("mypkg/served.py", "def factory():\n    pass\n"),
+            ("mypkg/orphan.py", "unused = 1\n"),
+            ("Dockerfile", command),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--production", "--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains(expected), "{stderr}");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        assert!(
+            report["issues"]
+                .as_array()
+                .expect("issues")
+                .iter()
+                .any(|issue| issue["code"] == "CHK001"
+                    && issue["target"] == "mypkg/orphan.py"
+                    && issue["confidence"] == "likely"),
+            "{report}"
+        );
+    }
+}
+
+#[test]
+fn binary_server_app_filtered_by_production_is_not_a_skipped_entry() {
+    let manifest = format!("{COMMAND_PYPROJECT}exclude = [\"tests/api.py\"]\n");
+    let project = write_project(&[
+        ("pyproject.toml", &manifest),
+        ("mypkg/__init__.py", ""),
+        (
+            "mypkg/main.py",
+            "import uvicorn\ndef main():\n    uvicorn.run('tests.api:app')\n",
+        ),
+        ("tests/api.py", "app = None\n"),
+    ]);
+    for production in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_chokkin"));
+        command.args(["--no-cache", "--reporter", "json"]);
+        if production {
+            command.arg("--production");
+        }
+        let output = command.arg(project.path()).output().expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert_eq!(
+            stderr.contains("entry: skipped entry `tests/api.py`"),
+            !production,
+            "{stderr}"
+        );
+    }
+}
+
+/// Commands outside the server entry forms still lower unused files when
+/// they run Python no entry reaches (#913).
 #[test]
 fn binary_unread_command_target_lowers_unused_files() {
     let file = |path: &str| (path.to_owned(), "likely".to_owned());
@@ -3080,7 +3438,6 @@ fn binary_unread_command_target_lowers_unused_files() {
             file("mypkg/gen.py"),
             file("mypkg/ghgen.py"),
             file("mypkg/modrun.py"),
-            file("mypkg/server.py"),
             file("mypkg/toxgen.py"),
         ],
         "{parsed}"
@@ -3089,7 +3446,6 @@ fn binary_unread_command_target_lowers_unused_files() {
     for warning in [
         "plugin: `.pre-commit-config.yaml:6` runs `mypkg.ghgen` as Python code no entry reaches; unused files are reported below certain",
         "plugin: `Makefile:2` runs `mypkg/gen.py` and 1 more target as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `Procfile:1` runs `mypkg.server` as Python code no entry reaches; unused files are reported below certain",
         "plugin: `tox.ini:2` runs `mypkg/toxgen.py` as Python code no entry reaches; unused files are reported below certain",
     ] {
         assert!(stderr.contains(warning), "{stderr}");
@@ -3103,7 +3459,7 @@ fn binary_unread_command_target_lowers_unused_files() {
     let stderr = String::from_utf8(explain.stderr).expect("utf8");
     assert!(
         stderr.contains(
-            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 4 more)"
+            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 3 more)"
         ),
         "{stderr}"
     );
@@ -5974,12 +6330,12 @@ fn trace_stderr(target: &str) -> String {
 fn binary_trace_prints_path_to_reachable_file() {
     assert_eq!(
         trace_stderr("src/acme/util.py"),
-        "Trace path:\n├─ file src/acme/cli.py\n└─ import acme.util (line 3)\n\n"
+        "Trace path:\n├─ file src/acme/cli.py\n└─ import acme.util (line 3)\n  entry root origins:\n    config\n\n"
     );
     // `./` and `\` spellings name the same root-relative file.
     assert_eq!(
         trace_stderr("./src/acme/dyn.py"),
-        "Trace path:\n├─ file src/acme/cli.py\n└─ dynamic import acme.dyn (line 5)\n\n"
+        "Trace path:\n├─ file src/acme/cli.py\n└─ dynamic import acme.dyn (line 5)\n  entry root origins:\n    config\n\n"
     );
     assert_eq!(
         trace_stderr(r"src\acme\views.py"),
@@ -6008,7 +6364,7 @@ Negative trace for src/acme/legacy.py:
     ├─ src/acme/__main__.py (auto: __main__.py)
     ├─ src/acme/backend.py (build backend: PEP 517)
     ├─ src/acme/cli.py (config)
-    ├─ src/acme/main.py (manifest: [console].acme)
+    ├─ src/acme/main.py (manifest: [console].acme, auto: main.py)
     ├─ src/acme/web.py (symbol: FLASK_APP)
     ├─ src/tools/gen.py (command: workflow run (.github/workflows/ci.yml:6))
     ├─ src/tools/report.py (script: PEP 723)

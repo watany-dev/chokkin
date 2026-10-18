@@ -234,6 +234,7 @@ fn run_analysis_core(
     crate::entry::add_script_roots(&mut entry, &probe.scripts, sources, production);
     crate::entry::add_build_backend_roots(&mut entry, &parse, &sources.files);
     crate::entry::add_main_block_roots(&mut entry, &parse, &sources.files, production);
+    crate::entry::add_server_roots(&mut entry, &parse, &plugins, sources, production);
     let entry_warnings = entry_warnings(&entry, &probe.sources);
     let skipped_entries: Vec<String> = entry_warnings
         .iter()

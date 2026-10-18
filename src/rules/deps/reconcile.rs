@@ -427,6 +427,7 @@ mod tests {
             config_module_refs: Vec::new(),
             config_script_entries: Vec::new(),
             config_command_targets: Vec::new(),
+            config_server_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -485,6 +486,7 @@ mod tests {
             config_module_refs: Vec::new(),
             config_script_entries: Vec::new(),
             config_command_targets: Vec::new(),
+            config_server_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -556,6 +558,7 @@ mod tests {
             config_module_refs: Vec::new(),
             config_script_entries: Vec::new(),
             config_command_targets: Vec::new(),
+            config_server_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();
@@ -640,6 +643,7 @@ mod tests {
             config_module_refs: Vec::new(),
             config_script_entries: Vec::new(),
             config_command_targets: Vec::new(),
+            config_server_refs: Vec::new(),
             warnings: Vec::new(),
         };
         let config = crate::config::default_config();

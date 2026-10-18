@@ -85,7 +85,15 @@ pub(super) fn toml_key_line(text: &str, table: &str, key: &str) -> Option<u32> {
             continue;
         }
         let line_key = trimmed.split_once('=').map(|(name, _)| name.trim());
-        if in_table && line_key.is_some_and(|name| name.trim_matches(['"', '\'']) == key) {
+        if in_table
+            && line_key.is_some_and(|name| {
+                let name = name.trim_matches(['"', '\'']);
+                name == key
+                    || name
+                        .strip_prefix(key)
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        {
             return line_number(index);
         }
     }

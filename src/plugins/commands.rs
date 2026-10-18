@@ -7,7 +7,7 @@
 
 use super::plugin_map::plugin_module_distribution;
 use super::types::{
-    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
+    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin, SymbolReference,
 };
 
 /// Predicate for binary names worth reporting (the binary map plus known tools).
@@ -30,9 +30,30 @@ pub(super) struct SourceHits {
     pub(super) distributions: Vec<String>,
     pub(super) module_refs: Vec<ModuleReference>,
     pub(super) command_targets: Vec<CommandTargetRef>,
+    pub(super) server_refs: Vec<SymbolReference>,
 }
 
 impl SourceHits {
+    pub(super) fn push_server_command(
+        &mut self,
+        command: &str,
+        known: KnownBinary<'_>,
+        origin: &ReferenceOrigin,
+    ) {
+        self.push_command(command, known, origin);
+        self.server_refs
+            .extend(command_targets(command).into_iter().filter_map(|target| {
+                let PythonTarget::Server { module, symbol } = target else {
+                    return None;
+                };
+                Some(SymbolReference {
+                    module,
+                    symbol,
+                    origin: origin.clone(),
+                })
+            }));
+    }
+
     pub(super) fn push_command(
         &mut self,
         command: &str,
@@ -84,7 +105,9 @@ pub(super) fn command_target_refs(
         .filter_map(|target| {
             let target = match target {
                 PythonTarget::Script(run) => script_target(&run)?,
-                PythonTarget::Module(module) => CommandTarget::Module { module },
+                PythonTarget::Module(module) | PythonTarget::Server { module, .. } => {
+                    CommandTarget::Module { module }
+                },
                 PythonTarget::Opaque(text) => CommandTarget::Opaque { text },
             };
             Some(CommandTargetRef {
@@ -213,7 +236,7 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
         .into_iter()
         .filter_map(|target| match target {
             PythonTarget::Script(run) => Some(run),
-            PythonTarget::Module(_) | PythonTarget::Opaque(_) => None,
+            PythonTarget::Module(_) | PythonTarget::Server { .. } | PythonTarget::Opaque(_) => None,
         })
         .collect()
 }
@@ -224,16 +247,21 @@ pub(super) enum PythonTarget {
     Script(ScriptRun),
     /// A module run with `-m`, served by a runner, or imported by `-c` code.
     Module(String),
+    Server {
+        module: String,
+        symbol: String,
+    },
     /// A variable, a substitution, or an argument shape that is not read.
     Opaque(String),
 }
 
 /// WSGI/ASGI servers and task runners whose argument names the module they load.
-const MODULE_RUNNERS: [&str; 6] = [
+const MODULE_RUNNERS: [&str; 7] = [
     "gunicorn",
     "uvicorn",
     "hypercorn",
     "daphne",
+    "granian",
     "waitress-serve",
     "celery",
 ];
@@ -393,12 +421,23 @@ fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
             let module = app.split_once(':').map_or(app, |(module, _)| module);
             if is_computed(app) {
                 PythonTarget::Opaque(app.to_owned())
+            } else if runner != "celery"
+                && let Some((module, symbol)) = parse_server_target(app)
+            {
+                PythonTarget::Server { module, symbol }
             } else {
                 module_target(module)
             }
         },
         None => PythonTarget::Opaque(runner.to_owned()),
     }
+}
+
+pub(crate) fn parse_server_target(value: &str) -> Option<(String, String)> {
+    let (module, symbol) = value.trim().split_once(':')?;
+    let symbol = symbol.strip_suffix("()").unwrap_or(symbol);
+    (is_dotted_identifier(module) && is_dotted_identifier(symbol))
+        .then(|| (module.to_owned(), symbol.to_owned()))
 }
 
 fn celery_app<'a>(args: &[&'a str]) -> Option<&'a str> {
@@ -418,16 +457,35 @@ fn celery_app<'a>(args: &[&'a str]) -> Option<&'a str> {
 }
 
 fn server_app<'a>(args: &[&'a str]) -> Option<&'a str> {
-    if let Some(app) = args.iter().find(|arg| is_app_reference(arg)) {
-        return Some(app);
-    }
     let mut after_option = false;
     for arg in args {
         if arg.starts_with('-') {
-            after_option = !arg.contains('=');
+            after_option = !arg.contains('=')
+                && (arg.starts_with("--") || arg.len() == 2)
+                && !matches!(
+                    *arg,
+                    "--factory"
+                        | "--reload"
+                        | "--preload"
+                        | "--daemon"
+                        | "-D"
+                        | "--debug"
+                        | "--access-log"
+                        | "--no-access-log"
+                        | "--use-colors"
+                        | "--no-use-colors"
+                        | "--proxy-headers"
+                        | "--no-proxy-headers"
+                        | "--server-header"
+                        | "--no-server-header"
+                        | "--date-header"
+                        | "--no-date-header"
+                        | "--call"
+                );
             continue;
         }
-        if !after_option && (is_computed(arg) || is_dotted_identifier(arg)) {
+        if !after_option && (is_app_reference(arg) || is_computed(arg) || is_dotted_identifier(arg))
+        {
             return Some(arg);
         }
         after_option = false;
@@ -787,7 +845,9 @@ mod tests {
                     Some(dir) => format!("script {dir}/{}", run.path),
                     None => format!("script {}", run.path),
                 },
-                PythonTarget::Module(module) => format!("module {module}"),
+                PythonTarget::Module(module) | PythonTarget::Server { module, .. } => {
+                    format!("module {module}")
+                },
                 PythonTarget::Opaque(text) => format!("opaque {text}"),
             })
             .collect()
@@ -864,6 +924,43 @@ mod tests {
             ["script tools/pre-commit.py", "module mypkg.a"]
         );
         assert_eq!(targets("python -c 'print(1)'"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn server_entries_skip_option_values_and_require_a_literal_target() {
+        for command in [
+            "uvicorn --log-config acme.log:CONFIG acme.api:app",
+            "gunicorn --config python:acme.config --preload acme.api:app",
+            "gunicorn -w4 -b127.0.0.1:8000 acme.api:app",
+            "granian --interface asgi acme.api:app",
+            "python -m uvicorn --factory acme.api:app",
+        ] {
+            let mut hits = SourceHits::default();
+            hits.push_server_command(
+                command,
+                &known,
+                &ReferenceOrigin {
+                    file: "Procfile".to_owned(),
+                    line: Some(1),
+                    label: "web".to_owned(),
+                },
+            );
+            let targets: Vec<_> = hits
+                .server_refs
+                .iter()
+                .map(|reference| (reference.module.as_str(), reference.symbol.as_str()))
+                .collect();
+            assert_eq!(targets, [("acme.api", "app")], "{command}");
+        }
+        for target in [
+            "acme.api:",
+            "acme.api:$APP",
+            "$MODULE:app",
+            "acme.api:factory(value)",
+            "acme.api:app/other",
+        ] {
+            assert_eq!(parse_server_target(target), None, "{target}");
+        }
     }
 
     #[test]

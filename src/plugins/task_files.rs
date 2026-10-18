@@ -1,5 +1,5 @@
 //! Commands from task runners and deploy files: Makefile, justfile,
-//! Dockerfile / Containerfile, Procfile, `.gitlab-ci.yml` and PDM scripts.
+//! Dockerfile / Containerfile, Procfile, `.gitlab-ci.yml`, PDM, Poe and Hatch tasks.
 //!
 //! Variables, includes and imports are never followed; each command line is
 //! read as written.
@@ -15,7 +15,7 @@ use super::config_text::{
     PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, origin_at, read_root_file,
     toml_words, yaml_block_body,
 };
-use super::types::ReferenceOrigin;
+use super::types::{CommandTarget, CommandTargetRef, ReferenceOrigin};
 
 /// Candidates in the order make / just search them; only the first found is read.
 const MAKEFILE_NAMES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
@@ -63,6 +63,8 @@ pub(super) fn scan(
     }
     if let Some(doc) = pyproject {
         scan_pdm_scripts(doc, known, &mut hits);
+        scan_poe_tasks(doc, known, &mut hits);
+        scan_hatch_scripts(doc, known, &mut hits);
     }
     hits
 }
@@ -186,7 +188,12 @@ fn scan_dockerfile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut
             continue;
         };
         let command = docker_command(rest.trim());
-        hits.push_command(&command, known, &origin_at(rel, index, label));
+        let origin = origin_at(rel, index, label);
+        if label == "RUN" {
+            hits.push_command(&command, known, &origin);
+        } else {
+            hits.push_server_command(&command, known, &origin);
+        }
     }
 }
 
@@ -210,7 +217,7 @@ fn scan_procfile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut S
             continue;
         }
         let label = format!("process {process}");
-        hits.push_command(command, known, &origin_at(rel, index, &label));
+        hits.push_server_command(command, known, &origin_at(rel, index, &label));
     }
 }
 
@@ -320,7 +327,111 @@ fn scan_pdm_scripts(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut Sourc
     for (name, value) in scripts {
         // `_` holds options shared by every script, not a script.
         if name != "_" {
-            push_pdm_script(value, &doc.origin(PDM_SCRIPTS, name), known, hits);
+            push_pdm_script(
+                value,
+                &task_origin(doc, PDM_SCRIPTS, name, value),
+                known,
+                hits,
+            );
+        }
+    }
+}
+
+fn scan_poe_tasks(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut SourceHits) {
+    if let Some(tasks) = doc.table("tool.poe.tasks") {
+        for (name, value) in tasks {
+            push_poe_task(
+                value,
+                &task_origin(doc, "tool.poe.tasks", name, value),
+                known,
+                hits,
+            );
+        }
+    }
+}
+
+fn task_origin(doc: &PyprojectDoc, section: &str, name: &str, value: &Value) -> ReferenceOrigin {
+    let mut origin = doc.origin(section, name);
+    if let Some(field) = [
+        "cmd",
+        "shell",
+        "sequence",
+        "composite",
+        "call",
+        "script",
+        "expr",
+    ]
+    .into_iter()
+    .find(|field| value.get(*field).is_some())
+    {
+        origin.line = doc
+            .origin(section, &format!("{name}.{field}"))
+            .line
+            .or_else(|| doc.origin(&format!("{section}.{name}"), field).line)
+            .or(origin.line);
+    }
+    origin
+}
+
+fn push_poe_task(
+    value: &Value,
+    origin: &ReferenceOrigin,
+    known: KnownBinary<'_>,
+    hits: &mut SourceHits,
+) {
+    match value {
+        Value::String(command) => hits.push_server_command(command, known, origin),
+        Value::Array(tasks) => {
+            // Strings in a Poe sequence name other tasks, whose bodies are
+            // scanned independently; only inline task tables are commands.
+            for task in tasks.iter().filter(|task| task.is_table()) {
+                push_poe_task(task, origin, known, hits);
+            }
+        },
+        Value::Table(task) => {
+            for key in ["cmd", "shell"] {
+                if let Some(command) = task.get(key).and_then(Value::as_str) {
+                    hits.push_server_command(command, known, origin);
+                }
+            }
+            if let Some(sequence) = task.get("sequence") {
+                push_poe_task(sequence, origin, known, hits);
+            }
+            for kind in ["script", "expr"] {
+                if task.contains_key(kind) {
+                    // These execute Python, not a shell command; their imports
+                    // are unread even when the task's server target is unknown.
+                    hits.command_targets.push(CommandTargetRef {
+                        target: CommandTarget::Opaque {
+                            text: format!("Poe {kind} task"),
+                        },
+                        origin: origin.clone(),
+                    });
+                }
+            }
+        },
+        // Other scalar types are not executable Poe tasks.
+        _ => {},
+    }
+}
+
+fn scan_hatch_scripts(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut SourceHits) {
+    if let Some(envs) = doc.table("tool.hatch.envs") {
+        for (env, value) in envs {
+            if let Some(scripts) = value.get("scripts").and_then(Value::as_table) {
+                for (name, value) in scripts {
+                    let origin = doc.origin(&format!("tool.hatch.envs.{env}.scripts"), name);
+                    for command in value.as_str().into_iter().chain(
+                        value
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(Value::as_str),
+                    ) {
+                        hits.push_server_command(command, known, &origin);
+                    }
+                }
+            }
         }
     }
 }
@@ -333,7 +444,7 @@ fn push_pdm_script(
 ) {
     let Some(table) = value.as_table() else {
         if let Some(command) = value.as_str() {
-            hits.push_command(command, known, origin);
+            hits.push_server_command(command, known, origin);
         }
         return;
     };
@@ -346,7 +457,11 @@ fn push_pdm_script(
         .into_iter()
         .flatten()
         .filter_map(|step| step.as_str().map(str::to_owned));
-    for command in commands.chain(composite) {
+    for command in commands {
+        hits.push_server_command(&command, known, origin);
+    }
+    // PDM composite steps invoke other tasks, whose bodies are scanned above.
+    for command in composite {
         hits.push_command(&command, known, origin);
     }
     if let Some(call) = table.get("call").and_then(Value::as_str) {
@@ -357,6 +472,48 @@ fn push_pdm_script(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poe_sequence_strings_are_task_references_not_commands() {
+        let value: Value = toml::from_str(
+            "tasks = [\"uvicorn fake.api:app\", {cmd = \"uvicorn real.api:app\"}]\n",
+        )
+        .expect("toml");
+        let mut hits = SourceHits::default();
+        push_poe_task(
+            &value["tasks"],
+            &origin_at("pyproject.toml", 0, "task"),
+            &known,
+            &mut hits,
+        );
+        let modules: Vec<_> = hits
+            .server_refs
+            .iter()
+            .map(|reference| reference.module.as_str())
+            .collect();
+        assert_eq!(modules, ["real.api"]);
+    }
+
+    #[test]
+    fn poe_python_tasks_are_opaque_and_pdm_composites_add_no_server_entry() {
+        let value: Value = toml::from_str(
+            "script = {script = 'acme.api:serve'}\nexpr = {expr = 'load()'}\ncomposite = {composite = ['uvicorn fake.api:app']}\n",
+        ).expect("toml");
+        let mut hits = SourceHits::default();
+        let origin = origin_at("pyproject.toml", 0, "task");
+        for key in ["script", "expr"] {
+            push_poe_task(&value[key], &origin, &known, &mut hits);
+        }
+        push_pdm_script(&value["composite"], &origin, &known, &mut hits);
+        assert!(hits.server_refs.is_empty());
+        assert_eq!(
+            hits.command_targets
+                .iter()
+                .filter(|reference| matches!(reference.target, CommandTarget::Opaque { .. }))
+                .count(),
+            2
+        );
+    }
 
     fn known(name: &str) -> bool {
         matches!(
