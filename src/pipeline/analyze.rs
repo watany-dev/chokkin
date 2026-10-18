@@ -215,7 +215,12 @@ fn run_analysis_core(
         .chain(plugins.warnings.iter().cloned().map(ProbeWarning::Plugin))
         .collect();
     let mut sources = probe.sources.clone();
-    mark_command_scripts_dev(&mut sources, &plugins);
+    mark_command_scripts_dev(
+        &probe.effective_config,
+        &probe.manifest,
+        &mut sources,
+        &plugins,
+    );
     let sources = &sources;
 
     let members: Vec<MemberEntryInput<'_>> = probe

@@ -85,7 +85,15 @@ pub(super) fn command_target_refs(
             let target = match target {
                 PythonTarget::Script(run) => script_target(&run)?,
                 PythonTarget::Module(module) => CommandTarget::Module { module },
-                PythonTarget::App { module, symbols } => CommandTarget::App { module, symbols },
+                PythonTarget::App {
+                    module,
+                    symbols,
+                    fallback,
+                } => CommandTarget::App {
+                    module,
+                    symbols,
+                    fallback,
+                },
                 PythonTarget::CodeModule(module) => CommandTarget::CodeModule { module },
                 PythonTarget::Opaque(text) => CommandTarget::Opaque { text },
             };
@@ -233,6 +241,7 @@ pub(super) enum PythonTarget {
     App {
         module: String,
         symbols: Vec<String>,
+        fallback: Option<String>,
     },
     /// A possible import in inline Python, retained only as gap evidence.
     CodeModule(String),
@@ -425,9 +434,14 @@ fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
             if is_computed(app) {
                 PythonTarget::Opaque(app.to_owned())
             } else if is_dotted_identifier(module) {
+                // Celery's `find_app` imports `<package>.celery` when a bare
+                // `-A package` has neither attribute.
+                let fallback =
+                    (runner == "celery" && !app.contains(':')).then(|| format!("{module}.celery"));
                 PythonTarget::App {
                     module: module.to_owned(),
                     symbols,
+                    fallback,
                 }
             } else {
                 module_target(module)

@@ -36,16 +36,22 @@ app mode の exit 1 は未使用の control file によるもの。library mode 
 - standalone の task script は dev。package module と Procfile / Dockerfile
   の deploy target は元の context を保つ。task と deploy が同じ file を指せば
   runtime を優先し、`--production` で落とす dev entry は gap にしない。
+- config の `entry`、manifest の entry point、plugin、自動検出（root の `main.py`）
+  が runtime entry にする file は、task が実行しても dev にしない。Makefile の
+  `uvicorn main:app` / `python main.py` / `python -m main` で `--production` の
+  entry が消え、`main.py` から届く file と依存が certain で報告されていた。
 - `python -m pkg` は `pkg.__main__`、`pkg` の順で解決する。server は named module
   自身を import するので、package の `__main__` に置き換えない。
 - server の属性と factory 名を entry symbol に残す。省略時の gunicorn の
   `application`、Celery の `app` / `celery` も残し、file の CHK001 が消えた代わりに
-  app 属性の CHK006 が出ることを防ぐ。
+  app 属性の CHK006 が出ることを防ぐ。属性を省いた `celery -A <package>` は、
+  Celery の `find_app` と同じく `<package>.celery` も entry にする（gap を外した
+  ことで未 import の `proj/celery.py` が likely から certain になっていた）。
 - computed target と heuristic な `python -c` の import は従来の gap に残す。
-  typo / third-party target は entry を増やさない。config scan cache は v7 にする。
+  typo / third-party target は entry を増やさない。config scan cache は v8 にする。
 
 修正前に 5-target regression が失敗することを確認した。最終 `make check` は
-fmt、rustdoc、clippy、全テスト（1,960 passed / 2 ignored）、cargo-deny、machete が PASS。
+fmt、rustdoc、clippy、全テスト（1,962 passed / 2 ignored）、cargo-deny、machete が PASS。
 全 task-file scanner、5 server、推移的な import、production、package execution、
 factory と暗黙の app 属性、origin の行、computed / 未解決 target をテストした。
 

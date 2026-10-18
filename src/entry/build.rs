@@ -334,11 +334,32 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
 
 /// Task/CI scripts are dev, like hatchling's build scripts (#735, #797).
 /// Package modules and deploy targets keep their context (#912).
-pub(crate) fn mark_command_scripts_dev(sources: &mut DiscoveredSources, plugins: &PluginHints) {
+pub(crate) fn mark_command_scripts_dev(
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    sources: &mut DiscoveredSources,
+    plugins: &PluginHints,
+) {
     let known_paths = known_file_paths(sources);
+    let file_contexts = file_context_index(sources);
     let entries = command_entries(plugins, sources, &known_paths);
+    let mut others = Vec::new();
+    collect_config_entries(config, &file_contexts, &mut others);
+    collect_manifest_entries(
+        manifest,
+        sources,
+        &known_paths,
+        false,
+        &mut others,
+        &mut Vec::new(),
+    );
+    collect_plugin_entries(plugins, &mut others);
+    others.extend(detect_auto_entries(sources));
+    // A file something else already runs as runtime (a declared entry, an
+    // auto `main.py`) stays runtime when a task also runs it.
     let runtime: BTreeSet<&str> = entries
         .iter()
+        .chain(&others)
         .filter(|entry| entry.context == FileContext::Runtime)
         .map(|entry| entry.spec.path.as_str())
         .collect();
@@ -384,41 +405,56 @@ fn command_entries(
         ));
     }
     for command in &plugins.config_command_targets {
-        let (path, symbols) = match &command.target {
-            CommandTarget::Script { paths } => {
-                (command_script_path(paths, known_paths).cloned(), Vec::new())
-            },
-            CommandTarget::Module { module } => (
-                resolve_module_to_path(&format!("{module}.__main__"), &sources.layout, known_paths)
-                    .or_else(|| resolve_module_to_path(module, &sources.layout, known_paths)),
-                Vec::new(),
+        let resolve = |module: &str| resolve_module_to_path(module, &sources.layout, known_paths);
+        let (paths, symbols): (Vec<String>, &[String]) = match &command.target {
+            CommandTarget::Script { paths } => (
+                command_script_path(paths, known_paths)
+                    .cloned()
+                    .into_iter()
+                    .collect(),
+                &[],
             ),
-            CommandTarget::App { module, symbols } => (
-                resolve_module_to_path(module, &sources.layout, known_paths),
-                symbols.clone(),
+            CommandTarget::Module { module } => (
+                resolve(&format!("{module}.__main__"))
+                    .or_else(|| resolve(module))
+                    .into_iter()
+                    .collect(),
+                &[],
+            ),
+            CommandTarget::App {
+                module,
+                symbols,
+                fallback,
+            } => (
+                std::iter::once(module)
+                    .chain(fallback)
+                    .filter_map(|module| resolve(module))
+                    .collect(),
+                symbols,
             ),
             CommandTarget::CodeModule { .. } | CommandTarget::Opaque { .. } => continue,
         };
-        let Some(path) = path else { continue };
-        let mut context = context_for_path(&path, &file_contexts);
-        let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
         // Deploy commands run in production, even when a task also runs the
         // same file. Package modules may be imported by runtime code too.
         let deploy = command.origin.file == "Procfile"
             || matches!(command.origin.label.as_str(), "RUN" | "CMD" | "ENTRYPOINT");
-        if context == FileContext::Runtime
-            && !deploy
-            && !known_paths.contains(&join_rel(dir, "__init__.py"))
-        {
-            context = FileContext::Dev;
-        }
-        for symbol in std::iter::once(None).chain(symbols.into_iter().map(Some)) {
-            candidates.push(command_candidate(
-                path.clone(),
-                symbol,
-                context,
-                &command.origin,
-            ));
+        for path in paths {
+            let mut context = context_for_path(&path, &file_contexts);
+            let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+            if context == FileContext::Runtime
+                && !deploy
+                && !known_paths.contains(&join_rel(dir, "__init__.py"))
+            {
+                context = FileContext::Dev;
+            }
+            for symbol in std::iter::once(None).chain(symbols.iter().cloned().map(Some)) {
+                candidates.push(command_candidate(
+                    path.clone(),
+                    symbol,
+                    context,
+                    &command.origin,
+                ));
+            }
         }
     }
     candidates

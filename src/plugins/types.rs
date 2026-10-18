@@ -66,6 +66,9 @@ pub enum CommandTarget {
         module: String,
         /// Explicit attribute, or the app names the runner looks up by default.
         symbols: Vec<String>,
+        /// A submodule the runner imports when `module` is a package without
+        /// the app: Celery falls back to `<package>.celery`.
+        fallback: Option<String>,
     },
     /// A possible import read heuristically from `python -c`; this is gap
     /// evidence, not a statically resolved entry (#913).

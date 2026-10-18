@@ -3286,6 +3286,61 @@ fn binary_task_and_deploy_contexts_hold_in_production() {
     }
 }
 
+/// A task that also runs an auto or declared entry does not demote it to a
+/// dev script, so `--production` keeps what it reaches.
+#[test]
+fn binary_task_commands_keep_runtime_entries_in_production() {
+    for (dependencies, chokkin, makefile) in [
+        ("\"fastapi\", \"uvicorn\"", "", "run:\n\tuvicorn main:app\n"),
+        ("\"fastapi\"", "", "run:\n\tpython main.py\n"),
+        ("\"fastapi\"", "", "run:\n\tpython -m main\n"),
+        (
+            "\"fastapi\"",
+            "entry = [\"main.py\"]\n",
+            "run:\n\tpython main.py\n",
+        ),
+    ] {
+        let pyproject = format!(
+            "[project]\nname = \"svc\"\nversion = \"0.1.0\"\ndependencies = [{dependencies}]\n\n[tool.chokkin]\nmode = \"app\"\n{chokkin}"
+        );
+        let project = write_project(&[
+            ("pyproject.toml", &pyproject),
+            ("main.py", "from helpers import util\n"),
+            ("helpers.py", "import fastapi\n\ndef util():\n    pass\n"),
+            ("Makefile", makefile),
+        ]);
+        let issues = json_issues(project.path(), &["--no-cache", "--production"]);
+        assert_eq!(issue_keys(&issues), [], "{chokkin}{makefile}");
+    }
+}
+
+/// Celery imports `<package>.celery` when a bare `-A package` has no app.
+#[test]
+fn binary_celery_package_app_reaches_its_celery_module() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"proj\"\nversion = \"0.1.0\"\ndependencies = [\"celery\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("proj/__init__.py", ""),
+        (
+            "proj/celery.py",
+            "from celery import Celery\n\napp = Celery(\"proj\")\n",
+        ),
+        ("proj/orphan.py", ""),
+        ("Procfile", "worker: celery -A proj worker\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [(
+            "CHK001".to_owned(),
+            "proj/orphan.py".to_owned(),
+            "error".to_owned(),
+            "certain".to_owned()
+        )]
+    );
+}
+
 /// A computed target may run any file, so it lowers unused files (#913).
 #[test]
 fn binary_computed_command_target_lowers_unused_files() {
