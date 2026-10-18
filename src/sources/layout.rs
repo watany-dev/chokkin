@@ -404,6 +404,8 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     globs.push("conftest.py".to_owned());
     // setuptools runs this at build time, outside the distributed package.
     globs.push("setup.py".to_owned());
+    // Notebook cells run directly even outside the inferred package (#1023).
+    globs.push("**/*.ipynb".to_owned());
     globs
 }
 
@@ -834,8 +836,11 @@ mod tests {
                 "tests/**/*.{py,pyi,ipynb}".to_owned(),
                 "test/**/*.{py,pyi,ipynb}".to_owned(),
                 "scripts/**/*.{py,pyi,ipynb}".to_owned(),
+                "examples/**/*.{py,pyi,ipynb}".to_owned(),
+                "docs/**/*.{py,pyi,ipynb}".to_owned(),
                 "conftest.py".to_owned(),
                 "setup.py".to_owned(),
+                "**/*.ipynb".to_owned(),
             ]
         );
     }
@@ -929,7 +934,10 @@ mod tests {
             path_to_module("lib/sqlalchemy/orm/session.py", &layout),
             Some("sqlalchemy.orm.session".to_owned())
         );
-        assert_eq!(path_to_module("examples/x.py", &layout), None);
+        assert_eq!(
+            path_to_module("examples/x.py", &layout),
+            Some("examples.x".to_owned())
+        );
     }
 
     #[test]

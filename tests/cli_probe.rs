@@ -21,7 +21,6 @@ fn probe_src_layout_fixture() {
     assert_eq!(report.manifest.metadata.name.as_deref(), Some("acme"));
     assert_eq!(report.sources.layout.layout, ProjectLayout::Src);
     assert_eq!(report.sources.layout.packages, ["acme"]);
-    // Src layout globs cover `src/`, `tests/` and `scripts/`, so `docs/conf.py` is not discovered.
     let files: Vec<_> = report
         .sources
         .python_files()
@@ -30,6 +29,7 @@ fn probe_src_layout_fixture() {
     assert_eq!(
         files,
         [
+            "docs/conf.py",
             "scripts/run.py",
             "src/acme/__init__.py",
             "src/acme/module.py",
@@ -37,6 +37,71 @@ fn probe_src_layout_fixture() {
             "tests/test_module.py",
         ]
     );
+}
+
+#[test]
+fn probe_member_notebooks_use_the_members_package_context() {
+    use chokkin::internals::FileContext;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    for (path, content) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = 'acme'\nversion = '0.1.0'\n\n[tool.uv.workspace]\nmembers = ['packages/worker']\n",
+        ),
+        (
+            "packages/worker/pyproject.toml",
+            "[project]\nname = 'worker'\nversion = '0.1.0'\n",
+        ),
+        ("packages/worker/src/worker/__init__.py", ""),
+        ("packages/worker/src/worker/demo.ipynb", "{}"),
+        ("packages/worker/demo.ipynb", "{}"),
+        ("packages/worker/notebooks/deep/demo.ipynb", "{}"),
+        ("packages/worker/docs/demo.py", ""),
+        ("packages/worker/examples/demo.py", ""),
+    ] {
+        let path = temp.path().join(path);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, content).expect("write");
+    }
+    let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+    for (path, context) in [
+        ("src/worker/demo.ipynb", FileContext::Runtime),
+        ("demo.ipynb", FileContext::Dev),
+        ("notebooks/deep/demo.ipynb", FileContext::Dev),
+        ("docs/demo.py", FileContext::Docs),
+        ("examples/demo.py", FileContext::Dev),
+    ] {
+        let path = format!("packages/worker/{path}");
+        let file = report
+            .sources
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .expect(&path);
+        assert_eq!(file.context, context, "{path}");
+    }
+    let production = probe_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides {
+            production: Some(true),
+            ..RuntimeOverrides::default()
+        },
+    )
+    .expect("production probe");
+    let notebooks: Vec<_> = production
+        .sources
+        .files
+        .iter()
+        .filter(|file| {
+            std::path::Path::new(&file.path)
+                .extension()
+                .is_some_and(|ext| ext == "ipynb")
+        })
+        .map(|file| file.path.as_str())
+        .collect();
+    assert_eq!(notebooks, ["packages/worker/src/worker/demo.ipynb"]);
 }
 
 #[test]

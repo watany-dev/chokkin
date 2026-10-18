@@ -99,6 +99,7 @@ Python では module top-level の名前が原則 import 可能なので、`unus
 **manifest と lockfile:** `pyproject.toml`(PEP 621、Poetry、PDM、Hatch、`[tool.uv]` の sources / constraints)、`include-group` を含む PEP 735 dependency group、PEP 723 inline script metadata、`setup.cfg`、静的に評価できる `setup.py`、`requirements*.txt` / `*.in`、そして transitive 判定用の `uv.lock` / `pylock.toml` / `poetry.lock` / `pdm.lock`。
 
 **layout:** src layout と flat layout、tests、scripts、docs、examples、Jupyter notebook、build backend 設定による package directory、uv workspace や自動検出した monorepo member(それぞれ自身の manifest で解析)。
+既定の discovery は root の examples・docs と、深さを問わず notebook を走査します。推定した package 外の notebook は dev 依存の使用元とし、`--production` では除外します (test / docs context を優先)。
 
 **framework とツール:** pytest、Django、FastAPI / uvicorn、Flask、Celery、Sphinx、MkDocs、Alembic、tox、nox、pre-commit、GitHub Actions。plugin は純粋な import 解析では見えない entry file・文字列による module 参照・binary usage を追加し、その framework が宣言済み依存にあれば自動で有効になります。例えば Django plugin は `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` の文字列を module 参照として扱い、`migrations/**` を framework-used にします。FastAPI と Flask の route handler は外部から使われているものとして扱います。
 

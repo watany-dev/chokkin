@@ -72,8 +72,11 @@ fn infers_src_layout() {
             "tests/**/*.{py,pyi,ipynb}".to_owned(),
             "test/**/*.{py,pyi,ipynb}".to_owned(),
             "scripts/**/*.{py,pyi,ipynb}".to_owned(),
+            "examples/**/*.{py,pyi,ipynb}".to_owned(),
+            "docs/**/*.{py,pyi,ipynb}".to_owned(),
             "conftest.py".to_owned(),
             "setup.py".to_owned(),
+            "**/*.ipynb".to_owned(),
         ]
     );
 
@@ -81,7 +84,7 @@ fn infers_src_layout() {
     assert!(paths.contains(&"src/acme/module.py"));
     assert!(paths.contains(&"tests/test_module.py"));
     assert!(paths.contains(&"scripts/run.py"));
-    assert!(!paths.contains(&"docs/conf.py"));
+    assert!(paths.contains(&"docs/conf.py"));
 }
 
 #[test]
@@ -316,7 +319,7 @@ fn full_pipeline_step4() {
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    assert_eq!(sources.python_files().count(), 5);
+    assert_eq!(sources.python_files().count(), 6);
     assert!(
         sources
             .files
@@ -356,6 +359,87 @@ fn includes_ipynb_as_notebook_kind() {
         .expect("notebook file");
     assert_eq!(notebook.kind, FileKind::Notebook);
     assert_eq!(notebook.context, FileContext::Runtime);
+}
+
+#[test]
+fn discovers_examples_docs_and_unpacked_notebooks_in_every_layout() {
+    for package in ["acme", "src/acme", "lib/acme", ""] {
+        let init = format!("{package}/__init__.py");
+        let packaged_notebook = format!("{package}/analysis.ipynb");
+        let mut files = vec![
+            (
+                "pyproject.toml",
+                "[project]\nname = 'acme'\nversion = '0.1.0'\n",
+            ),
+            ("examples/nested/demo.py", ""),
+            ("docs/nested/demo.pyi", ""),
+            ("docs/demo.ipynb", "{}"),
+            ("tests/demo.ipynb", "{}"),
+            ("demo.ipynb", "{}"),
+            ("notebooks/nested/demo.ipynb", "{}"),
+            ("other/deep/demo.ipynb", "{}"),
+            ("other/demo.py", ""),
+        ];
+        if !package.is_empty() {
+            files.extend([(init.as_str(), ""), (packaged_notebook.as_str(), "{}")]);
+        }
+        let sources = discover_tree(&files);
+        for (path, context) in [
+            ("examples/nested/demo.py", FileContext::Dev),
+            ("docs/nested/demo.pyi", FileContext::Docs),
+            ("docs/demo.ipynb", FileContext::Docs),
+            ("tests/demo.ipynb", FileContext::Test),
+            ("demo.ipynb", FileContext::Dev),
+            ("notebooks/nested/demo.ipynb", FileContext::Dev),
+            ("other/deep/demo.ipynb", FileContext::Dev),
+        ] {
+            assert_eq!(context_of(&sources, path), context, "{package}: {path}");
+        }
+        if !package.is_empty() {
+            assert_eq!(
+                context_of(&sources, &packaged_notebook),
+                FileContext::Runtime
+            );
+            assert!(!paths(&sources).contains(&"other/demo.py"));
+        }
+    }
+}
+
+#[test]
+fn extra_discovery_respects_globs_ignores_and_production() {
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = 'acme'\nversion = '0.1.0'\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/demo.ipynb", "{}"),
+        ("demo.ipynb", "{}"),
+        ("examples/demo.py", ""),
+        ("docs/demo.py", ""),
+        ("notebooks/ignored.ipynb", "{}"),
+        (".gitignore", "notebooks/\n"),
+    ];
+    let sources = discover_tree(&files);
+    assert!(!paths(&sources).contains(&"notebooks/ignored.ipynb"));
+    for (config, expected) in [
+        (
+            "project = ['acme/**']",
+            vec!["acme/__init__.py", "acme/demo.ipynb"],
+        ),
+        (
+            "production = true",
+            vec!["acme/__init__.py", "acme/demo.ipynb"],
+        ),
+        (
+            "exclude = ['docs/**', '**/*.ipynb']",
+            vec!["acme/__init__.py", "examples/demo.py"],
+        ),
+    ] {
+        let mut configured = files.to_vec();
+        configured.push(("chokkin.toml", config));
+        assert_eq!(paths(&discover_tree(&configured)), expected, "{config}");
+    }
 }
 
 /// pytest `testpaths` join discovery as test context, read from the root

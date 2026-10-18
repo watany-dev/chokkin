@@ -2528,6 +2528,43 @@ fn binary_invalid_notebook_is_skipped_with_a_diagnostic() {
     );
 }
 
+#[test]
+fn binary_unpacked_examples_docs_and_notebooks_use_dev_dependencies() {
+    for package in ["acme", "src/acme", "lib/acme"] {
+        let init = format!("{package}/__init__.py");
+        let plotting = format!("{package}/plotting.py");
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = 'acme'\nversion = '0.1.0'\n\n[dependency-groups]\ndev = ['matplotlib', 'seaborn', 'rich']\n\n[tool.chokkin]\nmode = 'app'\n",
+            ),
+            (&init, ""),
+            (&plotting, "def plot():\n    pass\n"),
+            (
+                "examples/demo.py",
+                "import matplotlib.pyplot\nfrom acme.plotting import plot\nplot()\n",
+            ),
+            ("docs/demo.py", "import rich\n"),
+            (
+                "notebooks/deep/demo.ipynb",
+                r#"{"cells":[{"cell_type":"code","source":["import seaborn\n"],"metadata":{}}],"metadata":{},"nbformat":4,"nbformat_minor":5}"#,
+            ),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--strict", "--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        assert_eq!(
+            report["issues"],
+            serde_json::json!([]),
+            "{package}: {report}"
+        );
+        assert!(output.status.success(), "{package}: {output:?}");
+    }
+}
+
 /// A notebook code cell whose `source` is not text is dropped with a warning
 /// that points at the notebook, and the other cells are still read (#898).
 #[test]

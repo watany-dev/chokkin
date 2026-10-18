@@ -10,14 +10,17 @@ const TEST_DIRS: &[&str] = &["tests", "test"];
 pub(super) const NESTED_TEST_DIR: &str = "tests";
 
 pub(super) fn default_scanned_dirs() -> impl Iterator<Item = &'static str> {
-    TEST_DIRS.iter().copied().chain(["scripts"])
+    TEST_DIRS
+        .iter()
+        .copied()
+        .chain(["scripts", "examples", "docs"])
 }
 
 /// Root directories that hold project source rather than build or
 /// environment output, so an `__init__.py` makes them importable by name
 /// (pytest puts the rootdir on `sys.path`).
 pub(super) fn local_package_dirs() -> impl Iterator<Item = &'static str> {
-    default_scanned_dirs().chain(["docs"])
+    default_scanned_dirs()
 }
 
 /// Directories never taken as the distributed package, nor as a namespace

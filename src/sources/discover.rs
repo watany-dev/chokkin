@@ -5,6 +5,7 @@ use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
 
 use super::cache::SourcesCache;
+use super::context::apply_member_context;
 use super::error::SourcesError;
 use super::glob::effective_exclude;
 use super::layout::{infer_layout, pytest_testpaths};
@@ -19,8 +20,10 @@ pub fn discover_sources(
     config: &LoadedConfig,
     manifest: &LoadedManifest,
 ) -> Result<DiscoveredSources, SourcesError> {
-    discover_sources_cached(root, config, manifest, &SourcesCache::default())
-        .map(|discovery| discovery.sources)
+    let mut sources =
+        discover_sources_cached(root, config, manifest, &SourcesCache::default())?.sources;
+    apply_member_context(&mut sources, config.effective.production);
+    Ok(sources)
 }
 
 /// What [`discover_sources_cached`] found besides the inventory.

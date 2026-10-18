@@ -1,5 +1,7 @@
 //! File context assignment (§10).
 
+use std::path::Path;
+
 use super::dirs::{NESTED_TEST_DIR, in_root_test_dir};
 use super::types::{DiscoveredSources, FileContext, LayoutInfo};
 
@@ -26,7 +28,11 @@ pub(crate) fn assign_file_context(path: &str) -> FileContext {
 /// `--production` dropped from the inventory.
 #[must_use]
 pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
-    layout_context(path, assign_file_context(path), layout)
+    notebook_context(
+        path,
+        layout_context(path, assign_file_context(path), layout),
+        layout,
+    )
 }
 
 /// Give `<member>/test/`, `<member>/docs/` and `<member>/examples/` files
@@ -36,12 +42,38 @@ pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> Fil
 pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: bool) {
     let layout = &sources.layout;
     for file in &mut sources.files {
-        file.context = layout_context(&file.path, file.context, layout);
+        file.context = notebook_context(
+            &file.path,
+            layout_context(&file.path, file.context, layout),
+            layout,
+        );
     }
     if production {
         sources
             .files
             .retain(|file| file.context.is_included_in_production());
+    }
+}
+
+fn notebook_context(path: &str, context: FileContext, layout: &LayoutInfo) -> FileContext {
+    if context != FileContext::Runtime
+        || !Path::new(path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ipynb"))
+    {
+        return context;
+    }
+    let (layout, path) = layout
+        .member_for(path)
+        .map_or((layout, path), |(member, rest)| (&member.layout, rest));
+    let in_package = layout
+        .packages
+        .iter()
+        .any(|package| Path::new(path).starts_with(layout.package_dir(package)));
+    if in_package {
+        context
+    } else {
+        FileContext::Dev
     }
 }
 
@@ -252,7 +284,7 @@ mod tests {
         let mut root_layout = layout();
         root_layout.members = vec![MemberLayout {
             path: member.to_owned(),
-            layout: layout(),
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
         }];
         let mut sources = DiscoveredSources {
             root: ProjectRoot {
@@ -339,7 +371,7 @@ mod tests {
         let paths = [
             "providers/google/examples/demo.ipynb",
             "providers/google/examples/demo.py",
-            "providers/google/src/examples/demo.ipynb",
+            "providers/google/src/acme/examples/demo.ipynb",
         ];
 
         let (all, root_layout) = member_sources(&paths, false);
@@ -351,7 +383,7 @@ mod tests {
         let (production, _) = member_sources(&paths, true);
         assert_eq!(
             kept(&production),
-            ["providers/google/src/examples/demo.ipynb"]
+            ["providers/google/src/acme/examples/demo.ipynb"]
         );
         assert_eq!(
             assign_layout_file_context(paths[0], &root_layout),

@@ -128,6 +128,9 @@ module itself reads (a TypeVar, a type alias, a helper) are not reported.
 **Layouts:** src and flat layouts, tests, scripts, docs, examples, Jupyter
 notebooks, build-backend package directories, and uv workspaces or
 auto-detected monorepo members, each analyzed with its own manifest.
+Default discovery includes root examples and docs, plus notebooks at any depth.
+Notebooks outside inferred packages use dev dependencies and are omitted by
+`--production`; test and docs context takes precedence.
 
 **Frameworks and tools:** pytest, Django, FastAPI / uvicorn, Flask, Celery,
 Sphinx, MkDocs, Alembic, tox, nox, pre-commit, and GitHub Actions. Plugins

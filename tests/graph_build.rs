@@ -37,7 +37,6 @@ fn build_graph_registers_files_and_dependencies() {
     let (manifest, sources) = pipeline_inputs("src_layout");
     let graph = build_graph_skeleton(&manifest, &sources).expect("graph");
 
-    // Src layout globs cover `src/`, `tests/` and `scripts/`, so `docs/conf.py` is not a node.
     let files: Vec<_> = graph
         .files()
         .map(|(_, node)| (node.path.as_str(), node.context, node.kind))
@@ -45,6 +44,7 @@ fn build_graph_registers_files_and_dependencies() {
     assert_eq!(
         files,
         [
+            ("docs/conf.py", FileContext::Docs, FileKind::Python),
             ("scripts/run.py", FileContext::Dev, FileKind::Python),
             (
                 "src/acme/__init__.py",

@@ -558,7 +558,9 @@ fn member_inputs(
     let manifest = extract_manifest_with_cache(&member_root, &loaded, cache)?;
     let target_version = resolve_target_version(&loaded.effective, &manifest);
     loaded.effective.target_version = Some(target_version);
-    let sources = discover_sources_cached(&member_root, &loaded, &manifest, sources_cache)?.sources;
+    let mut sources =
+        discover_sources_cached(&member_root, &loaded, &manifest, sources_cache)?.sources;
+    apply_member_context(&mut sources, loaded.effective.production);
     Ok(Some(WorkspaceMemberInputs {
         member: member.clone(),
         manifest,
