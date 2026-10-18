@@ -85,6 +85,8 @@ pub(super) fn command_target_refs(
             let target = match target {
                 PythonTarget::Script(run) => script_target(&run)?,
                 PythonTarget::Module(module) => CommandTarget::Module { module },
+                PythonTarget::App { module, symbols } => CommandTarget::App { module, symbols },
+                PythonTarget::CodeModule(module) => CommandTarget::CodeModule { module },
                 PythonTarget::Opaque(text) => CommandTarget::Opaque { text },
             };
             Some(CommandTargetRef {
@@ -213,7 +215,10 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
         .into_iter()
         .filter_map(|target| match target {
             PythonTarget::Script(run) => Some(run),
-            PythonTarget::Module(_) | PythonTarget::Opaque(_) => None,
+            PythonTarget::Module(_)
+            | PythonTarget::App { .. }
+            | PythonTarget::CodeModule(_)
+            | PythonTarget::Opaque(_) => None,
         })
         .collect()
 }
@@ -222,8 +227,15 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
 pub(super) enum PythonTarget {
     /// A `.py` file run by path.
     Script(ScriptRun),
-    /// A module run with `-m`, served by a runner, or imported by `-c` code.
+    /// A module run with `-m`.
     Module(String),
+    /// A server or task runner imports this module and optionally an attribute.
+    App {
+        module: String,
+        symbols: Vec<String>,
+    },
+    /// A possible import in inline Python, retained only as gap evidence.
+    CodeModule(String),
     /// A variable, a substitution, or an argument shape that is not read.
     Opaque(String),
 }
@@ -390,9 +402,33 @@ fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
     };
     match app {
         Some(app) => {
-            let module = app.split_once(':').map_or(app, |(module, _)| module);
+            let (module, symbols) = match app.split_once(':') {
+                Some((module, attr)) => {
+                    let attr = attr.split_once('(').map_or(attr, |(name, _)| name);
+                    (
+                        module,
+                        is_dotted_identifier(attr)
+                            .then(|| attr.to_owned())
+                            .into_iter()
+                            .collect(),
+                    )
+                },
+                None => (
+                    app,
+                    match runner {
+                        "gunicorn" => vec!["application".to_owned()],
+                        "celery" => vec!["app".to_owned(), "celery".to_owned()],
+                        _ => Vec::new(),
+                    },
+                ),
+            };
             if is_computed(app) {
                 PythonTarget::Opaque(app.to_owned())
+            } else if is_dotted_identifier(module) {
+                PythonTarget::App {
+                    module: module.to_owned(),
+                    symbols,
+                }
             } else {
                 module_target(module)
             }
@@ -458,7 +494,12 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
             directory = args.get(index).copied();
             index += 1;
         } else if matches!(*arg, "-m" | "--module") {
-            return Some(Run::Target(module_target(args.get(index)?)));
+            let module = args.get(index)?;
+            let rest = args.get(index + 1..).unwrap_or_default();
+            return Some(Run::Target(match module_runner(module) {
+                Some(runner) => runner_target(runner, rest),
+                None => module_target(module),
+            }));
         } else if UV_RUN_VALUE_OPTIONS.contains(arg) {
             index += 1;
         } else if !arg.starts_with('-') {
@@ -559,9 +600,9 @@ fn push_module(modules: &mut Vec<PythonTarget>, module: &str) {
     if is_dotted_identifier(module)
         && !modules
             .iter()
-            .any(|seen| matches!(seen, PythonTarget::Module(name) if name == module))
+            .any(|seen| matches!(seen, PythonTarget::CodeModule(name) if name == module))
     {
-        modules.push(PythonTarget::Module(module.to_owned()));
+        modules.push(PythonTarget::CodeModule(module.to_owned()));
     }
 }
 
@@ -787,7 +828,9 @@ mod tests {
                     Some(dir) => format!("script {dir}/{}", run.path),
                     None => format!("script {}", run.path),
                 },
-                PythonTarget::Module(module) => format!("module {module}"),
+                PythonTarget::Module(module)
+                | PythonTarget::App { module, .. }
+                | PythonTarget::CodeModule(module) => format!("module {module}"),
                 PythonTarget::Opaque(text) => format!("opaque {text}"),
             })
             .collect()

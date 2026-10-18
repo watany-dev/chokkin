@@ -3022,12 +3022,10 @@ fn binary_unresolved_script_import_lowers_only_its_block() {
 
 const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
 
-/// A command may be the only thing that runs a file, and commands add no
-/// entries yet (#912): one that runs Python no entry reaches lowers unused
-/// files to likely and is warned once per file (#913).
+/// Acceptance fixture 2 of #888: known command targets are entries (#912),
+/// so they no longer lower unrelated unused files through the #913 gap.
 #[test]
-fn binary_unread_command_target_lowers_unused_files() {
-    let file = |path: &str| (path.to_owned(), "likely".to_owned());
+fn binary_command_targets_are_entries() {
     let mut files = vec![
         ("pyproject.toml", COMMAND_PYPROJECT),
         ("mypkg/__init__.py", ""),
@@ -3045,6 +3043,7 @@ fn binary_unread_command_target_lowers_unused_files() {
             "repos:\n  - repo: local\n    hooks:\n      - id: ghgen\n        name: ghgen\n        entry: python -m mypkg.ghgen\n        language: system\n",
         ),
         ("Procfile", "web: gunicorn mypkg.server:app\n"),
+        ("mypkg/orphan.py", ""),
     ];
     for path in [
         "mypkg/gen.py",
@@ -3053,7 +3052,14 @@ fn binary_unread_command_target_lowers_unused_files() {
         "mypkg/ghgen.py",
         "mypkg/server.py",
     ] {
-        files.push((path, "app = None\n"));
+        files.push((
+            path,
+            if path == "mypkg/server.py" {
+                "app = None\n"
+            } else {
+                ""
+            },
+        ));
     }
     let project = write_project(&files);
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -3076,37 +3082,203 @@ fn binary_unread_command_target_lowers_unused_files() {
         .collect();
     assert_eq!(
         unused,
-        [
-            file("mypkg/gen.py"),
-            file("mypkg/ghgen.py"),
-            file("mypkg/modrun.py"),
-            file("mypkg/server.py"),
-            file("mypkg/toxgen.py"),
-        ],
+        [("mypkg/orphan.py".to_owned(), "certain".to_owned())],
         "{parsed}"
     );
     let stderr = String::from_utf8(output.stderr).expect("utf8");
-    for warning in [
-        "plugin: `.pre-commit-config.yaml:6` runs `mypkg.ghgen` as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `Makefile:2` runs `mypkg/gen.py` and 1 more target as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `Procfile:1` runs `mypkg.server` as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `tox.ini:2` runs `mypkg/toxgen.py` as Python code no entry reaches; unused files are reported below certain",
-    ] {
-        assert!(stderr.contains(warning), "{stderr}");
-    }
+    assert!(!stderr.contains("no entry reaches"), "{stderr}");
+}
 
-    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
-        .args(["--no-cache", "--explain", "CHK001:mypkg/gen.py"])
-        .arg(project.path())
-        .output()
-        .expect("run chokkin");
-    let stderr = String::from_utf8(explain.stderr).expect("utf8");
-    assert!(
-        stderr.contains(
-            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 4 more)"
+#[test]
+fn binary_task_file_commands_reach_first_party_imports() {
+    for (file, command) in [
+        ("Makefile", "gen:\n\tpython -I -W ignore mypkg/gen.py\n"),
+        ("justfile", "gen:\n    python -m mypkg.gen\n"),
+        ("Dockerfile", "RUN python mypkg/gen.py\n"),
+        (
+            "Containerfile",
+            "ENTRYPOINT [\"python\", \"-m\", \"mypkg.gen\"]\n",
         ),
-        "{stderr}"
+        (".gitlab-ci.yml", "gen:\n  script: python mypkg/gen.py\n"),
+        ("tox.ini", "[testenv]\ncommands = python -m mypkg.gen\n"),
+        (
+            "tox.toml",
+            "[env_run_base]\ncommands = [[\"python\", \"mypkg/gen.py\"]]\n",
+        ),
+        (
+            ".pre-commit-config.yaml",
+            "repos:\n  - repo: local\n    hooks:\n      - id: gen\n        entry: python -m mypkg.gen\n",
+        ),
+        ("Procfile", "web: gunicorn mypkg.gen:app\n"),
+        ("Procfile", "web: python -m gunicorn mypkg.gen:app\n"),
+        ("Procfile", "web: uv run -m uvicorn mypkg.gen:app\n"),
+        ("Procfile", "web: uvicorn --factory mypkg.gen:app\n"),
+        ("Procfile", "web: hypercorn mypkg.gen:app\n"),
+        ("Procfile", "web: daphne mypkg.gen:app\n"),
+        (
+            "Procfile",
+            "web: waitress-serve --listen=*:8000 mypkg.gen:app\n",
+        ),
+        (
+            "pyproject.toml",
+            "[tool.pdm.scripts]\ngen = \"python -m mypkg.gen\"\n",
+        ),
+    ] {
+        let pyproject = if file == "pyproject.toml" {
+            format!("{COMMAND_PYPROJECT}\n{command}")
+        } else {
+            COMMAND_PYPROJECT.to_owned()
+        };
+        let mut files = vec![
+            ("pyproject.toml", pyproject.as_str()),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", "def main():\n    pass\n"),
+            ("mypkg/gen.py", "import mypkg.helper\n"),
+            ("mypkg/helper.py", ""),
+            ("mypkg/orphan.py", ""),
+        ];
+        if file != "pyproject.toml" {
+            files.push((file, command));
+        }
+        let project = write_project(&files);
+        let unused: Vec<_> = issue_levels(project.path())
+            .into_iter()
+            .filter(|(code, ..)| code == "CHK001")
+            .collect();
+        assert_eq!(
+            unused,
+            [(
+                "CHK001".to_owned(),
+                "mypkg/orphan.py".to_owned(),
+                "error".to_owned(),
+                "certain".to_owned()
+            )],
+            "{file}: {command}"
+        );
+    }
+}
+
+/// The heuristic reader of `-c` imports remains a gap, rather than proving
+/// that a module mentioned in arbitrary Python text is executed (#913).
+#[test]
+fn binary_inline_python_command_keeps_its_gap() {
+    let project = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/tasks.py", ""),
+        ("Makefile", "gen:\n\tpython -c 'import mypkg.tasks'\n"),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [(
+            "CHK001".to_owned(),
+            "mypkg/tasks.py".to_owned(),
+            "error".to_owned(),
+            "likely".to_owned()
+        )]
     );
+}
+
+#[test]
+fn binary_server_commands_keep_the_loaded_attribute() {
+    for server in [
+        "gunicorn",
+        "uvicorn",
+        "hypercorn",
+        "daphne",
+        "waitress-serve",
+    ] {
+        let target = match server {
+            "gunicorn" => "mypkg.server:create_app('prod')",
+            "uvicorn" => "--factory mypkg.server:create_app",
+            "waitress-serve" => "--call mypkg.server:create_app",
+            _ => "mypkg.server:create_app",
+        };
+        let command = format!("web: {server} {target}\n");
+        let project = write_project(&[
+            ("pyproject.toml", COMMAND_PYPROJECT),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", "def main():\n    pass\n"),
+            (
+                "mypkg/server.py",
+                "def create_app():\n    pass\n\ndef unused():\n    pass\n",
+            ),
+            ("Procfile", &command),
+        ]);
+        let unused: Vec<_> = issue_levels(project.path())
+            .into_iter()
+            .filter(|(code, ..)| code == "CHK006")
+            .map(|(_, target, ..)| target)
+            .collect();
+        assert_eq!(unused, ["mypkg/server.py:unused"], "{server}");
+    }
+}
+
+#[test]
+fn binary_command_runners_keep_implicit_app_attributes() {
+    for command in ["gunicorn mypkg.server", "celery -A mypkg.server worker"] {
+        let procfile = format!("web: {command}\n");
+        let project = write_project(&[
+            ("pyproject.toml", COMMAND_PYPROJECT),
+            ("mypkg/__init__.py", ""),
+            ("mypkg/main.py", "def main():\n    pass\n"),
+            (
+                "mypkg/server.py",
+                "application = None\napp = None\ncelery = None\n",
+            ),
+            ("Procfile", &procfile),
+        ]);
+        let unused: Vec<_> = issue_levels(project.path())
+            .into_iter()
+            .filter(|(code, ..)| code == "CHK006")
+            .map(|(_, target, ..)| target)
+            .collect();
+        let expected = if command.starts_with("gunicorn") {
+            vec!["mypkg/server.py:app", "mypkg/server.py:celery"]
+        } else {
+            vec!["mypkg/server.py:application"]
+        };
+        assert_eq!(unused, expected, "{command}");
+    }
+}
+
+#[test]
+fn binary_task_and_deploy_contexts_hold_in_production() {
+    let pyproject = format!("{COMMAND_PYPROJECT}project = [\"**/*.py\"]\n");
+    let project = write_project(&[
+        ("pyproject.toml", &pyproject),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/live.py", ""),
+        ("mypkg/shared.py", ""),
+        ("mypkg/orphan.py", ""),
+        ("tools/gen.py", "import rich\n"),
+        ("tools/serve.py", "import mypkg.live\n"),
+        ("tools/shared.py", "import mypkg.shared\n"),
+        (
+            "Makefile",
+            "gen:\n\tpython tools/gen.py\n\tpython tools/shared.py\n",
+        ),
+        (
+            "Procfile",
+            "web: python tools/serve.py\nworker: python tools/shared.py\n",
+        ),
+    ]);
+    for production in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_chokkin"));
+        command.args(["--no-cache", "--reporter", "json"]);
+        if production {
+            command.arg("--production");
+        }
+        let output = command.arg(project.path()).output().expect("run chokkin");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+        let issues = parsed["issues"].as_array().expect("issues");
+        assert_eq!(issues.len(), 1, "{parsed}");
+        assert_eq!(issues[0]["target"], "mypkg/orphan.py", "{parsed}");
+        assert_eq!(issues[0]["confidence"], "certain", "{parsed}");
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("no entry reaches"));
+    }
 }
 
 /// A computed target may run any file, so it lowers unused files (#913).

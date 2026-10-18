@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
 use crate::path_util::{is_submodule, join_rel};
-use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_target};
+use crate::plugins::{
+    CommandTarget, PluginHints, ReferenceOrigin, parse_module_symbol, parse_uvicorn_script_target,
+};
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
 use super::auto::detect_auto_entries;
@@ -52,7 +54,7 @@ pub fn build_entry_roots(
             .filter(|candidate| known_paths.contains(&candidate.spec.path)),
     );
     collect_plugin_entries(plugins, &mut candidates);
-    collect_command_entries(plugins, &known_paths, &mut candidates);
+    candidates.extend(command_entries(plugins, sources, &known_paths));
     collect_symbol_ref_entries(
         plugins,
         sources,
@@ -330,23 +332,27 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
     }
 }
 
-/// Commands run their scripts by hand or in CI, so like hatchling's build
-/// scripts (#735) those files are dev (#797). A module of a package keeps its
-/// context, since the package may import it too.
+/// Task/CI scripts are dev, like hatchling's build scripts (#735, #797).
+/// Package modules and deploy targets keep their context (#912).
 pub(crate) fn mark_command_scripts_dev(sources: &mut DiscoveredSources, plugins: &PluginHints) {
     let known_paths = known_file_paths(sources);
-    let scripts: BTreeSet<String> = plugins
-        .config_script_entries
+    let entries = command_entries(plugins, sources, &known_paths);
+    let runtime: BTreeSet<&str> = entries
         .iter()
-        .filter_map(|script| command_script_path(&script.paths, &known_paths))
+        .filter(|entry| entry.context == FileContext::Runtime)
+        .map(|entry| entry.spec.path.as_str())
+        .collect();
+    let scripts: BTreeSet<&str> = entries
+        .iter()
+        .filter(|entry| entry.context == FileContext::Dev)
+        .map(|entry| entry.spec.path.as_str())
         .filter(|path| {
             let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
-            !known_paths.contains(&join_rel(dir, "__init__.py"))
+            !known_paths.contains(&join_rel(dir, "__init__.py")) && !runtime.contains(path)
         })
-        .cloned()
         .collect();
     for file in &mut sources.files {
-        if file.context == FileContext::Runtime && scripts.contains(&file.path) {
+        if file.context == FileContext::Runtime && scripts.contains(file.path.as_str()) {
             file.context = FileContext::Dev;
         }
     }
@@ -359,30 +365,80 @@ fn command_script_path<'a>(
     paths.iter().find(|path| known_paths.contains(*path))
 }
 
-fn collect_command_entries(
+fn command_entries(
     plugins: &PluginHints,
+    sources: &DiscoveredSources,
     known_paths: &BTreeSet<String>,
-    candidates: &mut Vec<EntryCandidate>,
-) {
+) -> Vec<EntryCandidate> {
+    let file_contexts = file_context_index(sources);
+    let mut candidates = Vec::new();
     for script in &plugins.config_script_entries {
         let Some(path) = command_script_path(&script.paths, known_paths) else {
             continue;
         };
-        candidates.push(EntryCandidate {
-            spec: EntrySpec {
-                path: path.clone(),
-                symbol: None,
+        candidates.push(command_candidate(
+            path.clone(),
+            None,
+            FileContext::Dev,
+            &script.origin,
+        ));
+    }
+    for command in &plugins.config_command_targets {
+        let (path, symbols) = match &command.target {
+            CommandTarget::Script { paths } => {
+                (command_script_path(paths, known_paths).cloned(), Vec::new())
             },
-            context: FileContext::Dev,
-            origin: EntryOrigin::Command {
-                label: match script.origin.line {
-                    Some(line) => {
-                        format!("{} ({}:{line})", script.origin.label, script.origin.file)
-                    },
-                    None => format!("{} ({})", script.origin.label, script.origin.file),
-                },
+            CommandTarget::Module { module } => (
+                resolve_module_to_path(&format!("{module}.__main__"), &sources.layout, known_paths)
+                    .or_else(|| resolve_module_to_path(module, &sources.layout, known_paths)),
+                Vec::new(),
+            ),
+            CommandTarget::App { module, symbols } => (
+                resolve_module_to_path(module, &sources.layout, known_paths),
+                symbols.clone(),
+            ),
+            CommandTarget::CodeModule { .. } | CommandTarget::Opaque { .. } => continue,
+        };
+        let Some(path) = path else { continue };
+        let mut context = context_for_path(&path, &file_contexts);
+        let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+        // Deploy commands run in production, even when a task also runs the
+        // same file. Package modules may be imported by runtime code too.
+        let deploy = command.origin.file == "Procfile"
+            || matches!(command.origin.label.as_str(), "RUN" | "CMD" | "ENTRYPOINT");
+        if context == FileContext::Runtime
+            && !deploy
+            && !known_paths.contains(&join_rel(dir, "__init__.py"))
+        {
+            context = FileContext::Dev;
+        }
+        for symbol in std::iter::once(None).chain(symbols.into_iter().map(Some)) {
+            candidates.push(command_candidate(
+                path.clone(),
+                symbol,
+                context,
+                &command.origin,
+            ));
+        }
+    }
+    candidates
+}
+
+fn command_candidate(
+    path: String,
+    symbol: Option<String>,
+    context: FileContext,
+    origin: &ReferenceOrigin,
+) -> EntryCandidate {
+    EntryCandidate {
+        spec: EntrySpec { path, symbol },
+        context,
+        origin: EntryOrigin::Command {
+            label: match origin.line {
+                Some(line) => format!("{} ({}:{line})", origin.label, origin.file),
+                None => format!("{} ({})", origin.label, origin.file),
             },
-        });
+        },
     }
 }
 

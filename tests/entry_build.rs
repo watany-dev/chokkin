@@ -360,6 +360,120 @@ fn commands_running_scripts_by_path_are_dev_entries() {
 }
 
 #[test]
+fn task_entries_preserve_package_and_deploy_contexts_and_command_lines() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let write = |rel: &str, contents: &str| {
+        let path = dir.path().join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    };
+    write(
+        "pyproject.toml",
+        "[tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n",
+    );
+    for path in [
+        "tools/gen.py",
+        "tools/serve.py",
+        "tools/container.py",
+        "pkg/__init__.py",
+        "pkg/gen.py",
+        "tools/shared.py",
+    ] {
+        write(path, "");
+    }
+    write(
+        "Makefile",
+        "gen:\n\tpython tools/gen.py\n\tpython -m pkg.gen\n\tpython tools/shared.py\n",
+    );
+    write(
+        "Procfile",
+        "web: python tools/serve.py\nworker: python tools/shared.py\n",
+    );
+    write(
+        "Dockerfile.dev",
+        "CMD [\"python\", \"tools/container.py\"]\n",
+    );
+    let inputs = load_pipeline(dir.path());
+    let plan = |production| {
+        build_entry_roots(
+            &inputs.config,
+            &inputs.manifest,
+            &inputs.sources,
+            &[],
+            &inputs.plugins,
+            production,
+        )
+    };
+    let all = plan(false);
+    let contexts: Vec<_> = all
+        .roots
+        .iter()
+        .map(|root| (root.path.as_str(), root.context))
+        .collect();
+    assert_eq!(
+        contexts,
+        [
+            ("pkg/gen.py", FileContext::Runtime),
+            ("tools/container.py", FileContext::Runtime),
+            ("tools/gen.py", FileContext::Dev),
+            ("tools/serve.py", FileContext::Runtime),
+            ("tools/shared.py", FileContext::Runtime)
+        ]
+    );
+    let package_entry = all
+        .roots
+        .iter()
+        .find(|root| root.path == "pkg/gen.py")
+        .expect("package entry");
+    assert!(package_entry.origins.iter().any(|origin| matches!(origin, EntryOrigin::Command {label} if label == "make recipe (Makefile:3)")), "{:?}", package_entry.origins);
+    assert_eq!(
+        entry_paths(&plan(true)),
+        [
+            "pkg/gen.py",
+            "tools/container.py",
+            "tools/serve.py",
+            "tools/shared.py"
+        ]
+    );
+}
+
+#[test]
+fn command_module_execution_and_server_import_have_distinct_roots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("pkg")).expect("mkdir");
+    for (path, text) in [
+        ("pyproject.toml", "[tool.chokkin]\nmode = \"app\"\n"),
+        ("pkg/__init__.py", "app = None\n"),
+        ("pkg/__main__.py", ""),
+        ("Makefile", "run:\n\tpython -m pkg\n"),
+        ("Procfile", "web: gunicorn pkg:app\n"),
+    ] {
+        std::fs::write(dir.path().join(path), text).expect("write");
+    }
+    let inputs = load_pipeline(dir.path());
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &[],
+        &inputs.plugins,
+        false,
+    );
+    let execution = plan
+        .roots
+        .iter()
+        .find(|root| root.path == "pkg/__main__.py")
+        .expect("execution entry");
+    assert!(execution.origins.iter().any(|origin| matches!(origin, EntryOrigin::Command {label} if label == "make recipe (Makefile:2)")), "{:?}", execution.origins);
+    let imported = plan
+        .roots
+        .iter()
+        .find(|root| root.path == "pkg/__init__.py")
+        .expect("server entry");
+    assert_eq!(imported.symbols.iter().collect::<Vec<_>>(), ["app"]);
+}
+
+#[test]
 fn workspace_members_add_entry_roots_and_library_members() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();

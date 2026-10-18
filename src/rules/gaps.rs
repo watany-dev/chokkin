@@ -600,11 +600,10 @@ fn keep_first_line<K: Ord>(sites: &mut BTreeMap<K, Option<u32>>, key: K, line: O
     };
 }
 
-/// One gap per command file and target. A computed or unread target may run
-/// any file; a file or module it names that no entry reaches runs code whose
-/// imports are not followed, since commands add no entries yet (#912). A
-/// target that names nothing discovered (a typo, a deleted file, a
-/// third-party module such as `pytest`) hides no project file, so it is no gap.
+/// A computed target may run any file. Heuristic `python -c` imports that no
+/// entry reaches also hide their imports. Known scripts and modules are
+/// entries (#912); a dev entry left out of production hides no runtime code.
+/// A target naming nothing discovered hides no project file (#913).
 fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef]) -> Vec<Gap> {
     let known_paths: BTreeSet<String> = context
         .sources
@@ -617,13 +616,10 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
     for command in commands {
         let text = match &command.target {
             CommandTarget::Opaque { text } => text.clone(),
-            CommandTarget::Script { paths } => {
-                match paths.iter().find(|path| known_paths.contains(*path)) {
-                    Some(path) if unreached(path) => path.clone(),
-                    _ => continue,
-                }
-            },
-            CommandTarget::Module { module } => {
+            CommandTarget::Script { .. }
+            | CommandTarget::Module { .. }
+            | CommandTarget::App { .. } => continue,
+            CommandTarget::CodeModule { module } => {
                 let layout = &context.sources.layout;
                 let path =
                     resolve_module_to_path(&format!("{module}.__main__"), layout, &known_paths)
