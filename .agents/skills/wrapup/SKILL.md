@@ -1,0 +1,56 @@
+---
+name: wrapup
+description: >
+  Post-work review gate. Run after a task's implementation is done and before
+  handing it off: correctness review, over-engineering review, take in only the
+  findings worth taking, then sweep comments. Fire when the user invokes
+  $wrapup or says "作業後レビュー", "wrapup", "仕上げて", or when an
+  implementation task is finished and about to be committed or pushed.
+---
+
+# wrapup
+
+実装が終わった後の仕上げ。レビュー2本を回し、**有用な指摘だけ**を取り込み、
+最後にコメントを掃除する。
+
+## 手順
+
+1. **CI**: `make check` (fmt-check → lint (clippy + doc) → test → deny →
+   machete) が通っていること。落ちていたらここで直す
+2. **正しさのレビュー**: Claude Code なら `/code-review`。それ以外のエージェント
+   （Codex / Cursor）は同等のレビューを自分で行う —
+   `git diff <base>...HEAD` を読み、バグ・エラー処理漏れ・境界条件・
+   テスト欠落を指摘として列挙する
+3. **過剰設計のレビュー**: `ponytail-review` スキルを差分に適用する
+4. **取り込み**: 下の基準で選別し、採用したものだけ直す
+5. **コメント掃除**: `cleanup-comments` スキルを適用する
+6. **CI を通してコミット**。1〜5 で入った修正は実装と同じコミットでよいが、
+   コメントのみの変更は別コミットにする
+
+## 取り込み基準
+
+採用する:
+
+- 動作が変わる欠陥（誤動作・クラッシュ・リーク・境界条件）
+- 差分が短くなる指摘（`delete:` / `stdlib:` / `yagni:` / `shrink:`）
+- テストが無い分岐の追加
+- 新しい抽出や形が、認識できない入力を黙って捨てている（ADR 0005）。捨てて
+  よいのは、どの rule にも効かないとコメントで言えるときだけ
+- `unsafe` / `unwrap` / `expect` / `panic!` の混入、`std::path` を使わない
+  パス操作（chokkin の不変条件違反）
+
+見送る:
+
+- 好みの問題、命名の言い換え、差分の外
+- 今の要件に無い一般化・将来への備え
+- 既存コードの様式に反する提案（周囲に合わせる）
+
+見送った指摘は理由を 1 行で報告する。黙って捨てない。
+
+## 注意
+
+- ドキュメント同期は wrapup の手順に含めない。`README.md` / `README.ja.md` /
+  `docs/dev/spec.ja.md` / `CLAUDE.md` / `AGENTS.md` を更新する必要があるときは
+  `update-docs` を個別に呼ぶ。
+- chokkin は Python コードを実行しない静的解析ツール。レビューや検証のために
+  解析対象プロジェクトのコードを実行することは絶対にない。
