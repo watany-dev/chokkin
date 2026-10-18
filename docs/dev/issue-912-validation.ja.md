@@ -53,6 +53,14 @@ wrapup の正しさレビューでは production の gap、module execution と 
 区別、factory / 暗黙の app 属性を取り込んだ。過剰設計レビューに削減案はなく、
 コメントは context / unknown-input の理由を説明するものを残した。
 
+hosted CI の Semgrep は、既存の security-audit の report validator にある
+`new RegExp` 2 か所で止まった。CLI が pattern を読むのは同梱の
+`report-schema.json` だけで、3 か所とも同じ線形の正規表現である。
+finding の入力は pattern を指定できないため、この 2 か所だけに理由付きの
+rule-specific annotation を別コミットで加えた。固定した Semgrep 1.178.0 の
+`p/default --error` は finding 0、既存の Node validator テスト 65 件も PASS。
+解析ロジックは変わらないので、以下の release binary と corpus 計測はそのままである。
+
 ## OSS corpus
 
 35 OSS project と 10 recall fixture を同じ checkout で比較した。

@@ -318,6 +318,8 @@ function collectSchemaErrors(schema, location = "schema") {
         errors.push(`${p}.pattern: expected string`);
       } else {
         try {
+          // The CLI loads patterns only from the checked-in report-schema.json.
+          // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
           new RegExp(node.pattern);
         } catch (error) {
           errors.push(`${p}.pattern: invalid regular expression`);
@@ -448,6 +450,8 @@ function validate(value, schema, p, errors) {
         errors.push(`${p}: must contain a visible character`);
       }
     }
+    // The checked-in schema's only pattern is linear; findings cannot set it.
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
     if (hasOwn(schema, "pattern") && !(new RegExp(schema.pattern).test(value))) {
       errors.push(`${p}: must match pattern ${JSON.stringify(schema.pattern)}`);
     }
