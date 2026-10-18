@@ -479,15 +479,32 @@ fn read_settings(
         }
 
         for field in ["WSGI_APPLICATION", "ASGI_APPLICATION"] {
-            if let Some(value) = assigned_value(&stmts, field)
-                && let Some(target) = string_value(value)
-                && let Some((module, symbol)) = parse_module_symbol(&target)
-            {
+            let Some(value) = assigned_value(&stmts, field) else {
+                continue;
+            };
+            let target = string_value(value);
+            // Unconfigured handlers name no project module to hide.
+            if matches!(value, Expr::NoneLiteral(_)) || target.as_deref() == Some("") {
+                continue;
+            }
+            if let Some((module, symbol)) = target.as_deref().and_then(application_target) {
                 contrib.symbol_refs.push(SymbolReference {
                     module,
                     symbol,
                     origin: origin(value.start(), field),
                 });
+            } else {
+                let line = Some(lines.line(value.start()));
+                push_unread(
+                    contrib,
+                    warnings,
+                    rel.clone(),
+                    line,
+                    SettingsUnread::UnreadField {
+                        field: field.to_owned(),
+                        site: import_site(&rel, line),
+                    },
+                );
             }
         }
 
@@ -543,6 +560,18 @@ fn read_settings(
             SettingsUnread::UnreadCall { call, site },
         );
     }
+}
+
+// Django's import_string uses a final dot; retain the colon form already read
+// by the plugin for existing configurations.
+fn application_target(target: &str) -> Option<(String, String)> {
+    parse_module_symbol(target).or_else(|| {
+        if !is_dotted_identifier(target) {
+            return None;
+        }
+        let (module, symbol) = target.rsplit_once('.')?;
+        Some((module.to_owned(), symbol.to_owned()))
+    })
 }
 
 /// Calls that run other files into the settings namespace, which the plugin

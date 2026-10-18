@@ -4,12 +4,12 @@
 
 ## ビルドと再現条件
 
-baseline は `d2c30ac`、HEAD の Rust source tree は `991413e238af9037a4d91e3c6f09d6fe5934c703`。baseline は独立した worktree と target directory、HEAD は別の target directory で `cargo build --release --locked --bin chokkin` した。
+baseline は `d2c30ac`、HEAD の Rust source tree は `1a326af5a56e69bc4e27680935199c1a29ae5fb6`。baseline は独立した worktree と target directory、HEAD は別の target directory で `cargo build --release --locked --bin chokkin` した。
 
 | Build | Binary | Version | MD5 |
 |---|---|---|---|
 | base | `target/issue-1003/target-base/release/chokkin` | `chokkin 0.7.7` | `49d03f938920f1107e87c8c2a3c73d18` |
-| head | `target/issue-1003/target-head/release/chokkin` | `chokkin 0.7.7` | `b96bf1a3e3ecd0f57119a6969c3bca93` |
+| head | `target/issue-1003/target-head/release/chokkin` | `chokkin 0.7.7` | `ef69e31506b58afbe8cd80f42423cf7e` |
 
 同じ package version だが MD5 は異なる。fixture の `AUTHENTICATION_BACKENDS` でだけ参照する backend と、その backend が import する helper を release binary で解析した。`--production` の CHK001 は baseline の backend / helper / unused の 3 件から、HEAD は unused だけの 1 件になった。
 
@@ -109,26 +109,26 @@ label 付き finding の precision と rule 別件数 (info は別列):
 | CHK009 | 0 | 5 | 0 | 0 | 0 | 0 | n/a | n/a | 0 |
 | CHK010 | 202 | 525 | 108 | 7 | 0 | 87 | 56.9 | 93.9 | 1 |
 
-build と corpus 測定の並行実行による負荷を避け、medium の 16 project は追加で baseline / HEAD の順序を交互に入れ替えて各 3 回ずつ測った。以下は cold run の median (ms)。最大の HEAD median は 77.0 ms で 2 秒の gate 内。速度改善の主張はしない。
+build と corpus 測定の並行実行による負荷を避け、medium の 16 project は追加で baseline / HEAD の順序を交互に入れ替えて各 3 回ずつ測った。以下は cold run の median (ms)。最大の HEAD median は 132.5 ms で 2 秒の gate 内。速度改善の主張はしない。
 
 | Project | Baseline ms | HEAD ms |
 |---|---:|---:|
-| requests | 28.3 | 26.2 |
-| urllib3 | 47.1 | 62.7 |
-| click | 35.8 | 29.8 |
-| jinja | 21.4 | 31.0 |
-| werkzeug | 25.6 | 26.2 |
-| flask | 24.8 | 22.3 |
-| httpx | 20.2 | 20.4 |
-| starlette | 19.6 | 19.6 |
-| uvicorn | 17.5 | 16.4 |
-| attrs | 19.9 | 18.5 |
-| structlog | 16.2 | 16.1 |
-| typer | 26.0 | 26.2 |
-| pydantic | 78.4 | 77.0 |
-| virtualenv | 25.1 | 25.7 |
-| poetry | 56.0 | 56.9 |
-| pdm | 39.8 | 38.1 |
+| requests | 23.2 | 18.0 |
+| urllib3 | 27.7 | 27.3 |
+| click | 20.8 | 17.5 |
+| jinja | 20.5 | 19.7 |
+| werkzeug | 26.0 | 27.5 |
+| flask | 20.9 | 21.0 |
+| httpx | 20.0 | 23.4 |
+| starlette | 40.4 | 22.7 |
+| uvicorn | 29.5 | 20.9 |
+| attrs | 21.2 | 21.0 |
+| structlog | 20.8 | 20.4 |
+| typer | 63.1 | 47.9 |
+| pydantic | 151.6 | 132.5 |
+| virtualenv | 33.8 | 49.3 |
+| poetry | 57.3 | 61.2 |
+| pdm | 38.2 | 40.6 |
 
 ## チェックとレビュー
 
@@ -138,6 +138,8 @@ build と corpus 測定の並行実行による負荷を避け、medium の 16 p
 
 初回 CI の mutation gate では 6 件が生き残った。partial tuple、named key を要求する位置の list / tuple、list unpacking、import slot 外の subscript 更新、従来の Django field を二重に参照にしないことの negative case を追加した。報告された 6 mutation を個別に再適用し、それぞれ regression test が失敗することをローカルで確認した。
 
+追加の reference-kind test で、既存の WSGI / ASGI reader が `module:application` だけを読み、Django の通常の `module.application` を落としていたことも分かった。同じ module 内の小さな修正として別 commit にした。colon 表記は保ち、`None` / 空文字列は未設定、計算式や不正な target は field の gap にする。両 field の release 再現で backend / helper / unused の CHK001 は 3 → 1、computed target の gap は settings の 2 行目を指すことを確認した。変更後に release build、Saleor の全 mode と 28 trace、OSS corpus を再測定し、結果は上の表のまま変わらなかった。
+
 ## 再現コマンド
 
 ```sh
@@ -146,8 +148,8 @@ git worktree add target/issue-1003/wt-base d2c30ac
 CARGO_TARGET_DIR=target/issue-1003/target-head cargo build --release --locked --bin chokkin
 scripts/clone-oss-fixtures.sh
 scripts/oss-metrics.py -b target/issue-1003/target-base/release/chokkin -o target/issue-1003/metrics/base-final -r 1 --with-strict
-scripts/oss-metrics.py -b target/issue-1003/target-head/release/chokkin -o target/issue-1003/metrics/head-final -r 3 --baseline target/issue-1003/metrics/base-final --with-strict --gate
+scripts/oss-metrics.py -b target/issue-1003/target-head/release/chokkin -o target/issue-1003/metrics/head-server -r 3 --baseline target/issue-1003/metrics/base-final --with-strict --gate
 make check
 ```
 
-実測は base / head の収集を並行に行い、head の収集後に `scripts/oss-metrics.py` の `finding_diff` / `downgrade_vs_vanish` / `compare_md` / `chk003_gate_count` で比較した。上の逐次コマンドは同じ測定・gate を再現するもの。生 JSON、corpus の lock、比較表、trace、再現 harness は `target/issue-1003/` と `/tmp/issue-1003-*.py` に残した。
+初回の実測は base / head の収集を並行に行い、`scripts/oss-metrics.py` の比較関数で diff / gate を計算した。追加の WSGI / ASGI 修正後は上の HEAD コマンドを `--baseline --with-strict --gate` 付きで実行し、`metrics/head-server/` に最終結果を固定した。生 JSON、corpus の lock、比較表、trace、再現 harness は `target/issue-1003/` と `/tmp/issue-1003-*.py` に残した。

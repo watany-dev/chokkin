@@ -544,7 +544,7 @@ DJANGO_SETTINGS_MODULE が指す settings module (なければ settings.py) をe
 INSTALLED_APPS の文字列をmodule referenceにする
 MIDDLEWARE の文字列をsymbol/module referenceにする
 ROOT_URLCONF をmodule referenceにする
-WSGI_APPLICATION / ASGI_APPLICATION を module:symbol reference にする
+WSGI_APPLICATION / ASGI_APPLICATION の module.symbol を module:symbol reference にする (既存のコロン表記も読む)
 migrations/**/*.py はframework-used扱いにする
 ```
 
@@ -555,6 +555,8 @@ settings を読めないことは gap にする (§11、#914)。Django project �
 `INSTALLED_APPS` / `MIDDLEWARE` は文字列 literal list として読み、literal list でなければ partial parse 警告を出す。追加の import 設定は `src/plugins/django/settings_refs.rs` の `IMPORT_PATHS` で定義する (#1003)。`AUTHENTICATION_BACKENDS` / `PASSWORD_HASHERS` / `DATABASE_ROUTERS` の list・tuple、`DEFAULT_FILE_STORAGE` / `STATICFILES_STORAGE` / `EMAIL_BACKEND` / `SESSION_ENGINE` / `TEST_RUNNER` / `FORM_RENDERER` / `CSRF_FAILURE_VIEW` の文字列、`AUTH_PASSWORD_VALIDATORS[*].NAME`、`STORAGES.*.BACKEND`、`TEMPLATES[*].BACKEND` と `OPTIONS` の `context_processors` / `libraries` / `builtins`、`LOGGING` の handler の `class` と handler・filter・formatter の `()` を module reference にする。nested container は literal の値だけを読み、storage の bucket 名など他の option は third-party import とみなさない。値が計算式や名前、container の展開などで読み切れなければ、読めた literal は残し、その field と行を示す settings gap・warning を出す (ADR 0005)。省略された optional key は gap にしない。
 
 表に無い設定も、代入の右辺にある dotted path の文字列 literal が発見した first-party module または `module.attr` (module が存在するもの) を指せば module reference にする。`BUILTIN_PLUGINS` / `PRIVATE_FILE_STORAGE` / `CELERY_BROKER_TRANSPORT` のような独自設定も `--production` で辿れる。module-level の `if` / `try` 等の block、型注釈付き代入、`+=`、`STORAGES['default']['BACKEND'] = ...` のような literal key・index による更新も読む。known field の key が計算式なら、右辺の first-party 文字列は拾うが、import slot を決められないので field の gap にする。関数・class・lambda 本体と dict の key は読まない。各 reference の origin は settings file・文字列の行・field 名にし、`--explain` の根拠にも使う。first-party に解決できない文字列は参照にしない。任意の設定は import を表すとは限らず、存在しない first-party module も隠さないため gap にもしない。表に無い field の計算式そのものは評価しない。これらの設定は、辿った star import 先からも同じように読む。
+
+`WSGI_APPLICATION` / `ASGI_APPLICATION` は Django の通常の dotted path (`pkg.server.application`) と従来から読む `pkg.server:application` を symbol reference にする。`None` / 空文字列は application を設定していないので参照も gap も足さない。計算式や不正な target で読み切れなければ、field と行を示す settings gap・warning にする。
 
 pytest pluginの例。
 

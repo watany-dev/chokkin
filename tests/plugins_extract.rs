@@ -511,6 +511,46 @@ fn django_import_settings_preserve_existing_reference_kinds() {
 }
 
 #[test]
+fn django_server_applications_read_dotted_targets_or_report_unknown_values() {
+    for field in ["WSGI_APPLICATION", "ASGI_APPLICATION"] {
+        for (value, referenced, unread) in [
+            ("'mysite.server.application'", true, false),
+            ("'mysite.server:application'", true, false),
+            ("None", false, false),
+            ("''", false, false),
+            ("build_application()", false, true),
+            ("APPLICATION", false, true),
+            ("'mysite.server.bad-name'", false, true),
+            ("'not_a_target'", false, true),
+        ] {
+            let settings = format!("INSTALLED_APPS = []\n{field} = {value}\n");
+            let hints = django_project(&[
+                ("mysite/__init__.py", ""),
+                ("mysite/server.py", "application = None\n"),
+                ("mysite/settings.py", &settings),
+            ]);
+            let contrib = django_contrib(&hints);
+            assert_eq!(
+                contrib.symbol_refs.len(),
+                usize::from(referenced),
+                "{field} = {value}"
+            );
+            assert_eq!(
+                !contrib.unread_settings.is_empty(),
+                unread,
+                "{field} = {value}"
+            );
+            if let Some(reference) = contrib.symbol_refs.first() {
+                assert_eq!(reference.module, "mysite.server");
+                assert_eq!(reference.symbol, "application");
+                assert_eq!(reference.origin.line, Some(2));
+                assert_eq!(reference.origin.label, field);
+            }
+        }
+    }
+}
+
+#[test]
 fn django_import_settings_follow_star_imports_and_module_assignments() {
     let hints = django_project(&[
         ("mysite/__init__.py", ""),

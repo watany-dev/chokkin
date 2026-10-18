@@ -3199,6 +3199,8 @@ fn binary_django_import_settings_reach_files_in_production() {
         "CELERY_BROKER_TRANSPORT = 'mysite.backend.Transport'",
         "PRIVATE_FILE_STORAGE = 'mysite.backend.Storage'",
         "CUSTOM_MODULE = 'mysite.backend'",
+        "WSGI_APPLICATION = 'mysite.backend.application'",
+        "ASGI_APPLICATION = 'mysite.backend.application'",
     ] {
         let settings = format!("INSTALLED_APPS = []\n{setting}\n");
         let project = write_project(&[
@@ -3230,7 +3232,12 @@ fn binary_django_import_settings_reach_files_in_production() {
             .expect("run chokkin");
         let stderr = String::from_utf8(trace.stderr).expect("utf8");
         let field = setting.split_whitespace().next().expect("field");
-        assert!(stderr.contains(field), "{setting}: {stderr}");
+        let evidence = if matches!(field, "WSGI_APPLICATION" | "ASGI_APPLICATION") {
+            "file mysite/backend.py"
+        } else {
+            field
+        };
+        assert!(stderr.contains(evidence), "{setting}: {stderr}");
     }
 }
 
