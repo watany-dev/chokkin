@@ -100,7 +100,7 @@ Python では module top-level の名前が原則 import 可能なので、`unus
 
 **layout:** src layout と flat layout、tests、scripts、docs、examples、Jupyter notebook、build backend 設定による package directory、uv workspace や自動検出した monorepo member(それぞれ自身の manifest で解析)。
 
-**framework とツール:** pytest、Django、FastAPI / uvicorn、Flask、Celery、Sphinx、MkDocs、Alembic、tox、nox、pre-commit、GitHub Actions。plugin は純粋な import 解析では見えない entry file・文字列による module 参照・binary usage を追加し、その framework が宣言済み依存にあれば自動で有効になります。例えば Django plugin は `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF` の文字列を module 参照として扱い、`migrations/**` を framework-used にします。FastAPI と Flask の route handler は外部から使われているものとして扱います。
+**framework とツール:** pytest、Django、FastAPI / uvicorn、Flask、Celery、Sphinx、MkDocs、Alembic、tox、nox、pre-commit、GitHub Actions。plugin は純粋な import 解析では見えない entry file・文字列による module 参照・binary usage を追加し、その framework が宣言済み依存にあれば自動で有効になります。例えば Django plugin は `INSTALLED_APPS` / `MIDDLEWARE` / `ROOT_URLCONF`、認証・storage backend の文字列、project の module を指す独自設定の文字列を module 参照として扱い、`migrations/**` を framework-used にします。FastAPI と Flask の route handler は外部から使われているものとして扱います。
 
 **dependency context:** 依存とファイルの両方に context(runtime / dev / test / docs / lint / type / optional extras)を割り当てます。これが `CHK005` の判定根拠です。`tests/` での `import pytest`(pytest が dev group にある)は OK、`src/` での同じ import は misplaced dependency です。`TYPE_CHECKING` 配下だけの import は type context、guard 付きの import(`try: import orjson`、`find_spec(...)`、platform 判定)は info 止まりです。
 

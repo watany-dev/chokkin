@@ -2,6 +2,8 @@
 
 #![allow(clippy::too_many_lines)]
 
+mod settings_refs;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 
@@ -34,9 +36,7 @@ use super::warnings::{PluginsWarning, SettingsUnread};
 
 /// Settings whose string-list values become module references (spec §9
 /// Django plugin). Each is also reported as a partial parse when present but
-/// not a literal list, so `TEMPLATES` (a list of dicts) cannot go here; add a
-/// field such as `AUTHENTICATION_BACKENDS` only with a fixture whose module is
-/// otherwise reported unused.
+/// not a literal list. Nested import settings use `settings_refs` instead.
 const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
 
 /// Fields whose absence from the settings read leaves project files or
@@ -82,6 +82,7 @@ struct SettingsModule {
 /// setter of `DJANGO_SETTINGS_MODULE` imports from (`setter_dir`).
 struct Lookup {
     known: BTreeSet<String>,
+    modules: BTreeSet<String>,
     dir: Option<String>,
 }
 
@@ -121,6 +122,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     // placeholder or another app's settings earlier on must not hide it.
     let first = settings_module.literals.first();
     let mut lookup = Lookup {
+        modules: known
+            .iter()
+            .filter_map(|path| crate::sources::path_to_module(path, &ctx.sources.layout))
+            .collect(),
         known,
         dir: first.and_then(|(_, setter, _)| setter_dir(setter)),
     };
@@ -341,6 +346,7 @@ fn push_unread(
         SettingsUnread::MissingModule { module, .. }
         | SettingsUnread::UnfollowedImport { module, .. } => Some(module.clone()),
         SettingsUnread::UnreadCall { call, .. } => Some(call.clone()),
+        SettingsUnread::UnreadField { field, .. } => Some(field.clone()),
         SettingsUnread::UnreadModule { .. } => Some("DJANGO_SETTINGS_MODULE".to_owned()),
         SettingsUnread::NoSettings | SettingsUnread::Unreadable { .. } => None,
     };
@@ -432,6 +438,16 @@ fn read_settings(
                     origin: origin(*start, field),
                 });
             }
+        }
+
+        let (references, unread) = settings_refs::extract(lookup, &stmts, &rel, &lines);
+        contrib.module_refs.extend(references);
+        for origin in unread {
+            let reason = SettingsUnread::UnreadField {
+                field: origin.label,
+                site: import_site(&origin.file, origin.line),
+            };
+            push_unread(contrib, warnings, origin.file, origin.line, reason);
         }
 
         if !urlconf_read

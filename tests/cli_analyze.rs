@@ -3184,6 +3184,125 @@ fn django_settings_package(manage: &str) -> tempfile::TempDir {
     ])
 }
 
+#[test]
+fn binary_django_import_settings_reach_files_in_production() {
+    for setting in [
+        "AUTHENTICATION_BACKENDS = ['mysite.backend.Backend']",
+        "PASSWORD_HASHERS = ['mysite.backend.Hasher']",
+        "DATABASE_ROUTERS = ('mysite.backend.Router',)",
+        "STORAGES = {'default': {'BACKEND': 'mysite.backend.Storage'}}",
+        "STORAGES = {}\nSTORAGES['default'] = {'BACKEND': 'mysite.backend.Storage'}",
+        "DEFAULT_FILE_STORAGE = 'mysite.backend.Storage'",
+        "TEMPLATES = [{'OPTIONS': {'context_processors': ['mysite.backend.processor']}}]",
+        "LOGGING = {'handlers': {'custom': {'class': 'mysite.backend.Handler'}}}",
+        "BUILTIN_PLUGINS = ['mysite.backend.Plugin']",
+        "CELERY_BROKER_TRANSPORT = 'mysite.backend.Transport'",
+        "PRIVATE_FILE_STORAGE = 'mysite.backend.Storage'",
+        "CUSTOM_MODULE = 'mysite.backend'",
+    ] {
+        let settings = format!("INSTALLED_APPS = []\n{setting}\n");
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+            ),
+            (
+                "manage.py",
+                "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+            ),
+            ("mysite/__init__.py", ""),
+            ("mysite/settings.py", &settings),
+            ("mysite/backend.py", "from . import helper\n"),
+            ("mysite/helper.py", ""),
+            ("mysite/unused.py", ""),
+        ]);
+        let issues = json_issues(project.path(), &["--production", "--no-cache"]);
+        let unused: Vec<_> = issues
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .map(|issue| issue["path"].as_str().expect("path"))
+            .collect();
+        assert_eq!(unused, ["mysite/unused.py"], "{setting}");
+        let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--production", "--no-cache", "--trace", "mysite/backend.py"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(trace.stderr).expect("utf8");
+        let field = setting.split_whitespace().next().expect("field");
+        assert!(stderr.contains(field), "{setting}: {stderr}");
+    }
+}
+
+#[test]
+fn binary_django_import_settings_explain_the_setting_line() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = []\nAUTHENTICATION_BACKENDS = [\n    'unknown_backend.Custom',\n]\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    let issue = issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK010")
+        .expect("unresolved backend");
+    assert_eq!(issue["path"], "mysite/settings.py");
+    assert_eq!(issue["line"], 3);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--explain",
+            "CHK010:mysite/settings.py:unknown_backend",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("AUTHENTICATION_BACKENDS"), "{stderr}");
+    assert!(stderr.contains("mysite/settings.py:3"), "{stderr}");
+}
+
+#[test]
+fn binary_django_computed_import_settings_lower_unused_findings() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = []\nAUTHENTICATION_BACKENDS = build_backends()\n",
+        ),
+        ("mysite/backend.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &["--production", "--no-cache"]);
+    let unused = issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK001")
+        .expect("unused backend");
+    assert_ne!(unused["confidence"], "certain");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--production",
+            "--no-cache",
+            "--explain",
+            "CHK001:mysite/backend.py",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("AUTHENTICATION_BACKENDS"), "{stderr}");
+    assert!(stderr.contains("mysite/settings.py:2"), "{stderr}");
+}
+
 /// A settings module named by `DJANGO_SETTINGS_MODULE` is read wherever it
 /// lives, assigned or `setdefault`, and its star imports supply the fields
 /// (#914).
