@@ -26,7 +26,7 @@ use super::error::PluginsError;
 use super::fastapi;
 use super::flask;
 use super::pytest;
-use super::types::PluginHints;
+use super::types::{PluginEntry, PluginHints};
 
 /// Inputs for [`extract_plugin_hints_with_parse`].
 #[derive(Clone, Copy)]
@@ -106,6 +106,52 @@ pub fn extract_plugin_hints_with_parse(
         config_command_targets: scan.command_targets,
         warnings,
     })
+}
+
+/// Before parsing, plugins can name files outside the project's source globs.
+/// Other hints and warnings are extracted again with the complete inventory.
+pub(crate) fn discover_plugin_entries(
+    config: &LoadedConfig,
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+) -> Vec<PluginEntry> {
+    let ctx = PluginContext {
+        root: &config.root,
+        config: &config.effective,
+        sources,
+        manifest,
+        parse: &ParseSummary::default(),
+    };
+    let mut entries = Vec::new();
+    for plugin in PluginId::all() {
+        if !config
+            .effective
+            .plugins
+            .get(plugin)
+            .copied()
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let contrib = match plugin {
+            PluginId::Django => django::extract(&ctx).0,
+            PluginId::Sphinx => doctools::extract(*plugin, &ctx),
+            PluginId::Alembic => alembic::extract(&ctx),
+            // These plugins either add no path entries or select them only
+            // from the existing inventory, so they cannot add a source here.
+            PluginId::Pytest
+            | PluginId::Fastapi
+            | PluginId::Flask
+            | PluginId::Celery
+            | PluginId::Tox
+            | PluginId::Nox
+            | PluginId::PreCommit
+            | PluginId::GithubActions
+            | PluginId::MkDocs => continue,
+        };
+        entries.extend(contrib.entries);
+    }
+    entries
 }
 
 #[derive(Serialize, Deserialize)]

@@ -20,14 +20,15 @@ use crate::manifest::{
 };
 use crate::path_util::{join_rel, rel_to_root, resolve_under_root};
 use crate::plugins::{
-    EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
+    EnablerScope, PluginActivation, PluginActivationReason, discover_plugin_entries,
+    resolve_plugin_activations,
 };
 use crate::reporters::escape_control;
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, LocalTrees, MemberLayout,
-    ProjectLayout, SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
-    unpackaged_module_dirs,
+    ProjectLayout, SourcesCache, SourcesError, SourcesWarning, apply_member_context,
+    discover_sources_cached, unpackaged_module_dirs,
 };
 
 use super::error::ProbeError;
@@ -223,6 +224,8 @@ pub(super) fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
+    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
+    include_plugin_sources(&loaded, &manifest, &mut sources)?;
     let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
     apply_member_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
@@ -243,7 +246,6 @@ pub(super) fn probe_project_with_cache(
             count: nested.len(),
         });
     }
-    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
     let local_trees = LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective);
 
     Ok(ProbeReport {
@@ -264,6 +266,59 @@ pub(super) fn probe_project_with_cache(
         plugin_activations,
         warnings,
     })
+}
+
+/// Reuse discovery's exclusions, ignore rules and symlink policy for plugin
+/// entries; only their paths bypass the project globs (#932).
+fn include_plugin_sources(
+    loaded: &LoadedConfig,
+    manifest: &LoadedManifest,
+    sources: &mut DiscoveredSources,
+) -> Result<(), SourcesError> {
+    let known: BTreeSet<_> = sources
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    let entries: BTreeMap<_, _> = discover_plugin_entries(loaded, manifest, sources)
+        .into_iter()
+        .filter(|entry| {
+            !known.contains(entry.spec.path.as_str())
+                && Path::new(&entry.spec.path)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+                && (!loaded.effective.production || entry.context.is_included_in_production())
+        })
+        .map(|entry| (entry.spec.path, entry.context))
+        .collect();
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let mut expanded = loaded.clone();
+    expanded.effective.project = entries.keys().map(|path| globset::escape(path)).collect();
+    let extra =
+        discover_sources_cached(&loaded.root, &expanded, manifest, &SourcesCache::default())?
+            .sources;
+    for mut file in extra.files {
+        let Some(context) = entries.get(&file.path) else {
+            continue;
+        };
+        file.context = *context;
+        if let Some(dir) = file.path.strip_suffix("/__init__.py") {
+            sources.layout.package_dirs.insert(dir.to_owned());
+        }
+        sources.files.push(file);
+    }
+    sources
+        .files
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    sources.effective_globs.extend(expanded.effective.project);
+    for warning in extra.warnings {
+        if !sources.warnings.contains(&warning) {
+            sources.warnings.push(warning);
+        }
+    }
+    Ok(())
 }
 
 /// Each member's manifest warnings, under root-relative paths (#888).
@@ -878,6 +933,106 @@ mod tests {
 
         let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
         assert_eq!(report.production_tests, []);
+    }
+
+    /// Plugin entries bypass project selection, while opt-outs and non-files
+    /// keep the discovery policy they had before #932.
+    #[test]
+    fn plugin_sources_respect_discovery_filters() {
+        for (config, ignored, conf, production, included) in [
+            ("", "", Some(""), false, true),
+            ("exclude = ['docs/conf.py']", "", Some(""), false, false),
+            ("exclude = ['docs/**']", "", Some(""), false, false),
+            ("", "docs/", Some(""), false, false),
+            ("respect_gitignore = false", "docs/", Some(""), false, true),
+            (
+                "[tool.chokkin.plugins]\nsphinx = false",
+                "",
+                Some(""),
+                false,
+                false,
+            ),
+            ("", "", Some(""), true, false),
+            ("", "", None, false, false),
+        ] {
+            let temp = TempDir::new().expect("tempdir");
+            fs::create_dir_all(temp.path().join("src/acme")).expect("package");
+            fs::create_dir(temp.path().join(".git")).expect("git");
+            fs::write(temp.path().join("src/acme/__init__.py"), "").expect("package");
+            fs::write(temp.path().join(".gitignore"), ignored).expect("ignore");
+            fs::write(
+                temp.path().join("pyproject.toml"),
+                format!("[project]\nname = 'acme'\nversion = '0.0.0'\n\n[tool.chokkin]\nproject = ['src/**/*.py']\n{config}\n"),
+            ).expect("manifest");
+            if let Some(conf) = conf {
+                fs::create_dir(temp.path().join("docs")).expect("docs");
+                fs::write(temp.path().join("docs/conf.py"), conf).expect("conf");
+                // A named entry does not widen to its directory.
+                fs::write(temp.path().join("docs/unrelated.py"), "").expect("unrelated");
+            }
+            let report = probe_project(
+                temp.path(),
+                None,
+                &RuntimeOverrides {
+                    production: Some(production),
+                    ..RuntimeOverrides::default()
+                },
+            )
+            .expect("probe");
+            let entry = report
+                .sources
+                .files
+                .iter()
+                .find(|file| file.path == "docs/conf.py");
+            assert_eq!(
+                entry.is_some(),
+                included,
+                "{config}, {ignored}, production={production}"
+            );
+            if let Some(entry) = entry {
+                assert_eq!(entry.context, FileContext::Docs);
+            }
+            assert!(
+                report
+                    .sources
+                    .files
+                    .iter()
+                    .all(|file| file.path != "docs/unrelated.py")
+            );
+        }
+    }
+
+    /// The second walk can observe an ignore-file error that appeared after
+    /// the inventory walk; that warning must still reach the user (#932).
+    #[test]
+    fn plugin_sources_keep_new_walk_warnings() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::create_dir_all(temp.path().join("src/acme")).expect("package");
+        fs::create_dir(temp.path().join(".git")).expect("git");
+        fs::write(temp.path().join("src/acme/__init__.py"), "").expect("package");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = 'acme'\nversion = '0.0.0'\n",
+        )
+        .expect("manifest");
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        let mut loaded = load_config(&report.root).expect("config");
+        loaded
+            .effective
+            .plugins
+            .insert(crate::config::PluginId::Sphinx, true);
+        let mut sources = report.sources;
+        assert!(sources.warnings.is_empty());
+
+        fs::create_dir(temp.path().join("docs")).expect("docs");
+        fs::write(temp.path().join("docs/conf.py"), "").expect("conf");
+        fs::write(temp.path().join(".gitignore"), "bad{glob\n").expect("ignore");
+        include_plugin_sources(&loaded, &report.manifest, &mut sources).expect("plugin sources");
+
+        let warnings = sources.warnings.iter().filter(|warning| {
+            matches!(warning, SourcesWarning::PathUnreadable { path, .. } if path.ends_with(".gitignore"))
+        }).count();
+        assert_eq!(warnings, 1, "{:?}", sources.warnings);
     }
 
     #[test]

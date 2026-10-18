@@ -474,7 +474,7 @@ discovery が拾った notebook（`.ipynb`）は深さを問わず全て entry �
 
 module top-level に `if __name__ == "__main__":` の block を持つ file も、深さと file 名を問わず entry にする（rule `main-block`、#1026）。この block は `python path/to/file.py` で直接実行するために書くもので、fastmcp の `contrib/mcp_mixin/example.py` や airflow の `gunicorn_config.py` のように、どこからも import されない file がこれを持つ。file 名でなく内容で決めるので `scripts/**` などの path 規則に漏れた置き場も拾う。guard は §6 の `in_main_block` と同じ `__name__ == "__main__"` の比較で、`elif` や `and` の中（`__name__ == "__main__" and not TYPE_CHECKING`）も含むが、その比較だけで branch が除外されるときに限る。`or` の相手が不明なら branch は残るので数えず、`if TYPE_CHECKING:` のように比較を含まない除外も数えない。`__main__.py` と notebook は常に `__main__` として動くので数えない。関数や class の body の中の block はその file の実行方法を示さないので対象外にし、`__name__ in ("__main__",)` など認識しない形の guard も entry にしない。認識できないときは file が orphan のまま CHK001 に残るので、見逃しは silence でなく報告になる。file の context は discovery のまま（test tree の block は test、package 内の block は runtime）で、`--production` では runtime 以外の block を落とす。mode の判定は file 名だけで見るので、深い `app.py` が block を持っても library は app にならない。`--trace` は origin `auto: main-block` で示す。
 
-entry の参照先 (`module:attr`) を source file に対応付けられないとき、その entry は root にせず、`` entry: could not map `mod` to a source file (`project.scripts.x` in `pyproject.toml`) `` を warning に出す。workspace member の manifest の entry も同じで、file は root からの path で書く。ただし、inventory には無いが disk に対応する file がある (`exclude` した file を指す) ときは、その file を path entry と同じく skip した entry として扱い、下の `` entry: skipped entry `path` `` を出して gap にする (#933)。disk のどこにも file が無い参照先 (typo、build 時に生成する module、install 済みの distribution の module) は、読めた code を何も実行しないので、disk に無い config entry と揃えて gap にしない。root にしようとした file が discovery の inventory に無いとき (exclude した config entry や `manage.py` など) も、`` entry: skipped entry `path`: not a discovered source file; unused files and dependencies are reported below certain `` を出す。その file が import するものは読まないので、skip した entry は gap にする (§11、#923)。member の manifest の entry が、member の inventory にあって root の inventory に無いとき (root の `exclude` が member の file を外したとき) も、同じ warning を root からの path で出して gap にする (#934)。disk に無い config entry や directory を指す config entry は source discovery が `sources: …` で報告するので、重ねて出さず、何も実行しないので gap にもしない。
+entry の参照先 (`module:attr`) を source file に対応付けられないとき、その entry は root にせず、`` entry: could not map `mod` to a source file (`project.scripts.x` in `pyproject.toml`) `` を warning に出す。workspace member の manifest の entry も同じで、file は root からの path で書く。ただし、inventory には無いが disk に対応する file がある (`exclude` した file を指す) ときは、その file を path entry と同じく skip した entry として扱い、下の `` entry: skipped entry `path` `` を出して gap にする (#933)。disk のどこにも file が無い参照先 (typo、build 時に生成する module、install 済みの distribution の module) は、読めた code を何も実行しないので、disk に無い config entry と揃えて gap にしない。root にしようとした file が discovery の inventory に無いとき (exclude した config entry や plugin entry など) も、`` entry: skipped entry `path`: not a discovered source file; unused files and dependencies are reported below certain `` を出す。その file が import するものは読まないので、skip した entry は gap にする (§11、#923)。member の manifest の entry が、member の inventory にあって root の inventory に無いとき (root の `exclude` が member の file を外したとき) も、同じ warning を root からの path で出して gap にする (#934)。disk に無い config entry や directory を指す config entry は source discovery が `sources: …` で報告するので、重ねて出さず、何も実行しないので gap にもしない。
 
 ただし、library projectではaggressiveにunused filesを出すと誤検知が増える。`mode = "auto"` の判定は次にする。
 
@@ -535,6 +535,17 @@ pluginの責務は3つだけにする。
 2. string/module referencesを追加する
 3. binary usageを追加する
 ```
+
+plugin が entry にした実在する `.py` は、layout の推定 glob や明示した `project` の
+外にあっても source inventory に加え、通常の parser で読む (#932)。root と workspace
+member の `docs/conf.py`、flat layout の root `manage.py` も、その import が到達性と
+依存の使用に効く。追加は名指しした file だけで、親 directory の全体には広げない。
+plugin の有効化と member の確定後、parse より前に entry を一度集める。通常の plugin
+抽出は parse 後に行い、追加 file を含めた hint と warning を使う。`exclude`・gitignore・
+symlink の除外は通常の discovery と同じにし、`--production` では plugin が指定した
+test / docs / dev entry を追加しない。除外された実在 file は §8 の skip warning と gap を
+保ち、読めない file は §6 の parse warning と gap にする。disk に無い entry は従来どおり
+source にせず、gap にもしない。
 
 Django pluginの例。
 

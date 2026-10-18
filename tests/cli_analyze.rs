@@ -2323,7 +2323,7 @@ fn binary_member_sphinx_conf_is_a_docs_entry() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"core\", \"providers/*\", \"devel-common\"]\n",
+            "[project]\nname = \"root\"\nversion = \"0.1.0\"\n\n[tool.uv.workspace]\nmembers = [\"core\", \"providers/*\", \"devel-common\"]\n\n[tool.chokkin]\nproject = [\"core/**/*.py\", \"providers/*/src/**/*.py\", \"devel-common/**/*.py\"]\n",
         ),
         (
             "core/pyproject.toml",
@@ -3792,6 +3792,159 @@ fn binary_skipped_entry_lowers_unused_files_and_distributions() {
             level("CHK001", "acme/helper.py", "certain"),
             level("CHK002", "requests", "certain"),
         ]
+    );
+}
+
+/// Plugin entries outside the layout's globs must contribute their imports,
+/// rather than merely lowering every unused finding (#932).
+#[test]
+fn binary_plugin_entries_outside_project_globs_are_read() {
+    for (entry, package, settings, dependencies, plugins) in [
+        (
+            "docs/conf.py",
+            "src/acme",
+            "",
+            "[dependency-groups]\ndocs = [\"requests\"]\n",
+            "[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        (
+            "manage.py",
+            "acme",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'acme.settings')\n",
+            "",
+            "",
+        ),
+    ] {
+        for project_glob in [
+            String::new(),
+            format!("project = [\"{package}/**/*.py\"]\n"),
+        ] {
+            let project = write_project(&[
+                (
+                    "pyproject.toml",
+                    &format!(
+                        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"rich\", \"requests\"]\n\n\
+                         {dependencies}\n[tool.chokkin]\nmode = \"app\"\n{project_glob}\n{plugins}"
+                    ),
+                ),
+                (
+                    entry,
+                    &format!("{settings}import requests\nfrom acme import used\n"),
+                ),
+                (&format!("{package}/__init__.py"), ""),
+                (
+                    &format!("{package}/used.py"),
+                    "# used by the plugin entry\n",
+                ),
+                (&format!("{package}/orphan.py"), "# unused\n"),
+                (
+                    &format!("{package}/settings.py"),
+                    "INSTALLED_APPS = []\nMIDDLEWARE = []\nROOT_URLCONF = 'acme.urls'\n",
+                ),
+                (&format!("{package}/urls.py"), ""),
+            ]);
+            let issues = json_issues(project.path(), &["--no-cache", "--strict"]);
+            assert!(
+                issues
+                    .iter()
+                    .all(|issue| issue["target"] != format!("{package}/used.py")),
+                "{entry}: {issues:?}"
+            );
+            assert!(
+                issues
+                    .iter()
+                    .all(|issue| issue["code"] != "CHK002" || issue["target"] != "requests"),
+                "{entry}: {issues:?}"
+            );
+            let unused = issues
+                .iter()
+                .find(|issue| issue["code"] == "CHK002" && issue["target"] == "rich")
+                .expect("unused rich");
+            assert_eq!(unused["confidence"], "certain", "{entry}: {issues:?}");
+            let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+                .args(["--no-cache", "--reporter", "json"])
+                .arg(project.path())
+                .output()
+                .expect("run chokkin");
+            let stderr = String::from_utf8(output.stderr).expect("utf8");
+            assert!(!stderr.contains("skipped entry"), "{entry}: {stderr}");
+            let cold = json_issues(project.path(), &["--strict"]);
+            assert_eq!(cold, issues, "{entry}: cold cache");
+            assert_eq!(
+                json_issues(project.path(), &["--strict"]),
+                issues,
+                "{entry}: warm cache"
+            );
+        }
+    }
+}
+
+/// A Django settings package can also be the plugin's missing `.py` entry
+/// (#932); its package directory must join the layout as well.
+#[test]
+fn binary_plugin_settings_package_outside_project_globs_is_read() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'acme'\nversion = '0.1.0'\ndependencies = ['requests']\n\n[tool.chokkin]\nproject = ['src/acme/*.py']\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'acme.settings')\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/urls.py", ""),
+        (
+            "src/acme/settings/__init__.py",
+            "import requests\nINSTALLED_APPS = []\nMIDDLEWARE = []\nROOT_URLCONF = 'acme.urls'\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert!(
+        issues.iter().all(|issue| issue["code"] != "CHK002"),
+        "{issues:?}"
+    );
+    let probe = chokkin::probe_project(project.path(), None, &chokkin::RuntimeOverrides::default())
+        .expect("probe");
+    assert!(
+        probe
+            .sources
+            .layout
+            .package_dirs
+            .contains("src/acme/settings")
+    );
+}
+
+/// Once discovered, an unreadable plugin entry uses the parse gap instead
+/// of claiming its imports are known (#932, ADR 0005).
+#[test]
+fn binary_unreadable_plugin_entry_keeps_unused_findings_below_certain() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'acme'\nversion = '0.1.0'\ndependencies = ['rich']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/orphan.py", ""),
+        ("docs/conf.py", "def broken(:\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("parse: skipped `docs/conf.py`: syntax error"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("entry: skipped entry"), "{stderr}");
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert!(
+        issues.iter().any(|issue| issue["code"] == "CHK002"
+            && issue["target"] == "rich"
+            && issue["confidence"] == "likely"),
+        "{issues:?}"
     );
 }
 
