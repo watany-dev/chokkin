@@ -494,8 +494,7 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
             directory = args.get(index).copied();
             index += 1;
         } else if matches!(*arg, "-m" | "--module") {
-            let module = args.get(index)?;
-            let rest = args.get(index + 1..).unwrap_or_default();
+            let (module, rest) = args.get(index..)?.split_first()?;
             return Some(Run::Target(match module_runner(module) {
                 Some(runner) => runner_target(runner, rest),
                 None => module_target(module),

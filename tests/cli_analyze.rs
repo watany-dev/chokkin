@@ -3217,7 +3217,12 @@ fn binary_server_commands_keep_the_loaded_attribute() {
 
 #[test]
 fn binary_command_runners_keep_implicit_app_attributes() {
-    for command in ["gunicorn mypkg.server", "celery -A mypkg.server worker"] {
+    for command in [
+        "gunicorn mypkg.server",
+        "uv run -m gunicorn mypkg.server",
+        "uv run --group deploy --module gunicorn mypkg.server",
+        "celery -A mypkg.server worker",
+    ] {
         let procfile = format!("web: {command}\n");
         let project = write_project(&[
             ("pyproject.toml", COMMAND_PYPROJECT),
@@ -3234,7 +3239,7 @@ fn binary_command_runners_keep_implicit_app_attributes() {
             .filter(|(code, ..)| code == "CHK006")
             .map(|(_, target, ..)| target)
             .collect();
-        let expected = if command.starts_with("gunicorn") {
+        let expected = if command.contains("gunicorn") {
             vec!["mypkg/server.py:app", "mypkg/server.py:celery"]
         } else {
             vec!["mypkg/server.py:application"]

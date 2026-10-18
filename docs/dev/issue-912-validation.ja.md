@@ -9,7 +9,7 @@
 | binary | version | md5 |
 | --- | --- | --- |
 | `target-base/release/chokkin` | 0.7.7 | `ef69e31506b58afbe8cd80f42423cf7e` |
-| `target-head/release/chokkin` | 0.7.7 | `19f12ed521e24ee67a3663668237cd1d` |
+| `target-head/release/chokkin` | 0.7.7 | `51b47cc0c7f50f13c46030424eb41617` |
 
 #912 の 5 command に、command からも import からも届かない control file
 `mypkg/orphan.py` を加えた。同じ project を app / library の両 mode で解析した。
@@ -59,7 +59,16 @@ hosted CI の Semgrep は、既存の security-audit の report validator にあ
 finding の入力は pattern を指定できないため、この 2 か所だけに理由付きの
 rule-specific annotation を別コミットで加えた。固定した Semgrep 1.178.0 の
 `p/default --error` は finding 0、既存の Node validator テスト 65 件も PASS。
-解析ロジックは変わらないので、以下の release binary と corpus 計測はそのままである。
+この annotation 自体は解析ロジックを変えない。
+
+続く mutation gate は 34 件中 23 caught / 9 unviable / 2 missed だった。
+2 件は `uv run -m` の runner 引数の開始位置 `index + 1` を `index - 1` / `index * 1`
+にするものだった。`-1` は module flag と runner 名を戻すが、その組は reader が
+読み飛ばすため同値になる。`*1` は bare module target の前に runner 名を残し、
+colon を持つ既存の再現例では誤りが隠れていた。bare な gunicorn target と
+`--group ... --module` を追加し、`*1` の mutation でテストが失敗することを確認した。
+手動の offset 計算を slice の `split_first()` に置き換え、`make check` と
+以下の release / corpus / cache gate を再実行した。
 
 ## OSS corpus
 
@@ -104,8 +113,8 @@ precision 改善ではなく、冒頭の再現例で誤検出の解消を確認�
 
 | 時間 | baseline | HEAD |
 | --- | ---: | ---: |
-| project 別中央値の合計 | 9,505.31 ms | 8,739.22 ms |
-| medium project の最大中央値 | 92.38 ms | 102.60 ms |
+| project 別中央値の合計 | 9,384.87 ms | 8,916.80 ms |
+| medium project の最大中央値 | 87.59 ms | 85.21 ms |
 
 medium project はいずれも 2,000 ms の gate 内。時間差を速度改善とは断言しない。
 
