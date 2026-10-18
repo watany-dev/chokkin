@@ -42,6 +42,10 @@ them when a maintainer, workflow, or job name changes.
   - `Test (ubuntu-24.04)`, `Test (macos-14)`, `Test (windows-latest)`
   - `Security (cargo-deny)`
 
+  Require `Semgrep` as well: its scan uses `--error` to fail on findings and
+  uploads SARIF even when it fails. The workflow alone does not prevent merging;
+  add this exact job name to the ruleset's required status checks.
+
   Also worth requiring: `MSRV (1.96) + chokkin baseline`,
   `Repo checks (actionlint, generated maps)`, and from the Release workflow
   `Test (dist profile, RUST_TOOLCHAIN)`, `Test action (HEAD wheel)`, each
