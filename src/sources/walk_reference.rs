@@ -479,7 +479,7 @@ mod tests {
         let root = temp.path().join("repo");
         write_file(&root.join("pkg/sub/gen.py"), "");
         write_file(&root.join("pkg/sub/.gitignore"), "");
-        fs::write(root.join("pkg/sub/.gitignore"), b"gen.py\n\xff\n").expect("write");
+        fs::write(root.join("pkg/sub/.gitignore"), b"\xff\ngen.py\n").expect("write");
         write_file(&root.join("lib/x.py"), "");
         #[cfg(unix)]
         std::os::unix::fs::symlink(root.join("missing"), root.join("lib/.gitignore"))
