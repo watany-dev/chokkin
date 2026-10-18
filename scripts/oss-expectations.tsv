@@ -15,7 +15,9 @@
 sqlalchemy	211	CHK006=136,CHK008=3,CHK010=6
 streamlit	246	CHK004=5,CHK005=3,CHK006=13,CHK010=2
 llama_index	1845	CHK001=1,CHK002=1,CHK003=55,CHK004=550,CHK005=20,CHK006=269,CHK010=376
-transformers	2431	CHK003=40,CHK006=624,CHK008=1,CHK010=203
+# #1023: newly discovered scripts; 12 unused declarations and 63 missing direct
+# dependencies verified in source/block (docs/dev/issue-1023-validation.ja.md).
+transformers	2433	CHK002=12,CHK003=103,CHK006=620,CHK008=1,CHK010=194
 openai-python	1714	CHK004=2,CHK005=1,CHK006=20,CHK010=1
 langchain	651	CHK003=33,CHK004=255,CHK006=56,CHK008=1,CHK010=24
 fastmcp	246	CHK001=13,CHK002=1,CHK003=9,CHK004=46,CHK006=55,CHK010=2

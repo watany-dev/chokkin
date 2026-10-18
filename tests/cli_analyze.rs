@@ -840,6 +840,60 @@ fn accelerate_is_used_when_transformers_is() {
 }
 
 #[test]
+fn pep723_runtime_peers_are_used_without_hiding_unrelated_dependencies() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"transformers\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/transformers/__init__.py", ""),
+        (
+            "examples/train.py",
+            "# /// script\n# dependencies = [\"transformers\", \"accelerate\", \"torch\", \"sentencepiece\", \"protobuf\", \"evaluate\", \"rouge-score\", \"boto3\"]\n# ///\nimport transformers\nimport evaluate\ntransformers.pipeline(\"summarization\")\nevaluate.load(\"rouge\")\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--strict"][..]] {
+        let unused: Vec<_> = issue_keys(&json_issues(project.path(), extra))
+            .into_iter()
+            .filter(|(code, _)| code == "CHK002")
+            .collect();
+        assert_eq!(
+            unused,
+            [(
+                "CHK002".to_owned(),
+                "script:examples/train.py:boto3".to_owned()
+            )]
+        );
+    }
+}
+
+#[test]
+fn pep723_command_argument_list_uses_the_program_and_its_runtime_peers() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "examples/serve.py",
+            "# /// script\n# dependencies = [\"transformers[serving]\", \"kernels\", \"boto3\"]\n# ///\nimport subprocess\nimport sys\ncmd = [\"transformers\", \"serve\", sys.argv[1]]\nsubprocess.run(cmd)\n",
+        ),
+    ]);
+    let unused: Vec<_> = issue_keys(&json_issues(project.path(), &["--strict"]))
+        .into_iter()
+        .filter(|(code, _)| code == "CHK002")
+        .collect();
+    assert_eq!(
+        unused,
+        [(
+            "CHK002".to_owned(),
+            "script:examples/serve.py:boto3".to_owned()
+        )]
+    );
+}
+
+#[test]
 fn binary_version_guarded_stdlib_import_is_not_chk010() {
     // #358: `tomllib` is stdlib on 3.11+, which `>=3.10,<3.15` covers.
     let temp = tempfile::TempDir::new().expect("tempdir");

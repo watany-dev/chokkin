@@ -725,6 +725,9 @@ runtime peer (例: python-multipart)
      (starletteの request.form() が python_multipart を読む)
   -> 同梱の表で対応する provider (starlette / fastapi) の使用があればused扱い
      (accelerate は transformers。device_map="auto" で transformers が読む、#984)
+     transformers の model/tokenizer/audio backend、evaluate の metric backend、
+     datasets の archive backend、torchmetrics の COCO backend、inspect-ai の
+     provider/plugin も同じ表で扱う。project と PEP 723 の両 scope に適用する
   -> provider自体が未使用なら、peerも併せてunused報告する
 
 
@@ -849,10 +852,15 @@ report : subject は `script:<path>:<distribution>`。CHK003 は Error/certain
          (optional / platform-guarded import は対象外)。CHK002 は project CHK002 と
          同じく marker 付きを default で除外し、--strict で報告する
          (script の `requires-python` で常に成り立つ marker は無条件、#919)
+         既知の runtime peer と stub は project scope と同じく provider の使用で
+         used 扱い。subprocess を import する file の command string と literal な
+         argv list/tuple の先頭も tool の使用として読む。計算した program 名は
+         使用の根拠にしない。provider 自体が未使用なら peer も未使用のまま
          CHK002 は一律 likely (default は warning、--strict で error)。block は
          `uv run` が作る環境の宣言で、script が import しない runtime peer (marimo
          notebook の polars / duckdb、transformers の torch) を並べるため (#984)。
-         extra 名やコマンド名がソースの文字列に現れるかで下げる判定は入れない。
+         extra 名やコマンド名が単にソースの文字列に現れるかで confidence を
+         変える判定は入れない。
          動的に組んだ名前や別 process の起動を拾えず、拾えなかった宣言を
          certain のまま残すため。optional extra は default で対象外のまま、
          --strict では certain (--fix で消す) のままにする
