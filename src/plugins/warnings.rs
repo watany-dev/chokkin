@@ -51,6 +51,14 @@ pub enum PluginsWarning {
 /// Why the Django settings could not be found or read (#914).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SettingsUnread {
+    /// A known import setting contains computed values that may hide usage.
+    #[error("settings `{site}` sets `{field}` in a form that could not be fully read")]
+    UnreadField {
+        /// The setting containing the unread import value.
+        field: String,
+        /// Where, as `path:line`.
+        site: String,
+    },
     /// `DJANGO_SETTINGS_MODULE` names a module that is not a project file.
     #[error("settings module `{module}` set in `{site}` is not a project file")]
     MissingModule {

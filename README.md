@@ -134,7 +134,8 @@ Sphinx, MkDocs, Alembic, tox, nox, pre-commit, and GitHub Actions. Plugins
 add entry files, string module references, and binary usage that plain import
 analysis cannot see, and they switch on automatically when the framework is a
 declared dependency. The Django plugin, for example, treats `INSTALLED_APPS`,
-`MIDDLEWARE`, and `ROOT_URLCONF` strings as module references and
+`MIDDLEWARE`, `ROOT_URLCONF`, authentication and storage backend strings, and
+custom settings strings that name project modules as module references, and
 `migrations/**` as framework-used; FastAPI and Flask route handlers count as
 externally used.
 

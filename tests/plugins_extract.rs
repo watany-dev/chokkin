@@ -295,6 +295,310 @@ fn django_project(files: &[(&str, &str)]) -> chokkin::internals::PluginHints {
     extract_at(root)
 }
 
+#[test]
+fn django_import_settings_read_known_nested_fields_and_origins() {
+    let settings = concat!(
+        "INSTALLED_APPS = []\n",
+        "AUTHENTICATION_BACKENDS = ['external.auth.Backend']\n",
+        "PASSWORD_HASHERS = ('external.hashers.Hasher',)\n",
+        "DATABASE_ROUTERS = ['external.router.Router']\n",
+        "DEFAULT_FILE_STORAGE = 'external.storage.Storage'\n",
+        "STATICFILES_STORAGE = 'external.static.Storage'\n",
+        "STORAGES = {'default': {'BACKEND': 'external.media.Storage', 'OPTIONS': {'bucket': 'external.ignore.Value'}}}\n",
+        "TEMPLATES = [{'BACKEND': 'external.templates.Backend', 'OPTIONS': {'context_processors': ['external.context.user'], 'libraries': {'tags': 'external.tags'}, 'builtins': ['external.builtins']}}]\n",
+        "LOGGING = {'handlers': {'mail': {'class': 'external.log.Handler'}}, 'filters': {'custom': {'()': 'external.log.Filter'}}}\n",
+        "AUTH_PASSWORD_VALIDATORS = [{'NAME': 'external.validation.Validator'}]\n",
+        "EMAIL_BACKEND = 'external.email.Backend'\n",
+        "SESSION_ENGINE = 'external.sessions'\n",
+        "TEST_RUNNER = 'external.tests.Runner'\n",
+        "FORM_RENDERER = 'external.forms.Renderer'\n",
+        "CSRF_FAILURE_VIEW = 'external.csrf.failure'\n",
+    );
+    let hints = django_project(&[("mysite/settings.py", settings)]);
+    let refs: Vec<_> = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .map(|reference| (reference.module.as_str(), reference.origin.line))
+        .collect();
+    for (module, line) in [
+        ("external.auth.Backend", 2),
+        ("external.hashers.Hasher", 3),
+        ("external.router.Router", 4),
+        ("external.storage.Storage", 5),
+        ("external.static.Storage", 6),
+        ("external.media.Storage", 7),
+        ("external.templates.Backend", 8),
+        ("external.context.user", 8),
+        ("external.tags", 8),
+        ("external.builtins", 8),
+        ("external.log.Handler", 9),
+        ("external.log.Filter", 9),
+        ("external.validation.Validator", 10),
+        ("external.email.Backend", 11),
+        ("external.sessions", 12),
+        ("external.tests.Runner", 13),
+        ("external.forms.Renderer", 14),
+        ("external.csrf.failure", 15),
+    ] {
+        assert!(
+            refs.contains(&(module, Some(line))),
+            "missing {module}: {refs:?}"
+        );
+    }
+    assert!(
+        !refs
+            .iter()
+            .any(|(module, _)| *module == "external.ignore.Value")
+    );
+    assert!(hints.warnings.is_empty(), "{:?}", hints.warnings);
+}
+
+#[test]
+fn django_custom_settings_only_reference_existing_first_party_values() {
+    let hints = django_project(&[
+        ("mysite/__init__.py", ""),
+        ("mysite/plugins.py", ""),
+        ("mysite/backend.py", ""),
+        ("mysite/key.py", ""),
+        ("mysite/function.py", ""),
+        (
+            "mysite/settings.py",
+            concat!(
+                "INSTALLED_APPS = []\n",
+                "BUILTIN_PLUGINS = ['mysite.plugins.Plugin', 'mysite.plugins']\n",
+                "if True:\n    PRIVATE_STORAGE = {'backend': 'mysite.backend.Storage'}\n",
+                "OTHER = {'mysite.key': 'unknown.backend.Class', 'missing': 'mysite.missing.AppConfig', 'url': 'https://mysite.key', 'name': 'mysite.missing.Unknown', 'package': 'mysite', 'invalid': 'mysite.backend.bad-name'}\n",
+                "def helper():\n    BACKEND = 'mysite.function.Factory'\n",
+            ),
+        ),
+    ]);
+    let refs: Vec<_> = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.origin.label.as_str(),
+                reference.origin.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("mysite.plugins.Plugin", "BUILTIN_PLUGINS", Some(2)),
+            ("mysite.plugins", "BUILTIN_PLUGINS", Some(2)),
+            ("mysite.backend.Storage", "PRIVATE_STORAGE", Some(4)),
+        ]
+    );
+}
+
+#[test]
+fn django_import_settings_keep_literals_and_report_unread_values() {
+    for field in [
+        "AUTHENTICATION_BACKENDS = ['mysite.backend.Backend', computed()]",
+        "PASSWORD_HASHERS = ('mysite.backend.Backend', computed())",
+        "STORAGES = {'default': {'BACKEND': backend_name}}",
+        "TEMPLATES = [{'OPTIONS': {'context_processors': processors}}]",
+        "LOGGING = {'handlers': handlers}",
+        "STORAGES = {'default': {'BACKEND': 'mysite.backend.Backend'}, **other}",
+        "STORAGES[key] = {'BACKEND': backend_name}",
+        "other, AUTHENTICATION_BACKENDS = computed()",
+    ] {
+        let settings = format!("INSTALLED_APPS = []\n{field}\n");
+        let hints = django_project(&[("mysite/settings.py", &settings)]);
+        assert!(
+            !django_contrib(&hints).unread_settings.is_empty(),
+            "{field}"
+        );
+        assert!(
+            hints.warnings.iter().any(|warning| matches!(warning,
+                PluginsWarning::DjangoSettingsUnread { path, line: Some(2), .. }
+                    if path == "mysite/settings.py"
+            )),
+            "{field}: {:?}",
+            hints.warnings
+        );
+        if field.starts_with("AUTHENTICATION_BACKENDS") || field.starts_with("PASSWORD_HASHERS") {
+            assert!(
+                django_contrib(&hints)
+                    .module_refs
+                    .iter()
+                    .any(|reference| reference.module == "mysite.backend.Backend")
+            );
+        }
+    }
+}
+
+#[test]
+fn django_import_settings_require_named_keys_in_nested_containers() {
+    for storage in ["['external.not_a_backend']", "('external.not_a_backend',)"] {
+        let settings = format!("INSTALLED_APPS = []\nSTORAGES = {{'default': {storage}}}\n");
+        let hints = django_project(&[("mysite/settings.py", &settings)]);
+        let contrib = django_contrib(&hints);
+        assert!(
+            contrib.module_refs.is_empty(),
+            "{storage}: {:?}",
+            contrib.module_refs
+        );
+        assert!(!contrib.unread_settings.is_empty(), "{storage}");
+    }
+}
+
+#[test]
+fn django_unpacked_settings_do_not_make_other_values_import_evidence() {
+    for target in [
+        "other, AUTHENTICATION_BACKENDS",
+        "[other, AUTHENTICATION_BACKENDS]",
+    ] {
+        let settings = format!(
+            "INSTALLED_APPS = []\n{target} = ('external.other.Value', ['external.auth.Backend'])\n"
+        );
+        let hints = django_project(&[("mysite/settings.py", &settings)]);
+        let contrib = django_contrib(&hints);
+        assert!(contrib.module_refs.is_empty(), "{:?}", contrib.module_refs);
+        assert!(!contrib.unread_settings.is_empty(), "{target}");
+    }
+}
+
+#[test]
+fn django_import_settings_ignore_updates_outside_import_slots() {
+    let hints = django_project(&[(
+        "mysite/settings.py",
+        "INSTALLED_APPS = []\nSTORAGES = {'default': {'BACKEND': 'external.storage.Backend'}}\nSTORAGES['default']['OPTIONS'] = {'bucket': 'example.bucket'}\n",
+    )]);
+    let refs: Vec<_> = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .map(|reference| reference.module.as_str())
+        .collect();
+    assert_eq!(refs, ["external.storage.Backend"]);
+    assert!(hints.warnings.is_empty(), "{:?}", hints.warnings);
+}
+
+#[test]
+fn django_import_settings_preserve_existing_reference_kinds() {
+    let hints = django_project(&[
+        ("mysite/__init__.py", ""),
+        ("mysite/backend.py", ""),
+        (
+            "mysite/settings.py",
+            concat!(
+                "INSTALLED_APPS = ['mysite.backend']\n",
+                "MIDDLEWARE = ['mysite.backend.Backend']\n",
+                "ROOT_URLCONF = 'mysite.backend'\n",
+                "WSGI_APPLICATION = 'mysite.backend:application'\n",
+                "ASGI_APPLICATION = 'mysite.backend:application'\n",
+            ),
+        ),
+    ]);
+    let contrib = django_contrib(&hints);
+    let refs: Vec<_> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| (reference.module.as_str(), reference.origin.label.as_str()))
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("mysite.backend", "INSTALLED_APPS"),
+            ("mysite.backend.Backend", "MIDDLEWARE"),
+            ("mysite.backend", "ROOT_URLCONF"),
+        ]
+    );
+    assert_eq!(contrib.symbol_refs.len(), 2);
+    assert!(hints.warnings.is_empty(), "{:?}", hints.warnings);
+}
+
+#[test]
+fn django_server_applications_read_dotted_targets_or_report_unknown_values() {
+    for field in ["WSGI_APPLICATION", "ASGI_APPLICATION"] {
+        for (value, referenced, unread) in [
+            ("'mysite.server.application'", true, false),
+            ("'mysite.server:application'", true, false),
+            ("None", false, false),
+            ("''", false, false),
+            ("build_application()", false, true),
+            ("APPLICATION", false, true),
+            ("'mysite.server.bad-name'", false, true),
+            ("'not_a_target'", false, true),
+        ] {
+            let settings = format!("INSTALLED_APPS = []\n{field} = {value}\n");
+            let hints = django_project(&[
+                ("mysite/__init__.py", ""),
+                ("mysite/server.py", "application = None\n"),
+                ("mysite/settings.py", &settings),
+            ]);
+            let contrib = django_contrib(&hints);
+            assert_eq!(
+                contrib.symbol_refs.len(),
+                usize::from(referenced),
+                "{field} = {value}"
+            );
+            assert_eq!(
+                !contrib.unread_settings.is_empty(),
+                unread,
+                "{field} = {value}"
+            );
+            if let Some(reference) = contrib.symbol_refs.first() {
+                assert_eq!(reference.module, "mysite.server");
+                assert_eq!(reference.symbol, "application");
+                assert_eq!(reference.origin.line, Some(2));
+                assert_eq!(reference.origin.label, field);
+            }
+        }
+    }
+}
+
+#[test]
+fn django_import_settings_follow_star_imports_and_module_assignments() {
+    let hints = django_project(&[
+        ("mysite/__init__.py", ""),
+        ("mysite/backend.py", ""),
+        ("mysite/settings.py", "from .base import *\n"),
+        (
+            "mysite/base.py",
+            concat!(
+                "INSTALLED_APPS = []\n",
+                "AUTHENTICATION_BACKENDS: list[str] = ['mysite.backend.Backend']\n",
+                "BUILTIN_PLUGINS = []\n",
+                "BUILTIN_PLUGINS += ('mysite.backend.Plugin',)\n",
+                "EMPTY: str\n",
+                "IGNORED = lambda: 'mysite.backend.Lambda'\n",
+                "class Config:\n    EMAIL_BACKEND = 'mysite.backend.Class'\n",
+                "TEMPLATES = [{'OPTIONS': {}}]\n",
+                "STORAGES = {}\n",
+                "STORAGES['default'] = {'BACKEND': 'external.storage.Backend'}\n",
+                "STORAGES['staticfiles'] = {}\n",
+                "STORAGES['staticfiles']['BACKEND'] = 'external.static.Backend'\n",
+                "TEMPLATES[0]['OPTIONS']['context_processors'] = ['external.context.user']\n",
+            ),
+        ),
+    ]);
+    let refs: Vec<_> = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.origin.file.as_str(),
+                reference.origin.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("mysite.backend.Backend", "mysite/base.py", Some(2)),
+            ("mysite.backend.Plugin", "mysite/base.py", Some(4)),
+            ("external.storage.Backend", "mysite/base.py", Some(11)),
+            ("external.static.Backend", "mysite/base.py", Some(13)),
+            ("external.context.user", "mysite/base.py", Some(14)),
+        ]
+    );
+    assert!(hints.warnings.is_empty(), "{:?}", hints.warnings);
+}
+
 /// A project depending on Django has its settings read without `manage.py`.
 #[test]
 fn django_reads_settings_found_without_a_setter() {

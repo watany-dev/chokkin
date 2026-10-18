@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gunicorn's `python:` config no longer report as unused files (#1026).
 
 ### Fixed
+- Django's usual dotted `WSGI_APPLICATION` and `ASGI_APPLICATION` targets
+  are recognized alongside the previously supported colon notation.
+  Unread targets report a settings gap; unset handlers remain optional.
+- Django settings strings now keep authentication, storage, logging, and other
+  configured modules reachable in production analysis. Custom settings also
+  count when their dotted strings name a project module; computed values in
+  known import settings report a gap instead of implying complete coverage
+  (#1003).
 - Root and workspace-member `setup.py` files are dev entry roots, including
   in src and flat layouts, so build scripts and the helpers they import are
   no longer reported as unused files. Their imports use the build environment's

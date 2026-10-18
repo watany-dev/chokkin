@@ -1,0 +1,112 @@
+mode	status	code	fingerprint	classification	evidence
+default	GONE	CHK001	CHK001:saleor/core/db_routers.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.db_routers (DATABASE_ROUTERS)
+default	GONE	CHK001	CHK001:saleor/core/logging.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.logging (LOGGING)
+default	GONE	CHK001	CHK001:saleor/site/context_processors.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.site.context_processors (context_processors)
+default	GONE	CHK001	CHK001:saleor/tests/runner.py	settings reference / transitive imports	also removed in production
+default	NEW	CHK006	CHK006:saleor/core/db_routers.py:PrimaryReplicaRouter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.db_routers:PrimaryReplicaRouter
+default	NEW	CHK006	CHK006:saleor/core/logging.py:JsonCeleryFormatter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.logging:JsonCeleryFormatter
+default	NEW	CHK006	CHK006:saleor/core/logging.py:JsonCeleryTaskFormatter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.logging:JsonCeleryTaskFormatter
+default	NEW	CHK010	CHK010:saleor/core/logging.py:pythonjsonlogger	newly reached logging module exposes an existing provider-map miss	pythonjsonlogger -> python-json-logger
+production	GONE	CHK001	CHK001:saleor/core/auth_backend.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.auth_backend (AUTHENTICATION_BACKENDS)
+production	GONE	CHK001	CHK001:saleor/core/db_routers.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.db_routers (DATABASE_ROUTERS)
+production	GONE	CHK001	CHK001:saleor/core/hashers.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.hashers (PASSWORD_HASHERS)
+production	GONE	CHK001	CHK001:saleor/core/logging.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.logging (LOGGING)
+production	GONE	CHK001	CHK001:saleor/core/sqs.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.sqs (CELERY_BROKER_TRANSPORT)
+production	GONE	CHK001	CHK001:saleor/core/storages.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.storages (STORAGES)
+production	GONE	CHK001	CHK001:saleor/payment/gateways/stripe/consts.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.payment.gateways.stripe.plugin (BUILTIN_PLUGINS) -> └─ import saleor.payment.gateways.stripe.consts (line 24)
+production	GONE	CHK001	CHK001:saleor/payment/gateways/stripe/plugin.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.payment.gateways.stripe.plugin (BUILTIN_PLUGINS)
+production	GONE	CHK001	CHK001:saleor/payment/gateways/stripe/stripe_api.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.payment.gateways.stripe.plugin (BUILTIN_PLUGINS) -> └─ import saleor.payment.gateways.stripe.stripe_api (line 34)
+production	GONE	CHK001	CHK001:saleor/payment/gateways/stripe/webhooks.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.payment.gateways.stripe.plugin (BUILTIN_PLUGINS) -> └─ import saleor.payment.gateways.stripe.webhooks (line 47)
+production	GONE	CHK001	CHK001:saleor/payment/gateways/utils.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.payment.gateways.stripe.plugin (BUILTIN_PLUGINS) -> └─ import saleor.payment.gateways.utils (line 23)
+production	GONE	CHK001	CHK001:saleor/plugins/admin_email/constants.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.admin_email.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.admin_email.constants (line 24)
+production	GONE	CHK001	CHK001:saleor/plugins/admin_email/notify_events.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.admin_email.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.admin_email.notify_events (line 25)
+production	GONE	CHK001	CHK001:saleor/plugins/admin_email/plugin.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.plugins.admin_email.plugin (BUILTIN_PLUGINS)
+production	GONE	CHK001	CHK001:saleor/plugins/avatax/plugin.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.plugins.avatax.plugin (BUILTIN_PLUGINS)
+production	GONE	CHK001	CHK001:saleor/plugins/openid_connect/client.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.openid_connect.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.openid_connect.client (line 27)
+production	GONE	CHK001	CHK001:saleor/plugins/openid_connect/const.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.openid_connect.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.openid_connect.const (line 28)
+production	GONE	CHK001	CHK001:saleor/plugins/openid_connect/dataclasses.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.openid_connect.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.openid_connect.dataclasses (line 29)
+production	GONE	CHK001	CHK001:saleor/plugins/openid_connect/exceptions.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.openid_connect.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.openid_connect.exceptions (line 30)
+production	GONE	CHK001	CHK001:saleor/plugins/openid_connect/plugin.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.plugins.openid_connect.plugin (BUILTIN_PLUGINS)
+production	GONE	CHK001	CHK001:saleor/plugins/openid_connect/utils.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.openid_connect.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.openid_connect.utils (line 31)
+production	GONE	CHK001	CHK001:saleor/plugins/user_email/constants.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.user_email.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.user_email.constants (line 23)
+production	GONE	CHK001	CHK001:saleor/plugins/user_email/notify_events.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.user_email.plugin (BUILTIN_PLUGINS) -> └─ import saleor.plugins.user_email.notify_events (line 25)
+production	GONE	CHK001	CHK001:saleor/plugins/user_email/plugin.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.plugins.user_email.plugin (BUILTIN_PLUGINS)
+production	GONE	CHK001	CHK001:saleor/plugins/webhook/plugin.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.plugins.webhook.plugin (BUILTIN_PLUGINS)
+production	GONE	CHK001	CHK001:saleor/site/context_processors.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.site.context_processors (context_processors)
+production	GONE	CHK001	CHK001:saleor/webhook/circuit_breaker/storage.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.webhook.circuit_breaker.storage (BREAKER_BOARD_STORAGE_CLASS)
+production	GONE	CHK001	CHK001:saleor/webhook/transport/payment.py	settings reference / transitive imports	Trace path: -> ├─ plugin ref saleor.plugins.webhook.plugin (BUILTIN_PLUGINS) -> └─ import saleor.webhook.transport.payment (line 105)
+production	GONE	CHK002	CHK002:kombu	imports of newly reachable modules use the dependency	kombu
+production	GONE	CHK002	CHK002:stripe	imports of newly reachable modules use the dependency	stripe
+production	GONE	CHK006	CHK006:saleor/account/utils.py:get_user_groups_permissions	newly reachable modules change symbol reference evidence	saleor.account.utils:get_user_groups_permissions
+production	GONE	CHK006	CHK006:saleor/account/utils.py:send_user_event	newly reachable modules change symbol reference evidence	saleor.account.utils:send_user_event
+production	GONE	CHK006	CHK006:saleor/core/jwt.py:get_user_from_access_payload	newly reachable modules change symbol reference evidence	saleor.core.jwt:get_user_from_access_payload
+production	GONE	CHK006	CHK006:saleor/core/jwt.py:is_saleor_token	newly reachable modules change symbol reference evidence	saleor.core.jwt:is_saleor_token
+production	GONE	CHK006	CHK006:saleor/core/tracing.py:otel_trace	newly reachable modules change symbol reference evidence	saleor.core.tracing:otel_trace
+production	GONE	CHK006	CHK006:saleor/graphql/account/dataloaders.py:UserByEmailLoader	newly reachable modules change symbol reference evidence	saleor.graphql.account.dataloaders:UserByEmailLoader
+production	GONE	CHK006	CHK006:saleor/graphql/plugins/dataloaders.py:EmailTemplatesByPluginConfigurationLoader	newly reachable modules change symbol reference evidence	saleor.graphql.plugins.dataloaders:EmailTemplatesByPluginConfigurationLoader
+production	GONE	CHK006	CHK006:saleor/payment/interface.py:GatewayConfig	newly reachable modules change symbol reference evidence	saleor.payment.interface:GatewayConfig
+production	GONE	CHK006	CHK006:saleor/payment/utils.py:price_from_minor_unit	newly reachable modules change symbol reference evidence	saleor.payment.utils:price_from_minor_unit
+production	GONE	CHK006	CHK006:saleor/payment/utils.py:price_to_minor_unit	newly reachable modules change symbol reference evidence	saleor.payment.utils:price_to_minor_unit
+production	GONE	CHK006	CHK006:saleor/payment/utils.py:try_void_or_refund_inactive_payment	newly reachable modules change symbol reference evidence	saleor.payment.utils:try_void_or_refund_inactive_payment
+production	GONE	CHK006	CHK006:saleor/plugins/avatax/__init__.py:CustomerErrors	newly reachable modules change symbol reference evidence	saleor.plugins.avatax:CustomerErrors
+production	GONE	CHK006	CHK006:saleor/plugins/avatax/__init__.py:DEFAULT_TAX_DESCRIPTION	newly reachable modules change symbol reference evidence	saleor.plugins.avatax:DEFAULT_TAX_DESCRIPTION
+production	GONE	CHK006	CHK006:saleor/plugins/avatax/__init__.py:META_DESCRIPTION_KEY	newly reachable modules change symbol reference evidence	saleor.plugins.avatax:META_DESCRIPTION_KEY
+production	GONE	CHK006	CHK006:saleor/plugins/avatax/__init__.py:get_cached_tax_codes_or_fetch	newly reachable modules change symbol reference evidence	saleor.plugins.avatax:get_cached_tax_codes_or_fetch
+production	GONE	CHK006	CHK006:saleor/plugins/avatax/__init__.py:get_checkout_tax_data	newly reachable modules change symbol reference evidence	saleor.plugins.avatax:get_checkout_tax_data
+production	GONE	CHK006	CHK006:saleor/plugins/avatax/__init__.py:get_order_tax_data	newly reachable modules change symbol reference evidence	saleor.plugins.avatax:get_order_tax_data
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:DEFAULT_EMAIL_CONFIGURATION	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:DEFAULT_EMAIL_CONFIGURATION
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:DEFAULT_EMAIL_CONFIG_STRUCTURE	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:DEFAULT_EMAIL_CONFIG_STRUCTURE
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:DEFAULT_SUBJECT_HELP_TEXT	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:DEFAULT_SUBJECT_HELP_TEXT
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:DEFAULT_TEMPLATE_HELP_TEXT	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:DEFAULT_TEMPLATE_HELP_TEXT
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:get_email_subject	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:get_email_subject
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:get_email_template_or_default	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:get_email_template_or_default
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:validate_default_email_configuration	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:validate_default_email_configuration
+production	GONE	CHK006	CHK006:saleor/plugins/email_common.py:validate_format_of_provided_templates	newly reachable modules change symbol reference evidence	saleor.plugins.email_common:validate_format_of_provided_templates
+production	GONE	CHK006	CHK006:saleor/settings.py:WEBHOOK_SYNC_TIMEOUT	newly reachable modules change symbol reference evidence	saleor.settings:WEBHOOK_SYNC_TIMEOUT
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_collection_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_collection_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_invoice_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_invoice_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_list_gateways_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_list_gateways_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_metadata_updated_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_metadata_updated_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_payment_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_payment_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_product_deleted_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_product_deleted_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_product_media_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_product_media_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_sale_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_sale_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_sale_toggle_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_sale_toggle_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_thumbnail_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_thumbnail_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_transaction_session_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_transaction_session_payload
+production	GONE	CHK006	CHK006:saleor/webhook/payloads.py:generate_translation_payload	newly reachable modules change symbol reference evidence	saleor.webhook.payloads:generate_translation_payload
+production	GONE	CHK006	CHK006:saleor/webhook/transport/list_stored_payment_methods.py:get_list_stored_payment_methods_from_response	newly reachable modules change symbol reference evidence	saleor.webhook.transport.list_stored_payment_methods:get_list_stored_payment_methods_from_response
+production	GONE	CHK006	CHK006:saleor/webhook/transport/list_stored_payment_methods.py:get_response_for_payment_gateway_initialize_tokenization	newly reachable modules change symbol reference evidence	saleor.webhook.transport.list_stored_payment_methods:get_response_for_payment_gateway_initialize_tokenization
+production	GONE	CHK006	CHK006:saleor/webhook/transport/list_stored_payment_methods.py:get_response_for_payment_method_tokenization	newly reachable modules change symbol reference evidence	saleor.webhook.transport.list_stored_payment_methods:get_response_for_payment_method_tokenization
+production	GONE	CHK006	CHK006:saleor/webhook/transport/list_stored_payment_methods.py:get_response_for_stored_payment_method_request_delete	newly reachable modules change symbol reference evidence	saleor.webhook.transport.list_stored_payment_methods:get_response_for_stored_payment_method_request_delete
+production	GONE	CHK006	CHK006:saleor/webhook/transport/synchronous/transport.py:trigger_transaction_request	newly reachable modules change symbol reference evidence	saleor.webhook.transport.synchronous.transport:trigger_transaction_request
+production	GONE	CHK006	CHK006:saleor/webhook/transport/utils.py:get_meta_code_key	newly reachable modules change symbol reference evidence	saleor.webhook.transport.utils:get_meta_code_key
+production	GONE	CHK006	CHK006:saleor/webhook/transport/utils.py:get_meta_description_key	newly reachable modules change symbol reference evidence	saleor.webhook.transport.utils:get_meta_description_key
+production	NEW	CHK006	CHK006:saleor/core/auth_backend.py:PluginBackend	newly reachable symbol analyzed; registry usage remains #698	saleor.core.auth_backend:PluginBackend
+production	NEW	CHK006	CHK006:saleor/core/db_routers.py:PrimaryReplicaRouter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.db_routers:PrimaryReplicaRouter
+production	NEW	CHK006	CHK006:saleor/core/hashers.py:SHA512Base64PBKDF2PasswordHasher	newly reachable symbol analyzed; registry usage remains #698	saleor.core.hashers:SHA512Base64PBKDF2PasswordHasher
+production	NEW	CHK006	CHK006:saleor/core/logging.py:JsonCeleryFormatter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.logging:JsonCeleryFormatter
+production	NEW	CHK006	CHK006:saleor/core/logging.py:JsonCeleryTaskFormatter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.logging:JsonCeleryTaskFormatter
+production	NEW	CHK006	CHK006:saleor/core/sqs.py:Transport	newly reachable symbol analyzed; registry usage remains #698	saleor.core.sqs:Transport
+production	NEW	CHK006	CHK006:saleor/core/storages.py:AzureMediaPrivateStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:AzureMediaPrivateStorage
+production	NEW	CHK006	CHK006:saleor/core/storages.py:AzureMediaStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:AzureMediaStorage
+production	NEW	CHK006	CHK006:saleor/core/storages.py:AzureStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:AzureStorage
+production	NEW	CHK006	CHK006:saleor/core/storages.py:GCSMediaPrivateStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:GCSMediaPrivateStorage
+production	NEW	CHK006	CHK006:saleor/core/storages.py:GCSMediaStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:GCSMediaStorage
+production	NEW	CHK006	CHK006:saleor/core/storages.py:S3MediaPrivateStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:S3MediaPrivateStorage
+production	NEW	CHK006	CHK006:saleor/core/storages.py:S3MediaStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.core.storages:S3MediaStorage
+production	NEW	CHK006	CHK006:saleor/payment/gateways/stripe/consts.py:FAILED_STATUSES	newly reachable symbol analyzed; registry usage remains #698	saleor.payment.gateways.stripe.consts:FAILED_STATUSES
+production	NEW	CHK006	CHK006:saleor/payment/gateways/stripe/plugin.py:StripeGatewayPlugin	newly reachable symbol analyzed; registry usage remains #698	saleor.payment.gateways.stripe.plugin:StripeGatewayPlugin
+production	NEW	CHK006	CHK006:saleor/plugins/avatax/plugin.py:DeprecatedAvataxPlugin	newly reachable symbol analyzed; registry usage remains #698	saleor.plugins.avatax.plugin:DeprecatedAvataxPlugin
+production	NEW	CHK006	CHK006:saleor/plugins/openid_connect/plugin.py:OpenIDConnectPlugin	newly reachable symbol analyzed; registry usage remains #698	saleor.plugins.openid_connect.plugin:OpenIDConnectPlugin
+production	NEW	CHK006	CHK006:saleor/plugins/webhook/plugin.py:WebhookPlugin	newly reachable symbol analyzed; registry usage remains #698	saleor.plugins.webhook.plugin:WebhookPlugin
+production	NEW	CHK006	CHK006:saleor/webhook/circuit_breaker/storage.py:RedisStorage	newly reachable symbol analyzed; registry usage remains #698	saleor.webhook.circuit_breaker.storage:RedisStorage
+production	NEW	CHK010	CHK010:saleor/core/logging.py:pythonjsonlogger	newly reached logging module exposes an existing provider-map miss	pythonjsonlogger -> python-json-logger
+strict	GONE	CHK001	CHK001:saleor/core/db_routers.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.db_routers (DATABASE_ROUTERS)
+strict	GONE	CHK001	CHK001:saleor/core/logging.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.core.logging (LOGGING)
+strict	GONE	CHK001	CHK001:saleor/site/context_processors.py	settings reference / transitive imports	Trace path: -> └─ plugin ref saleor.site.context_processors (context_processors)
+strict	GONE	CHK001	CHK001:saleor/tests/runner.py	settings reference / transitive imports	also removed in production
+strict	NEW	CHK006	CHK006:saleor/core/db_routers.py:PrimaryReplicaRouter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.db_routers:PrimaryReplicaRouter
+strict	NEW	CHK006	CHK006:saleor/core/logging.py:JsonCeleryFormatter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.logging:JsonCeleryFormatter
+strict	NEW	CHK006	CHK006:saleor/core/logging.py:JsonCeleryTaskFormatter	newly reachable symbol analyzed; registry usage remains #698	saleor.core.logging:JsonCeleryTaskFormatter
+strict	NEW	CHK010	CHK010:saleor/core/logging.py:pythonjsonlogger	newly reached logging module exposes an existing provider-map miss	pythonjsonlogger -> python-json-logger

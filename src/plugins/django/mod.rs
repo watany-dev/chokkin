@@ -2,6 +2,8 @@
 
 #![allow(clippy::too_many_lines)]
 
+mod settings_refs;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 
@@ -34,9 +36,7 @@ use super::warnings::{PluginsWarning, SettingsUnread};
 
 /// Settings whose string-list values become module references (spec §9
 /// Django plugin). Each is also reported as a partial parse when present but
-/// not a literal list, so `TEMPLATES` (a list of dicts) cannot go here; add a
-/// field such as `AUTHENTICATION_BACKENDS` only with a fixture whose module is
-/// otherwise reported unused.
+/// not a literal list. Nested import settings use `settings_refs` instead.
 const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
 
 /// Fields whose absence from the settings read leaves project files or
@@ -82,6 +82,7 @@ struct SettingsModule {
 /// setter of `DJANGO_SETTINGS_MODULE` imports from (`setter_dir`).
 struct Lookup {
     known: BTreeSet<String>,
+    modules: BTreeSet<String>,
     dir: Option<String>,
 }
 
@@ -121,6 +122,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     // placeholder or another app's settings earlier on must not hide it.
     let first = settings_module.literals.first();
     let mut lookup = Lookup {
+        modules: known
+            .iter()
+            .filter_map(|path| crate::sources::path_to_module(path, &ctx.sources.layout))
+            .collect(),
         known,
         dir: first.and_then(|(_, setter, _)| setter_dir(setter)),
     };
@@ -341,6 +346,7 @@ fn push_unread(
         SettingsUnread::MissingModule { module, .. }
         | SettingsUnread::UnfollowedImport { module, .. } => Some(module.clone()),
         SettingsUnread::UnreadCall { call, .. } => Some(call.clone()),
+        SettingsUnread::UnreadField { field, .. } => Some(field.clone()),
         SettingsUnread::UnreadModule { .. } => Some("DJANGO_SETTINGS_MODULE".to_owned()),
         SettingsUnread::NoSettings | SettingsUnread::Unreadable { .. } => None,
     };
@@ -434,6 +440,16 @@ fn read_settings(
             }
         }
 
+        let (references, unread) = settings_refs::extract(lookup, &stmts, &rel, &lines);
+        contrib.module_refs.extend(references);
+        for origin in unread {
+            let reason = SettingsUnread::UnreadField {
+                field: origin.label,
+                site: import_site(&origin.file, origin.line),
+            };
+            push_unread(contrib, warnings, origin.file, origin.line, reason);
+        }
+
         if !urlconf_read
             && let Some(value) = assigned_value(&stmts, "ROOT_URLCONF")
             && let Some(urlconf) = string_value(value)
@@ -463,15 +479,32 @@ fn read_settings(
         }
 
         for field in ["WSGI_APPLICATION", "ASGI_APPLICATION"] {
-            if let Some(value) = assigned_value(&stmts, field)
-                && let Some(target) = string_value(value)
-                && let Some((module, symbol)) = parse_module_symbol(&target)
-            {
+            let Some(value) = assigned_value(&stmts, field) else {
+                continue;
+            };
+            let target = string_value(value);
+            // Unconfigured handlers name no project module to hide.
+            if matches!(value, Expr::NoneLiteral(_)) || target.as_deref() == Some("") {
+                continue;
+            }
+            if let Some((module, symbol)) = target.as_deref().and_then(application_target) {
                 contrib.symbol_refs.push(SymbolReference {
                     module,
                     symbol,
                     origin: origin(value.start(), field),
                 });
+            } else {
+                let line = Some(lines.line(value.start()));
+                push_unread(
+                    contrib,
+                    warnings,
+                    rel.clone(),
+                    line,
+                    SettingsUnread::UnreadField {
+                        field: field.to_owned(),
+                        site: import_site(&rel, line),
+                    },
+                );
             }
         }
 
@@ -527,6 +560,18 @@ fn read_settings(
             SettingsUnread::UnreadCall { call, site },
         );
     }
+}
+
+// Django's import_string uses a final dot; retain the colon form already read
+// by the plugin for existing configurations.
+fn application_target(target: &str) -> Option<(String, String)> {
+    parse_module_symbol(target).or_else(|| {
+        if !is_dotted_identifier(target) {
+            return None;
+        }
+        let (module, symbol) = target.rsplit_once('.')?;
+        Some((module.to_owned(), symbol.to_owned()))
+    })
 }
 
 /// Calls that run other files into the settings namespace, which the plugin

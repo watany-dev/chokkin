@@ -464,6 +464,9 @@ fn unresolved_import_candidate(
         "check for typos in first-party module names".to_owned(),
         "third-party packages may be missing from dependency declarations".to_owned(),
     ];
+    if let Some(label) = anchor.reference {
+        details.insert(0, format!("`{label}` entry at {site}"));
+    }
     let numbered = others
         .iter()
         .flatten()
