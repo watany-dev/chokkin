@@ -32,7 +32,8 @@ Start a new Codex session in this repository if it has not discovered the skills
 
 Invoke `$security-audit` in Codex or `/security-audit` in Claude Code to use
 [Cloudflare's official security audit skill](https://github.com/cloudflare/security-audit-skill).
-This skill shares the unchanged upstream files through
+Automatic invocation is disabled for both tools; invoke the command explicitly
+when you want an audit. This skill shares the upstream audit instructions through
 `.agents/skills/security-audit -> ../../.claude/skills/security-audit`.
 See the [installation notes](../../.claude/skills/security-audit/INSTALLATION.ja.md)
 for the pinned source commit, requirements, validation, and update instructions.
