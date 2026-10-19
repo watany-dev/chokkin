@@ -212,7 +212,6 @@ impl Locations<'_, '_> {
         }
     }
 
-    /// One `load_from` item, on `lines` of the workspace.
     fn load_item(&mut self, workspace: &Workspace<'_>, lines: Range<usize>, item: &str) {
         let origin = origin_at(workspace.file, lines.start, "load_from");
         let Some((kind, inline)) = item.split_once(':') else {
