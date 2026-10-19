@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
 use crate::path_util::{is_submodule, join_rel};
-use crate::plugins::{PluginHints, parse_module_symbol, parse_uvicorn_script_target};
+use crate::plugins::{
+    CommandTarget, PluginHints, ReferenceOrigin, parse_module_symbol, parse_uvicorn_script_target,
+};
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
 use super::auto::detect_auto_entries;
@@ -53,6 +55,15 @@ pub fn build_entry_roots(
     );
     collect_plugin_entries(plugins, &mut candidates);
     collect_command_entries(plugins, &known_paths, &mut candidates);
+    collect_server_app_entries(
+        plugins,
+        sources,
+        &known_paths,
+        &file_contexts,
+        production,
+        &mut candidates,
+        &mut warnings,
+    );
     collect_symbol_ref_entries(
         plugins,
         sources,
@@ -375,15 +386,83 @@ fn collect_command_entries(
             },
             context: FileContext::Dev,
             origin: EntryOrigin::Command {
-                label: match script.origin.line {
-                    Some(line) => {
-                        format!("{} ({}:{line})", script.origin.label, script.origin.file)
-                    },
-                    None => format!("{} ({})", script.origin.label, script.origin.file),
-                },
+                label: command_label(&script.origin),
             },
         });
     }
+}
+
+/// `label (file:line)`, as `--trace` shows a command origin.
+fn command_label(origin: &ReferenceOrigin) -> String {
+    match origin.line {
+        Some(line) => format!("{} ({}:{line})", origin.label, origin.file),
+        None => format!("{} ({})", origin.label, origin.file),
+    }
+}
+
+/// The apps WSGI/ASGI servers load, from commands and literal
+/// `uvicorn.run`/`uvicorn.Config` calls (#1004). The server imports the module
+/// and reads the attribute, so the file is a root with that symbol, in the
+/// file's own context: `CMD ["uvicorn", "pkg.asgi:app"]` serves production
+/// code. A `uvicorn.run` call in a script also finds the module next to the
+/// script, which `python script.py` puts on `sys.path`. A module that maps to
+/// no discovered file is a third-party or missing app and adds nothing,
+/// unless the file is on disk and discovery left it out.
+#[allow(clippy::too_many_arguments)]
+fn collect_server_app_entries(
+    plugins: &PluginHints,
+    sources: &DiscoveredSources,
+    known_paths: &BTreeSet<String>,
+    file_contexts: &BTreeMap<&str, FileContext>,
+    production: bool,
+    candidates: &mut Vec<EntryCandidate>,
+    warnings: &mut Vec<EntryWarning>,
+) {
+    for command in &plugins.config_command_targets {
+        let CommandTarget::App { module, symbol } = &command.target else {
+            continue;
+        };
+        let Some(path) = resolve_module_to_path(module, &sources.layout, known_paths)
+            .or_else(|| beside_script(module, &command.origin.file, known_paths))
+        else {
+            let warning = unresolved_target(
+                module,
+                &command.origin.file,
+                &command.origin.label,
+                sources,
+                production,
+            );
+            if matches!(warning, EntryWarning::MissingEntryPath { .. }) {
+                warnings.push(warning);
+            }
+            continue;
+        };
+        let context = context_for_path(&path, file_contexts);
+        candidates.push(EntryCandidate {
+            spec: EntrySpec {
+                path,
+                symbol: symbol.clone(),
+            },
+            context,
+            origin: EntryOrigin::Command {
+                label: command_label(&command.origin),
+            },
+        });
+    }
+}
+
+/// The discovered module `module` names in the directory of `script`, a `.py`
+/// file.
+fn beside_script(module: &str, script: &str, known_paths: &BTreeSet<String>) -> Option<String> {
+    let script = std::path::Path::new(script);
+    if script.extension().is_none_or(|ext| ext != "py") {
+        return None;
+    }
+    let dir = script.parent()?.to_str()?;
+    let stem = join_rel(dir, &module.replace('.', "/"));
+    [format!("{stem}.py"), format!("{stem}/__init__.py")]
+        .into_iter()
+        .find(|path| known_paths.contains(path))
 }
 
 #[allow(clippy::too_many_arguments)]

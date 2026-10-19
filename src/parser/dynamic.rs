@@ -184,7 +184,7 @@ fn module_argument(call: &ExprCall) -> Option<&Expr> {
     argument(call, 0, "name")
 }
 
-fn argument<'a>(call: &'a ExprCall, index: usize, keyword: &str) -> Option<&'a Expr> {
+pub(super) fn argument<'a>(call: &'a ExprCall, index: usize, keyword: &str) -> Option<&'a Expr> {
     call.arguments.args.get(index).or_else(|| {
         call.arguments
             .keywords
@@ -341,7 +341,7 @@ pub(super) fn sys_path_hint(expr: &Expr) -> Option<Cow<'_, str>> {
     (!segments.is_empty()).then(|| Cow::Owned(segments.join("/")))
 }
 
-fn str_constant(expr: &Expr) -> Option<&str> {
+pub(super) fn str_constant(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::StringLiteral(literal) => Some(literal.value.to_str()),
         _ => None,

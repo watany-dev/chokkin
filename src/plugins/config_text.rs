@@ -70,7 +70,8 @@ pub(super) fn read_root_file(root: &Path, name: &str) -> Option<(String, String)
     Some((rel_to_root(root, &path), contents))
 }
 
-/// 1-based line of `key = …` inside `[table]`, or of a `[table.key]` header.
+/// 1-based line of `key = …` inside `[table]`, of its first dotted
+/// `key.sub = …` line, or of a `[table.key]` header.
 pub(super) fn toml_key_line(text: &str, table: &str, key: &str) -> Option<u32> {
     let header = format!("[{table}]");
     let sub_header = format!("[{table}.{key}]");
@@ -85,11 +86,21 @@ pub(super) fn toml_key_line(text: &str, table: &str, key: &str) -> Option<u32> {
             continue;
         }
         let line_key = trimmed.split_once('=').map(|(name, _)| name.trim());
-        if in_table && line_key.is_some_and(|name| name.trim_matches(['"', '\'']) == key) {
+        if in_table && line_key.is_some_and(|name| names_key(name, key)) {
             return line_number(index);
         }
     }
     None
+}
+
+/// Whether a TOML line's key part is `key` or starts with `key.`, bare or
+/// quoted.
+fn names_key(name: &str, key: &str) -> bool {
+    let first = match name.chars().next() {
+        Some(quote @ ('"' | '\'')) => name[1..].split(quote).next().unwrap_or_default(),
+        _ => name.split('.').next().unwrap_or_default().trim(),
+    };
+    first == key
 }
 
 /// Value of `key` in INI `[section]` joined with its indented continuation
@@ -217,6 +228,10 @@ mod tests {
         assert_eq!(toml_key_line(text, "tool.pdm.scripts", "lint-all"), Some(6));
         assert_eq!(toml_key_line(text, "tool.pdm.scripts", "serve"), Some(8));
         assert_eq!(toml_key_line(text, "tool.pdm.scripts", "name"), None);
+        let dotted = "[tool.poe.tasks]\nstart.help = \"Run\"\nstart.cmd = \"uvicorn a:app\"\n\"lint.all\".cmd = \"ruff\"\n";
+        assert_eq!(toml_key_line(dotted, "tool.poe.tasks", "start"), Some(2));
+        assert_eq!(toml_key_line(dotted, "tool.poe.tasks", "lint.all"), Some(4));
+        assert_eq!(toml_key_line(dotted, "tool.poe.tasks", "lint"), None);
     }
 
     #[test]

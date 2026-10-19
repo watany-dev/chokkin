@@ -1,5 +1,6 @@
 //! Commands from task runners and deploy files: Makefile, justfile,
-//! Dockerfile / Containerfile, Procfile, `.gitlab-ci.yml` and PDM scripts.
+//! Dockerfile / Containerfile, Procfile, `.gitlab-ci.yml`, and PDM scripts,
+//! poe tasks and hatch environment scripts in `pyproject.toml`.
 //!
 //! Variables, includes and imports are never followed; each command line is
 //! read as written.
@@ -25,6 +26,8 @@ const GITLAB_CI: &str = ".gitlab-ci.yml";
 const DOCKER_INSTRUCTIONS: [&str; 3] = ["RUN", "CMD", "ENTRYPOINT"];
 const GITLAB_SCRIPT_KEYS: [&str; 3] = ["script:", "before_script:", "after_script:"];
 const PDM_SCRIPTS: &str = "tool.pdm.scripts";
+const POE_TASKS: &str = "tool.poe.tasks";
+const HATCH_ENVS: &str = "tool.hatch.envs";
 
 pub(super) fn input_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = MAKEFILE_NAMES
@@ -63,6 +66,8 @@ pub(super) fn scan(
     }
     if let Some(doc) = pyproject {
         scan_pdm_scripts(doc, known, &mut hits);
+        scan_poe_tasks(doc, known, &mut hits);
+        scan_hatch_scripts(doc, known, &mut hits);
     }
     hits
 }
@@ -354,6 +359,148 @@ fn push_pdm_script(
     }
 }
 
+/// poe tasks (#1004). A task runs what its type key names: `cmd` and `shell`
+/// are commands, `script` imports the module before its `:`, and `sequence`,
+/// `parallel` and `switch` hold more tasks. `ref` names a task read on its
+/// own, and `expr` evaluates Python that is not read, though its `imports`
+/// are. A table's `cwd` runs its command from that directory. A table with
+/// none of these runs nothing read; `[tool.poe] include` files are not
+/// followed.
+fn scan_poe_tasks(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut SourceHits) {
+    let Some(tasks) = doc.table(POE_TASKS) else {
+        return;
+    };
+    let poe = doc.table("tool.poe");
+    let option = |key: &str, default: &'static str| -> String {
+        poe.and_then(|poe| poe.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or(default)
+            .to_owned()
+    };
+    let reader = PoeTasks {
+        task_type: option("default_task_type", "cmd"),
+        item_type: option("default_array_item_task_type", "ref"),
+        known,
+    };
+    for (name, task) in tasks {
+        reader.push(task, &reader.task_type, &doc.origin(POE_TASKS, name), hits);
+    }
+}
+
+struct PoeTasks<'a> {
+    /// The type of a task given as a bare string.
+    task_type: String,
+    /// The type of a bare string inside a sequence.
+    item_type: String,
+    known: KnownBinary<'a>,
+}
+
+impl PoeTasks<'_> {
+    fn push(
+        &self,
+        task: &Value,
+        string_type: &str,
+        origin: &ReferenceOrigin,
+        hits: &mut SourceHits,
+    ) {
+        match task {
+            Value::String(_) => self.push_typed(string_type, task, origin, hits),
+            Value::Array(items) => {
+                for item in items {
+                    self.push(item, &self.item_type, origin, hits);
+                }
+            },
+            Value::Table(table) => {
+                let item_type = table
+                    .get("default_item_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&self.item_type);
+                for (key, value) in table {
+                    match key.as_str() {
+                        "sequence" | "parallel" => {
+                            for item in value.as_array().into_iter().flatten() {
+                                self.push(item, item_type, origin, hits);
+                            }
+                        },
+                        "switch" => {
+                            for case in value.as_array().into_iter().flatten() {
+                                self.push(case, &self.task_type, origin, hits);
+                            }
+                        },
+                        "expr" => {
+                            let imports = table.get("imports").and_then(Value::as_array);
+                            for module in imports.into_iter().flatten().filter_map(Value::as_str) {
+                                hits.push_module(module, origin);
+                            }
+                        },
+                        "cmd" | "shell" => match table.get("cwd").and_then(Value::as_str) {
+                            Some(cwd) => {
+                                if let Some(command) = toml_words(value) {
+                                    let command = format!("cd {cwd} && {command}");
+                                    hits.push_command(&command, self.known, origin);
+                                }
+                            },
+                            None => self.push_typed(key, value, origin, hits),
+                        },
+                        "script" => self.push_typed(key, value, origin, hits),
+                        _ => {},
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+
+    /// A `cmd`/`shell`/`script` task's content; other types run no command.
+    fn push_typed(
+        &self,
+        task_type: &str,
+        value: &Value,
+        origin: &ReferenceOrigin,
+        hits: &mut SourceHits,
+    ) {
+        match task_type {
+            "cmd" | "shell" => {
+                if let Some(command) = toml_words(value) {
+                    hits.push_command(&command, self.known, origin);
+                }
+            },
+            "script" => {
+                if let Some(script) = value.as_str() {
+                    hits.push_module(script.split(':').next().unwrap_or(script), origin);
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+/// Scripts of every hatch environment (#1004): a command or a list of them,
+/// each maybe prefixed `- ` to ignore its exit code. `hatch.toml` is not read.
+fn scan_hatch_scripts(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut SourceHits) {
+    let Some(envs) = doc.table(HATCH_ENVS) else {
+        return;
+    };
+    for (env, config) in envs {
+        let Some(scripts) = config.get("scripts").and_then(Value::as_table) else {
+            continue;
+        };
+        let table = format!("{HATCH_ENVS}.{env}.scripts");
+        for (name, value) in scripts {
+            let origin = doc.origin(&table, name);
+            let items = match value {
+                Value::Array(items) => items.as_slice(),
+                other => std::slice::from_ref(other),
+            };
+            for command in items.iter().filter_map(Value::as_str) {
+                let command = command.trim_start();
+                let command = command.strip_prefix("- ").unwrap_or(command);
+                hits.push_command(command, known, &origin);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -470,6 +617,99 @@ mod tests {
         assert_eq!(
             read_first(temp.path(), &MAKEFILE_NAMES),
             Some(("Makefile".to_owned(), "all:\n".to_owned()))
+        );
+    }
+
+    /// Each command target and module reference `scan` reads from `pyproject`,
+    /// with its line.
+    fn pyproject_hits(
+        pyproject: &str,
+        scan: fn(&PyprojectDoc, KnownBinary<'_>, &mut SourceHits),
+    ) -> Vec<String> {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::write(temp.path().join("pyproject.toml"), pyproject).expect("write");
+        let doc = PyprojectDoc::load(temp.path()).expect("pyproject");
+        let mut hits = SourceHits::default();
+        scan(&doc, &known, &mut hits);
+        let line = |origin: &ReferenceOrigin| origin.line.unwrap_or(0);
+        hits.command_targets
+            .iter()
+            .map(|target| format!("{:?} @{}", target.target, line(&target.origin)))
+            .chain(
+                hits.module_refs
+                    .iter()
+                    .map(|module| format!("module {} @{}", module.module, line(&module.origin))),
+            )
+            .collect()
+    }
+
+    #[test]
+    fn poe_tasks_read_commands_scripts_and_nested_tasks() {
+        let pyproject = r#"[tool.poe.tasks]
+start.help = "Run"
+start.cmd = "uvicorn acme.asgi:app --reload"
+shell = { shell = "gunicorn acme.wsgi:app" }
+seq = ["start", { cmd = "hypercorn acme.seq:app" }]
+script = { script = "acme.cli:main" }
+expr = { expr = "x", imports = ["acme.calc"] }
+switch = { switch = [{ case = "linux", cmd = "daphne acme.sw:app" }] }
+ref = { ref = "start" }
+help-only = { help = "nothing to run" }
+par = { parallel = ["uvicorn acme.par:app"], default_item_type = "cmd" }
+moved = { cmd = "uvicorn acme.moved:app", cwd = "web" }
+
+[tool.poe.tasks.table]
+cmd = "granian --interface asgi acme.table:app"
+"#;
+        assert_eq!(
+            pyproject_hits(pyproject, scan_poe_tasks),
+            [
+                r#"Opaque { text: "acme.moved" } @12"#,
+                r#"App { module: "acme.par", symbol: Some("app") } @11"#,
+                r#"App { module: "acme.seq", symbol: Some("app") } @5"#,
+                r#"App { module: "acme.wsgi", symbol: Some("app") } @4"#,
+                r#"App { module: "acme.asgi", symbol: Some("app") } @2"#,
+                r#"App { module: "acme.sw", symbol: Some("app") } @8"#,
+                r#"App { module: "acme.table", symbol: Some("app") } @14"#,
+                "module acme.calc @7",
+                "module acme.cli @6",
+            ]
+        );
+    }
+
+    #[test]
+    fn poe_bare_strings_follow_the_default_task_types() {
+        let pyproject = r#"[tool.poe]
+default_task_type = "script"
+default_array_item_task_type = "cmd"
+
+[tool.poe.tasks]
+cli = "acme.cli:main"
+all = ["uvicorn acme.asgi:app"]
+"#;
+        assert_eq!(
+            pyproject_hits(pyproject, scan_poe_tasks),
+            [
+                r#"App { module: "acme.asgi", symbol: Some("app") } @7"#,
+                "module acme.cli @6",
+            ]
+        );
+    }
+
+    #[test]
+    fn hatch_scripts_read_every_environment() {
+        let pyproject = r#"[tool.hatch.envs.default.scripts]
+serve = "uvicorn acme.asgi:app"
+
+[tool.hatch.envs.prod.scripts]
+web = ["- gunicorn acme.wsgi", "lint"]
+"#;
+        assert_eq!(
+            pyproject_hits(pyproject, scan_hatch_scripts),
+            [
+                r#"App { module: "acme.asgi", symbol: Some("app") } @2"#,
+                r#"App { module: "acme.wsgi", symbol: Some("application") } @5"#,
+            ]
         );
     }
 }
