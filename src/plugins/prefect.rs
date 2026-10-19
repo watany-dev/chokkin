@@ -3,16 +3,12 @@
 
 use crate::config::{EntrySpec, PluginId};
 use crate::path_util::rel_to_root;
-use crate::sources::FileContext;
 
 use super::commands::is_dotted_identifier;
 use super::config_text::{origin_at, yaml_scalar};
 use super::context::PluginContext;
-use super::types::{
-    CommandTarget, CommandTargetRef, PluginContribution, PluginEntry, ReferenceOrigin,
-    SymbolReference,
-};
-use super::util::{is_py_path, join_lexical};
+use super::types::{PluginContribution, PluginEntry, ReferenceOrigin, SymbolReference};
+use super::util::{file_context, is_py_path, join_lexical, project_dirs};
 
 const LABEL: &str = "entrypoint";
 
@@ -20,13 +16,7 @@ const LABEL: &str = "entrypoint";
 pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let root = ctx.root.path.as_path();
     let mut contrib = PluginContribution::empty(PluginId::Prefect);
-    let dirs = std::iter::once("").chain(
-        ctx.sources
-            .layout
-            .members
-            .iter()
-            .map(|member| member.path.as_str()),
-    );
+    let dirs = project_dirs(ctx);
     for dir in dirs {
         let path = root.join(dir).join("prefect.yaml");
         let Ok(contents) = std::fs::read_to_string(&path) else {
@@ -75,17 +65,12 @@ fn push_entrypoint(
         && is_dotted_identifier(func)
     {
         let Some(path) = join_lexical(dir, path) else {
-            return gap(contrib, value, origin);
+            return contrib.push_gap(value, origin);
         };
         if !ctx.root.path.join(&path).is_file() {
             return;
         }
-        let context = ctx
-            .sources
-            .files
-            .iter()
-            .find(|file| file.path == path)
-            .map_or(FileContext::Runtime, |file| file.context);
+        let context = file_context(ctx, &path);
         contrib.entries.push(PluginEntry {
             spec: EntrySpec {
                 path,
@@ -108,16 +93,7 @@ fn push_entrypoint(
         });
         return;
     }
-    gap(contrib, value, origin);
-}
-
-fn gap(contrib: &mut PluginContribution, value: &str, origin: ReferenceOrigin) {
-    contrib.command_targets.push(CommandTargetRef {
-        target: CommandTarget::Opaque {
-            text: value.to_owned(),
-        },
-        origin,
-    });
+    contrib.push_gap(value, origin);
 }
 
 #[cfg(test)]

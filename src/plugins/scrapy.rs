@@ -17,10 +17,9 @@ use super::commands::is_dotted_identifier;
 use super::config_text::{ini_value, origin_at};
 use super::context::PluginContext;
 use super::types::{
-    CommandTarget, CommandTargetRef, ModuleReference, PluginContribution, PluginEntry,
-    ReferenceOrigin, SymbolReference,
+    ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin, SymbolReference,
 };
-use super::util::{module_paths, parse_ini_section};
+use super::util::{module_paths, parse_ini_section, project_dirs};
 
 const SPIDER_MODULES: &str = "SPIDER_MODULES";
 
@@ -31,13 +30,7 @@ const NEWSPIDER_MODULE: &str = "NEWSPIDER_MODULE";
 pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let root = ctx.root.path.as_path();
     let mut contrib = PluginContribution::empty(PluginId::Scrapy);
-    let dirs = std::iter::once("").chain(
-        ctx.sources
-            .layout
-            .members
-            .iter()
-            .map(|member| member.path.as_str()),
-    );
+    let dirs = project_dirs(ctx);
     for dir in dirs {
         let path = root.join(dir).join("scrapy.cfg");
         let Ok(contents) = std::fs::read_to_string(&path) else {
@@ -72,7 +65,7 @@ fn settings_module(
     origin: ReferenceOrigin,
 ) {
     if !is_dotted_identifier(module) {
-        return gap(contrib, module, origin);
+        return contrib.push_gap(module, origin);
     }
     let Some((path, context)) = module_paths(ctx, dir, module, false).into_iter().next() else {
         contrib.module_refs.push(ModuleReference {
@@ -157,7 +150,7 @@ fn spider_modules(
     let mut modules = Vec::new();
     for elt in elts {
         let Some(text) = string_value(elt) else {
-            return gap(contrib, &settings.contents[value.range()], origin);
+            return contrib.push_gap(&settings.contents[value.range()], origin);
         };
         modules.extend(
             text.split(',')
@@ -169,7 +162,7 @@ fn spider_modules(
     let mut seen = BTreeSet::new();
     for module in modules {
         if !is_dotted_identifier(&module) {
-            gap(contrib, &module, origin.clone());
+            contrib.push_gap(&module, origin.clone());
             continue;
         }
         for (path, context) in module_paths(ctx, settings.dir, &module, true) {
@@ -262,13 +255,4 @@ fn push_component(
             origin,
         });
     }
-}
-
-fn gap(contrib: &mut PluginContribution, value: &str, origin: ReferenceOrigin) {
-    contrib.command_targets.push(CommandTargetRef {
-        target: CommandTarget::Opaque {
-            text: value.to_owned(),
-        },
-        origin,
-    });
 }

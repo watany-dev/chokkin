@@ -413,6 +413,28 @@ pub(super) fn join_lexical(base: &str, rel: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
+/// The root, then each workspace member: the directories a framework's
+/// config file is looked for in.
+pub(super) fn project_dirs<'a>(ctx: &PluginContext<'a>) -> impl Iterator<Item = &'a str> {
+    std::iter::once("").chain(
+        ctx.sources
+            .layout
+            .members
+            .iter()
+            .map(|member| member.path.as_str()),
+    )
+}
+
+/// The inventory's context for root-relative `path`; a file it lacks runs
+/// as runtime code.
+pub(super) fn file_context(ctx: &PluginContext<'_>, path: &str) -> crate::sources::FileContext {
+    ctx.sources
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .map_or(crate::sources::FileContext::Runtime, |file| file.context)
+}
+
 /// Discovered `.py` files of `module`: its own file first, then every file
 /// under it when it is a package. Empty when it names no discovered file.
 pub(super) fn module_files<'a>(
@@ -488,8 +510,9 @@ pub(super) fn module_paths(
 }
 
 /// The `.py` files under root-relative `dir`, as a framework walking a
-/// folder or package finds them. Hidden directories, `__pycache__` and symlinked directories are not
-/// entered; discovery still applies its exclusions to what is found.
+/// folder or package finds them. Hidden directories, `__pycache__` and
+/// symlinked directories are not entered; discovery still applies its
+/// exclusions to what is found.
 pub(super) fn walk_py(root: &Path, dir: &str, out: &mut BTreeSet<String>) {
     walk_py_at(root, dir, 0, out);
 }

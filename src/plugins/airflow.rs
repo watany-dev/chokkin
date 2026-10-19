@@ -10,10 +10,8 @@ use crate::sources::FileContext;
 
 use super::config_text::{ini_value, origin_at};
 use super::context::PluginContext;
-use super::types::{
-    CommandTarget, CommandTargetRef, PluginContribution, PluginEntry, ReferenceOrigin,
-};
-use super::util::{join_lexical, origin_for_file, walk_py};
+use super::types::{PluginContribution, PluginEntry, ReferenceOrigin};
+use super::util::{join_lexical, origin_for_file, project_dirs, walk_py};
 
 /// A DAG folder: root-relative directory and whether every `.py` file in it
 /// loads (`dag_discovery_safe_mode = False`) or only those that look like
@@ -38,13 +36,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
         .map(|file| (file.path.clone(), file.context))
         .collect();
     let mut on_disk = BTreeSet::new();
-    let default_dirs = std::iter::once("").chain(
-        ctx.sources
-            .layout
-            .members
-            .iter()
-            .map(|member| member.path.as_str()),
-    );
+    let default_dirs = project_dirs(ctx);
     for dir in default_dirs
         .filter_map(|dir| join_lexical(dir, "dags"))
         .chain(folders.iter().map(|folder| folder.dir.clone()))
@@ -88,13 +80,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
 /// any other substitution names a folder not known here, so it is a gap.
 fn config_folders(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) -> Vec<DagFolder> {
     let root = ctx.root.path.as_path();
-    let dirs = std::iter::once("").chain(
-        ctx.sources
-            .layout
-            .members
-            .iter()
-            .map(|member| member.path.as_str()),
-    );
+    let dirs = project_dirs(ctx);
     let mut folders = Vec::new();
     for dir in dirs {
         let path = root.join(dir).join("airflow.cfg");
@@ -114,10 +100,7 @@ fn config_folders(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) -> 
                 load_all,
                 origin,
             }),
-            None => contrib.command_targets.push(CommandTargetRef {
-                target: CommandTarget::Opaque { text: value },
-                origin,
-            }),
+            None => contrib.push_gap(&value, origin),
         }
     }
     folders

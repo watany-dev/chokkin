@@ -192,6 +192,17 @@ impl PluginContribution {
             command_targets: Vec::new(),
         }
     }
+
+    /// A config value the plugin does not read, kept as an unread command
+    /// target so it caps unreached findings (ADR 0005).
+    pub(super) fn push_gap(&mut self, text: &str, origin: ReferenceOrigin) {
+        self.command_targets.push(CommandTargetRef {
+            target: CommandTarget::Opaque {
+                text: text.to_owned(),
+            },
+            origin,
+        });
+    }
 }
 
 /// Aggregated plugin hints from all enabled extractors.

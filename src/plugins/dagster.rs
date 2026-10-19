@@ -13,11 +13,8 @@ use crate::sources::FileContext;
 use super::commands::is_dotted_identifier;
 use super::config_text::{leading_spaces, origin_at, toml_key_line, yaml_scalar};
 use super::context::PluginContext;
-use super::types::{
-    CommandTarget, CommandTargetRef, ModuleReference, PluginContribution, PluginEntry,
-    ReferenceOrigin,
-};
-use super::util::{is_py_path, join_lexical, module_paths};
+use super::types::{ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin};
+use super::util::{file_context, is_py_path, join_lexical, module_paths, project_dirs};
 
 /// What dagster builds a code location from.
 const DEFINITION_NAMES: [&str; 3] = ["Definitions", "repository", "definitions"];
@@ -37,13 +34,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
         contrib: PluginContribution::empty(PluginId::Dagster),
         seen: BTreeSet::new(),
     };
-    let dirs = std::iter::once("").chain(
-        ctx.sources
-            .layout
-            .members
-            .iter()
-            .map(|member| member.path.as_str()),
-    );
+    let dirs = project_dirs(ctx);
     for dir in dirs {
         locations.pyproject(dir);
         let path = root.join(dir).join("workspace.yaml");
@@ -114,14 +105,15 @@ impl Locations<'_, '_> {
             if table_path == "tool.dagster" {
                 let modules = toml_strings(table.get("module_name"));
                 let Some(modules) = modules else {
-                    self.gap(&table_text(&table, "module_name"), origin("module_name"));
+                    self.contrib
+                        .push_gap(&table_text(&table, "module_name"), origin("module_name"));
                     continue;
                 };
                 for module in modules {
                     if is_dotted_identifier(&module) {
                         self.push_module(dir, &module, origin("module_name"));
                     } else {
-                        self.gap(&module, origin("module_name"));
+                        self.contrib.push_gap(&module, origin("module_name"));
                     }
                 }
                 continue;
@@ -143,7 +135,8 @@ impl Locations<'_, '_> {
                         }
                     },
                     _ if explicit => {
-                        self.gap(&table_text(&table, "defs_module"), origin("defs_module"));
+                        self.contrib
+                            .push_gap(&table_text(&table, "defs_module"), origin("defs_module"));
                     },
                     _ => {},
                 }
@@ -158,7 +151,7 @@ impl Locations<'_, '_> {
                     {
                         self.push_module(dir, &target, origin(key));
                     },
-                    _ if explicit => self.gap(&table_text(&table, key), origin(key)),
+                    _ if explicit => self.contrib.push_gap(&table_text(&table, key), origin(key)),
                     _ => {},
                 }
             }
@@ -210,14 +203,14 @@ impl Locations<'_, '_> {
     fn load_item(&mut self, workspace: &Workspace<'_>, lines: Range<usize>, item: &str) {
         let origin = origin_at(workspace.file, lines.start, "load_from");
         let Some((kind, inline)) = item.split_once(':') else {
-            return self.gap(item, origin);
+            return self.contrib.push_gap(item, origin);
         };
         let kind = kind.trim();
         if kind == "grpc_server" {
             return;
         }
         let Some((_, nested_key)) = LOAD_KINDS.iter().find(|(name, _)| *name == kind) else {
-            return self.gap(item, origin);
+            return self.contrib.push_gap(item, origin);
         };
         let inline = yaml_scalar(inline);
         let (value, origin) = if inline.is_empty() {
@@ -230,7 +223,7 @@ impl Locations<'_, '_> {
                 ))
             });
             let Some(nested) = nested else {
-                return self.gap(item, origin);
+                return self.contrib.push_gap(item, origin);
             };
             nested
         } else {
@@ -242,7 +235,7 @@ impl Locations<'_, '_> {
         if is_dotted_identifier(value) {
             self.push_module(workspace.dir, value, origin);
         } else {
-            self.gap(value, origin);
+            self.contrib.push_gap(value, origin);
         }
     }
 
@@ -253,18 +246,12 @@ impl Locations<'_, '_> {
             .then(|| join_lexical(dir, value))
             .flatten();
         let Some(path) = path else {
-            return self.gap(value, origin);
+            return self.contrib.push_gap(value, origin);
         };
         if !self.ctx.root.path.join(&path).is_file() {
             return;
         }
-        let context = self
-            .ctx
-            .sources
-            .files
-            .iter()
-            .find(|file| file.path == path)
-            .map_or(FileContext::Runtime, |file| file.context);
+        let context = file_context(self.ctx, &path);
         self.push_entry(&path, context, origin);
     }
 
@@ -296,15 +283,6 @@ impl Locations<'_, '_> {
                 origin,
             });
         }
-    }
-
-    fn gap(&mut self, value: &str, origin: ReferenceOrigin) {
-        self.contrib.command_targets.push(CommandTargetRef {
-            target: CommandTarget::Opaque {
-                text: value.to_owned(),
-            },
-            origin,
-        });
     }
 }
 
