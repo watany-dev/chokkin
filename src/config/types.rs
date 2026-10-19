@@ -132,6 +132,14 @@ pub enum PluginId {
     MkDocs,
     /// Alembic migration environment.
     Alembic,
+    /// Airflow DAG files.
+    Airflow,
+    /// Dagster code locations.
+    Dagster,
+    /// Prefect deployment entrypoints.
+    Prefect,
+    /// Scrapy settings and spiders.
+    Scrapy,
 }
 
 impl PluginId {
@@ -151,6 +159,10 @@ impl PluginId {
             Self::Sphinx => "sphinx",
             Self::MkDocs => "mkdocs",
             Self::Alembic => "alembic",
+            Self::Airflow => "airflow",
+            Self::Dagster => "dagster",
+            Self::Prefect => "prefect",
+            Self::Scrapy => "scrapy",
         }
     }
 
@@ -170,6 +182,10 @@ impl PluginId {
             Self::Sphinx,
             Self::MkDocs,
             Self::Alembic,
+            Self::Airflow,
+            Self::Dagster,
+            Self::Prefect,
+            Self::Scrapy,
         ]
     }
 }

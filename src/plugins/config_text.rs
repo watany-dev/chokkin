@@ -200,6 +200,32 @@ pub(super) fn is_yaml_block_scalar(value: &str) -> bool {
     value.trim_start().starts_with(['|', '>'])
 }
 
+/// A plain or quoted YAML scalar with its trailing ` # comment`, an anchor
+/// (`&name`) and its quotes dropped; an alias (`*name`) is kept as written
+/// for the caller to reject.
+pub(super) fn yaml_scalar(value: &str) -> &str {
+    let value = value.trim();
+    let value = match value.find(" #") {
+        Some(end) if !value.starts_with(['"', '\'']) => &value[..end],
+        _ => value,
+    };
+    let value = match value.strip_prefix('&') {
+        Some(anchored) => anchored.split_once(' ').map_or("", |(_, rest)| rest),
+        None => value,
+    };
+    let value = value.trim();
+    for quote in ['"', '\''] {
+        if let Some(inner) = value
+            .strip_prefix(quote)
+            .and_then(|rest| rest.rsplit_once(quote))
+            .map(|(inner, _)| inner)
+        {
+            return inner;
+        }
+    }
+    value
+}
+
 pub(super) fn leading_spaces(line: &str) -> usize {
     line.chars().take_while(|ch| *ch == ' ').count()
 }
@@ -220,6 +246,16 @@ fn line_number(index: usize) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn yaml_scalar_drops_comment_anchor_and_quotes() {
+        assert_eq!(yaml_scalar(" flows/etl.py:run  # main"), "flows/etl.py:run");
+        assert_eq!(yaml_scalar("\"a # b\" # note"), "a # b");
+        assert_eq!(yaml_scalar("'quoted'"), "quoted");
+        assert_eq!(yaml_scalar("&entry flows/etl.py:run"), "flows/etl.py:run");
+        assert_eq!(yaml_scalar("*entry"), "*entry");
+        assert_eq!(yaml_scalar(""), "");
+    }
 
     #[test]
     fn toml_key_line_finds_key_and_sub_table_header() {

@@ -1,6 +1,6 @@
 //! Shared helpers for plugin extractors.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::str::CharIndices;
 use std::sync::LazyLock;
@@ -13,7 +13,7 @@ use crate::manifest::ManifestError;
 use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{path_is_within_root, read_to_string};
 use crate::parser::{LineIndex, ParseSeverity, ParsedModule};
-use crate::path_util::rel_to_root;
+use crate::path_util::{join_rel, rel_to_root};
 use crate::sources::path_to_module;
 
 use super::commands::is_dotted_identifier;
@@ -411,6 +411,122 @@ pub(super) fn join_lexical(base: &str, rel: &str) -> Option<String> {
         }
     }
     Some(parts.join("/"))
+}
+
+/// Discovered `.py` files of `module`: its own file first, then every file
+/// under it when it is a package. Empty when it names no discovered file.
+pub(super) fn module_files<'a>(
+    ctx: &PluginContext<'a>,
+    module: &str,
+) -> Vec<&'a crate::sources::DiscoveredFile> {
+    let sources = ctx.sources;
+    let known: BTreeSet<String> = sources
+        .python_files()
+        .map(|file| file.path.clone())
+        .collect();
+    let Some(path) = crate::entry::resolve_module_to_path(module, &sources.layout, &known) else {
+        return Vec::new();
+    };
+    let package = path.strip_suffix("/__init__.py");
+    let own = sources.python_files().filter(|file| file.path == path);
+    let rest = sources.python_files().filter(|file| {
+        file.path != path
+            && package.is_some_and(|dir| {
+                file.path
+                    .strip_prefix(dir)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+    });
+    own.chain(rest).collect()
+}
+
+/// The file of `module`, or with `tree` every file of its package, with
+/// their context: the inventory's when it has them, else on disk from `dir`
+/// or `dir/src`, as a framework that imports it by name finds it. Files the
+/// layout left out of the inventory then join it as plugin entries (#932).
+pub(super) fn module_paths(
+    ctx: &PluginContext<'_>,
+    dir: &str,
+    module: &str,
+    tree: bool,
+) -> Vec<(String, crate::sources::FileContext)> {
+    let known = module_files(ctx, module);
+    if let Some(first) = known.first() {
+        // The module's own file sorts before the rest of its package.
+        let files = if tree {
+            known.as_slice()
+        } else {
+            std::slice::from_ref(first)
+        };
+        return files
+            .iter()
+            .map(|file| (file.path.clone(), file.context))
+            .collect();
+    }
+    let root = ctx.root.path.as_path();
+    let rel = module.replace('.', "/");
+    for base in [dir.to_owned(), join_rel(dir, "src")] {
+        let file = join_rel(&base, &format!("{rel}.py"));
+        if root.join(&file).is_file() {
+            return vec![(file, crate::sources::FileContext::Runtime)];
+        }
+        let package = join_rel(&base, &rel);
+        if root.join(&package).join("__init__.py").is_file() {
+            if !tree {
+                let init = join_rel(&package, "__init__.py");
+                return vec![(init, crate::sources::FileContext::Runtime)];
+            }
+            let mut files = BTreeSet::new();
+            walk_py(root, &package, &mut files);
+            return files
+                .into_iter()
+                .map(|file| (file, crate::sources::FileContext::Runtime))
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// The `.py` files under root-relative `dir`, as a framework walking a
+/// folder or package finds them. Hidden directories, `__pycache__` and symlinked directories are not
+/// entered; discovery still applies its exclusions to what is found.
+pub(super) fn walk_py(root: &Path, dir: &str, out: &mut BTreeSet<String>) {
+    walk_py_at(root, dir, 0, out);
+}
+
+fn walk_py_at(root: &Path, dir: &str, depth: usize, out: &mut BTreeSet<String>) {
+    const MAX_DEPTH: usize = 16;
+    let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let path = if dir.is_empty() {
+            name.clone()
+        } else {
+            format!("{dir}/{name}")
+        };
+        if kind.is_dir() {
+            if depth < MAX_DEPTH && !name.starts_with('.') && name != "__pycache__" {
+                walk_py_at(root, &path, depth + 1, out);
+            }
+        } else if is_py_path(&name) {
+            out.insert(path);
+        }
+    }
+}
+
+/// Whether `path` ends in `.py`, as written: the tools load the path they
+/// are given.
+pub(super) fn is_py_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "py")
 }
 
 /// Convert a dotted module path to a root-relative `.py` file path.

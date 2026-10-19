@@ -7032,3 +7032,242 @@ fn binary_root_examples_and_notebooks_count_as_dev_usage() {
     let issues = json_issues(temp.path(), &["--strict"]);
     assert_eq!(issue_keys(&issues), [], "{issues:#?}");
 }
+
+/// Orchestrators load their code by path or by name from their own config,
+/// so nothing imports it (#401): each framework's files and what they import
+/// stay unreported, and a config form the plugin does not read leaves the
+/// unrelated orphan likely rather than certain (ADR 0005). A case is the
+/// pyproject, the framework's files, the CHK001 targets and their confidence.
+type OrchestrationCase = (
+    String,
+    Vec<(&'static str, &'static str)>,
+    &'static [&'static str],
+    &'static str,
+);
+
+/// What a definition the plugin did not read leaves unreached: the helper
+/// only it imports, and the orphan, both capped by the gap.
+const ORPHAN: &[&str] = &["acme/orphan.py"];
+const UNREACHED: &[&str] = &["acme/helper.py", "acme/orphan.py"];
+const AIRFLOW_DAG: &str =
+    "from airflow import DAG\nfrom acme import helper\n\nwith DAG(\"etl\"):\n    helper.run()\n";
+
+fn orchestration_pyproject(deps: &str, extra: &str) -> String {
+    format!(
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [{deps}]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/__init__.py\"]\n{extra}"
+    )
+}
+
+fn assert_orchestration_cases(cases: Vec<OrchestrationCase>) {
+    for (pyproject, files, targets, confidence) in cases {
+        let mut files = files.clone();
+        files.extend([
+            ("pyproject.toml", pyproject.as_str()),
+            ("acme/__init__.py", ""),
+            ("acme/helper.py", "def run():\n    pass\n\nasset = None\n"),
+            ("acme/orphan.py", "# orphan\n"),
+        ]);
+        let project = write_project(&files);
+        let issues: Vec<(String, String, String)> = json_issues(project.path(), &["--no-cache"])
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .map(|issue| {
+                let field = |key: &str| issue[key].as_str().unwrap_or_default().to_owned();
+                (field("code"), field("target"), field("confidence"))
+            })
+            .collect();
+        let expected: Vec<(String, String, String)> = targets
+            .iter()
+            .map(|target| {
+                (
+                    "CHK001".to_owned(),
+                    (*target).to_owned(),
+                    confidence.to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(issues, expected, "{files:?}");
+    }
+}
+
+#[test]
+fn binary_airflow_plugin_roots_its_definitions() {
+    assert_orchestration_cases(vec![
+        // DAG files under the default `dags/` and a test `dags_*` folder.
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                ("dags/etl.py", AIRFLOW_DAG),
+                (
+                    "tests/dags_corrupted/load.py",
+                    "from airflow.sdk import dag\n\n@dag()\ndef load():\n    pass\n",
+                ),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // `dags_folder` from `airflow.cfg`, relative to `AIRFLOW_HOME`.
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                (
+                    "airflow.cfg",
+                    "[core]\ndags_folder = {AIRFLOW_HOME}/pipelines\n",
+                ),
+                ("pipelines/etl.py", AIRFLOW_DAG),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // An absolute `dags_folder` is not read.
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                ("airflow.cfg", "[core]\ndags_folder = /opt/airflow/flows\n"),
+                ("dags/etl.py", AIRFLOW_DAG),
+            ],
+            ORPHAN,
+            "likely",
+        ),
+    ]);
+}
+
+#[test]
+fn binary_dagster_plugin_roots_its_definitions() {
+    assert_orchestration_cases(vec![
+        // Dagster's `[tool.dagster] module_name` and `Definitions(...)`.
+        (
+            orchestration_pyproject(
+                "\"dagster\"",
+                "\n[tool.dagster]\nmodule_name = \"acme_dg.definitions\"\n",
+            ),
+            vec![
+                ("acme_dg/__init__.py", ""),
+                (
+                    "acme_dg/definitions.py",
+                    "from dagster import Definitions\nfrom acme import helper\n\ndefs = Definitions(assets=[helper.asset])\n",
+                ),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // `workspace.yaml` code locations by file and by module.
+        (
+            orchestration_pyproject("\"dagster\"", ""),
+            vec![
+                (
+                    "workspace.yaml",
+                    "load_from:\n  - python_file:\n      relative_path: jobs/repo.py\n      location_name: jobs\n  - python_module: acme_ops.defs\n",
+                ),
+                (
+                    "jobs/repo.py",
+                    "import dagster as dg\nfrom acme import helper\n\n@dg.job\ndef job():\n    helper.run()\n",
+                ),
+                ("acme_ops/__init__.py", ""),
+                ("acme_ops/defs.py", "from acme import helper\n"),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // A `load_from` kind that is not read.
+        (
+            orchestration_pyproject("\"dagster\"", ""),
+            vec![
+                (
+                    "workspace.yaml",
+                    "load_from:\n  - python_entrypoint: acme_ops.defs\n",
+                ),
+                ("acme_ops/__init__.py", ""),
+                (
+                    "acme_ops/defs.py",
+                    "import dagster\nfrom acme import helper\n",
+                ),
+            ],
+            UNREACHED,
+            "likely",
+        ),
+    ]);
+}
+
+#[test]
+fn binary_prefect_plugin_roots_its_definitions() {
+    assert_orchestration_cases(vec![
+        // Prefect's `prefect.yaml` entrypoint `path.py:flow`.
+        (
+            orchestration_pyproject("\"prefect\"", ""),
+            vec![
+                (
+                    "prefect.yaml",
+                    "name: acme\ndeployments:\n  - name: etl\n    entrypoint: flows/etl.py:etl_flow\n    work_pool:\n      name: default\n",
+                ),
+                (
+                    "flows/etl.py",
+                    "from prefect import flow\nfrom acme import helper\n\n@flow\ndef etl_flow():\n    helper.run()\n",
+                ),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // A templated entrypoint is not read.
+        (
+            orchestration_pyproject("\"prefect\"", ""),
+            vec![
+                (
+                    "prefect.yaml",
+                    "deployments:\n  - name: etl\n    entrypoint: \"{{ $FLOW_ENTRYPOINT }}\"\n",
+                ),
+                (
+                    "flows/etl.py",
+                    "from prefect import flow\nfrom acme import helper\n",
+                ),
+            ],
+            UNREACHED,
+            "likely",
+        ),
+    ]);
+}
+
+#[test]
+fn binary_scrapy_plugin_roots_its_definitions() {
+    assert_orchestration_cases(vec![
+        // Scrapy's settings from `scrapy.cfg`, its spiders and pipelines.
+        (
+            orchestration_pyproject("\"scrapy\"", ""),
+            vec![
+                ("scrapy.cfg", "[settings]\ndefault = crawler.settings\n"),
+                ("crawler/__init__.py", ""),
+                (
+                    "crawler/settings.py",
+                    "BOT_NAME = \"crawler\"\nSPIDER_MODULES = [\"crawler.spiders\"]\nITEM_PIPELINES = {\"crawler.pipelines.SavePipeline\": 300}\n",
+                ),
+                ("crawler/spiders/__init__.py", ""),
+                (
+                    "crawler/spiders/quotes.py",
+                    "import scrapy\nfrom acme import helper\n\nclass QuotesSpider(scrapy.Spider):\n    name = \"quotes\"\n",
+                ),
+                ("crawler/pipelines.py", "class SavePipeline:\n    pass\n"),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // `SPIDER_MODULES` computed at runtime is not read.
+        (
+            orchestration_pyproject("\"scrapy\"", ""),
+            vec![
+                ("scrapy.cfg", "[settings]\ndefault = crawler.settings\n"),
+                ("crawler/__init__.py", ""),
+                (
+                    "crawler/settings.py",
+                    "import os\nSPIDER_MODULES = os.environ[\"SPIDERS\"].split(\",\")\n",
+                ),
+                ("crawler/spiders/__init__.py", ""),
+                (
+                    "crawler/spiders/quotes.py",
+                    "import scrapy\nfrom acme import helper\n",
+                ),
+            ],
+            UNREACHED,
+            "likely",
+        ),
+    ]);
+}

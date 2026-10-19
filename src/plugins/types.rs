@@ -170,6 +170,9 @@ pub struct PluginContribution {
     /// Settings the framework reads that could not be found or read; the
     /// gap stage reads it (#914).
     pub unread_settings: Vec<UnreadSettings>,
+    /// Code the framework's config names in a form not read, or by a path
+    /// or module the plugin does not root; the gap stage reads it (#401).
+    pub command_targets: Vec<CommandTargetRef>,
 }
 
 impl PluginContribution {
@@ -186,6 +189,7 @@ impl PluginContribution {
             framework_used_globs: Vec::new(),
             sys_path_imports: Vec::new(),
             unread_settings: Vec::new(),
+            command_targets: Vec::new(),
         }
     }
 }

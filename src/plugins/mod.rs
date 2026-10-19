@@ -1,5 +1,6 @@
 //! Config / plugin extraction (pipeline step 5).
 
+mod airflow;
 mod alembic;
 mod celery;
 mod ci_installs;
@@ -7,6 +8,7 @@ mod commands;
 mod config_scan;
 mod config_text;
 mod context;
+mod dagster;
 mod devtools;
 mod django;
 mod doctools;
@@ -16,7 +18,9 @@ mod extract;
 mod fastapi;
 mod flask;
 mod plugin_map;
+mod prefect;
 mod pytest;
+mod scrapy;
 mod script_entries;
 mod task_files;
 mod tool_plugins;
