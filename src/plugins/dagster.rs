@@ -168,8 +168,9 @@ impl Locations<'_, '_> {
     /// The items of `workspace.yaml`'s `load_from` list. `python_file` is a
     /// path from the file's directory, `python_module` and `python_package`
     /// a module, each written inline or under its nested key. `grpc_server`
-    /// runs code elsewhere; any other kind, a flow sequence or mapping, an
-    /// alias or a template is not read, so it is a gap.
+    /// runs code elsewhere; any other kind, a flow sequence or mapping, a
+    /// line that is no list item, an alias or a template is not read, so it
+    /// is a gap.
     fn load_from(&mut self, workspace: &Workspace<'_>) {
         let lines = &workspace.lines;
         let Some(start) = lines
@@ -196,7 +197,10 @@ impl Locations<'_, '_> {
             if indent < base_indent || (indent == base_indent && !text.starts_with('-')) {
                 break;
             }
+            // A line that is no list item is a mapping dagster rejects.
             let Some(item) = text.strip_prefix('-').map(str::trim_start) else {
+                let origin = origin_at(workspace.file, index, "load_from");
+                self.contrib.push_gap(text, origin);
                 index += 1;
                 continue;
             };

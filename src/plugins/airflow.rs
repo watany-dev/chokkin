@@ -122,11 +122,7 @@ fn dags_folder(config_dir: &str, value: &str) -> Option<String> {
     for home in ["${AIRFLOW_HOME}", "$AIRFLOW_HOME", "{AIRFLOW_HOME}"] {
         value = value.replace(home, ".");
     }
-    if value.is_empty()
-        || value.contains(['$', '{', '%', '~'])
-        || value.starts_with(['/', '\\'])
-        || value.get(1..2) == Some(":")
-    {
+    if value.is_empty() || value.contains(['$', '{', '%', '~']) {
         return None;
     }
     join_lexical(config_dir, &value)
@@ -218,6 +214,20 @@ mod tests {
         assert_eq!(dags_folder("", "${DAGS_DIR}"), None);
         assert_eq!(dags_folder("", "~/dags"), None);
         assert_eq!(dags_folder("", "../outside"), None);
+    }
+
+    #[test]
+    fn looks_like_dag_file_needs_both_words() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let check = |text: &str| {
+            let path = temp.path().join("f.py");
+            std::fs::write(&path, text).expect("write");
+            looks_like_dag_file(&path)
+        };
+        assert!(check("from airflow import DAG\n"));
+        assert!(!check("import airflow\n"));
+        assert!(!check("dag = build()\n"));
+        assert!(!looks_like_dag_file(&temp.path().join("missing.py")));
     }
 
     #[test]

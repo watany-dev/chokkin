@@ -876,4 +876,176 @@ mod tests {
             ["a/b/c/d/settings.py"]
         );
     }
+
+    /// Run `check` on a context over `root`, whose inventory is `files` and
+    /// whose workspace members are `members`.
+    fn with_ctx(
+        root: &Path,
+        files: &[(&str, crate::sources::FileContext)],
+        members: &[&str],
+        check: impl FnOnce(&PluginContext<'_>),
+    ) {
+        use crate::discovery::{ProjectRoot, RootMarker};
+        use crate::manifest::{LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata};
+        use crate::sources::{
+            DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo, MemberLayout,
+        };
+
+        let root = ProjectRoot {
+            path: root.to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: LayoutInfo {
+                members: members
+                    .iter()
+                    .map(|path| MemberLayout {
+                        path: (*path).to_owned(),
+                        layout: LayoutInfo::default(),
+                    })
+                    .collect(),
+                ..LayoutInfo::default()
+            },
+            effective_globs: Vec::new(),
+            files: files
+                .iter()
+                .map(|(path, context)| DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: *context,
+                })
+                .collect(),
+            warnings: Vec::new(),
+        };
+        let manifest = LoadedManifest {
+            root: root.clone(),
+            metadata: ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        };
+        let config = crate::config::default_config();
+        let parse = crate::parser::ParseSummary::default();
+        check(&PluginContext {
+            root: &root,
+            config: &config,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &parse,
+        });
+    }
+
+    fn write_files(root: &Path, paths: &[&str]) {
+        for path in paths {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, "").expect("write");
+        }
+    }
+
+    #[test]
+    fn project_dirs_are_the_root_then_each_member() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        with_ctx(temp.path(), &[], &["packages/etl"], |ctx| {
+            assert_eq!(project_dirs(ctx).collect::<Vec<_>>(), ["", "packages/etl"]);
+        });
+    }
+
+    /// An inventoried file keeps its own context, even one its path would
+    /// not imply; any other file takes the context its path implies.
+    #[test]
+    fn file_context_prefers_the_inventory() {
+        use crate::sources::FileContext;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let files = [
+            ("a/x.py", FileContext::Dev),
+            ("flows/f.py", FileContext::Test),
+        ];
+        with_ctx(temp.path(), &files, &[], |ctx| {
+            assert_eq!(file_context(ctx, "flows/f.py"), FileContext::Test);
+            assert_eq!(file_context(ctx, "tests/t.py"), FileContext::Test);
+            assert_eq!(file_context(ctx, "acme/m.py"), FileContext::Runtime);
+        });
+    }
+
+    /// A module the inventory holds is answered from it, context included,
+    /// without looking at the disk.
+    #[test]
+    fn module_paths_read_the_inventory_first() {
+        use crate::sources::FileContext;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let files = [
+            ("acme/__init__.py", FileContext::Runtime),
+            ("acme/jobs/a.py", FileContext::Test),
+            ("acmex/b.py", FileContext::Runtime),
+        ];
+        with_ctx(temp.path(), &files, &[], |ctx| {
+            assert_eq!(
+                module_paths(ctx, "", "acme", true),
+                [
+                    ("acme/__init__.py".to_owned(), FileContext::Runtime),
+                    ("acme/jobs/a.py".to_owned(), FileContext::Test),
+                ]
+            );
+            assert_eq!(
+                module_paths(ctx, "", "acme", false),
+                [("acme/__init__.py".to_owned(), FileContext::Runtime)]
+            );
+        });
+    }
+
+    /// On disk, a directory without `__init__.py` is walked as a tree but
+    /// names no module by itself.
+    #[test]
+    fn module_paths_on_disk_walk_a_namespace_only_as_a_tree() {
+        use crate::sources::FileContext;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        write_files(temp.path(), &["ns/x.py", "src/pkg/__init__.py"]);
+        with_ctx(temp.path(), &[], &[], |ctx| {
+            assert_eq!(module_paths(ctx, "", "ns", false), []);
+            assert_eq!(
+                module_paths(ctx, "", "ns", true),
+                [("ns/x.py".to_owned(), FileContext::Runtime)]
+            );
+            assert_eq!(
+                module_paths(ctx, "", "pkg", false),
+                [("src/pkg/__init__.py".to_owned(), FileContext::Runtime)]
+            );
+        });
+    }
+
+    /// The walk lists `.py` files only, skips hidden directories and
+    /// `__pycache__`, and enters at most 16 directories below the start.
+    #[test]
+    fn walk_py_skips_hidden_cache_and_too_deep_directories() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let deep: Vec<String> = (1..=16).map(|n| format!("d{n}")).collect();
+        let deep = deep.join("/");
+        let ok = format!("w/{deep}/e.py");
+        let too_deep = format!("w/{deep}/d17/f.py");
+        write_files(
+            temp.path(),
+            &[
+                "w/a.py",
+                "w/notes.txt",
+                "w/.hidden/b.py",
+                "w/__pycache__/c.py",
+                "w/sub/d.py",
+                &ok,
+                &too_deep,
+            ],
+        );
+        let mut found = BTreeSet::new();
+        walk_py(temp.path(), "w", &mut found);
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            ["w/a.py".to_owned(), ok, "w/sub/d.py".to_owned()]
+        );
+    }
 }

@@ -1895,6 +1895,94 @@ fn dagster_tool_table_reads_module_names_and_reports_others() {
     assert_eq!(contrib.command_targets[0].origin.line, Some(9));
 }
 
+fn module_ref_names(contrib: &chokkin::internals::PluginContribution) -> Vec<&str> {
+    contrib
+        .module_refs
+        .iter()
+        .map(|reference| reference.module.as_str())
+        .collect()
+}
+
+/// An explicit `dg` setting is read whether or not its file exists, and a
+/// value that is no dotted name is a gap.
+#[test]
+fn dagster_explicit_dg_settings_are_read_or_reported() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "\n[tool.dg.project]\ndefs_module = \"not valid\"\ncode_location_target_module = \"bad name\"\n",
+        &[(
+            "dg.toml",
+            "[project]\ncode_location_target_module = \"external.defs\"\n",
+        )],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert!(contrib.entries.is_empty());
+    assert_eq!(module_ref_names(contrib), ["external.defs"]);
+    assert_eq!(gap_texts(contrib), ["\"not valid\"", "\"bad name\""]);
+}
+
+/// The modules a `root_module` implies are read only when they are dotted
+/// names with a file; a file building `Definitions` keeps its own context.
+#[test]
+fn dagster_implied_dg_settings_need_a_file() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "\n[tool.dg.project]\nroot_module = \"bad name\"\n",
+        &[
+            ("dg.toml", "[project]\nroot_module = \"acme_dg\"\n"),
+            ("acme_dg/__init__.py", ""),
+            ("acme_dg/definitions.py", "x = 1\n"),
+            ("tests/test_defs.py", "from dagster import Definitions\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(
+        sorted_entries(contrib),
+        ["acme_dg/definitions.py", "tests/test_defs.py"]
+    );
+    let test_entry = contrib
+        .entries
+        .iter()
+        .find(|entry| entry.spec.path == "tests/test_defs.py")
+        .expect("test entry");
+    assert_eq!(test_entry.context, FileContext::Test);
+    assert!(module_ref_names(contrib).is_empty());
+    assert!(gap_texts(contrib).is_empty());
+}
+
+/// `load_from` items at the key's own indent, blank lines inside and
+/// between them, and the key that ends the list; a line that is no list
+/// item is a gap.
+#[test]
+fn dagster_load_from_reads_the_list_to_its_end() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "",
+        &[
+            (
+                "workspace.yaml",
+                concat!(
+                    "load_from:\n",
+                    "  stray: x\n",
+                    "- python_module: col_zero.defs\n",
+                    "\n",
+                    "- python_file:\n",
+                    "\n",
+                    "    relative_path: jobs/spaced.py\n",
+                    "other:\n",
+                    "- python_module: not_loaded.defs\n",
+                ),
+            ),
+            ("jobs/spaced.py", "x = 1\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(sorted_entries(contrib), ["jobs/spaced.py"]);
+    assert_eq!(module_ref_names(contrib), ["col_zero.defs"]);
+    assert_eq!(gap_texts(contrib), ["stray: x"]);
+    assert_eq!(contrib.command_targets[0].origin.line, Some(2));
+}
+
 #[test]
 fn prefect_entrypoints_root_files_and_report_templates() {
     let hints = orchestration_hints(
@@ -1958,8 +2046,12 @@ fn scrapy_settings_root_spiders_and_named_components() {
                     "ITEM_PIPELINES = {\"crawler.pipelines.SavePipeline\": 300}\n",
                     "DOWNLOADER_MIDDLEWARES = {\"scrapy.downloadermiddlewares.useragent.UserAgentMiddleware\": None}\n",
                     "DUPEFILTER_CLASS = \"crawler.dupes\"\n",
+                    "FEED_EXPORTERS_LIST = [\"crawler.ext_a\"]\n",
+                    "SPIDER_LOADERS = (\"crawler.ext_b\",)\n",
                 ),
             ),
+            ("crawler/ext_a.py", "x = 1\n"),
+            ("crawler/ext_b.py", "x = 1\n"),
             ("crawler/spiders/__init__.py", ""),
             ("crawler/spiders/quotes.py", "import scrapy\n"),
             ("crawler/spiders/nested/__init__.py", ""),
@@ -1973,6 +2065,8 @@ fn scrapy_settings_root_spiders_and_named_components() {
         sorted_entries(contrib),
         [
             "crawler/dupes.py",
+            "crawler/ext_a.py",
+            "crawler/ext_b.py",
             "crawler/pipelines.py",
             "crawler/settings.py",
             "crawler/spiders/__init__.py",
