@@ -62,7 +62,14 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
             locations.push_entry(&module.path, file.context, origin);
         }
     }
-    locations.contrib
+    // Dagster collects the definitions each module binds.
+    let mut contrib = locations.contrib;
+    contrib.scanned_files = contrib
+        .entries
+        .iter()
+        .map(|entry| entry.spec.path.clone())
+        .collect();
+    contrib
 }
 
 /// The code locations found so far, each file once.

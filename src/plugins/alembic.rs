@@ -82,6 +82,12 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
             origin_for_file(root, &env, DEFAULT_ENV),
         );
     }
+    // Alembic loads them by path and reads their names.
+    contrib.scanned_files = contrib
+        .entries
+        .iter()
+        .map(|entry| entry.spec.path.clone())
+        .collect();
     contrib
 }
 

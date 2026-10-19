@@ -78,6 +78,8 @@ fn settings_module(
         return;
     }
     push_entry(contrib, &path, context, origin);
+    // Scrapy reads the settings by name.
+    contrib.scanned_files.push(path.clone());
     let Ok(contents) = std::fs::read_to_string(ctx.root.path.join(&path)) else {
         return;
     };
@@ -168,6 +170,8 @@ fn spider_modules(
         for (path, context) in module_paths(ctx, settings.dir, &module, true) {
             if seen.insert(path.clone()) {
                 push_entry(contrib, &path, context, origin.clone());
+                // Scrapy collects the spider classes each module binds.
+                contrib.scanned_files.push(path);
             }
         }
     }

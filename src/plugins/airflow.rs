@@ -71,6 +71,12 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
             });
         }
     }
+    // The DAG processor loads them by path and collects the DAGs they bind.
+    contrib.scanned_files = contrib
+        .entries
+        .iter()
+        .map(|entry| entry.spec.path.clone())
+        .collect();
     contrib
 }
 

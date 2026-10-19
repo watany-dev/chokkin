@@ -173,6 +173,11 @@ pub struct PluginContribution {
     /// Code the framework's config names in a form not read, or by a path
     /// or module the plugin does not root; the gap stage reads it (#401).
     pub command_targets: Vec<CommandTargetRef>,
+    /// Entry files whose top-level names the framework reads itself, by
+    /// loading them by path or scanning them for definitions: alembic's
+    /// scripts, DAG files, a scrapy settings module. Their names are no API
+    /// surface (#667, #401).
+    pub scanned_files: Vec<String>,
 }
 
 impl PluginContribution {
@@ -190,6 +195,7 @@ impl PluginContribution {
             sys_path_imports: Vec::new(),
             unread_settings: Vec::new(),
             command_targets: Vec::new(),
+            scanned_files: Vec::new(),
         }
     }
 

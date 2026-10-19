@@ -7271,3 +7271,62 @@ fn binary_scrapy_plugin_roots_its_definitions() {
         ),
     ]);
 }
+
+/// The orchestrators read their files' globals themselves: the DAG processor
+/// collects the `DAG`s a file binds, dagster and scrapy scan a module for
+/// definitions and spiders, scrapy reads its settings' names. Those names
+/// are no API surface even inside the package (#401). Prefect reads only
+/// the entrypoint's function, so the flow file's other names still report,
+/// as does an ordinary module beside them.
+#[test]
+fn binary_orchestration_files_are_no_api_surface() {
+    let pyproject = orchestration_pyproject(
+        "\"apache-airflow\", \"dagster\", \"prefect\", \"scrapy\"",
+        "",
+    );
+    let project = write_project(&[
+        ("pyproject.toml", pyproject.as_str()),
+        ("acme/__init__.py", "from acme import lib\n\nlib.used()\n"),
+        (
+            "acme/lib.py",
+            "def used():\n    pass\n\n\ndef unused():\n    pass\n",
+        ),
+        (
+            "acme/example_dags/etl.py",
+            "from airflow import DAG\n\nRETRIES = 3\n\nwith DAG(\"etl\") as dag:\n    pass\n",
+        ),
+        (
+            "acme/defs.py",
+            "from dagster import Definitions, asset\n\n\n@asset\ndef orders():\n    pass\n\n\ndefs = Definitions(assets=[orders])\n",
+        ),
+        (
+            "prefect.yaml",
+            "deployments:\n  - name: etl\n    entrypoint: acme/flows/etl.py:etl_flow\n",
+        ),
+        (
+            "acme/flows/etl.py",
+            "from prefect import flow\n\nRETRIES = 3\n\n\n@flow(retries=RETRIES)\ndef etl_flow():\n    pass\n\n\ndef other_flow():\n    pass\n",
+        ),
+        ("scrapy.cfg", "[settings]\ndefault = acme.settings\n"),
+        (
+            "acme/settings.py",
+            "BOT_NAME = \"acme\"\nSPIDER_MODULES = [\"acme.spiders\"]\n",
+        ),
+        ("acme/spiders/__init__.py", ""),
+        (
+            "acme/spiders/quotes.py",
+            "import scrapy\n\n\nclass QuotesSpider(scrapy.Spider):\n    name = \"quotes\"\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &["--no-cache", "--strict"]);
+    let targets: Vec<&str> = issues
+        .iter()
+        .filter(|issue| matches!(issue["code"].as_str(), Some("CHK001" | "CHK006" | "CHK007")))
+        .filter_map(|issue| issue["target"].as_str())
+        .collect();
+    assert_eq!(
+        targets,
+        ["acme/flows/etl.py:other_flow", "acme/lib.py:unused"],
+        "{issues:#?}"
+    );
+}
