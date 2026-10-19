@@ -89,6 +89,13 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
     candidates
 }
 
+/// A file the shallow-name rule makes an entry (`main.py`, `app.py`, ...):
+/// the app itself, whatever else runs it.
+pub(super) fn is_app_entry_file(path: &str, layout: &crate::sources::LayoutInfo) -> bool {
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    SHALLOW_ENTRY_NAMES.contains(&file_name) && is_shallow_entry_path(path, file_name, layout)
+}
+
 fn candidate(path: &str, context: FileContext, rule: String) -> EntryCandidate {
     EntryCandidate {
         spec: EntrySpec {

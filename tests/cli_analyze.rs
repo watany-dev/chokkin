@@ -6213,6 +6213,39 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
     }
 }
 
+/// A file another root runs in production keeps its context when a command
+/// also runs it, so `--production` still analyzes the app (#797): the root
+/// `main.py`, a module a console script names (its dev-group import is
+/// misplaced), and a configured entry.
+#[test]
+fn binary_command_run_runtime_roots_keep_runtime_context() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\", \"rich\"]\n\n[dependency-groups]\ndev = [\"click\"]\n\n[project.scripts]\nacme = \"cli:main\"\n\n[tool.chokkin]\nproject = [\"*.py\"]\nentry = [\"serve.py\"]\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  run:\n    steps:\n      - run: python main.py\n      - run: python cli.py\n      - run: python serve.py\n",
+        ),
+        ("main.py", "import helper\nimport requests\n"),
+        ("helper.py", ""),
+        (
+            "cli.py",
+            "import click\n\n\ndef main():\n    click.echo()\n",
+        ),
+        ("serve.py", "import rich\n"),
+    ]);
+    for mode in [&["--strict"][..], &["--strict", "--production"]] {
+        let keys = issue_keys(&json_issues(project.path(), mode));
+        assert_eq!(
+            keys,
+            [("CHK005".to_owned(), "click".to_owned())],
+            "{mode:?}: {keys:?}"
+        );
+    }
+}
+
 /// Apps named by `flask --app` / `celery -A` in `scripts/` and `bin/` shell
 /// scripts are entry roots, so only the control module is unused. The
 /// `*_bare_module` fixtures name a module without `:attr`, whose app the tool

@@ -10,7 +10,7 @@ use crate::plugins::{
 };
 use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
 
-use super::auto::detect_auto_entries;
+use super::auto::{detect_auto_entries, is_app_entry_file};
 use super::merge::merge_entry_candidates;
 use super::mode::{is_library_member, resolve_project_mode};
 use super::module::{resolve_module_on_disk, resolve_module_to_path};
@@ -343,16 +343,24 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
 
 /// Commands run their scripts by hand or in CI, so like hatchling's build
 /// scripts (#735) those files are dev (#797). A module of a package keeps its
-/// context, since the package may import it too.
-pub(crate) fn mark_command_scripts_dev(sources: &mut DiscoveredSources, plugins: &PluginHints) {
+/// context, since the package may import it too, and so does a file another
+/// root runs in production: the root `main.py` a workflow also runs is still
+/// the app.
+pub(crate) fn mark_command_scripts_dev(
+    sources: &mut DiscoveredSources,
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    plugins: &PluginHints,
+) {
     let known_paths = known_file_paths(sources);
+    let runtime_roots = runtime_root_paths(sources, config, manifest, plugins, &known_paths);
     let scripts: BTreeSet<String> = plugins
         .config_script_entries
         .iter()
         .filter_map(|script| command_script_path(&script.paths, &known_paths))
         .filter(|path| {
             let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
-            !known_paths.contains(&join_rel(dir, "__init__.py"))
+            !known_paths.contains(&join_rel(dir, "__init__.py")) && !runtime_roots.contains(*path)
         })
         .cloned()
         .collect();
@@ -361,6 +369,54 @@ pub(crate) fn mark_command_scripts_dev(sources: &mut DiscoveredSources, plugins:
             file.context = FileContext::Dev;
         }
     }
+}
+
+/// Files that roots other than commands run whatever context the files have:
+/// configured entries, manifest entry points, runtime plugin entries, symbol
+/// references, server apps, and app files found by name (`main.py`).
+fn runtime_root_paths(
+    sources: &DiscoveredSources,
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    plugins: &PluginHints,
+    known_paths: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let resolve = |module: &str| resolve_module_to_path(module, &sources.layout, known_paths);
+    let manifest_paths = manifest.entry_points.iter().filter_map(|entry_point| {
+        parse_manifest_target(&entry_point.target).and_then(|(module, _)| resolve(&module))
+    });
+    let plugin_paths = plugins
+        .contributions
+        .iter()
+        .flat_map(|contrib| &contrib.entries)
+        .filter(|entry| entry.context == FileContext::Runtime)
+        .map(|entry| entry.spec.path.clone());
+    let symbol_paths = plugins
+        .symbol_refs()
+        .filter_map(|symbol_ref| resolve(&symbol_ref.module));
+    let app_paths =
+        plugins
+            .config_command_targets
+            .iter()
+            .filter_map(|command| match &command.target {
+                CommandTarget::App { module, .. } => resolve(module),
+                _ => None,
+            });
+    config
+        .entry
+        .iter()
+        .map(|entry| entry.path.clone())
+        .chain(manifest_paths)
+        .chain(plugin_paths)
+        .chain(symbol_paths)
+        .chain(app_paths)
+        .chain(
+            sources
+                .python_files()
+                .filter(|file| is_app_entry_file(&file.path, &sources.layout))
+                .map(|file| file.path.clone()),
+        )
+        .collect()
 }
 
 fn command_script_path<'a>(
