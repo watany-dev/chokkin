@@ -477,6 +477,7 @@ mod tests {
         "x_test.pyi",
         "test_x.PY",
         "Test_x.py",
+        "nb.ipynb",
     ];
 
     const IMPORT_CONTEXTS: &[ImportContext] = &[
@@ -513,6 +514,15 @@ mod tests {
             Some("examples") => FileContext::Dev,
             Some("scripts") if !member => FileContext::Dev,
             None if !member && file == "noxfile.py" => FileContext::Dev,
+            // A notebook ships only inside the package: `src/` of a member
+            // (an unknown layout) or of the root (`src/acme` layout) (#1023).
+            _ if std::path::Path::new(file)
+                .extension()
+                .is_some_and(|ext| ext == "ipynb")
+                && top != Some("src") =>
+            {
+                FileContext::Dev
+            },
             _ => FileContext::Runtime,
         }
     }

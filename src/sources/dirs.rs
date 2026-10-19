@@ -9,15 +9,19 @@ const TEST_DIRS: &[&str] = &["tests", "test"];
 /// The test directory that is test code at any depth (`pandas/tests/`).
 pub(super) const NESTED_TEST_DIR: &str = "tests";
 
-pub(super) fn default_scanned_dirs() -> impl Iterator<Item = &'static str> {
-    TEST_DIRS.iter().copied().chain(["scripts"])
-}
-
 /// Root directories that hold project source rather than build or
 /// environment output, so an `__init__.py` makes them importable by name
 /// (pytest puts the rootdir on `sys.path`).
 pub(super) fn local_package_dirs() -> impl Iterator<Item = &'static str> {
-    default_scanned_dirs().chain(["docs"])
+    TEST_DIRS.iter().copied().chain(["scripts", "docs"])
+}
+
+/// Root directories every layout scans besides its package: the local
+/// package directories and `examples/`, whose files are entries (§8,
+/// #1023). An `examples/` package keeps no module name: its scripts run as
+/// files (sqlalchemy's `examples/`).
+pub(super) fn default_scanned_dirs() -> impl Iterator<Item = &'static str> {
+    local_package_dirs().chain(["examples"])
 }
 
 /// Directories never taken as the distributed package, nor as a namespace
@@ -38,8 +42,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn non_package_dirs_cover_every_local_package_dir() {
-        for dir in local_package_dirs() {
+    fn non_package_dirs_cover_every_scanned_dir() {
+        for dir in default_scanned_dirs() {
             assert!(is_non_package_dir(dir), "{dir}");
         }
         for dir in [

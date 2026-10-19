@@ -1,5 +1,7 @@
 //! Source file discovery orchestration.
 
+use std::path::Path;
+
 use crate::config::LoadedConfig;
 use crate::discovery::ProjectRoot;
 use crate::manifest::LoadedManifest;
@@ -7,10 +9,11 @@ use crate::manifest::LoadedManifest;
 use super::cache::SourcesCache;
 use super::error::SourcesError;
 use super::glob::effective_exclude;
-use super::layout::{infer_layout, pytest_testpaths};
+use super::layout::{ENTRY_TREE_GLOBS, infer_layout, pytest_testpaths};
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
-    CollectOptions, collect_files, large_project_warning, load_gitignore, validate_entries,
+    CollectOptions, Collected, collect_files, large_project_warning, load_gitignore,
+    validate_entries,
 };
 
 /// Discover Python source files under `root` using config and manifest hints.
@@ -82,7 +85,16 @@ pub(crate) fn discover_sources_cached(
         production: config.effective.production,
         cache,
     };
-    let collected = collect_files(&collect_options)?;
+    let mut collected = collect_files(&collect_options)?;
+    if config.effective.project.is_empty() {
+        drop_member_entry_trees(
+            &mut collected,
+            &effective_globs,
+            &test_matcher,
+            config,
+            cache,
+        )?;
+    }
     let files = collected.files;
     layout.package_dirs = files
         .iter()
@@ -110,4 +122,42 @@ pub(crate) fn discover_sources_cached(
         },
         held_tests: collected.held_tests,
     })
+}
+
+/// Drop the files inside a workspace member that only [`ENTRY_TREE_GLOBS`]
+/// reached: the member keeps its own layout, and the root never read them
+/// before those globs (#1023). Files a pytest `testpaths` entry covers stay,
+/// since the root read them as tests before.
+fn drop_member_entry_trees(
+    collected: &mut Collected,
+    effective_globs: &[String],
+    test_matcher: &globset::GlobSet,
+    config: &LoadedConfig,
+    cache: &SourcesCache,
+) -> Result<(), SourcesError> {
+    let members: Vec<&Path> = config
+        .workspace_members
+        .iter()
+        .filter(|member| !member.path.is_empty())
+        .map(|member| Path::new(member.path.as_str()))
+        .collect();
+    if members.is_empty() {
+        return Ok(());
+    }
+    let own_globs: Vec<String> = effective_globs
+        .iter()
+        .filter(|glob| !ENTRY_TREE_GLOBS.contains(&glob.as_str()))
+        .cloned()
+        .collect();
+    let own_matcher = cache.glob_set(&own_globs)?;
+    let keep = |file: &DiscoveredFile| {
+        own_matcher.is_match(&file.path)
+            || test_matcher.is_match(&file.path)
+            || !members
+                .iter()
+                .any(|member| Path::new(&file.path).starts_with(member))
+    };
+    collected.files.retain(keep);
+    collected.held_tests.retain(keep);
+    Ok(())
 }

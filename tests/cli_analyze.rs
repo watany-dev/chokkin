@@ -6889,3 +6889,33 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
         assert!(stderr.contains(reason), "{target}: {stderr}");
     }
 }
+
+#[test]
+fn binary_root_examples_and_notebooks_count_as_dev_usage() {
+    // #1023: a flat layout read neither `examples/` nor `notebooks/`, so the
+    // module and the dev dependencies only they use read as unused; reading
+    // them must not make the notebook runtime code (CHK005).
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[dependency-groups]\ndev = [\"matplotlib\", \"seaborn\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/plotting.py", "def plot():\n    pass\n"),
+        (
+            "examples/demo.py",
+            "import matplotlib.pyplot as plt\nfrom acme.plotting import plot\nplot()\n",
+        ),
+        (
+            "notebooks/demo.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": "import seaborn\n"}]}"#,
+        ),
+    ] {
+        let path = temp.path().join(file);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, text).expect("write fixture");
+    }
+    let issues = json_issues(temp.path(), &["--strict"]);
+    assert_eq!(issue_keys(&issues), [], "{issues:#?}");
+}
