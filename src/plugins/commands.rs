@@ -925,6 +925,7 @@ mod tests {
             ("waitress-serve mypkg.wsgi", "app mypkg.wsgi"),
             // An attribute that is not a name path still names the module.
             ("uvicorn 'mypkg.app:apps[0]'", "app mypkg.app"),
+            ("uvicorn 'mypkg.app:$APP'", "opaque mypkg.app:$APP"),
             // An option's `scheme:value` is not the app.
             (
                 "gunicorn -c python:mypkg.conf mypkg.wsgi:app",
@@ -936,6 +937,10 @@ mod tests {
             ),
             (
                 "gunicorn -c python:mypkg.conf mypkg.wsgi",
+                "app mypkg.wsgi:application",
+            ),
+            (
+                "gunicorn --workers=$WEB_CONCURRENCY mypkg.wsgi",
                 "app mypkg.wsgi:application",
             ),
             // An app imported from another directory names no known file.

@@ -1377,10 +1377,17 @@ mod tests {
             "uvicorn.Config(\"pkg.a:app\")\n",
             "run(\"pkg.b:app\")\n",
         ));
+        let look_alikes = visit_source(concat!(
+            "import uvicornish\n",
+            "import starlette as server\n",
+            "uvicorn.run(\"pkg.unbound:app\")\n",
+            "server.run(\"pkg.aliased:app\")\n",
+        ));
         let apps: Vec<(&str, &str, u32, bool)> = parsed
             .server_apps
             .iter()
             .chain(&submodules.server_apps)
+            .chain(&look_alikes.server_apps)
             .map(|server| {
                 (
                     server.call.as_str(),
