@@ -385,6 +385,16 @@ fn packages_with_init(parent: &Path, skip_non_packages: bool) -> Vec<String> {
     packages
 }
 
+/// The globs [`default_globs`] adds so the entry rules for root examples,
+/// docs and notebooks see files outside the package in every layout (§8,
+/// #1023). A workspace member under them keeps its own layout: its files
+/// are not the root's examples.
+pub(super) const ENTRY_TREE_GLOBS: [&str; 3] = [
+    "docs/**/*.{py,pyi,ipynb}",
+    "examples/**/*.{py,pyi,ipynb}",
+    "**/*.ipynb",
+];
+
 /// `src/` keeps its whole tree (top-level modules, namespace packages);
 /// any other package root only contributes its packages, so `lib/tests`
 /// next to `lib/streamlit` stays out of the runtime set.

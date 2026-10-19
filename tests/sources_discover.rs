@@ -488,3 +488,36 @@ fn discovers_root_examples_docs_and_notebooks_in_every_layout() {
         assert_eq!(context_of(&sources, "docs/demo.ipynb"), FileContext::Docs);
     }
 }
+
+#[test]
+fn root_example_and_notebook_trees_skip_workspace_members() {
+    // mcp-python-sdk's `examples/snippets` is a uv member with a layout of
+    // its own; the root's `examples/**` and `**/*.ipynb` must not read it as
+    // root examples, which never are entries there (#1023).
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n\
+             [tool.uv.workspace]\nmembers = [\"examples/snippets\"]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("examples/demo.py", ""),
+        (
+            "examples/snippets/pyproject.toml",
+            "[project]\nname = \"snippets\"\nversion = \"0.1.0\"\n",
+        ),
+        ("examples/snippets/servers/__init__.py", ""),
+        ("examples/snippets/servers/echo.py", ""),
+        ("examples/snippets/demo.ipynb", "{}"),
+    ]);
+    assert_eq!(sources.layout.layout, ProjectLayout::Src);
+    let discovered = paths(&sources);
+    assert!(discovered.contains(&"examples/demo.py"), "{discovered:?}");
+    for path in [
+        "examples/snippets/servers/__init__.py",
+        "examples/snippets/servers/echo.py",
+        "examples/snippets/demo.ipynb",
+    ] {
+        assert!(!discovered.contains(&path), "{path}");
+    }
+}
