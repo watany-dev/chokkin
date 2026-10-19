@@ -255,13 +255,19 @@ pub(super) fn python_run(elts: &[Expr]) -> Option<PythonRun> {
     }
 }
 
-/// The program a shell command line would run: the first word of a string
-/// literal that has more than one (`"ruff format --check"` gives `ruff`).
+/// The program in a command string or the literal head of an argv list/tuple.
 #[must_use]
 pub(super) fn command_word(expr: &Expr) -> Option<&str> {
-    let mut words = str_constant(expr)?.split_whitespace();
-    let first = words.next()?;
-    words.next()?;
+    let first = match expr {
+        Expr::List(list) => str_constant(list.elts.first()?)?,
+        Expr::Tuple(tuple) => str_constant(tuple.elts.first()?)?,
+        _ => {
+            let mut words = str_constant(expr)?.split_whitespace();
+            let first = words.next()?;
+            words.next()?;
+            first
+        },
+    };
     let valid = first.starts_with(|c: char| c.is_ascii_alphabetic())
         && first
             .chars()

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use super::companions::companion_is_used;
 use super::unused::is_conditional;
 use super::used::{sorted_paths, within};
 use crate::config::Confidence;
@@ -84,6 +85,12 @@ pub(super) fn detect_script_dependency_issues(
                 .map(normalize_distribution_name)
                 .filter(|name| declared.contains(name)),
         );
+        let companions: Vec<_> = declared
+            .iter()
+            .filter(|name| companion_is_used(name, |provider| used.contains(provider)))
+            .cloned()
+            .collect();
+        used.extend(companions);
         // A file run with `sys.executable` shares the block's environment, and
         // its imports cannot be followed.
         if !parsed.is_some_and(|module| module.runs_python_file) {

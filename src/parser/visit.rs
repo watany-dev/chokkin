@@ -1015,6 +1015,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
     /// Both used to be separate full-tree passes; folding them into the statement
     /// walk keeps cold parse to a single traversal per file.
     fn visit_expr(&mut self, expr: &'ast Expr) {
+        if let Some(word) = command_word(expr) {
+            self.command_words.insert(word.to_owned());
+        }
         match expr {
             Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
             Expr::Attribute(attribute) => self.attribute_sites.push(attribute),
@@ -1058,9 +1061,6 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             Expr::List(list) => self.record_python_run(expr, &list.elts),
             Expr::Tuple(tuple) => self.record_python_run(expr, &tuple.elts),
             Expr::StringLiteral(_) => {
-                if let Some(word) = command_word(expr) {
-                    self.command_words.insert(word.to_owned());
-                }
                 if let Some(hint) = sys_path_hint(expr)
                     && !self.sys_path.literals.contains(hint.as_ref())
                 {
@@ -1620,6 +1620,14 @@ def later():
         assert_eq!(visit_source(source).shell_commands, Vec::<String>::new());
         let parsed = visit_source(&format!("import subprocess\n{source}"));
         assert_eq!(parsed.shell_commands, vec!["ruff".to_owned()]);
+    }
+
+    #[test]
+    fn records_command_argument_list_heads_only_with_subprocess() {
+        let source = "cmd = [\"transformers\", \"serve\", model]\nother = (\"ruff\", \"check\", path)\nunknown = [program, \"boto3\"]\n";
+        assert!(visit_source(source).shell_commands.is_empty());
+        let parsed = visit_source(&format!("import subprocess\n{source}"));
+        assert_eq!(parsed.shell_commands, ["ruff", "transformers"]);
     }
 
     #[test]
