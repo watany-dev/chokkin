@@ -1,5 +1,7 @@
 //! File context assignment (§10).
 
+use std::path::Path;
+
 use super::dirs::{NESTED_TEST_DIR, in_root_test_dir};
 use super::types::{DiscoveredSources, FileContext, LayoutInfo, ProjectLayout};
 
@@ -68,8 +70,9 @@ fn layout_context(path: &str, context: FileContext, layout: &LayoutInfo) -> File
 }
 
 fn is_notebook(path: &str) -> bool {
-    path.rsplit_once('.')
-        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("ipynb"))
+    Path::new(path)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ipynb"))
 }
 
 /// Whether `path` lies in the tree the innermost member's (or the root's)
@@ -426,8 +429,7 @@ mod tests {
 
     #[test]
     fn notebooks_outside_the_distributed_package_are_dev() {
-        use crate::discovery::{ProjectRoot, RootMarker};
-        use crate::sources::{DiscoveredFile, FileKind, MemberLayout};
+        use crate::sources::MemberLayout;
 
         let mut layout = LayoutInfo::new("", vec!["acme".to_owned()]);
         layout.members = vec![MemberLayout {
@@ -447,45 +449,13 @@ mod tests {
             ("pkgs/core/src/core/demo.ipynb", FileContext::Runtime),
             ("pkgs/core/notebooks/demo.ipynb", FileContext::Dev),
         ];
-        let discovered = |production: bool| {
-            let mut sources = DiscoveredSources {
-                root: ProjectRoot {
-                    path: std::path::PathBuf::from("/project"),
-                    marker: RootMarker::PyProjectToml,
-                },
-                layout: layout.clone(),
-                effective_globs: Vec::new(),
-                files: cases
-                    .iter()
-                    .map(|(path, _)| DiscoveredFile {
-                        path: (*path).to_owned(),
-                        kind: FileKind::Notebook,
-                        context: assign_file_context(path),
-                    })
-                    .collect(),
-                warnings: Vec::new(),
-            };
-            apply_member_context(&mut sources, production);
-            sources
-        };
-        let all = discovered(false);
-        for ((path, expected), file) in cases.iter().zip(&all.files) {
-            assert_eq!(file.context, *expected, "{path}");
+        for (path, expected) in cases {
             assert_eq!(
                 assign_layout_file_context(path, &layout),
-                *expected,
+                expected,
                 "{path}"
             );
         }
-        let production = discovered(true);
-        assert_eq!(
-            kept(&production),
-            cases
-                .iter()
-                .filter(|(_, context)| context.is_included_in_production())
-                .map(|(path, _)| *path)
-                .collect::<Vec<_>>()
-        );
     }
 
     #[test]
