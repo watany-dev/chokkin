@@ -230,7 +230,7 @@ impl Locations<'_, '_> {
         };
         let inline = yaml_scalar(inline);
         let (value, origin) = if inline.is_empty() {
-            let nested = (lines.start + 1..lines.end).find_map(|line| {
+            let nested = lines.skip(1).find_map(|line| {
                 let text = workspace.lines[line].trim_start();
                 let value = text.strip_prefix(nested_key)?.strip_prefix(':')?;
                 Some((

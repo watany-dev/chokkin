@@ -1895,6 +1895,32 @@ fn dagster_tool_table_reads_module_names_and_reports_others() {
     assert_eq!(contrib.command_targets[0].origin.line, Some(9));
 }
 
+/// A module binding a dagster definitions name, imported or read off an
+/// imported `dagster`, is an entry; other dagster names are not.
+#[test]
+fn dagster_definitions_modules_need_a_definitions_name() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "",
+        &[
+            ("acme/__init__.py", ""),
+            (
+                "acme/a.py",
+                "import dagster as dg\n\ndefs = dg.Definitions()\n",
+            ),
+            ("acme/b.py", "from dagster import asset\n"),
+            (
+                "acme/c.py",
+                "import other as dg\n\ndefs = dg.Definitions()\n",
+            ),
+            ("acme/d.py", "import dagster as dg\n\nx = dg.asset\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(sorted_entries(contrib), ["acme/a.py"]);
+    assert_eq!(contrib.entries[0].origin.line, Some(3));
+}
+
 fn module_ref_names(contrib: &chokkin::internals::PluginContribution) -> Vec<&str> {
     contrib
         .module_refs
@@ -1969,6 +1995,7 @@ fn dagster_load_from_reads_the_list_to_its_end() {
                     "- python_file:\n",
                     "\n",
                     "    relative_path: jobs/spaced.py\n",
+                    "- python_file:\n",
                     "other:\n",
                     "- python_module: not_loaded.defs\n",
                 ),
@@ -1979,7 +2006,7 @@ fn dagster_load_from_reads_the_list_to_its_end() {
     let contrib = plugin_contrib(&hints, PluginId::Dagster);
     assert_eq!(sorted_entries(contrib), ["jobs/spaced.py"]);
     assert_eq!(module_ref_names(contrib), ["col_zero.defs"]);
-    assert_eq!(gap_texts(contrib), ["stray: x"]);
+    assert_eq!(gap_texts(contrib), ["stray: x", "python_file:"]);
     assert_eq!(contrib.command_targets[0].origin.line, Some(2));
 }
 
