@@ -51,12 +51,20 @@ pub struct ScriptReference {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommandTarget {
     /// A `.py` file run by path: root-relative candidates in priority order.
+    /// An entry once one is discovered (#912).
     Script {
         /// Candidates; the first discovered one is the script.
         paths: Vec<String>,
     },
-    /// A module run with `-m` or by a task runner, or imported by
-    /// `python -c` code.
+    /// A module run with `-m`; an entry once it resolves to a project file
+    /// (#912).
+    Run {
+        /// Dotted module name.
+        module: String,
+    },
+    /// A module a task runner loads, one `python -c` code imports, or one
+    /// run with `-m` from a directory the command changes to or puts on the
+    /// import path.
     Module {
         /// Dotted module name.
         module: String,
@@ -85,6 +93,11 @@ pub struct CommandTargetRef {
     pub target: CommandTarget,
     /// The command's file and line.
     pub origin: ReferenceOrigin,
+    /// The command runs in the deployed image or process (a Dockerfile, a
+    /// Procfile), so what it runs keeps its own context rather than being
+    /// dev (#912).
+    #[serde(default)]
+    pub deploy: bool,
 }
 
 /// A config file imports a first-party module whose `sys.path` edits apply to
@@ -210,8 +223,9 @@ pub struct PluginHints {
     /// Scripts CI workflows, local pre-commit hooks and agent skill docs run
     /// by path (#797).
     pub config_script_entries: Vec<ScriptReference>,
-    /// Python code task files and tool configs run (#913). Server apps are
-    /// entries (#1004); the gap stage reads the rest, which is not.
+    /// Python code task files and tool configs run (#913). Scripts, `-m`
+    /// modules (#912) and server apps (#1004) are entries; the gap stage
+    /// reads what no entry reaches.
     pub config_command_targets: Vec<CommandTargetRef>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,

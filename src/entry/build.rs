@@ -6,9 +6,10 @@ use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
 use crate::path_util::{is_submodule, join_rel};
 use crate::plugins::{
-    CommandTarget, PluginHints, ReferenceOrigin, parse_module_symbol, parse_uvicorn_script_target,
+    CommandTarget, CommandTargetRef, PluginHints, ReferenceOrigin, parse_module_symbol,
+    parse_uvicorn_script_target,
 };
-use crate::sources::{DiscoveredSources, FileContext, assign_file_context};
+use crate::sources::{DiscoveredSources, FileContext, LayoutInfo, assign_file_context};
 
 use super::auto::{detect_auto_entries, is_app_entry_file};
 use super::merge::merge_entry_candidates;
@@ -55,6 +56,13 @@ pub fn build_entry_roots(
     );
     collect_plugin_entries(plugins, &mut candidates);
     collect_command_entries(plugins, &known_paths, &mut candidates);
+    collect_command_target_entries(
+        plugins,
+        &sources.layout,
+        &known_paths,
+        &file_contexts,
+        &mut candidates,
+    );
     collect_server_app_entries(
         plugins,
         sources,
@@ -342,10 +350,11 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
 }
 
 /// Commands run their scripts by hand or in CI, so like hatchling's build
-/// scripts (#735) those files are dev (#797). A module of a package keeps its
-/// context, since the package may import it too, and so does a file another
-/// root runs in production: the root `main.py` a workflow also runs is still
-/// the app.
+/// scripts (#735) those files are dev (#797), and so are the scripts and `-m`
+/// modules task files run (#912). A module of a package keeps its context,
+/// since the package may import it too, and so does a file another root runs
+/// in production: the root `main.py` a workflow also runs is still the app,
+/// and so is a script a Dockerfile or Procfile runs.
 pub(crate) fn mark_command_scripts_dev(
     sources: &mut DiscoveredSources,
     config: &ChokkinConfig,
@@ -354,15 +363,20 @@ pub(crate) fn mark_command_scripts_dev(
 ) {
     let known_paths = known_file_paths(sources);
     let runtime_roots = runtime_root_paths(sources, config, manifest, plugins, &known_paths);
+    let task_targets = plugins
+        .config_command_targets
+        .iter()
+        .filter(|command| !command.deploy)
+        .filter_map(|command| command_target_path(command, &sources.layout, &known_paths));
     let scripts: BTreeSet<String> = plugins
         .config_script_entries
         .iter()
-        .filter_map(|script| command_script_path(&script.paths, &known_paths))
+        .filter_map(|script| command_script_path(&script.paths, &known_paths).cloned())
+        .chain(task_targets)
         .filter(|path| {
             let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
-            !known_paths.contains(&join_rel(dir, "__init__.py")) && !runtime_roots.contains(*path)
+            !known_paths.contains(&join_rel(dir, "__init__.py")) && !runtime_roots.contains(path)
         })
-        .cloned()
         .collect();
     for file in &mut sources.files {
         if file.context == FileContext::Runtime && scripts.contains(&file.path) {
@@ -371,9 +385,10 @@ pub(crate) fn mark_command_scripts_dev(
     }
 }
 
-/// Files that roots other than commands run whatever context the files have:
-/// configured entries, manifest entry points, runtime plugin entries, symbol
-/// references, server apps, and app files found by name (`main.py`).
+/// Files that roots other than dev commands run whatever context the files
+/// have: configured entries, manifest entry points, runtime plugin entries,
+/// symbol references, server apps, what deploy commands run, and app files
+/// found by name (`main.py`).
 fn runtime_root_paths(
     sources: &DiscoveredSources,
     config: &ChokkinConfig,
@@ -394,14 +409,14 @@ fn runtime_root_paths(
     let symbol_paths = plugins
         .symbol_refs()
         .filter_map(|symbol_ref| resolve(&symbol_ref.module));
-    let app_paths =
-        plugins
-            .config_command_targets
-            .iter()
-            .filter_map(|command| match &command.target {
-                CommandTarget::App { module, .. } => resolve(module),
-                _ => None,
-            });
+    let command_paths = plugins
+        .config_command_targets
+        .iter()
+        .filter_map(|command| match &command.target {
+            CommandTarget::App { module, .. } => resolve(module),
+            _ if command.deploy => command_target_path(command, &sources.layout, known_paths),
+            _ => None,
+        });
     config
         .entry
         .iter()
@@ -409,7 +424,7 @@ fn runtime_root_paths(
         .chain(manifest_paths)
         .chain(plugin_paths)
         .chain(symbol_paths)
-        .chain(app_paths)
+        .chain(command_paths)
         .chain(
             sources
                 .python_files()
@@ -443,6 +458,58 @@ fn collect_command_entries(
             context: FileContext::Dev,
             origin: EntryOrigin::Command {
                 label: command_label(&script.origin),
+            },
+        });
+    }
+}
+
+/// The file a task file or tool config runs as a script or with `-m`
+/// (#912): a script's first discovered candidate, or the module's
+/// `__main__` before the module itself, as `python -m` runs a package's.
+fn command_target_path(
+    command: &CommandTargetRef,
+    layout: &LayoutInfo,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    match &command.target {
+        CommandTarget::Script { paths } => command_script_path(paths, known_paths).cloned(),
+        CommandTarget::Run { module } => {
+            resolve_module_to_path(&format!("{module}.__main__"), layout, known_paths)
+                .or_else(|| resolve_module_to_path(module, layout, known_paths))
+        },
+        CommandTarget::Module { .. } | CommandTarget::App { .. } | CommandTarget::Opaque { .. } => {
+            None
+        },
+    }
+}
+
+/// Scripts and `-m` modules task files and tool configs run are roots, so
+/// what they import is followed (#912). They are dev, as the scripts CI runs
+/// are (#797), unless a deploy command runs them: those keep the file's own
+/// context, as a server's app does (#1004). A target that names no
+/// discovered file adds nothing; the gap stage reads the ones that resolve
+/// but are relocated, imported by `-c` code, or loaded by a task runner.
+fn collect_command_target_entries(
+    plugins: &PluginHints,
+    layout: &LayoutInfo,
+    known_paths: &BTreeSet<String>,
+    file_contexts: &BTreeMap<&str, FileContext>,
+    candidates: &mut Vec<EntryCandidate>,
+) {
+    for command in &plugins.config_command_targets {
+        let Some(path) = command_target_path(command, layout, known_paths) else {
+            continue;
+        };
+        let context = if command.deploy {
+            context_for_path(&path, file_contexts)
+        } else {
+            FileContext::Dev
+        };
+        candidates.push(EntryCandidate {
+            spec: EntrySpec { path, symbol: None },
+            context,
+            origin: EntryOrigin::Command {
+                label: command_label(&command.origin),
             },
         });
     }

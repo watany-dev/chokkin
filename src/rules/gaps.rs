@@ -602,9 +602,12 @@ fn keep_first_line<K: Ord>(sites: &mut BTreeMap<K, Option<u32>>, key: K, line: O
 
 /// One gap per command file and target. A computed or unread target may run
 /// any file; a file or module it names that no entry reaches runs code whose
-/// imports are not followed, since only server apps are entries (#912,
-/// #1004). A target that names nothing discovered (a typo, a deleted file, a
-/// third-party module such as `pytest`) hides no project file, so it is no gap.
+/// imports are not followed. Scripts, `-m` modules (#912) and server apps
+/// (#1004) are entries, so that is a module a task runner loads, `-c` code
+/// imports, or a relocated `-m` names, and under `--production` a dev
+/// command's script or module, whose entry is held back. A target that names
+/// nothing discovered (a typo, a deleted file, a third-party module such as
+/// `pytest`) hides no project file, so it is no gap.
 fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef]) -> Vec<Gap> {
     let known_paths: BTreeSet<String> = context
         .sources
@@ -623,7 +626,7 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
                     _ => continue,
                 }
             },
-            CommandTarget::Module { module } => {
+            CommandTarget::Run { module } | CommandTarget::Module { module } => {
                 let layout = &context.sources.layout;
                 let path =
                     resolve_module_to_path(&format!("{module}.__main__"), layout, &known_paths)

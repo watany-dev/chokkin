@@ -232,7 +232,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v7".to_owned(),
+            unit_version: "config-scan-v8".to_owned(),
         },
         inputs,
     })
