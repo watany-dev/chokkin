@@ -6347,19 +6347,27 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
 
 /// A file another root runs in production keeps its context when a command
 /// also runs it, so `--production` still analyzes the app (#797): the root
-/// `main.py`, a module a console script names (its dev-group import is
-/// misplaced), and a configured entry.
+/// `main.py`, a module a console script names and a `FLASK_APP` file (their
+/// dev-group imports are misplaced), a configured entry, and a server app a
+/// Makefile serves.
 #[test]
 fn binary_command_run_runtime_roots_keep_runtime_context() {
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\", \"rich\"]\n\n[dependency-groups]\ndev = [\"click\"]\n\n[project.scripts]\nacme = \"cli:main\"\n\n[tool.chokkin]\nproject = [\"*.py\"]\nentry = [\"serve.py\"]\n",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"flask\", \"gunicorn\", \"httpx\", \"requests\", \"rich\"]\n\n[dependency-groups]\ndev = [\"attrs\", \"click\"]\n\n[project.scripts]\nacme = \"cli:main\"\n\n[tool.chokkin]\nproject = [\"*.py\"]\nentry = [\"serve.py\"]\n",
         ),
         (
             ".github/workflows/ci.yml",
-            "jobs:\n  run:\n    steps:\n      - run: python main.py\n      - run: python cli.py\n      - run: python serve.py\n",
+            "jobs:\n  run:\n    steps:\n      - run: python main.py\n      - run: python cli.py\n      - run: python serve.py\n      - run: python hello.py\n      - run: python web.py\n",
         ),
+        (".flaskenv", "FLASK_APP=hello.py\n"),
+        (
+            "hello.py",
+            "import attrs\nimport flask\n\napp = flask.Flask(__name__)\n",
+        ),
+        ("Makefile", "serve:\n\tgunicorn web:app\n"),
+        ("web.py", "import httpx\n\napp = httpx.Client()\n"),
         ("main.py", "import helper\nimport requests\n"),
         ("helper.py", ""),
         (
@@ -6372,7 +6380,10 @@ fn binary_command_run_runtime_roots_keep_runtime_context() {
         let keys = issue_keys(&json_issues(project.path(), mode));
         assert_eq!(
             keys,
-            [("CHK005".to_owned(), "click".to_owned())],
+            [
+                ("CHK005".to_owned(), "attrs".to_owned()),
+                ("CHK005".to_owned(), "click".to_owned())
+            ],
             "{mode:?}: {keys:?}"
         );
     }
