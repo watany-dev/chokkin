@@ -3257,6 +3257,40 @@ fn binary_deploy_command_runs_keep_runtime_context() {
     }
 }
 
+/// A file with a `__main__` block or one the wheel ships stays a production
+/// root when a task file also runs it: `make run` runs the flat app and tox
+/// runs the library's module, neither of which is a dev script (#912).
+#[test]
+fn binary_command_runs_keep_main_block_and_shipped_files() {
+    let app = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"*.py\"]\n",
+        ),
+        ("Makefile", "run:\n\tpython bot.py\n"),
+        (
+            "bot.py",
+            "import helpers\n\nif __name__ == \"__main__\":\n    helpers.run()\n",
+        ),
+        (
+            "helpers.py",
+            "import requests\n\n\ndef run():\n    requests.get\n",
+        ),
+    ]);
+    let library = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mymod\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.setuptools]\npy-modules = [\"mymod\"]\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        ("tox.ini", "[testenv]\ncommands = python -m mymod\n"),
+        ("mymod.py", "import requests\n"),
+    ]);
+    for project in [&app, &library] {
+        let keys = issue_keys(&json_issues(project.path(), &["--production"]));
+        assert!(keys.iter().all(|(code, _)| code == "CHK008"), "{keys:?}");
+    }
+}
+
 /// A computed target may run any file, so it lowers unused files (#913).
 #[test]
 fn binary_computed_command_target_lowers_unused_files() {

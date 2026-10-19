@@ -4,12 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
 use crate::manifest::LoadedManifest;
+use crate::parser::ParseSummary;
 use crate::path_util::{is_submodule, join_rel};
 use crate::plugins::{
     CommandTarget, CommandTargetRef, PluginHints, ReferenceOrigin, parse_module_symbol,
     parse_uvicorn_script_target,
 };
-use crate::sources::{DiscoveredSources, FileContext, LayoutInfo, assign_file_context};
+use crate::sources::{
+    DiscoveredSources, FileContext, LayoutInfo, PublicSurface, assign_file_context,
+};
 
 use super::auto::{detect_auto_entries, is_app_entry_file};
 use super::merge::merge_entry_candidates;
@@ -353,15 +356,26 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
 /// modules task files run (#912). A module of a package keeps its context,
 /// since the package may import it too, and so does a file another root runs
 /// in production: the root `main.py` a workflow also runs is still the app,
-/// and so is a script a Dockerfile or Procfile runs.
+/// and so are a script a Dockerfile or Procfile runs, a file with a
+/// `__main__` block, and a module the wheel ships.
 pub(crate) fn mark_command_scripts_dev(
     sources: &mut DiscoveredSources,
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
     plugins: &PluginHints,
+    parse: &ParseSummary,
 ) {
     let known_paths = known_file_paths(sources);
-    let runtime_roots = runtime_root_paths(sources, config, manifest, plugins, &known_paths);
+    let mut runtime_roots = runtime_root_paths(sources, config, manifest, plugins, &known_paths);
+    runtime_roots.extend(
+        parse
+            .modules
+            .iter()
+            .filter(|module| module.has_main_block)
+            .map(|module| module.path.clone()),
+    );
+    let shipped = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
+    runtime_roots.extend(shipped.into_iter().flat_map(|surface| surface.files));
     let task_targets = plugins
         .config_command_targets
         .iter()

@@ -220,6 +220,7 @@ fn run_analysis_core(
         &probe.effective_config,
         &probe.manifest,
         &plugins,
+        &parse,
     );
     let sources = &sources;
 
