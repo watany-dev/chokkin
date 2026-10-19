@@ -514,8 +514,18 @@ fn celery_app<'a>(args: &[&'a str]) -> Option<&'a str> {
 }
 
 fn server_app<'a>(args: &[&'a str]) -> Option<&'a str> {
-    if let Some(app) = args.iter().find(|arg| is_app_reference(arg)) {
-        return Some(app);
+    // A reference right after an option may be its value (`-c python:conf`,
+    // `-k egg:dist#worker`), so it is the last resort; after a flag
+    // (`--reload mypkg:app`) it is still the app.
+    let follows_option = |index: usize| {
+        index
+            .checked_sub(1)
+            .is_some_and(|prev| args[prev].starts_with('-') && !args[prev].contains('='))
+    };
+    if let Some(index) =
+        (0..args.len()).find(|&index| is_app_reference(args[index]) && !follows_option(index))
+    {
+        return Some(args[index]);
     }
     let mut after_option = false;
     for arg in args {
@@ -528,7 +538,7 @@ fn server_app<'a>(args: &[&'a str]) -> Option<&'a str> {
         }
         after_option = false;
     }
-    None
+    args.iter().copied().find(|arg| is_app_reference(arg))
 }
 
 /// `module:attr`, `module:factory()` or a computed `$APP_MODULE`-like word
@@ -920,6 +930,19 @@ mod tests {
             ("uvicorn mypkg.main", "app mypkg.main"),
             // An attribute that is not a name path still names the module.
             ("uvicorn 'mypkg.app:apps[0]'", "app mypkg.app"),
+            // An option's `scheme:value` is not the app.
+            (
+                "gunicorn -c python:mypkg.conf mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            (
+                "gunicorn -k egg:meinheld#gevent_worker mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            (
+                "gunicorn -c python:mypkg.conf mypkg.wsgi",
+                "app mypkg.wsgi:application",
+            ),
             // An app imported from another directory names no known file.
             ("cd src && uvicorn mypkg.asgi:app", "opaque mypkg.asgi"),
             ("uvicorn --app-dir src mypkg.asgi:app", "opaque mypkg.asgi"),
