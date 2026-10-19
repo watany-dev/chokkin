@@ -1033,12 +1033,13 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 self.record_computed_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
-                if let Some((label, app)) = self.server_names.app(call) {
+                if let Some((label, app, app_dir)) = self.server_names.app(call) {
                     let line = self.line_number(call);
                     self.parsed.server_apps.push(ServerApp {
                         call: label.to_owned(),
                         app: app.to_owned(),
                         line,
+                        app_dir,
                     });
                 }
                 let arguments = &call.arguments;
@@ -1348,7 +1349,8 @@ mod tests {
     }
 
     /// Literal `module:attr` apps passed to uvicorn's `run` and `Config`,
-    /// aliases included; app objects, computed strings, bare modules and
+    /// aliases and submodule imports included, with whether `app_dir=` moves
+    /// the import root; app objects, computed strings, bare modules and
     /// look-alike calls are not read (#1004).
     #[test]
     fn records_literal_apps_passed_to_uvicorn() {
@@ -1362,26 +1364,42 @@ mod tests {
             "def main():\n",
             "    serve(\"pkg.main:create()\", factory=True)\n",
             "    Config(\"pkg.other:app\")\n",
-            "    C(\"pkg.sub:app\")\n",
+            "    C(\"pkg.sub:app\", app_dir=\"src\")\n",
             "uvicorn.run(app)\n",
             "uvicorn.run(f\"pkg.{name}:app\")\n",
             "uvicorn.run(\"pkg.bare\")\n",
             "other.run(\"pkg.not_uvicorn:app\")\n",
             "run(\"pkg.not_imported:app\")\n",
         ));
-        let apps: Vec<(&str, &str, u32)> = parsed
+        let submodules = visit_source(concat!(
+            "import uvicorn.config\n",
+            "from uvicorn.main import run\n",
+            "uvicorn.Config(\"pkg.a:app\")\n",
+            "run(\"pkg.b:app\")\n",
+        ));
+        let apps: Vec<(&str, &str, u32, bool)> = parsed
             .server_apps
             .iter()
-            .map(|server| (server.call.as_str(), server.app.as_str(), server.line))
+            .chain(&submodules.server_apps)
+            .map(|server| {
+                (
+                    server.call.as_str(),
+                    server.app.as_str(),
+                    server.line,
+                    server.app_dir,
+                )
+            })
             .collect();
         assert_eq!(
             apps,
             [
-                ("uvicorn.run", "pkg.asgi:app", 5),
-                ("uvicorn.Config", "pkg.cfg:application", 6),
-                ("uvicorn.run", "pkg.main:create()", 8),
-                ("uvicorn.Config", "pkg.other:app", 9),
-                ("uvicorn.Config", "pkg.sub:app", 10),
+                ("uvicorn.run", "pkg.asgi:app", 5, false),
+                ("uvicorn.Config", "pkg.cfg:application", 6, false),
+                ("uvicorn.run", "pkg.main:create()", 8, false),
+                ("uvicorn.Config", "pkg.other:app", 9, false),
+                ("uvicorn.Config", "pkg.sub:app", 10, true),
+                ("uvicorn.Config", "pkg.a:app", 3, false),
+                ("uvicorn.run", "pkg.b:app", 4, false),
             ]
         );
     }

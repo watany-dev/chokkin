@@ -633,14 +633,9 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
                     _ => continue,
                 }
             },
-            // An app that resolves is an entry; one excluded from the
-            // analysis stays unreached.
-            CommandTarget::App { module, .. } => {
-                match resolve_module_to_path(module, &context.sources.layout, &known_paths) {
-                    Some(path) if unreached(&path) => module.clone(),
-                    _ => continue,
-                }
-            },
+            // An app that resolves to an analysed file is an entry, so it is
+            // reached.
+            CommandTarget::App { .. } => continue,
         };
         keep_first_line(
             &mut sites,

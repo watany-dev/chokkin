@@ -441,6 +441,60 @@ fn servers_given_a_project_app_make_it_an_entry() {
     );
 }
 
+/// `python acme/standalone.py` finds `sibling` next to the script, an
+/// `app_dir` app names no known file, and an excluded app file warns.
+#[test]
+fn server_apps_beside_scripts_moved_or_excluded() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    };
+    write(
+        "pyproject.toml",
+        "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nexclude = [\"acme/asgi.py\"]\n",
+    );
+    write("acme/__init__.py", "");
+    write("acme/asgi.py", "");
+    write("acme/sibling.py", "");
+    write("acme/dir_app.py", "");
+    write(
+        "acme/standalone.py",
+        "import uvicorn\nuvicorn.run(\"sibling:app\")\nuvicorn.run(\"acme.dir_app:app\", app_dir=\"x\")\n",
+    );
+    write("Procfile", "web: uvicorn acme.asgi:app\n");
+
+    let inputs = load_pipeline(root);
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &[],
+        &inputs.plugins,
+        false,
+    );
+
+    assert_eq!(
+        plan.warnings,
+        [EntryWarning::MissingEntryPath {
+            path: "acme/asgi.py".to_owned()
+        }]
+    );
+    let server_roots: Vec<_> = plan
+        .roots
+        .iter()
+        .filter(|root| {
+            root.origins
+                .iter()
+                .any(|origin| matches!(origin, EntryOrigin::Command { .. }))
+        })
+        .map(|root| root.path.as_str())
+        .collect();
+    assert_eq!(server_roots, ["acme/sibling.py"]);
+}
+
 #[test]
 fn workspace_members_add_entry_roots_and_library_members() {
     let dir = tempfile::tempdir().expect("tempdir");

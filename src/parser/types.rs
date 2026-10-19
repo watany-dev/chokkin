@@ -302,6 +302,8 @@ pub struct ServerApp {
     pub app: String,
     /// 1-based line of the call.
     pub line: u32,
+    /// `app_dir=` imports the app from another directory.
+    pub app_dir: bool,
 }
 
 /// Result of parsing one `.py` file.

@@ -404,8 +404,10 @@ fn command_label(origin: &ReferenceOrigin) -> String {
 /// `uvicorn.run`/`uvicorn.Config` calls (#1004). The server imports the module
 /// and reads the attribute, so the file is a root with that symbol, in the
 /// file's own context: `CMD ["uvicorn", "pkg.asgi:app"]` serves production
-/// code. A module that maps to no discovered file is a third-party or missing
-/// app and adds nothing, unless the file is on disk and discovery left it out.
+/// code. A `uvicorn.run` call in a script also finds the module next to the
+/// script, which `python script.py` puts on `sys.path`. A module that maps to
+/// no discovered file is a third-party or missing app and adds nothing,
+/// unless the file is on disk and discovery left it out.
 #[allow(clippy::too_many_arguments)]
 fn collect_server_app_entries(
     plugins: &PluginHints,
@@ -420,7 +422,9 @@ fn collect_server_app_entries(
         let CommandTarget::App { module, symbol } = &command.target else {
             continue;
         };
-        let Some(path) = resolve_module_to_path(module, &sources.layout, known_paths) else {
+        let Some(path) = resolve_module_to_path(module, &sources.layout, known_paths)
+            .or_else(|| beside_script(module, &command.origin.file, known_paths))
+        else {
             let warning = unresolved_target(
                 module,
                 &command.origin.file,
@@ -445,6 +449,20 @@ fn collect_server_app_entries(
             },
         });
     }
+}
+
+/// The discovered module `module` names in the directory of `script`, a `.py`
+/// file.
+fn beside_script(module: &str, script: &str, known_paths: &BTreeSet<String>) -> Option<String> {
+    let script = std::path::Path::new(script);
+    if script.extension().is_none_or(|ext| ext != "py") {
+        return None;
+    }
+    let dir = script.parent()?.to_str()?;
+    let stem = join_rel(dir, &module.replace('.', "/"));
+    [format!("{stem}.py"), format!("{stem}/__init__.py")]
+        .into_iter()
+        .find(|path| known_paths.contains(path))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -363,8 +363,9 @@ fn push_pdm_script(
 /// are commands, `script` imports the module before its `:`, and `sequence`,
 /// `parallel` and `switch` hold more tasks. `ref` names a task read on its
 /// own, and `expr` evaluates Python that is not read, though its `imports`
-/// are. A table with none of these runs nothing read; `[tool.poe] include`
-/// files are not followed.
+/// are. A table's `cwd` runs its command from that directory. A table with
+/// none of these runs nothing read; `[tool.poe] include` files are not
+/// followed.
 fn scan_poe_tasks(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut SourceHits) {
     let Some(tasks) = doc.table(POE_TASKS) else {
         return;
@@ -432,9 +433,16 @@ impl PoeTasks<'_> {
                                 hits.push_module(module, origin);
                             }
                         },
-                        "cmd" | "shell" | "script" => {
-                            self.push_typed(key, value, origin, hits);
+                        "cmd" | "shell" => match table.get("cwd").and_then(Value::as_str) {
+                            Some(cwd) => {
+                                if let Some(command) = toml_words(value) {
+                                    let command = format!("cd {cwd} && {command}");
+                                    hits.push_command(&command, self.known, origin);
+                                }
+                            },
+                            None => self.push_typed(key, value, origin, hits),
                         },
+                        "script" => self.push_typed(key, value, origin, hits),
                         _ => {},
                     }
                 }
@@ -480,11 +488,11 @@ fn scan_hatch_scripts(doc: &PyprojectDoc, known: KnownBinary<'_>, hits: &mut Sou
         let table = format!("{HATCH_ENVS}.{env}.scripts");
         for (name, value) in scripts {
             let origin = doc.origin(&table, name);
-            let commands = value.as_array().map_or_else(
-                || value.as_str().into_iter().collect(),
-                |items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>(),
-            );
-            for command in commands {
+            let items = match value {
+                Value::Array(items) => items.as_slice(),
+                other => std::slice::from_ref(other),
+            };
+            for command in items.iter().filter_map(Value::as_str) {
                 let command = command.trim_start();
                 let command = command.strip_prefix("- ").unwrap_or(command);
                 hits.push_command(command, known, &origin);
@@ -623,7 +631,7 @@ mod tests {
         let doc = PyprojectDoc::load(temp.path()).expect("pyproject");
         let mut hits = SourceHits::default();
         scan(&doc, &known, &mut hits);
-        let line = |origin: &ReferenceOrigin| origin.line.map_or(0, |line| line);
+        let line = |origin: &ReferenceOrigin| origin.line.unwrap_or(0);
         hits.command_targets
             .iter()
             .map(|target| format!("{:?} @{}", target.target, line(&target.origin)))
@@ -647,6 +655,8 @@ expr = { expr = "x", imports = ["acme.calc"] }
 switch = { switch = [{ case = "linux", cmd = "daphne acme.sw:app" }] }
 ref = { ref = "start" }
 help-only = { help = "nothing to run" }
+par = { parallel = ["uvicorn acme.par:app"], default_item_type = "cmd" }
+moved = { cmd = "uvicorn acme.moved:app", cwd = "web" }
 
 [tool.poe.tasks.table]
 cmd = "granian --interface asgi acme.table:app"
@@ -654,11 +664,13 @@ cmd = "granian --interface asgi acme.table:app"
         assert_eq!(
             pyproject_hits(pyproject, scan_poe_tasks),
             [
+                r#"Opaque { text: "acme.moved" } @12"#,
+                r#"App { module: "acme.par", symbol: Some("app") } @11"#,
                 r#"App { module: "acme.seq", symbol: Some("app") } @5"#,
                 r#"App { module: "acme.wsgi", symbol: Some("app") } @4"#,
                 r#"App { module: "acme.asgi", symbol: Some("app") } @2"#,
                 r#"App { module: "acme.sw", symbol: Some("app") } @8"#,
-                r#"App { module: "acme.table", symbol: Some("app") } @12"#,
+                r#"App { module: "acme.table", symbol: Some("app") } @14"#,
                 "module acme.calc @7",
                 "module acme.cli @6",
             ]

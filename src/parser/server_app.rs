@@ -44,10 +44,11 @@ impl ServerNames {
     }
 
     /// The literal `module:attr` app a call to `run` or `Config` loads, given
-    /// positionally or as `app=`, with the call's label. An app object or a
-    /// computed string is not read: the object's module is imported where it
-    /// is named, and the string is a recall gap.
-    pub(super) fn app<'a>(&self, call: &'a ExprCall) -> Option<(&'static str, &'a str)> {
+    /// positionally or as `app=`, with the call's label and whether `app_dir=`
+    /// moves its import root. An app object or a computed string is not read:
+    /// the object's module is imported where it is named, and the string is a
+    /// recall gap.
+    pub(super) fn app<'a>(&self, call: &'a ExprCall) -> Option<(&'static str, &'a str, bool)> {
         let label = match &*call.func {
             Expr::Attribute(attribute) => match &*attribute.value {
                 Expr::Name(name) if self.modules.contains(name.id.as_str()) => {
@@ -64,6 +65,7 @@ impl ServerNames {
         };
         // uvicorn rejects an import string without `:`.
         let app = str_constant(argument(call, 0, "app")?)?;
-        app.contains(':').then_some((label, app))
+        let app_dir = call.arguments.find_keyword("app_dir").is_some();
+        app.contains(':').then_some((label, app, app_dir))
     }
 }
