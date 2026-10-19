@@ -397,9 +397,13 @@ pub(super) fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -
 }
 
 /// `rel` appended to root-relative `base`, with `.` and `..` folded; `None`
-/// when it climbs out of the root. Either separator is read, as a Windows
+/// when it climbs out of the root or is absolute (`/x`, `\\x`, `C:...`),
+/// which names no place under it. Either separator is read, as a Windows
 /// config or script may use `\`.
 pub(super) fn join_lexical(base: &str, rel: &str) -> Option<String> {
+    if rel.starts_with(['/', '\\']) || rel.get(1..2) == Some(":") {
+        return None;
+    }
     let mut parts: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
     for part in rel.split(['/', '\\']) {
         match part {
@@ -425,14 +429,17 @@ pub(super) fn project_dirs<'a>(ctx: &PluginContext<'a>) -> impl Iterator<Item = 
     )
 }
 
-/// The inventory's context for root-relative `path`; a file it lacks runs
-/// as runtime code.
+/// The inventory's context for root-relative `path`; a file it lacks gets
+/// the one its path implies, as discovery would give it.
 pub(super) fn file_context(ctx: &PluginContext<'_>, path: &str) -> crate::sources::FileContext {
     ctx.sources
         .files
         .iter()
         .find(|file| file.path == path)
-        .map_or(crate::sources::FileContext::Runtime, |file| file.context)
+        .map_or_else(
+            || crate::sources::assign_file_context(path),
+            |file| file.context,
+        )
 }
 
 /// Discovered `.py` files of `module`: its own file first, then every file
@@ -490,19 +497,27 @@ pub(super) fn module_paths(
     for base in [dir.to_owned(), join_rel(dir, "src")] {
         let file = join_rel(&base, &format!("{rel}.py"));
         if root.join(&file).is_file() {
-            return vec![(file, crate::sources::FileContext::Runtime)];
+            let context = crate::sources::assign_file_context(&file);
+            return vec![(file, context)];
         }
         let package = join_rel(&base, &rel);
-        if root.join(&package).join("__init__.py").is_file() {
+        // A tree is walked as `pkgutil` walks a package's `__path__`, which
+        // a namespace package (no `__init__.py`) has too.
+        let is_package = root.join(&package).join("__init__.py").is_file();
+        if is_package || (tree && root.join(&package).is_dir()) {
             if !tree {
                 let init = join_rel(&package, "__init__.py");
-                return vec![(init, crate::sources::FileContext::Runtime)];
+                let context = crate::sources::assign_file_context(&init);
+                return vec![(init, context)];
             }
             let mut files = BTreeSet::new();
             walk_py(root, &package, &mut files);
             return files
                 .into_iter()
-                .map(|file| (file, crate::sources::FileContext::Runtime))
+                .map(|file| {
+                    let context = crate::sources::assign_file_context(&file);
+                    (file, context)
+                })
                 .collect();
         }
     }
@@ -759,6 +774,9 @@ mod tests {
         );
         assert_eq!(join_lexical("pkg", ".").as_deref(), Some("pkg"));
         assert_eq!(join_lexical("", "../x"), None);
+        assert_eq!(join_lexical("pkg", "/opt/app/etl.py"), None);
+        assert_eq!(join_lexical("pkg", "\\\\host\\etl.py"), None);
+        assert_eq!(join_lexical("", "C:\\proj\\etl.py"), None);
     }
 
     #[test]

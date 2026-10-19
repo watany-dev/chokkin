@@ -7169,6 +7169,20 @@ fn binary_dagster_plugin_roots_its_definitions() {
             ORPHAN,
             "certain",
         ),
+        // A flow sequence is not read.
+        (
+            orchestration_pyproject("\"dagster\"", ""),
+            vec![
+                (
+                    "workspace.yaml",
+                    "load_from: [{python_module: acme_ops.defs}]\n",
+                ),
+                ("acme_ops/__init__.py", ""),
+                ("acme_ops/defs.py", "from acme import helper\n"),
+            ],
+            UNREACHED,
+            "likely",
+        ),
         // A `load_from` kind that is not read.
         (
             orchestration_pyproject("\"dagster\"", ""),
@@ -7246,6 +7260,48 @@ fn binary_scrapy_plugin_roots_its_definitions() {
                     "import scrapy\nfrom acme import helper\n\nclass QuotesSpider(scrapy.Spider):\n    name = \"quotes\"\n",
                 ),
                 ("crawler/pipelines.py", "class SavePipeline:\n    pass\n"),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // Settings split across modules by a star import.
+        (
+            orchestration_pyproject("\"scrapy\"", ""),
+            vec![
+                ("scrapy.cfg", "[settings]\ndefault = crawler.settings\n"),
+                ("crawler/__init__.py", ""),
+                (
+                    "crawler/settings.py",
+                    "from .base import *\n\nLOG_LEVEL = \"INFO\"\n",
+                ),
+                (
+                    "crawler/base.py",
+                    "SPIDER_MODULES = [\"crawler.spiders\"]\nITEM_PIPELINES = {\"crawler.pipelines.SavePipeline\": 300}\n",
+                ),
+                ("crawler/spiders/__init__.py", ""),
+                (
+                    "crawler/spiders/quotes.py",
+                    "import scrapy\nfrom acme import helper\n",
+                ),
+                ("crawler/pipelines.py", "class SavePipeline:\n    pass\n"),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // A namespace package of spiders, walked as `pkgutil` walks it.
+        (
+            orchestration_pyproject("\"scrapy\"", ""),
+            vec![
+                ("scrapy.cfg", "[settings]\ndefault = crawler.settings\n"),
+                ("crawler/__init__.py", ""),
+                (
+                    "crawler/settings.py",
+                    "SPIDER_MODULES = [\"crawler.spiders\"]\n",
+                ),
+                (
+                    "crawler/spiders/quotes.py",
+                    "import scrapy\nfrom acme import helper\n",
+                ),
             ],
             ORPHAN,
             "certain",
@@ -7329,4 +7385,27 @@ fn binary_orchestration_files_are_no_api_surface() {
         ["acme/flows/etl.py:other_flow", "acme/lib.py:unused"],
         "{issues:#?}"
     );
+}
+
+/// A DAG file the walk finds on disk keeps the context its path implies:
+/// under `--production` a test DAG is dropped, not a skipped entry (#401).
+#[test]
+fn binary_airflow_on_disk_test_dag_is_no_production_entry() {
+    let pyproject = orchestration_pyproject("\"apache-airflow\"", "");
+    let project = write_project(&[
+        ("pyproject.toml", pyproject.as_str()),
+        ("acme/__init__.py", ""),
+        ("dags/etl.py", AIRFLOW_DAG),
+        (
+            "dags/tests/test_etl.py",
+            "from airflow import DAG\n\n\ndef test_dag():\n    DAG(\"t\")\n",
+        ),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--production"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
 }

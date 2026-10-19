@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
 use crate::path_util::rel_to_root;
-use crate::sources::FileContext;
+use crate::sources::{FileContext, assign_file_context};
 
 use super::config_text::{ini_value, origin_at};
 use super::context::PluginContext;
@@ -29,7 +29,8 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let folders = config_folders(ctx, &mut contrib);
     // The inventory, then the DAG folders on disk: a `dags/` with no
     // `__init__.py` is no package, so the inferred globs leave it out
-    // (#932).
+    // (#932). A DAG folder at the root is discovery's own tree; walking it
+    // would read the virtualenvs and build output discovery excludes.
     let mut files: Vec<(String, FileContext)> = ctx
         .sources
         .python_files()
@@ -40,6 +41,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     for dir in default_dirs
         .filter_map(|dir| join_lexical(dir, "dags"))
         .chain(folders.iter().map(|folder| folder.dir.clone()))
+        .filter(|dir| !dir.is_empty())
     {
         walk_py(root, &dir, &mut on_disk);
     }
@@ -47,7 +49,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
         on_disk
             .into_iter()
             .filter(|path| !ctx.sources.files.iter().any(|file| file.path == *path))
-            .map(|path| (path, FileContext::Runtime)),
+            .map(|path| {
+                let context = assign_file_context(&path);
+                (path, context)
+            }),
     );
     let mut seen = BTreeSet::new();
     for (path, context) in &files {
@@ -114,7 +119,7 @@ fn config_folders(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) -> 
 
 fn dags_folder(config_dir: &str, value: &str) -> Option<String> {
     let mut value = value.trim().to_owned();
-    for home in ["{AIRFLOW_HOME}", "${AIRFLOW_HOME}", "$AIRFLOW_HOME"] {
+    for home in ["${AIRFLOW_HOME}", "$AIRFLOW_HOME", "{AIRFLOW_HOME}"] {
         value = value.replace(home, ".");
     }
     if value.is_empty()
@@ -202,6 +207,10 @@ mod tests {
         assert_eq!(
             dags_folder("deploy", "$AIRFLOW_HOME/dags").as_deref(),
             Some("deploy/dags")
+        );
+        assert_eq!(
+            dags_folder("", "${AIRFLOW_HOME}/pipelines").as_deref(),
+            Some("pipelines")
         );
         assert_eq!(dags_folder("", "flows").as_deref(), Some("flows"));
         assert_eq!(dags_folder("", "/opt/airflow/dags"), None);

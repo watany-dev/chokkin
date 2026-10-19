@@ -30,6 +30,7 @@ const NEWSPIDER_MODULE: &str = "NEWSPIDER_MODULE";
 pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let root = ctx.root.path.as_path();
     let mut contrib = PluginContribution::empty(PluginId::Scrapy);
+    let mut parsed = BTreeSet::new();
     let dirs = project_dirs(ctx);
     for dir in dirs {
         let path = root.join(dir).join("scrapy.cfg");
@@ -42,7 +43,8 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
                 continue;
             };
             let origin = origin_at(&file, index, "settings");
-            settings_module(ctx, &mut contrib, dir, value.trim(), origin);
+            let module = value.trim();
+            settings_module(ctx, &mut contrib, &mut parsed, (dir, module), origin);
         }
     }
     // A module several settings name keeps its first origin.
@@ -54,14 +56,14 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
 }
 
 /// A `[settings]` value is the settings module scrapy imports, with the
-/// config's directory on `sys.path`. One that is not a dotted name is a
-/// gap; one that names no project file is left to the import resolver as a
-/// module reference.
+/// config's directory `dir` on `sys.path`. One that is not a dotted name is
+/// a gap; one that names no project file is left to the import resolver as
+/// a module reference. `parsed` holds the settings files already read.
 fn settings_module(
     ctx: &PluginContext<'_>,
     contrib: &mut PluginContribution,
-    dir: &str,
-    module: &str,
+    parsed: &mut BTreeSet<String>,
+    (dir, module): (&str, &str),
     origin: ReferenceOrigin,
 ) {
     if !is_dotted_identifier(module) {
@@ -74,7 +76,7 @@ fn settings_module(
         });
         return;
     };
-    if contrib.entries.iter().any(|entry| entry.spec.path == path) {
+    if !parsed.insert(path.clone()) {
         return;
     }
     push_entry(contrib, &path, context, origin);
@@ -94,6 +96,46 @@ fn settings_module(
     };
     spider_modules(ctx, contrib, &stmts, &settings);
     components(ctx, contrib, &stmts, &settings);
+    // Settings split across modules: the names a star import brings in are
+    // the settings' own.
+    for stmt in &stmts {
+        let Stmt::ImportFrom(import) = stmt else {
+            continue;
+        };
+        if !import.names.iter().any(|alias| alias.name.as_str() == "*") {
+            continue;
+        }
+        let origin = settings.origin(import.start(), "settings star import");
+        let target = import.module.as_ref().map_or("", |name| name.as_str());
+        match star_target(module, path.ends_with("/__init__.py"), import.level, target) {
+            Some(target) => {
+                settings_module(ctx, contrib, parsed, (dir, &target), origin);
+            },
+            None => contrib.push_gap(&contents[import.range()], origin),
+        }
+    }
+}
+
+/// The absolute module a star import in settings module `module` names:
+/// `target` itself, or for a relative import (`level` dots) read from the
+/// package `module` is, or is in. `None` when it climbs above the top
+/// package, as Python refuses it.
+fn star_target(module: &str, is_package: bool, level: u32, target: &str) -> Option<String> {
+    if level == 0 {
+        return Some(target.to_owned());
+    }
+    let mut parts: Vec<&str> = module.split('.').collect();
+    if !is_package {
+        parts.pop();
+    }
+    for _ in 1..level {
+        parts.pop()?;
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.extend(target.split('.').filter(|part| !part.is_empty()));
+    Some(parts.join("."))
 }
 
 /// A settings module read for the names it gives scrapy.
@@ -167,7 +209,16 @@ fn spider_modules(
             contrib.push_gap(&module, origin.clone());
             continue;
         }
-        for (path, context) in module_paths(ctx, settings.dir, &module, true) {
+        let paths = module_paths(ctx, settings.dir, &module, true);
+        if paths.is_empty() {
+            // No project package: left to the import resolver.
+            contrib.module_refs.push(ModuleReference {
+                module,
+                origin: origin.clone(),
+            });
+            continue;
+        }
+        for (path, context) in paths {
             if seen.insert(path.clone()) {
                 push_entry(contrib, &path, context, origin.clone());
                 // Scrapy collects the spider classes each module binds.
@@ -258,5 +309,31 @@ fn push_component(
             symbol: symbol.to_owned(),
             origin,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn star_target_reads_relative_imports_from_the_package() {
+        assert_eq!(
+            star_target("crawler.settings", false, 1, "base").as_deref(),
+            Some("crawler.base")
+        );
+        assert_eq!(
+            star_target("crawler.settings", true, 1, "base").as_deref(),
+            Some("crawler.settings.base")
+        );
+        assert_eq!(
+            star_target("crawler.settings.prod", false, 2, "").as_deref(),
+            Some("crawler")
+        );
+        assert_eq!(
+            star_target("crawler.settings", false, 0, "shared.base").as_deref(),
+            Some("shared.base")
+        );
+        assert_eq!(star_target("settings", false, 1, "base"), None);
     }
 }

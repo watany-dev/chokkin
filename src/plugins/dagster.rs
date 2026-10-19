@@ -168,8 +168,8 @@ impl Locations<'_, '_> {
     /// The items of `workspace.yaml`'s `load_from` list. `python_file` is a
     /// path from the file's directory, `python_module` and `python_package`
     /// a module, each written inline or under its nested key. `grpc_server`
-    /// runs code elsewhere; any other kind, a flow mapping, an alias or a
-    /// template is not read, so it is a gap.
+    /// runs code elsewhere; any other kind, a flow sequence or mapping, an
+    /// alias or a template is not read, so it is a gap.
     fn load_from(&mut self, workspace: &Workspace<'_>) {
         let lines = &workspace.lines;
         let Some(start) = lines
@@ -178,6 +178,12 @@ impl Locations<'_, '_> {
         else {
             return;
         };
+        // A flow sequence or an alias on the key's own line is not read.
+        let inline = yaml_scalar(&lines[start]["load_from:".len()..]);
+        if !inline.is_empty() {
+            let origin = origin_at(workspace.file, start, "load_from");
+            return self.contrib.push_gap(inline, origin);
+        }
         let base_indent = leading_spaces(lines[start]);
         let mut index = start + 1;
         while let Some(line) = lines.get(index) {

@@ -201,10 +201,13 @@ pub(super) fn is_yaml_block_scalar(value: &str) -> bool {
 }
 
 /// A plain or quoted YAML scalar with its trailing ` # comment`, an anchor
-/// (`&name`) and its quotes dropped; an alias (`*name`) is kept as written
-/// for the caller to reject.
+/// (`&name`) and its quotes dropped, empty when only a comment follows the
+/// key; an alias (`*name`) is kept as written for the caller to reject.
 pub(super) fn yaml_scalar(value: &str) -> &str {
     let value = value.trim();
+    if value.starts_with('#') {
+        return "";
+    }
     let value = match value.find(" #") {
         Some(end) if !value.starts_with(['"', '\'']) => &value[..end],
         _ => value,
@@ -255,6 +258,7 @@ mod tests {
         assert_eq!(yaml_scalar("&entry flows/etl.py:run"), "flows/etl.py:run");
         assert_eq!(yaml_scalar("*entry"), "*entry");
         assert_eq!(yaml_scalar(""), "");
+        assert_eq!(yaml_scalar("  # nested below"), "");
     }
 
     #[test]
