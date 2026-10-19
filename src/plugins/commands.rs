@@ -517,10 +517,9 @@ fn celery_app<'a>(args: &[&'a str]) -> Option<&'a str> {
 fn server_app<'a>(args: &[&'a str]) -> Option<&'a str> {
     // A word right after an option may be its value (`-c python:conf`,
     // `-k egg:dist#worker`), so such a reference is the last resort; after a
-    // flag (`--reload mypkg:app`) it is still the app.
-    let follows_option = |index: usize| {
-        index > 0 && args[index - 1].starts_with('-') && !args[index - 1].contains('=')
-    };
+    // known flag (`--reload mypkg:app`) or an option holding its value
+    // (`-w4 mypkg.wsgi`) it is the app.
+    let follows_option = |index: usize| index > 0 && takes_value(args[index - 1]);
     let unbound = || {
         (0..args.len())
             .filter(|&index| !follows_option(index))
@@ -534,6 +533,42 @@ fn server_app<'a>(args: &[&'a str]) -> Option<&'a str> {
             })
         })
         .or_else(|| args.iter().copied().find(|arg| is_app_reference(arg)))
+}
+
+/// Server options that take no value, so the next word is not theirs.
+const SERVER_FLAGS: [&str; 22] = [
+    "--access-log",
+    "--call",
+    "--capture-output",
+    "--check-config",
+    "--daemon",
+    "--date-header",
+    "--debug",
+    "--enable-stdio-inheritance",
+    "--expose-tracebacks",
+    "--factory",
+    "--ipv4",
+    "--ipv6",
+    "--preload",
+    "--print-config",
+    "--proxy-headers",
+    "--reload",
+    "--reuse-port",
+    "--server-header",
+    "--use-colors",
+    "--ws",
+    "-D",
+    "-R",
+];
+
+/// Whether `arg` is an option whose value is the next word: not `--opt=value`
+/// or `-w4`, a known flag, or a `--no-*` switch. An unknown long option is
+/// read as taking one.
+fn takes_value(arg: &str) -> bool {
+    if arg.contains('=') || SERVER_FLAGS.contains(&arg) || arg.starts_with("--no-") {
+        return false;
+    }
+    arg.starts_with("--") || (arg.starts_with('-') && arg.len() == 2)
 }
 
 /// `module:attr`, `module:factory()` or a computed `$APP_MODULE`-like word
@@ -941,6 +976,19 @@ mod tests {
             ),
             (
                 "gunicorn --workers=$WEB_CONCURRENCY mypkg.wsgi",
+                "app mypkg.wsgi:application",
+            ),
+            // A flag takes no value, and neither does a short option holding
+            // its own.
+            (
+                "gunicorn --config python:mypkg.conf --preload mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            ("uvicorn --no-access-log mypkg.asgi", "app mypkg.asgi"),
+            ("gunicorn -w4 mypkg.wsgi", "app mypkg.wsgi:application"),
+            ("hypercorn --reload mypkg.asgi", "app mypkg.asgi:app"),
+            (
+                "gunicorn -b127.0.0.1:8000 -D mypkg.wsgi",
                 "app mypkg.wsgi:application",
             ),
             // An app imported from another directory names no known file.
