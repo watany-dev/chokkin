@@ -356,8 +356,9 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
 /// modules task files run (#912). A module of a package keeps its context,
 /// since the package may import it too, and so does a file another root runs
 /// in production: the root `main.py` a workflow also runs is still the app,
-/// and so are a script a Dockerfile or Procfile runs, a file with a
-/// `__main__` block, and a module the wheel ships.
+/// and so is a script a Dockerfile or Procfile runs. A task file's target
+/// with a `__main__` block or one the wheel ships is also kept, since a
+/// Makefile often runs the app itself; a CI script keeps being dev (#797).
 pub(crate) fn mark_command_scripts_dev(
     sources: &mut DiscoveredSources,
     config: &ChokkinConfig,
@@ -366,20 +367,20 @@ pub(crate) fn mark_command_scripts_dev(
     parse: &ParseSummary,
 ) {
     let known_paths = known_file_paths(sources);
-    let mut runtime_roots = runtime_root_paths(sources, config, manifest, plugins, &known_paths);
-    runtime_roots.extend(
-        parse
-            .modules
-            .iter()
-            .filter(|module| module.has_main_block)
-            .map(|module| module.path.clone()),
-    );
+    let runtime_roots = runtime_root_paths(sources, config, manifest, plugins, &known_paths);
     let shipped = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
-    runtime_roots.extend(shipped.into_iter().flat_map(|surface| surface.files));
+    let app_files: BTreeSet<String> = parse
+        .modules
+        .iter()
+        .filter(|module| module.has_main_block)
+        .map(|module| module.path.clone())
+        .chain(shipped.into_iter().flat_map(|surface| surface.files))
+        .collect();
     let task_targets = plugins
         .config_command_targets
         .iter()
-        .filter_map(|command| command_target_path(command, &sources.layout, &known_paths));
+        .filter_map(|command| command_target_path(command, &sources.layout, &known_paths))
+        .filter(|path| !app_files.contains(path));
     let scripts: BTreeSet<String> = plugins
         .config_script_entries
         .iter()

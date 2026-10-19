@@ -6310,7 +6310,8 @@ fn binary_deferred_imports_of_optional_packages_are_info() {
 #[test]
 fn binary_command_run_scripts_import_dependency_groups_as_dev() {
     // airflow's pre-commit runs `task-sdk/dev/generate_task_sdk_models.py`,
-    // which imports its `codegen` group (#797). The package module run by the
+    // which imports its `codegen` group (#797), even with a `__main__` block
+    // unlike a task file's script (#912). The package module run by the
     // same workflow keeps its runtime context.
     let project = write_project(&[
         (
@@ -6321,7 +6322,10 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
             ".github/workflows/ci.yml",
             "jobs:\n  gen:\n    steps:\n      - run: python tools/gen.py\n      - run: python acme/cli.py\n",
         ),
-        ("tools/gen.py", "import gen_lib\n\ngen_lib.run()\n"),
+        (
+            "tools/gen.py",
+            "import gen_lib\n\nif __name__ == \"__main__\":\n    gen_lib.run()\n",
+        ),
         ("acme/__init__.py", ""),
         ("acme/cli.py", "import pkg_lib\n\npkg_lib.run()\n"),
     ]);
