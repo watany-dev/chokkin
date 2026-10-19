@@ -4045,7 +4045,47 @@ fn binary_plugin_entries_outside_the_globs_are_read() {
             .expect("run chokkin");
         let stderr = String::from_utf8(output.stderr).expect("utf8");
         assert!(!stderr.contains("skipped entry"), "{stderr}");
+        // The added file is in the parse cache key, cold and warm.
+        let uncached = json_issues(project.path(), &["--no-cache"]);
+        for run in ["cold", "warm"] {
+            assert_eq!(json_issues(project.path(), &[]), uncached, "{run}");
+        }
     }
+}
+
+/// A plugin entry the globs left out and the parser cannot read is a parse
+/// gap, not a skipped entry: its imports are unknown, so unrelated unused
+/// findings stay below certain (#932, ADR 0005).
+#[test]
+fn binary_unreadable_plugin_entry_outside_the_globs_is_a_parse_gap() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"httpx\"]\n\n[project.optional-dependencies]\ndocs = [\"sphinx\"]\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"src/**/*.py\"]\nentry = [\"src/acme/__init__.py\"]\n",
+        ),
+        ("docs/conf.py", "def broken(:\n"),
+        ("src/acme/__init__.py", ""),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("parse: skipped `docs/conf.py`: syntax error"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
+    let levels = issue_levels(project.path());
+    assert!(
+        levels
+            .iter()
+            .any(|(code, target, _, confidence)| code == "CHK002"
+                && target == "httpx"
+                && confidence != "certain"),
+        "{levels:?}"
+    );
 }
 
 /// An unreadable `requires-python` leaves py311 to decide which modules are
