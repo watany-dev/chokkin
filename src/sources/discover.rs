@@ -87,7 +87,13 @@ pub(crate) fn discover_sources_cached(
     };
     let mut collected = collect_files(&collect_options)?;
     if config.effective.project.is_empty() {
-        drop_member_entry_trees(&mut collected, &effective_globs, config, cache)?;
+        drop_member_entry_trees(
+            &mut collected,
+            &effective_globs,
+            &test_matcher,
+            config,
+            cache,
+        )?;
     }
     let files = collected.files;
     layout.package_dirs = files
@@ -120,10 +126,12 @@ pub(crate) fn discover_sources_cached(
 
 /// Drop the files inside a workspace member that only [`ENTRY_TREE_GLOBS`]
 /// reached: the member keeps its own layout, and the root never read them
-/// before those globs (#1023).
+/// before those globs (#1023). Files a pytest `testpaths` entry covers stay,
+/// since the root read them as tests before.
 fn drop_member_entry_trees(
     collected: &mut Collected,
     effective_globs: &[String],
+    test_matcher: &globset::GlobSet,
     config: &LoadedConfig,
     cache: &SourcesCache,
 ) -> Result<(), SourcesError> {
@@ -144,6 +152,7 @@ fn drop_member_entry_trees(
     let own_matcher = cache.glob_set(&own_globs)?;
     let keep = |file: &DiscoveredFile| {
         own_matcher.is_match(&file.path)
+            || test_matcher.is_match(&file.path)
             || !members
                 .iter()
                 .any(|member| Path::new(&file.path).starts_with(member))

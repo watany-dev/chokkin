@@ -1310,6 +1310,12 @@ mod tests {
                         .iter()
                         .any(|glob| glob == "**/*.ipynb" || glob == "**/*.{py,pyi,ipynb}");
                     prop_assert!(notebooks);
+                    // The workspace member drop matches these by text.
+                    if layout != ProjectLayout::Unknown {
+                        for glob in ENTRY_TREE_GLOBS {
+                            prop_assert!(globs.iter().any(|own| own == glob));
+                        }
+                    }
                 }
             }
         }

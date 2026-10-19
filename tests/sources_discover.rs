@@ -521,3 +521,31 @@ fn root_example_and_notebook_trees_skip_workspace_members() {
         assert!(!discovered.contains(&path), "{path}");
     }
 }
+
+#[test]
+fn workspace_member_files_under_testpaths_stay_tests() {
+    // A testpaths entry read the member's files as root tests before the
+    // example globs existed; the member drop must not take them away.
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n\
+             [tool.uv.workspace]\nmembers = [\"examples/snippets\"]\n\n\
+             [tool.pytest.ini_options]\ntestpaths = [\"tests\", \"examples\"]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "examples/snippets/pyproject.toml",
+            "[project]\nname = \"snippets\"\nversion = \"0.1.0\"\n",
+        ),
+        ("examples/snippets/test_echo.py", ""),
+        ("examples/snippets2/demo.py", ""),
+    ]);
+    let discovered = paths(&sources);
+    for path in [
+        "examples/snippets/test_echo.py",
+        "examples/snippets2/demo.py",
+    ] {
+        assert!(discovered.contains(&path), "{path}: {discovered:?}");
+    }
+}
