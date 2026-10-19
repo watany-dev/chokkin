@@ -55,8 +55,7 @@ pub fn build_entry_roots(
             .filter(|candidate| known_paths.contains(&candidate.spec.path)),
     );
     collect_plugin_entries(plugins, &mut candidates);
-    collect_command_entries(plugins, &known_paths, &mut candidates);
-    collect_command_target_entries(
+    collect_command_entries(
         plugins,
         &sources.layout,
         &known_paths,
@@ -366,7 +365,6 @@ pub(crate) fn mark_command_scripts_dev(
     let task_targets = plugins
         .config_command_targets
         .iter()
-        .filter(|command| !command.deploy)
         .filter_map(|command| command_target_path(command, &sources.layout, &known_paths));
     let scripts: BTreeSet<String> = plugins
         .config_script_entries
@@ -441,28 +439,6 @@ fn command_script_path<'a>(
     paths.iter().find(|path| known_paths.contains(*path))
 }
 
-fn collect_command_entries(
-    plugins: &PluginHints,
-    known_paths: &BTreeSet<String>,
-    candidates: &mut Vec<EntryCandidate>,
-) {
-    for script in &plugins.config_script_entries {
-        let Some(path) = command_script_path(&script.paths, known_paths) else {
-            continue;
-        };
-        candidates.push(EntryCandidate {
-            spec: EntrySpec {
-                path: path.clone(),
-                symbol: None,
-            },
-            context: FileContext::Dev,
-            origin: EntryOrigin::Command {
-                label: command_label(&script.origin),
-            },
-        });
-    }
-}
-
 /// The file a task file or tool config runs as a script or with `-m`
 /// (#912): a script's first discovered candidate, or the module's
 /// `__main__` before the module itself, as `python -m` runs a package's.
@@ -483,33 +459,38 @@ fn command_target_path(
     }
 }
 
-/// Scripts and `-m` modules task files and tool configs run are roots, so
-/// what they import is followed (#912). They are dev, as the scripts CI runs
-/// are (#797), unless a deploy command runs them: those keep the file's own
-/// context, as a server's app does (#1004). A target that names no
+/// Scripts CI workflows run (#797) and the scripts and `-m` modules task
+/// files and tool configs run (#912) are roots, so what they import is
+/// followed. They are dev unless a deploy command runs them: those keep the
+/// file's own context, as a server's app does (#1004). A target that names no
 /// discovered file adds nothing; the gap stage reads the ones that resolve
 /// but are relocated, imported by `-c` code, or loaded by a task runner.
-fn collect_command_target_entries(
+fn collect_command_entries(
     plugins: &PluginHints,
     layout: &LayoutInfo,
     known_paths: &BTreeSet<String>,
     file_contexts: &BTreeMap<&str, FileContext>,
     candidates: &mut Vec<EntryCandidate>,
 ) {
-    for command in &plugins.config_command_targets {
-        let Some(path) = command_target_path(command, layout, known_paths) else {
-            continue;
-        };
+    let scripts = plugins.config_script_entries.iter().filter_map(|script| {
+        let path = command_script_path(&script.paths, known_paths)?;
+        Some((path.clone(), FileContext::Dev, &script.origin))
+    });
+    let targets = plugins.config_command_targets.iter().filter_map(|command| {
+        let path = command_target_path(command, layout, known_paths)?;
         let context = if command.deploy {
             context_for_path(&path, file_contexts)
         } else {
             FileContext::Dev
         };
+        Some((path, context, &command.origin))
+    });
+    for (path, context, origin) in scripts.chain(targets) {
         candidates.push(EntryCandidate {
             spec: EntrySpec { path, symbol: None },
             context,
             origin: EntryOrigin::Command {
-                label: command_label(&command.origin),
+                label: command_label(origin),
             },
         });
     }

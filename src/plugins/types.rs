@@ -96,7 +96,6 @@ pub struct CommandTargetRef {
     /// The command runs in the deployed image or process (a Dockerfile, a
     /// Procfile), so what it runs keeps its own context rather than being
     /// dev (#912).
-    #[serde(default)]
     pub deploy: bool,
 }
 

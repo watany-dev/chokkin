@@ -48,9 +48,7 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
             continue;
         }
 
-        if SHALLOW_ENTRY_NAMES.contains(&file_name)
-            && is_shallow_entry_path(path, file_name, layout)
-        {
+        if is_app_entry_file(path, layout) {
             candidates.push(candidate(path, file.context, file_name.to_owned()));
             continue;
         }
