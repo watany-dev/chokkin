@@ -28,6 +28,7 @@ pub(crate) use django::SETTINGS_LABEL as DJANGO_SETTINGS_LABEL;
 pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};
 pub(crate) use enablers::{PluginActivation, PluginActivationReason};
 pub(crate) use error::PluginsError;
+pub(crate) use extract::discover_plugin_entries;
 pub use extract::{PluginExtractRequest, extract_plugin_hints_with_parse};
 pub(crate) use pytest::{PytestImportSettings, import_settings as pytest_import_settings};
 #[cfg(test)]
