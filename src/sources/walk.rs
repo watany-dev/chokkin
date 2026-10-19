@@ -1,5 +1,6 @@
 //! Directory walking with glob, exclude, and gitignore filters.
 
+use std::collections::BTreeSet;
 use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -40,6 +41,9 @@ pub(super) struct CollectOptions<'a> {
     pub production: bool,
     /// Ignore files and globs parsed by earlier walks.
     pub cache: &'a SourcesCache,
+    /// When set, the only directories the walk enters, root-relative: a walk
+    /// for named files leaves the rest of the tree alone (#932).
+    pub dirs: Option<&'a BTreeSet<String>>,
 }
 
 /// What [`collect_files`] found under its root.
@@ -154,6 +158,7 @@ fn configure_walker(
     overrides: Arc<Override>,
     exclude_matcher: Arc<GlobSet>,
     gitignore: Option<GitignoreFilter>,
+    dirs: Option<BTreeSet<String>>,
 ) -> WalkBuilder {
     let root_for_filter = root.to_path_buf();
 
@@ -187,7 +192,10 @@ fn configure_walker(
             }
             if is_dir {
                 let rel_str = normalize_rel_path(rel);
-                return !should_prune_dir(&rel_str, &exclude_matcher);
+                let outside = dirs
+                    .as_ref()
+                    .is_some_and(|dirs| !rel_str.is_empty() && !dirs.contains(&rel_str));
+                return !outside && !should_prune_dir(&rel_str, &exclude_matcher);
             }
             true
         });
@@ -384,6 +392,30 @@ fn source_kind(path: &Path) -> Option<FileKind> {
     }
 }
 
+/// The walk over `options.root`, with the ancestor `.gitignore` errors in
+/// `warnings`.
+fn walker(
+    options: &CollectOptions<'_>,
+    warnings: &mut Vec<SourcesWarning>,
+) -> Result<WalkBuilder, SourcesError> {
+    let root = options.root;
+    let overrides = options.cache.exclude_overrides(options.exclude_patterns)?;
+    let filter = options.respect_gitignore.then(|| {
+        let ancestors = options.cache.ancestors(root).map(Arc::new);
+        for error in ancestors.iter().flat_map(|ancestors| ancestors.errors()) {
+            push_walk_error(root, error, warnings);
+        }
+        GitignoreFilter::new(root, options.cache, ancestors)
+    });
+    Ok(configure_walker(
+        root,
+        overrides,
+        Arc::clone(options.exclude_matcher),
+        filter,
+        options.dirs.cloned(),
+    ))
+}
+
 /// Collect Python-related files under `root`.
 pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, SourcesError> {
     let root = options.root.to_path_buf();
@@ -401,15 +433,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let gitignored =
         |rel: &Path, is_dir| gitignore.is_some_and(|ignore| ignore.gitignore_ignores(rel, is_dir));
 
-    let overrides = cache.exclude_overrides(options.exclude_patterns)?;
-    let filter = options.respect_gitignore.then(|| {
-        let ancestors = cache.ancestors(&root).map(Arc::new);
-        for error in ancestors.iter().flat_map(|ancestors| ancestors.errors()) {
-            push_walk_error(&root, error, &mut warnings);
-        }
-        GitignoreFilter::new(&root, cache, ancestors)
-    });
-    let builder = configure_walker(&root, overrides, Arc::clone(exclude_matcher), filter);
+    let builder = walker(options, &mut warnings)?;
 
     for result in builder.build() {
         let entry = match result {
@@ -546,7 +570,7 @@ mod tests {
         let patterns = effective_exclude(&["custom/**".to_owned()]);
         let exclude = cache.glob_set(&patterns).expect("excludes");
         let overrides = cache.exclude_overrides(&patterns).expect("overrides");
-        let entries: Vec<_> = configure_walker(root, overrides, exclude, None)
+        let entries: Vec<_> = configure_walker(root, overrides, exclude, None, None)
             .build()
             .map(|entry| entry.expect("entry").into_path())
             .collect();
@@ -590,6 +614,7 @@ mod tests {
             gitignore: None,
             production: false,
             cache: &cache,
+            dirs: None,
         };
         let files = collect_files(&options).expect("collect").files;
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
@@ -629,6 +654,7 @@ mod tests {
             gitignore: None,
             production: true,
             cache: &cache,
+            dirs: None,
         };
         let collected = collect_files(&options).expect("collect");
         let paths: Vec<_> = collected
@@ -675,6 +701,7 @@ mod tests {
             gitignore: None,
             production: false,
             cache: &cache,
+            dirs: None,
         };
         let files = collect_files(&options).expect("collect").files;
         let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();

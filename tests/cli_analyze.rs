@@ -3975,6 +3975,79 @@ fn binary_skipped_entry_lowers_unused_files_and_distributions() {
     );
 }
 
+/// A file a plugin makes an entry is read even where the layout's globs do
+/// not reach: its imports count, and no skipped entry lowers the unrelated
+/// findings (#932).
+#[test]
+fn binary_plugin_entries_outside_the_globs_are_read() {
+    // (pyproject, files, the orphan that stays reported)
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+    let level = |code: &str, target: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            "error".to_owned(),
+            "certain".to_owned(),
+        )
+    };
+    let cases: [Case; 3] = [
+        // A flat layout scans its package, not the root's scripts.
+        (
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\", \"requests\", \"httpx\"]\n",
+            &[
+                (
+                    "manage.py",
+                    "import os\nimport requests\nfrom django.core.management import execute_from_command_line\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\nfrom mysite import helper\n",
+                ),
+                ("mysite/__init__.py", ""),
+                ("mysite/settings.py", "# settings\n"),
+                ("mysite/helper.py", "# helper\n"),
+            ],
+            "mysite/orphan.py",
+        ),
+        // Explicit `project` globs leave out the docs.
+        (
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"httpx\"]\n\n[project.optional-dependencies]\ndocs = [\"sphinx\", \"furo\"]\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"src/**/*.py\"]\nentry = [\"src/acme/__init__.py\"]\n",
+            &[
+                ("docs/conf.py", "import furo\nfrom acme import helper\n"),
+                ("src/acme/__init__.py", ""),
+                ("src/acme/helper.py", "# helper\n"),
+            ],
+            "src/acme/orphan.py",
+        ),
+        // Alembic's default environment sits beside a flat layout's package.
+        (
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"alembic\", \"sqlalchemy\", \"httpx\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/__init__.py\"]\n",
+            &[
+                (
+                    "alembic/env.py",
+                    "from alembic import context\nimport sqlalchemy\nfrom acme import helper\n",
+                ),
+                ("acme/__init__.py", ""),
+                ("acme/helper.py", "# helper\n"),
+            ],
+            "acme/orphan.py",
+        ),
+    ];
+    for (pyproject, files, orphan) in cases {
+        let mut files = files.to_vec();
+        files.extend([("pyproject.toml", pyproject), (orphan, "# orphan\n")]);
+        let project = write_project(&files);
+        assert_eq!(
+            issue_levels(project.path()),
+            [level("CHK001", orphan), level("CHK002", "httpx")],
+            "{pyproject}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!stderr.contains("skipped entry"), "{stderr}");
+    }
+}
+
 /// An unreadable `requires-python` leaves py311 to decide which modules are
 /// stdlib, so an import of one that only other versions ship becomes a hint;
 /// other imports keep their level, and an explicit `target_version` assumes

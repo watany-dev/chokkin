@@ -20,14 +20,15 @@ use crate::manifest::{
 };
 use crate::path_util::{join_rel, rel_to_root, resolve_under_root};
 use crate::plugins::{
-    EnablerScope, PluginActivation, PluginActivationReason, resolve_plugin_activations,
+    EnablerScope, PluginActivation, PluginActivationReason, discover_plugin_entries,
+    resolve_plugin_activations,
 };
 use crate::reporters::escape_control;
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, Discovery, FileContext, FileKind, LocalTrees, MemberLayout,
-    ProjectLayout, SourcesCache, SourcesWarning, apply_member_context, discover_sources_cached,
-    unpackaged_module_dirs,
+    ProjectLayout, SourcesCache, SourcesError, SourcesWarning, apply_member_context,
+    discover_named_files, discover_sources_cached, unpackaged_module_dirs,
 };
 
 use super::error::ProbeError;
@@ -108,15 +109,20 @@ pub fn probe_project(
 /// inside a skipped project (#714).
 fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &BTreeSet<String>) {
     sources.files.retain(|file| {
-        !nested.iter().any(|dir| {
-            file.path
-                .strip_prefix(dir.as_str())
-                .is_some_and(|rest| rest.starts_with('/'))
-        }) || (file.kind == FileKind::Python
-            && !discover_inline_scripts(root, [file.path.as_str()])
-                .0
-                .is_empty())
+        !under_any(&file.path, nested)
+            || (file.kind == FileKind::Python
+                && !discover_inline_scripts(root, [file.path.as_str()])
+                    .0
+                    .is_empty())
     });
+}
+
+/// Whether root-relative `path` lies inside one of `dirs`.
+fn under_any(path: &str, dirs: &BTreeSet<String>) -> bool {
+    dirs.iter().any(|dir| {
+        path.strip_prefix(dir.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 /// Root `[tool.uv.sources]` paths that are no member say why instead of
@@ -173,6 +179,7 @@ fn unread_path_sources(
 /// # Errors
 ///
 /// Returns [`ProbeError`] when a pipeline step fails fatally.
+#[allow(clippy::too_many_lines)]
 pub(super) fn probe_project_with_cache(
     start: &Path,
     project_root_override: Option<&Path>,
@@ -193,6 +200,13 @@ pub(super) fn probe_project_with_cache(
     let (discovery, mut workspace_inputs) =
         discover_root_and_members(&root, &loaded, &manifest, overrides, cache)?;
     let mut sources = discovery.sources;
+    // Before the drops below: a file they drop is not added back as an entry.
+    let discovered: BTreeSet<String> = sources
+        .files
+        .iter()
+        .chain(&discovery.held_tests)
+        .map(|file| file.path.clone())
+        .collect();
     let nested = if overrides.no_auto_workspace == Some(true) {
         BTreeSet::new()
     } else {
@@ -223,6 +237,8 @@ pub(super) fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
+    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
+    include_plugin_sources(&loaded, &manifest, &discovered, &nested, &mut sources)?;
     let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
     apply_member_context(&mut sources, loaded.effective.production);
     let (scripts, script_warnings) = discover_inline_scripts(
@@ -243,7 +259,6 @@ pub(super) fn probe_project_with_cache(
             count: nested.len(),
         });
     }
-    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
     let local_trees = LocalTrees::new(&manifest, &loaded.workspace_members, &loaded.effective);
 
     Ok(ProbeReport {
@@ -264,6 +279,60 @@ pub(super) fn probe_project_with_cache(
         plugin_activations,
         warnings,
     })
+}
+
+/// Add the files plugins name as entries that the project globs left out
+/// (`manage.py` in a flat layout, `docs/conf.py` under explicit globs), with
+/// the context the plugin gives them (#932). Discovery's exclusions, ignore
+/// rules and symlink policy still apply, so an excluded entry stays a
+/// skipped one; only the named files join, never their directories. A file
+/// discovery found, or one inside a nested project, is not added back, and a
+/// path's own test, docs or dev context outranks the plugin's.
+fn include_plugin_sources(
+    loaded: &LoadedConfig,
+    manifest: &LoadedManifest,
+    discovered: &BTreeSet<String>,
+    nested: &BTreeSet<String>,
+    sources: &mut DiscoveredSources,
+) -> Result<(), SourcesError> {
+    let mut entries = BTreeMap::new();
+    for entry in discover_plugin_entries(loaded, manifest, sources) {
+        let path = entry.spec.path;
+        let wanted = !discovered.contains(&path)
+            && Path::new(&path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+            && !under_any(&path, nested);
+        if wanted {
+            entries.entry(path).or_insert(entry.context);
+        }
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let paths: BTreeSet<String> = entries.keys().cloned().collect();
+    for mut file in discover_named_files(loaded, &paths)? {
+        let Some(&context) = entries.get(&file.path) else {
+            continue;
+        };
+        if file.context == FileContext::Runtime {
+            file.context = context;
+        }
+        // `--production` reads no test, docs or dev code.
+        if loaded.effective.production && !file.context.is_included_in_production() {
+            continue;
+        }
+        if let Some(dir) = file.path.strip_suffix("/__init__.py") {
+            sources.layout.package_dirs.insert(dir.to_owned());
+        }
+        // The parse cache keys on the globs, so they name the added files.
+        sources.effective_globs.push(globset::escape(&file.path));
+        sources.files.push(file);
+    }
+    sources
+        .files
+        .sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(())
 }
 
 /// Each member's manifest warnings, under root-relative paths (#888).
@@ -878,6 +947,192 @@ mod tests {
 
         let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
         assert_eq!(report.production_tests, []);
+    }
+
+    /// A plugin entry outside the project globs joins the inventory with the
+    /// plugin's context, under discovery's opt-outs; its directory does not
+    /// (#932).
+    #[test]
+    fn plugin_entries_join_the_inventory_under_discovery_filters() {
+        for (config, ignored, conf, production, included) in [
+            ("", "", true, false, true),
+            ("exclude = ['docs/conf.py']", "", true, false, false),
+            ("exclude = ['docs/**']", "", true, false, false),
+            ("", "docs/\n", true, false, false),
+            ("respect_gitignore = false", "docs/\n", true, false, true),
+            (
+                "[tool.chokkin.plugins]\nsphinx = false",
+                "",
+                true,
+                false,
+                false,
+            ),
+            // Docs code is not production code.
+            ("", "", true, true, false),
+            ("", "", false, false, false),
+        ] {
+            let temp = TempDir::new().expect("tempdir");
+            fs::create_dir(temp.path().join(".git")).expect("git");
+            fs::write(temp.path().join(".gitignore"), ignored).expect("ignore");
+            fs::write(
+                temp.path().join("pyproject.toml"),
+                format!(
+                    "[project]\nname = 'acme'\nversion = '0.0.0'\n\
+                     [project.optional-dependencies]\ndocs = ['sphinx']\n\
+                     [tool.chokkin]\nproject = ['src/**/*.py']\n{config}\n"
+                ),
+            )
+            .expect("manifest");
+            let mut files = vec!["src/acme/__init__.py", "docs/unrelated.py"];
+            if conf {
+                files.push("docs/conf.py");
+            }
+            for file in files {
+                let path = temp.path().join(file);
+                fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+                fs::write(path, "").expect("write");
+            }
+            let overrides = RuntimeOverrides {
+                production: Some(production),
+                ..RuntimeOverrides::default()
+            };
+
+            let report = probe_project(temp.path(), None, &overrides).expect("probe");
+            let added: Vec<_> = report
+                .sources
+                .files
+                .iter()
+                .filter(|file| file.path.starts_with("docs/"))
+                .map(|file| (file.path.as_str(), file.context))
+                .collect();
+            let expected: &[_] = if included {
+                &[("docs/conf.py", FileContext::Docs)]
+            } else {
+                &[]
+            };
+            assert_eq!(added, expected, "{config:?} {ignored:?} {production}");
+        }
+    }
+
+    /// `manage.py` beside a flat layout's package is runtime code, so
+    /// `--production` reads it too (#932).
+    #[test]
+    fn production_reads_a_runtime_plugin_entry() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = 'mysite'\nversion = '0.0.0'\ndependencies = ['django']\n",
+        )
+        .expect("manifest");
+        for file in ["manage.py", "mysite/__init__.py", "mysite/settings.py"] {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            fs::write(path, "").expect("write");
+        }
+        let overrides = RuntimeOverrides {
+            production: Some(true),
+            ..RuntimeOverrides::default()
+        };
+
+        let report = probe_project(temp.path(), None, &overrides).expect("probe");
+        let manage = report
+            .sources
+            .files
+            .iter()
+            .find(|file| file.path == "manage.py")
+            .expect("manage.py");
+        assert_eq!(manage.context, FileContext::Runtime);
+        assert!(
+            report
+                .sources
+                .effective_globs
+                .contains(&"manage.py".to_owned())
+        );
+    }
+
+    /// A plugin entry under `tests/` keeps the test context its path gives,
+    /// so `--production` reads neither the held test nor one the globs left
+    /// out (#932).
+    #[test]
+    fn plugin_entries_keep_the_context_of_their_path() {
+        for (config, production, expected) in [
+            ("", false, Some(FileContext::Test)),
+            ("", true, None),
+            (
+                "[tool.chokkin]\nproject = ['app/**/*.py']",
+                false,
+                Some(FileContext::Test),
+            ),
+            ("[tool.chokkin]\nproject = ['app/**/*.py']", true, None),
+        ] {
+            let temp = TempDir::new().expect("tempdir");
+            fs::write(
+                temp.path().join("pyproject.toml"),
+                format!(
+                    "[project]\nname = 'app'\nversion = '0.0.0'\ndependencies = ['django']\n\
+                     [tool.pytest.ini_options]\nDJANGO_SETTINGS_MODULE = 'tests.settings'\n{config}\n"
+                ),
+            )
+            .expect("manifest");
+            for file in ["app/__init__.py", "tests/__init__.py", "tests/settings.py"] {
+                let path = temp.path().join(file);
+                fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+                fs::write(path, "").expect("write");
+            }
+            let overrides = RuntimeOverrides {
+                production: Some(production),
+                ..RuntimeOverrides::default()
+            };
+
+            let report = probe_project(temp.path(), None, &overrides).expect("probe");
+            let settings = report
+                .sources
+                .files
+                .iter()
+                .find(|file| file.path == "tests/settings.py")
+                .map(|file| file.context);
+            assert_eq!(settings, expected, "{config:?} production={production}");
+        }
+    }
+
+    /// A settings package outside the globs joins as a package, so imports
+    /// resolve to it (#932).
+    #[test]
+    fn a_plugin_entry_package_joins_the_layout() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = 'app'\nversion = '0.0.0'\ndependencies = ['django']\n\
+             [tool.pytest.ini_options]\nDJANGO_SETTINGS_MODULE = 'conf.settings'\n\
+             [tool.chokkin]\nproject = ['app/**/*.py']\n",
+        )
+        .expect("manifest");
+        for file in [
+            "app/__init__.py",
+            "conf/__init__.py",
+            "conf/settings/__init__.py",
+        ] {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            fs::write(path, "").expect("write");
+        }
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        let settings = report
+            .sources
+            .files
+            .iter()
+            .find(|file| file.path == "conf/settings/__init__.py")
+            .expect("settings");
+        assert_eq!(settings.context, FileContext::Runtime);
+        assert!(report.sources.layout.package_dirs.contains("conf/settings"));
+        assert!(
+            !report
+                .sources
+                .files
+                .iter()
+                .any(|file| file.path == "conf/__init__.py")
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Source file discovery orchestration.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::config::LoadedConfig;
@@ -84,6 +85,7 @@ pub(crate) fn discover_sources_cached(
         gitignore: gitignore.as_deref(),
         production: config.effective.production,
         cache,
+        dirs: None,
     };
     let mut collected = collect_files(&collect_options)?;
     if config.effective.project.is_empty() {
@@ -122,6 +124,48 @@ pub(crate) fn discover_sources_cached(
         },
         held_tests: collected.held_tests,
     })
+}
+
+/// The files at `paths` (root-relative) that discovery would collect if the
+/// project globs named them: the same exclusions, ignore rules and symlink
+/// policy, without walking the rest of the tree (#932). A path that is
+/// excluded, ignored or missing is left out; the caller decides what that
+/// means. Contexts come from the path, and `production` drops none. The walk
+/// warnings are dropped: the root walk met the same directories and links.
+pub(crate) fn discover_named_files(
+    config: &LoadedConfig,
+    paths: &BTreeSet<String>,
+) -> Result<Vec<DiscoveredFile>, SourcesError> {
+    let cache = SourcesCache::default();
+    let globs: Vec<String> = paths.iter().map(|path| globset::escape(path)).collect();
+    let dirs: BTreeSet<String> = paths
+        .iter()
+        .flat_map(|path| {
+            path.match_indices('/')
+                .map(|(end, _)| path[..end].to_owned())
+        })
+        .collect();
+    let exclude_patterns = effective_exclude(&config.effective.exclude);
+    let project_matcher = cache.glob_set(&globs)?;
+    let exclude_matcher = cache.glob_set(&exclude_patterns)?;
+    let gitignore = if config.effective.respect_gitignore {
+        load_gitignore(&config.root.path, &cache).0
+    } else {
+        None
+    };
+    let collected = collect_files(&CollectOptions {
+        root: &config.root.path,
+        project_matcher: &project_matcher,
+        exclude_matcher: &exclude_matcher,
+        test_matcher: &globset::GlobSet::empty(),
+        exclude_patterns: &exclude_patterns,
+        respect_gitignore: config.effective.respect_gitignore,
+        gitignore: gitignore.as_deref(),
+        production: false,
+        cache: &cache,
+        dirs: Some(&dirs),
+    })?;
+    Ok(collected.files)
 }
 
 /// Drop the files inside a workspace member that only [`ENTRY_TREE_GLOBS`]
