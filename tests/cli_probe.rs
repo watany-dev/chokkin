@@ -21,7 +21,7 @@ fn probe_src_layout_fixture() {
     assert_eq!(report.manifest.metadata.name.as_deref(), Some("acme"));
     assert_eq!(report.sources.layout.layout, ProjectLayout::Src);
     assert_eq!(report.sources.layout.packages, ["acme"]);
-    // Src layout globs cover `src/`, `tests/` and `scripts/`, so `docs/conf.py` is not discovered.
+    // Every layout also scans root `docs/`, so `docs/conf.py` is discovered (#1023).
     let files: Vec<_> = report
         .sources
         .python_files()
@@ -30,6 +30,7 @@ fn probe_src_layout_fixture() {
     assert_eq!(
         files,
         [
+            "docs/conf.py",
             "scripts/run.py",
             "src/acme/__init__.py",
             "src/acme/module.py",

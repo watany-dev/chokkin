@@ -1,7 +1,7 @@
 //! File context assignment (§10).
 
 use super::dirs::{NESTED_TEST_DIR, in_root_test_dir};
-use super::types::{DiscoveredSources, FileContext, LayoutInfo};
+use super::types::{DiscoveredSources, FileContext, LayoutInfo, ProjectLayout};
 
 /// Assign a file context from a root-relative path.
 ///
@@ -22,17 +22,18 @@ pub(crate) fn assign_file_context(path: &str) -> FileContext {
 }
 
 /// [`assign_file_context`] that also knows `<member>/test/` is test,
-/// `<member>/docs/` docs and `<member>/examples/` dev, for files
-/// `--production` dropped from the inventory.
+/// `<member>/docs/` docs, `<member>/examples/` and notebooks outside the
+/// package dev, for files `--production` dropped from the inventory.
 #[must_use]
 pub(crate) fn assign_layout_file_context(path: &str, layout: &LayoutInfo) -> FileContext {
     layout_context(path, assign_file_context(path), layout)
 }
 
 /// Give `<member>/test/`, `<member>/docs/` and `<member>/examples/` files
-/// the context root `test/`, `docs/` and `examples/` get. Members are
-/// detected after the walk, so this runs once they are known (#612, #571,
-/// #681, #694).
+/// the context root `test/`, `docs/` and `examples/` get, and notebooks
+/// outside the root's or their member's package dev. Members are detected
+/// after the walk, so this runs once they are known (#612, #571, #681,
+/// #694, #1023).
 pub(crate) fn apply_member_context(sources: &mut DiscoveredSources, production: bool) {
     let layout = &sources.layout;
     for file in &mut sources.files {
@@ -52,11 +53,41 @@ fn layout_context(path: &str, context: FileContext, layout: &LayoutInfo) -> File
     if context != FileContext::Runtime && !from_root_examples {
         return context;
     }
-    match member_context(path, layout) {
+    let context = match member_context(path, layout) {
         Some(context) => context,
         None if layout.member_for(path).is_some() => FileContext::Runtime,
         None => context,
+    };
+    if context == FileContext::Runtime && is_notebook(path) && !in_distributed_package(path, layout)
+    {
+        // A notebook is run by hand, never shipped: outside the package it
+        // is analysis or a demo, like `examples/` (#1023).
+        return FileContext::Dev;
     }
+    context
+}
+
+fn is_notebook(path: &str) -> bool {
+    path.rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("ipynb"))
+}
+
+/// Whether `path` lies in the tree the innermost member's (or the root's)
+/// layout ships: all of `src/` for a src or unknown layout, else one of its
+/// packages. A layout naming no package ships nothing but `src/`.
+fn in_distributed_package(path: &str, layout: &LayoutInfo) -> bool {
+    let (layout, path) = layout
+        .member_for(path)
+        .map_or((layout, path), |(member, rest)| (&member.layout, rest));
+    let under = |dir: &str| {
+        path.strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+    };
+    matches!(layout.layout, ProjectLayout::Src | ProjectLayout::Unknown) && under("src")
+        || layout
+            .packages
+            .iter()
+            .any(|package| under(&layout.package_dir(package)))
 }
 
 fn member_context(path: &str, layout: &LayoutInfo) -> Option<FileContext> {
@@ -384,6 +415,99 @@ mod tests {
                 FileContext::Runtime
             );
         }
+    }
+
+    #[test]
+    fn notebooks_outside_the_distributed_package_are_dev() {
+        use crate::discovery::{ProjectRoot, RootMarker};
+        use crate::sources::{DiscoveredFile, FileKind, MemberLayout};
+
+        let mut layout = LayoutInfo::new("", vec!["acme".to_owned()]);
+        layout.members = vec![MemberLayout {
+            path: "pkgs/core".to_owned(),
+            layout: LayoutInfo::new("src", vec!["core".to_owned()]),
+        }];
+        let cases = [
+            ("acme/demo.ipynb", FileContext::Runtime),
+            ("acme/sub/demo.IPYNB", FileContext::Runtime),
+            ("notebooks/demo.ipynb", FileContext::Dev),
+            ("demo.ipynb", FileContext::Dev),
+            ("acme_extra/demo.ipynb", FileContext::Dev),
+            ("docs/demo.ipynb", FileContext::Docs),
+            ("tests/demo.ipynb", FileContext::Test),
+            ("acme/notebook.py", FileContext::Runtime),
+            ("notebooks/loose.py", FileContext::Runtime),
+            ("pkgs/core/src/core/demo.ipynb", FileContext::Runtime),
+            ("pkgs/core/notebooks/demo.ipynb", FileContext::Dev),
+        ];
+        let discovered = |production: bool| {
+            let mut sources = DiscoveredSources {
+                root: ProjectRoot {
+                    path: std::path::PathBuf::from("/project"),
+                    marker: RootMarker::PyProjectToml,
+                },
+                layout: layout.clone(),
+                effective_globs: Vec::new(),
+                files: cases
+                    .iter()
+                    .map(|(path, _)| DiscoveredFile {
+                        path: (*path).to_owned(),
+                        kind: FileKind::Notebook,
+                        context: assign_file_context(path),
+                    })
+                    .collect(),
+                warnings: Vec::new(),
+            };
+            apply_member_context(&mut sources, production);
+            sources
+        };
+        let all = discovered(false);
+        for ((path, expected), file) in cases.iter().zip(&all.files) {
+            assert_eq!(file.context, *expected, "{path}");
+            assert_eq!(
+                assign_layout_file_context(path, &layout),
+                *expected,
+                "{path}"
+            );
+        }
+        let production = discovered(true);
+        assert_eq!(
+            kept(&production),
+            cases
+                .iter()
+                .filter(|(_, context)| context.is_included_in_production())
+                .map(|(path, _)| *path)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn notebooks_in_a_src_tree_or_unknown_layout_follow_src() {
+        let src = LayoutInfo::new("src", vec!["acme".to_owned()]);
+        let unknown = LayoutInfo::default();
+        for layout in [&src, &unknown] {
+            assert_eq!(
+                assign_layout_file_context("src/acme/demo.ipynb", layout),
+                FileContext::Runtime
+            );
+            assert_eq!(
+                assign_layout_file_context("src/demo.ipynb", layout),
+                FileContext::Runtime
+            );
+            assert_eq!(
+                assign_layout_file_context("notebooks/demo.ipynb", layout),
+                FileContext::Dev
+            );
+        }
+        let lib = LayoutInfo::new("lib", vec!["acme".to_owned()]);
+        assert_eq!(
+            assign_layout_file_context("lib/acme/demo.ipynb", &lib),
+            FileContext::Runtime
+        );
+        assert_eq!(
+            assign_layout_file_context("lib/demo.ipynb", &lib),
+            FileContext::Dev
+        );
     }
 
     #[test]

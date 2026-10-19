@@ -400,6 +400,11 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     // The singular `test/` is where sqlalchemy and CPython-style projects
     // keep their suite; without it the symbols only tests call read as unused.
     globs.extend(default_scanned_dirs().map(|dir| format!("{dir}/**/*.{{py,pyi,ipynb}}")));
+    // Notebooks are entries at any depth (§8); outside the package they are
+    // dev code (§10), so reading them never makes a dependency runtime.
+    if layout != ProjectLayout::Unknown {
+        globs.push("**/*.ipynb".to_owned());
+    }
     // pytest always loads the rootdir conftest, wherever the suite lives.
     globs.push("conftest.py".to_owned());
     // setuptools runs this at build time, outside the distributed package.
@@ -834,6 +839,9 @@ mod tests {
                 "tests/**/*.{py,pyi,ipynb}".to_owned(),
                 "test/**/*.{py,pyi,ipynb}".to_owned(),
                 "scripts/**/*.{py,pyi,ipynb}".to_owned(),
+                "docs/**/*.{py,pyi,ipynb}".to_owned(),
+                "examples/**/*.{py,pyi,ipynb}".to_owned(),
+                "**/*.ipynb".to_owned(),
                 "conftest.py".to_owned(),
                 "setup.py".to_owned(),
             ]
@@ -1279,15 +1287,19 @@ mod tests {
             }
 
             #[test]
-            fn default_globs_always_cover_test_dirs_and_scripts(
+            fn default_globs_always_cover_scanned_dirs_and_notebooks(
                 packages in candidate_names(),
             ) {
                 for layout in [ProjectLayout::Src, ProjectLayout::Flat, ProjectLayout::Unknown] {
                     let globs = default_globs(layout, "src", &packages);
-                    for glob in ["tests", "test", "scripts"] {
+                    for glob in ["tests", "test", "scripts", "docs", "examples"] {
                         let glob = format!("{glob}/**/*.{{py,pyi,ipynb}}");
                         prop_assert!(globs.contains(&glob));
                     }
+                    let notebooks = globs
+                        .iter()
+                        .any(|glob| glob == "**/*.ipynb" || glob == "**/*.{py,pyi,ipynb}");
+                    prop_assert!(notebooks);
                 }
             }
         }

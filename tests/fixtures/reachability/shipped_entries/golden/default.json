@@ -2,6 +2,12 @@
   "mode": "app",
   "entry_roots": [
     {
+      "path": "docs/guide.py",
+      "origins": [
+        "auto:docs/**"
+      ]
+    },
+    {
       "path": "src/acme/__main__.py",
       "origins": [
         "auto:__main__.py"
@@ -27,6 +33,7 @@
     }
   ],
   "reachable": [
+    "docs/guide.py",
     "src/acme/__init__.py",
     "src/acme/__main__.py",
     "src/acme/cli.py",

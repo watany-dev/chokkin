@@ -72,6 +72,9 @@ fn infers_src_layout() {
             "tests/**/*.{py,pyi,ipynb}".to_owned(),
             "test/**/*.{py,pyi,ipynb}".to_owned(),
             "scripts/**/*.{py,pyi,ipynb}".to_owned(),
+            "docs/**/*.{py,pyi,ipynb}".to_owned(),
+            "examples/**/*.{py,pyi,ipynb}".to_owned(),
+            "**/*.ipynb".to_owned(),
             "conftest.py".to_owned(),
             "setup.py".to_owned(),
         ]
@@ -81,7 +84,7 @@ fn infers_src_layout() {
     assert!(paths.contains(&"src/acme/module.py"));
     assert!(paths.contains(&"tests/test_module.py"));
     assert!(paths.contains(&"scripts/run.py"));
-    assert!(!paths.contains(&"docs/conf.py"));
+    assert!(paths.contains(&"docs/conf.py"));
 }
 
 #[test]
@@ -316,7 +319,7 @@ fn full_pipeline_step4() {
     let config = load_config(&root).expect("load config");
     let manifest = extract_manifest(&root, &config).expect("extract manifest");
     let sources = discover_sources(&root, &config, &manifest).expect("discover sources");
-    assert_eq!(sources.python_files().count(), 5);
+    assert_eq!(sources.python_files().count(), 6);
     assert!(
         sources
             .files
@@ -441,4 +444,47 @@ fn pytest_testpaths_skip_packages_and_explicit_globs() {
         context_of(&explicit, "t[1]/helpers.py"),
         FileContext::Runtime
     );
+}
+
+#[test]
+fn discovers_root_examples_docs_and_notebooks_in_every_layout() {
+    // #1023: the entry rules `examples/**`, `docs/**` and `**/*.ipynb` only
+    // work on files discovery reads, whatever the layout.
+    for (package, layout) in [
+        ("acme/__init__.py", ProjectLayout::Flat),
+        ("src/acme/__init__.py", ProjectLayout::Src),
+    ] {
+        let sources = discover_tree(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+            ),
+            (package, ""),
+            ("examples/demo.py", ""),
+            ("examples/demo.ipynb", "{}"),
+            ("docs/conf.py", ""),
+            ("docs/demo.ipynb", "{}"),
+            ("notebooks/demo.ipynb", "{}"),
+            ("notebooks/loose.py", ""),
+            ("demo.ipynb", "{}"),
+            ("tools/build.py", ""),
+        ]);
+        assert_eq!(sources.layout.layout, layout);
+        let discovered = paths(&sources);
+        for path in [
+            "examples/demo.py",
+            "examples/demo.ipynb",
+            "docs/conf.py",
+            "docs/demo.ipynb",
+            "notebooks/demo.ipynb",
+            "demo.ipynb",
+        ] {
+            assert!(discovered.contains(&path), "{layout:?}: {path}");
+        }
+        // Loose `.py` outside the package stays out (`Unpackaged:`, #977).
+        assert!(!discovered.contains(&"notebooks/loose.py"), "{layout:?}");
+        assert!(!discovered.contains(&"tools/build.py"), "{layout:?}");
+        assert_eq!(context_of(&sources, "examples/demo.py"), FileContext::Dev);
+        assert_eq!(context_of(&sources, "docs/demo.ipynb"), FileContext::Docs);
+    }
 }
