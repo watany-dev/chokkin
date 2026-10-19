@@ -581,6 +581,27 @@ mod tests {
     }
 
     #[test]
+    fn a_dirs_walk_enters_only_the_named_directories() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path();
+        write_file(&root.join("docs/conf.py"), "");
+        write_file(&root.join("src/app/module.py"), "");
+        write_file(&root.join("manage.py"), "");
+        let cache = SourcesCache::default();
+        let patterns = effective_exclude(&[]);
+        let exclude = cache.glob_set(&patterns).expect("excludes");
+        let overrides = cache.exclude_overrides(&patterns).expect("overrides");
+        let dirs = BTreeSet::from(["docs".to_owned()]);
+        let entries: Vec<_> = configure_walker(root, overrides, exclude, None, Some(dirs))
+            .build()
+            .map(|entry| entry.expect("entry").into_path())
+            .collect();
+        assert!(entries.contains(&root.join("docs/conf.py")));
+        assert!(entries.contains(&root.join("manage.py")));
+        assert!(!entries.contains(&root.join("src")));
+    }
+
+    #[test]
     fn collect_files_honors_project_and_exclude_globs() {
         let temp = tempdir().expect("tempdir");
         let root = temp.path();
