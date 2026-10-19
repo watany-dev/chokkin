@@ -5,8 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use indexmap::IndexSet;
 
 use crate::manifest::{
-    DeclaredDependency, DependencyContext, InlineScript, LoadedManifest,
-    normalize_distribution_name, supported_python,
+    DeclaredDependency, DependencyContext, InlineScript, LoadedManifest, supported_python,
 };
 use crate::plugins::PluginHints;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
@@ -17,6 +16,7 @@ use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::PublicSurface;
 
 use super::binary::{BinaryProviders, detect_unlisted_binaries};
+use super::companions::companion_is_used;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::{detect_misplaced_dependencies, pytest11_modules};
 use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
@@ -289,37 +289,13 @@ fn workspace_declared_indices<'a>(
         .collect()
 }
 
-/// Distributions another library imports lazily at runtime, so the project
-/// declares them without importing them: starlette's `request.form()` imports
-/// `python_multipart` only when called, and transformers imports `accelerate`
-/// for `device_map="auto"`.
-const RUNTIME_PEERS: &[(&str, &[&str])] = &[
-    ("python-multipart", &["starlette", "fastapi"]),
-    ("accelerate", &["transformers"]),
-];
-
-/// Mark `types-*` stubs and [`RUNTIME_PEERS`] used when the package they serve is.
 fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSet<String>) {
-    for name in declared.keys() {
-        if let Some(runtime) = runtime_for_stub(name)
-            && used.contains(&normalize_distribution_name(runtime))
-        {
-            used.insert(name.clone());
-        }
-    }
-    for (peer, providers) in RUNTIME_PEERS {
-        if declared.contains_key(*peer) && providers.iter().any(|provider| used.contains(*provider))
-        {
-            used.insert((*peer).to_owned());
-        }
-    }
-}
-
-/// Map a `types-*` stub name to its runtime package when the pattern is known.
-fn runtime_for_stub(stub_name: &str) -> Option<&str> {
-    stub_name
-        .strip_prefix("types-")
-        .or_else(|| stub_name.strip_suffix("-stubs"))
+    let companions: Vec<_> = declared
+        .keys()
+        .filter(|name| companion_is_used(name, |provider| used.contains(provider)))
+        .cloned()
+        .collect();
+    used.extend(companions);
 }
 
 #[cfg(test)]
@@ -369,11 +345,6 @@ mod tests {
             ParseSummary::default(),
             ProjectGraph::new(manifest.root.clone()),
         )
-    }
-
-    #[test]
-    fn runtime_for_stub_maps_types_prefix() {
-        assert_eq!(runtime_for_stub("types-requests"), Some("requests"));
     }
 
     #[test]

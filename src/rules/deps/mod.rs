@@ -1,6 +1,7 @@
 //! Dependency reconciliation (pipeline step 10).
 
 mod binary;
+mod companions;
 mod context;
 mod duplicate;
 mod misplaced;

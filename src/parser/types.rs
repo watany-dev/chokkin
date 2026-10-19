@@ -337,7 +337,8 @@ pub struct ParsedModule {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub runs_python_file: bool,
     /// In a module that imports `subprocess`, the first words of string
-    /// literals that look like command lines: programs it may run.
+    /// literals that look like command lines and literal argv list/tuple heads:
+    /// programs it may run. Computed program names supply no usage evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_commands: Vec<String>,
     /// In a module that edits `sys.path`, string literals that may name the
