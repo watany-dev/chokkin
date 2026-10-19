@@ -117,7 +117,6 @@ fn drop_nested_projects(root: &Path, sources: &mut DiscoveredSources, nested: &B
     });
 }
 
-/// Whether root-relative `path` lies inside one of `dirs`.
 fn under_any(path: &str, dirs: &BTreeSet<String>) -> bool {
     dirs.iter().any(|dir| {
         path.strip_prefix(dir.as_str())
@@ -318,7 +317,6 @@ fn include_plugin_sources(
         if file.context == FileContext::Runtime {
             file.context = context;
         }
-        // `--production` reads no test, docs or dev code.
         if loaded.effective.production && !file.context.is_included_in_production() {
             continue;
         }

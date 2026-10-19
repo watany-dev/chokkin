@@ -392,8 +392,6 @@ fn source_kind(path: &Path) -> Option<FileKind> {
     }
 }
 
-/// The walk over `options.root`, with the ancestor `.gitignore` errors in
-/// `warnings`.
 fn walker(
     options: &CollectOptions<'_>,
     warnings: &mut Vec<SourcesWarning>,
