@@ -20,7 +20,7 @@ pub(crate) use context::{
     apply_member_context, assign_file_context, assign_layout_file_context, is_test_data_path,
 };
 pub use discover::discover_sources;
-pub(crate) use discover::{Discovery, discover_sources_cached};
+pub(crate) use discover::{Discovery, discover_named_files, discover_sources_cached};
 pub use error::SourcesError;
 pub(crate) use glob::build_glob_set;
 pub(crate) use layout::unpackaged_module_dirs;

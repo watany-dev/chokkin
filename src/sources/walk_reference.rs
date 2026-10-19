@@ -263,6 +263,7 @@ mod tests {
             gitignore: gitignore.as_deref(),
             production: false,
             cache,
+            dirs: None,
         };
         let collected = collect_files(&options).expect("collect");
         let mut warnings = collected.warnings;

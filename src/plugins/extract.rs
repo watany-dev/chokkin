@@ -26,7 +26,7 @@ use super::error::PluginsError;
 use super::fastapi;
 use super::flask;
 use super::pytest;
-use super::types::PluginHints;
+use super::types::{PluginEntry, PluginHints};
 
 /// Inputs for [`extract_plugin_hints_with_parse`].
 #[derive(Clone, Copy)]
@@ -106,6 +106,48 @@ pub fn extract_plugin_hints_with_parse(
         config_command_targets: scan.command_targets,
         warnings,
     })
+}
+
+/// The entries plugins name by path before the inventory is parsed, so files
+/// outside the project globs can join it (#932). Warnings and other hints
+/// wait for [`extract_plugin_hints_with_parse`], which sees those files.
+pub(crate) fn discover_plugin_entries(
+    config: &LoadedConfig,
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+) -> Vec<PluginEntry> {
+    let parse = ParseSummary::default();
+    let ctx = PluginContext {
+        root: &config.root,
+        config: &config.effective,
+        sources,
+        manifest,
+        parse: &parse,
+    };
+    let mut entries = Vec::new();
+    let enabled = PluginId::all()
+        .iter()
+        .filter(|plugin| config.effective.plugins.get(plugin) == Some(&true));
+    for plugin in enabled {
+        let contrib = match plugin {
+            PluginId::Django => django::extract(&ctx).0,
+            PluginId::Sphinx => doctools::extract(*plugin, &ctx),
+            PluginId::Alembic => alembic::extract(&ctx),
+            // Their entries come from the inventory or the parse, so they
+            // name no file the inventory lacks.
+            PluginId::Pytest
+            | PluginId::Fastapi
+            | PluginId::Flask
+            | PluginId::Celery
+            | PluginId::Tox
+            | PluginId::Nox
+            | PluginId::PreCommit
+            | PluginId::GithubActions
+            | PluginId::MkDocs => continue,
+        };
+        entries.extend(contrib.entries);
+    }
+    entries
 }
 
 #[derive(Serialize, Deserialize)]
