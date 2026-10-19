@@ -74,7 +74,9 @@ fn is_notebook(path: &str) -> bool {
 
 /// Whether `path` lies in the tree the innermost member's (or the root's)
 /// layout ships: all of `src/` for a src or unknown layout, else one of its
-/// packages. A layout naming no package ships nothing but `src/`.
+/// packages. An unknown layout names no package, so there a directory with
+/// an `__init__.py` ships too (the `llama_index` namespace package that
+/// each llama-index integration member ships).
 fn in_distributed_package(path: &str, layout: &LayoutInfo) -> bool {
     let (layout, path) = layout
         .member_for(path)
@@ -83,7 +85,12 @@ fn in_distributed_package(path: &str, layout: &LayoutInfo) -> bool {
         path.strip_prefix(dir)
             .is_some_and(|rest| rest.starts_with('/'))
     };
+    let in_package_dir = || {
+        path.rsplit_once('/')
+            .is_some_and(|(dir, _)| layout.package_dirs.contains(dir))
+    };
     matches!(layout.layout, ProjectLayout::Src | ProjectLayout::Unknown) && under("src")
+        || layout.layout == ProjectLayout::Unknown && in_package_dir()
         || layout
             .packages
             .iter()
@@ -483,6 +490,8 @@ mod tests {
 
     #[test]
     fn notebooks_in_a_src_tree_or_unknown_layout_follow_src() {
+        use crate::sources::MemberLayout;
+
         let src = LayoutInfo::new("src", vec!["acme".to_owned()]);
         let unknown = LayoutInfo::default();
         for layout in [&src, &unknown] {
@@ -496,6 +505,31 @@ mod tests {
             );
             assert_eq!(
                 assign_layout_file_context("notebooks/demo.ipynb", layout),
+                FileContext::Dev
+            );
+        }
+        // llama_index's members ship the `llama_index` namespace package.
+        let namespace = LayoutInfo {
+            package_dirs: ["llama_index/llms/contextual".to_owned()].into(),
+            ..LayoutInfo::default()
+        };
+        let root = LayoutInfo {
+            members: vec![MemberLayout {
+                path: "llms/contextual".to_owned(),
+                layout: namespace.clone(),
+            }],
+            ..LayoutInfo::default()
+        };
+        for (layout, prefix) in [(&namespace, ""), (&root, "llms/contextual/")] {
+            assert_eq!(
+                assign_layout_file_context(
+                    &format!("{prefix}llama_index/llms/contextual/demo.ipynb"),
+                    layout
+                ),
+                FileContext::Runtime
+            );
+            assert_eq!(
+                assign_layout_file_context(&format!("{prefix}notebooks/demo.ipynb"), layout),
                 FileContext::Dev
             );
         }
