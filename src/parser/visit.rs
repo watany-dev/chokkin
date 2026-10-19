@@ -29,10 +29,11 @@ use super::platform_guard::{
     PlatformModules, is_platform_guard_test, mentions_platform_test, platform_modules,
 };
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
+use super::server_app::ServerNames;
 use super::type_checking::is_type_checking_test;
 use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef, ModuleRef,
-    ParsedModule, SymbolDef, SymbolKind, import_context_for_file,
+    ParsedModule, ServerApp, SymbolDef, SymbolKind, import_context_for_file,
 };
 
 /// Whether the module edits `sys.path`, and its path-like literals (#719).
@@ -118,6 +119,7 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
+    server_names: ServerNames,
     /// Names the current scope binds to a module a prefixed loader call
     /// returned (`module = import_module("pkg." + name)`), with that call's
     /// index in `dynamic_import_prefixes` (#728).
@@ -170,6 +172,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
+            server_names: ServerNames::default(),
             prefix_modules: HashMap::new(),
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
@@ -584,6 +587,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         for alias in &import.names {
             let optional = optional || self.is_imported_guarded(alias.name.as_str());
             self.loader_names.record_import(alias);
+            self.server_names.record_import(alias);
             if alias.name.as_str() == "typing" {
                 self.typing_aliases.insert(
                     alias
@@ -630,6 +634,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
 
             if level == 0 && !is_star {
                 self.loader_names
+                    .record_import_from(module_suffix.as_deref(), alias);
+                self.server_names
                     .record_import_from(module_suffix.as_deref(), alias);
             }
             if level == 0
@@ -1027,6 +1033,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 self.record_computed_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
+                if let Some((label, app)) = self.server_names.app(call) {
+                    let line = self.line_number(call);
+                    self.parsed.server_apps.push(ServerApp {
+                        call: label.to_owned(),
+                        app: app.to_owned(),
+                        line,
+                    });
+                }
                 let arguments = &call.arguments;
                 if let Some(loader) = self.loader_names.loader(&call.func) {
                     if let Some(target) =
@@ -1331,6 +1345,45 @@ mod tests {
             .map(|reference| (reference.text.as_str(), reference.line))
             .collect();
         assert_eq!(refs, [("pkg.cli.run", 2), ("python:pkg.config", 4),]);
+    }
+
+    /// Literal `module:attr` apps passed to uvicorn's `run` and `Config`,
+    /// aliases included; app objects, computed strings, bare modules and
+    /// look-alike calls are not read (#1004).
+    #[test]
+    fn records_literal_apps_passed_to_uvicorn() {
+        let parsed = visit_source(concat!(
+            "import uvicorn\n",
+            "import uvicorn as uv\n",
+            "from uvicorn import run as serve, Config\n",
+            "from uvicorn.config import Config as C\n",
+            "uvicorn.run(\"pkg.asgi:app\", port=8000)\n",
+            "uv.Config(app=\"pkg.cfg:application\")\n",
+            "def main():\n",
+            "    serve(\"pkg.main:create()\", factory=True)\n",
+            "    Config(\"pkg.other:app\")\n",
+            "    C(\"pkg.sub:app\")\n",
+            "uvicorn.run(app)\n",
+            "uvicorn.run(f\"pkg.{name}:app\")\n",
+            "uvicorn.run(\"pkg.bare\")\n",
+            "other.run(\"pkg.not_uvicorn:app\")\n",
+            "run(\"pkg.not_imported:app\")\n",
+        ));
+        let apps: Vec<(&str, &str, u32)> = parsed
+            .server_apps
+            .iter()
+            .map(|server| (server.call.as_str(), server.app.as_str(), server.line))
+            .collect();
+        assert_eq!(
+            apps,
+            [
+                ("uvicorn.run", "pkg.asgi:app", 5),
+                ("uvicorn.Config", "pkg.cfg:application", 6),
+                ("uvicorn.run", "pkg.main:create()", 8),
+                ("uvicorn.Config", "pkg.other:app", 9),
+                ("uvicorn.Config", "pkg.sub:app", 10),
+            ]
+        );
     }
 
     #[test]

@@ -5,6 +5,8 @@
 //! and `python -m`. Arguments, `$(...)` substitutions and variables are never
 //! treated as commands, so `echo pytest` or `$(COVERAGE) run` stay silent.
 
+use crate::parser::ParseSummary;
+
 use super::plugin_map::plugin_module_distribution;
 use super::types::{
     BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
@@ -85,6 +87,7 @@ pub(super) fn command_target_refs(
             let target = match target {
                 PythonTarget::Script(run) => script_target(&run)?,
                 PythonTarget::Module(module) => CommandTarget::Module { module },
+                PythonTarget::App { module, symbol } => CommandTarget::App { module, symbol },
                 PythonTarget::Opaque(text) => CommandTarget::Opaque { text },
             };
             Some(CommandTargetRef {
@@ -93,6 +96,34 @@ pub(super) fn command_target_refs(
             })
         })
         .collect()
+}
+
+/// The apps literal `uvicorn.run`/`uvicorn.Config` calls load, read as a
+/// `uvicorn` command's app (#1004); one that is no name path is dropped, as
+/// uvicorn fails to load it.
+pub(super) fn parsed_server_apps(parse: &ParseSummary) -> impl Iterator<Item = CommandTargetRef> {
+    parse.modules.iter().flat_map(|module| {
+        module.server_apps.iter().filter_map(|server| {
+            let PythonTarget::App {
+                module: app,
+                symbol,
+            } = runner_target("uvicorn", &[&server.app])
+            else {
+                return None;
+            };
+            Some(CommandTargetRef {
+                target: CommandTarget::App {
+                    module: app,
+                    symbol,
+                },
+                origin: ReferenceOrigin {
+                    file: module.path.clone(),
+                    line: Some(server.line),
+                    label: server.call.clone(),
+                },
+            })
+        })
+    })
 }
 
 fn script_target(run: &ScriptRun) -> Option<CommandTarget> {
@@ -213,7 +244,7 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
         .into_iter()
         .filter_map(|target| match target {
             PythonTarget::Script(run) => Some(run),
-            PythonTarget::Module(_) | PythonTarget::Opaque(_) => None,
+            PythonTarget::Module(_) | PythonTarget::App { .. } | PythonTarget::Opaque(_) => None,
         })
         .collect()
 }
@@ -222,21 +253,40 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
 pub(super) enum PythonTarget {
     /// A `.py` file run by path.
     Script(ScriptRun),
-    /// A module run with `-m`, served by a runner, or imported by `-c` code.
+    /// A module run with `-m` or by a task runner, or imported by `-c` code.
     Module(String),
+    /// The application a WSGI/ASGI server loads (#1004).
+    App {
+        /// Dotted module name.
+        module: String,
+        /// The attribute path served, when the command names one or the
+        /// server has a default.
+        symbol: Option<String>,
+    },
     /// A variable, a substitution, or an argument shape that is not read.
     Opaque(String),
 }
 
 /// WSGI/ASGI servers and task runners whose argument names the module they load.
-const MODULE_RUNNERS: [&str; 6] = [
+const MODULE_RUNNERS: [&str; 7] = [
     "gunicorn",
     "uvicorn",
     "hypercorn",
     "daphne",
+    "granian",
     "waitress-serve",
     "celery",
 ];
+
+/// The attribute a server loads from a module named without one; uvicorn and
+/// daphne require it.
+fn default_app_attr(runner: &str) -> Option<&'static str> {
+    match runner {
+        "gunicorn" | "waitress-serve" => Some("application"),
+        "hypercorn" | "granian" => Some("app"),
+        _ => None,
+    }
+}
 
 /// What each segment that runs Python (a `python` word, `uv run`, or one of
 /// [`MODULE_RUNNERS`]) runs. A segment whose command word is anything else, a
@@ -268,6 +318,7 @@ pub(super) fn command_targets(command: &str) -> Vec<PythonTarget> {
                 }
                 targets.push(PythonTarget::Script(run));
             },
+            Some(Run::Target(target)) if cwd.is_some() => targets.push(relocated(target)),
             Some(Run::Target(target)) => targets.push(target),
             Some(Run::Code) => runs_code = true,
             None => {},
@@ -382,22 +433,67 @@ fn path_target(arg: &str) -> PythonTarget {
 /// The module a runner loads: celery's `-A` / `--app`, else the first
 /// `module:attr` argument, else a lone dotted positional (gunicorn's
 /// `module` form). An app named only in a config file is not read.
+///
+/// A server's app keeps its attribute: the name before a factory's `(`, or
+/// the server's default for a bare module. An attribute that is no name path
+/// (`apps[0]`) leaves the module alone, and an option that moves the import
+/// root makes the app opaque.
 fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
+    let target = server_or_celery_target(runner, args);
+    if args.iter().any(|arg| moves_import_root(arg)) {
+        return relocated(target);
+    }
+    target
+}
+
+/// Options that import the app from another directory: uvicorn's
+/// `--app-dir`, gunicorn's `--chdir` and `--pythonpath`, granian's
+/// `--working-dir`.
+fn moves_import_root(arg: &str) -> bool {
+    let option = arg.split_once('=').map_or(arg, |(option, _)| option);
+    matches!(
+        option,
+        "--app-dir" | "--chdir" | "--pythonpath" | "--working-dir"
+    )
+}
+
+/// An app imported from a directory the command changes to: which file its
+/// module names is unknown, so it is opaque rather than a guess (ADR 0005).
+fn relocated(target: PythonTarget) -> PythonTarget {
+    match target {
+        PythonTarget::App { module, .. } => PythonTarget::Opaque(module),
+        target => target,
+    }
+}
+
+fn server_or_celery_target(runner: &str, args: &[&str]) -> PythonTarget {
     let app = if runner == "celery" {
         celery_app(args)
     } else {
         server_app(args)
     };
-    match app {
-        Some(app) => {
-            let module = app.split_once(':').map_or(app, |(module, _)| module);
-            if is_computed(app) {
-                PythonTarget::Opaque(app.to_owned())
-            } else {
-                module_target(module)
-            }
+    let Some(app) = app else {
+        return PythonTarget::Opaque(runner.to_owned());
+    };
+    let (module, attr) = app
+        .split_once(':')
+        .map_or((app, None), |(module, attr)| (module, Some(attr)));
+    if is_computed(app) || !is_dotted_identifier(module) {
+        return PythonTarget::Opaque(app.to_owned());
+    }
+    if runner == "celery" {
+        return PythonTarget::Module(module.to_owned());
+    }
+    let symbol = match attr {
+        Some(attr) => {
+            let name = attr.split_once('(').map_or(attr, |(name, _)| name);
+            is_dotted_identifier(name).then(|| name.to_owned())
         },
-        None => PythonTarget::Opaque(runner.to_owned()),
+        None => default_app_attr(runner).map(str::to_owned),
+    };
+    PythonTarget::App {
+        module: module.to_owned(),
+        symbol,
     }
 }
 
@@ -475,7 +571,10 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
             if let Run::Target(PythonTarget::Script(script)) = &mut run {
                 script.directory = directory.map(str::to_owned);
             }
-            return Some(run);
+            return Some(match (run, directory) {
+                (Run::Target(target), Some(_)) => Run::Target(relocated(target)),
+                (run, _) => run,
+            });
         }
     }
     None
@@ -788,9 +887,58 @@ mod tests {
                     None => format!("script {}", run.path),
                 },
                 PythonTarget::Module(module) => format!("module {module}"),
+                PythonTarget::App { module, symbol } => match symbol {
+                    Some(symbol) => format!("app {module}:{symbol}"),
+                    None => format!("app {module}"),
+                },
                 PythonTarget::Opaque(text) => format!("opaque {text}"),
             })
             .collect()
+    }
+
+    #[test]
+    fn command_targets_read_server_apps() {
+        for (command, app) in [
+            (
+                "granian --interface asgi mypkg.asgi:application",
+                "app mypkg.asgi:application",
+            ),
+            (
+                "daphne -b 0.0.0.0 -p 8000 mypkg.asgi:application",
+                "app mypkg.asgi:application",
+            ),
+            (
+                "waitress-serve --port=8080 mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            ("uvicorn mypkg.app:api.app", "app mypkg.app:api.app"),
+            // A module alone gets the server's default attribute, where it
+            // has one.
+            ("hypercorn mypkg.asgi", "app mypkg.asgi:app"),
+            ("granian mypkg.asgi", "app mypkg.asgi:app"),
+            ("waitress-serve mypkg.wsgi", "app mypkg.wsgi:application"),
+            ("uvicorn mypkg.main", "app mypkg.main"),
+            // An attribute that is not a name path still names the module.
+            ("uvicorn 'mypkg.app:apps[0]'", "app mypkg.app"),
+            // An app imported from another directory names no known file.
+            ("cd src && uvicorn mypkg.asgi:app", "opaque mypkg.asgi"),
+            ("uvicorn --app-dir src mypkg.asgi:app", "opaque mypkg.asgi"),
+            ("gunicorn --chdir=/srv mypkg.wsgi", "opaque mypkg.wsgi"),
+            (
+                "gunicorn --pythonpath lib mypkg.wsgi:app",
+                "opaque mypkg.wsgi",
+            ),
+            (
+                "granian --working-dir web --interface asgi mypkg.asgi:app",
+                "opaque mypkg.asgi",
+            ),
+            (
+                "uv run --directory web uvicorn mypkg.asgi:app",
+                "opaque mypkg.asgi",
+            ),
+        ] {
+            assert_eq!(targets(command), [app], "{command}");
+        }
     }
 
     #[test]
@@ -805,13 +953,16 @@ mod tests {
         assert_eq!(targets("uv run -m mypkg.cli"), ["module mypkg.cli"]);
         assert_eq!(
             targets("poetry run gunicorn -w 4 -b 0.0.0.0:80 mypkg.server:app"),
-            ["module mypkg.server"]
+            ["app mypkg.server:app"]
         );
         assert_eq!(
             targets("uvicorn --factory mypkg.api:create_app() --reload"),
-            ["module mypkg.api"]
+            ["app mypkg.api:create_app"]
         );
-        assert_eq!(targets("gunicorn mypkg.wsgi"), ["module mypkg.wsgi"]);
+        assert_eq!(
+            targets("gunicorn mypkg.wsgi"),
+            ["app mypkg.wsgi:application"]
+        );
         assert_eq!(
             targets("python -m celery -A mypkg.tasks worker"),
             ["module mypkg.tasks"]
@@ -840,15 +991,15 @@ mod tests {
         );
         assert_eq!(
             targets("gunicorn -b localhost:8000 mypkg.wsgi"),
-            ["module mypkg.wsgi"]
+            ["app mypkg.wsgi:application"]
         );
         assert_eq!(
             targets("gunicorn --bind localhost:8000 mypkg.wsgi:app"),
-            ["module mypkg.wsgi"]
+            ["app mypkg.wsgi:app"]
         );
         assert_eq!(
             targets("python -m gunicorn mypkg.wsgi"),
-            ["module mypkg.wsgi"]
+            ["app mypkg.wsgi:application"]
         );
         assert_eq!(
             targets("python -c 'import x, mypkg.a as a, mypkg.b'"),

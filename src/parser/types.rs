@@ -292,6 +292,18 @@ pub struct ModuleRef {
     pub line: u32,
 }
 
+/// An app a literal `uvicorn.run(...)` or `uvicorn.Config(...)` loads
+/// (#1004).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerApp {
+    /// The call as uvicorn names it: `uvicorn.run` or `uvicorn.Config`.
+    pub call: String,
+    /// The `module:attr` literal as written.
+    pub app: String,
+    /// 1-based line of the call.
+    pub line: u32,
+}
+
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::struct_excessive_bools)]
@@ -359,6 +371,9 @@ pub struct ParsedModule {
     /// the module they name (#1026): each distinct literal at its first line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub module_refs: Vec<ModuleRef>,
+    /// Apps passed to uvicorn as `module:attr` literals (#1004).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_apps: Vec<ServerApp>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,

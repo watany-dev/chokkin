@@ -15,6 +15,7 @@ mod module_guard;
 mod parse;
 mod platform_guard;
 mod relative;
+mod server_app;
 mod type_checking;
 mod types;
 mod visit;

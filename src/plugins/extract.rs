@@ -17,6 +17,7 @@ use crate::sources::DiscoveredSources;
 
 use super::alembic;
 use super::celery;
+use super::commands;
 use super::config_scan;
 use super::context::PluginContext;
 use super::devtools;
@@ -94,6 +95,9 @@ pub fn extract_plugin_hints_with_parse(
     }
 
     let scan = cached_config_scan(&ctx, config, manifest, cache)?;
+    // From the parse, which the config scan cache does not key on.
+    let mut command_targets = scan.command_targets;
+    command_targets.extend(commands::parsed_server_apps(parse));
 
     Ok(PluginHints {
         contributions,
@@ -103,7 +107,7 @@ pub fn extract_plugin_hints_with_parse(
         config_provided_binaries: scan.provided_binaries,
         config_module_refs: scan.module_refs,
         config_script_entries: scan.script_entries,
-        config_command_targets: scan.command_targets,
+        config_command_targets: command_targets,
         warnings,
     })
 }
@@ -186,7 +190,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v6".to_owned(),
+            unit_version: "config-scan-v7".to_owned(),
         },
         inputs,
     })

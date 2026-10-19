@@ -3076,9 +3076,9 @@ fn binary_unresolved_script_import_lowers_only_its_block() {
 
 const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
 
-/// A command may be the only thing that runs a file, and commands add no
-/// entries yet (#912): one that runs Python no entry reaches lowers unused
-/// files to likely and is warned once per file (#913).
+/// A command may be the only thing that runs a file, and commands other than
+/// a server's app add no entries (#912, #1004): one that runs Python no entry
+/// reaches lowers unused files to likely and is warned once per file (#913).
 #[test]
 fn binary_unread_command_target_lowers_unused_files() {
     let file = |path: &str| (path.to_owned(), "likely".to_owned());
@@ -3134,7 +3134,6 @@ fn binary_unread_command_target_lowers_unused_files() {
             file("mypkg/gen.py"),
             file("mypkg/ghgen.py"),
             file("mypkg/modrun.py"),
-            file("mypkg/server.py"),
             file("mypkg/toxgen.py"),
         ],
         "{parsed}"
@@ -3143,11 +3142,12 @@ fn binary_unread_command_target_lowers_unused_files() {
     for warning in [
         "plugin: `.pre-commit-config.yaml:6` runs `mypkg.ghgen` as Python code no entry reaches; unused files are reported below certain",
         "plugin: `Makefile:2` runs `mypkg/gen.py` and 1 more target as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `Procfile:1` runs `mypkg.server` as Python code no entry reaches; unused files are reported below certain",
         "plugin: `tox.ini:2` runs `mypkg/toxgen.py` as Python code no entry reaches; unused files are reported below certain",
     ] {
         assert!(stderr.contains(warning), "{stderr}");
     }
+    // The server's app is an entry, so its command is no gap.
+    assert!(!stderr.contains("`Procfile:1`"), "{stderr}");
 
     let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--no-cache", "--explain", "CHK001:mypkg/gen.py"])
@@ -3157,7 +3157,7 @@ fn binary_unread_command_target_lowers_unused_files() {
     let stderr = String::from_utf8(explain.stderr).expect("utf8");
     assert!(
         stderr.contains(
-            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 4 more)"
+            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 3 more)"
         ),
         "{stderr}"
     );

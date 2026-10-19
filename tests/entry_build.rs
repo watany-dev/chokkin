@@ -360,6 +360,88 @@ fn commands_running_scripts_by_path_are_dev_entries() {
 }
 
 #[test]
+fn servers_given_a_project_app_make_it_an_entry() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        std::fs::write(path, contents).expect("write");
+    };
+    write(
+        "pyproject.toml",
+        concat!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\n\n",
+            "[tool.poe.tasks]\n",
+            "start.help = \"Run\"\n",
+            "start.cmd = \"granian --interface asgi acme.poe_app:app\"\n\n",
+            "[tool.hatch.envs.default.scripts]\n",
+            "serve = [\"hypercorn acme.hatch_app\"]\n",
+        ),
+    );
+    for module in "__init__ asgi wsgi poe_app hatch_app cfg_app run_app".split(' ') {
+        write(&format!("acme/{module}.py"), "");
+    }
+    write(
+        "acme/__main__.py",
+        "import uvicorn\nconfig = uvicorn.Config(\"acme.cfg_app:application\", port=8000)\n",
+    );
+    write(
+        "acme/serve.py",
+        "from uvicorn import run\n\ndef main():\n    run(app=\"acme.run_app:app\")\n",
+    );
+    write(
+        "Dockerfile",
+        "FROM python\nCMD [\"uvicorn\", \"acme.asgi:application\", \"--host=0.0.0.0\"]\n",
+    );
+    write(
+        "Procfile",
+        "web: gunicorn acme.wsgi\nother: uvicorn elsewhere.app:app\n",
+    );
+
+    let inputs = load_pipeline(root);
+    let plan = build_entry_roots(
+        &inputs.config,
+        &inputs.manifest,
+        &inputs.sources,
+        &[],
+        &inputs.plugins,
+        true,
+    );
+
+    let server_roots: Vec<_> = plan
+        .roots
+        .iter()
+        .filter_map(|root| {
+            root.origins.iter().find_map(|origin| match origin {
+                EntryOrigin::Command { label } => Some(format!(
+                    "{} {:?} {:?} {label}",
+                    root.path, root.symbols, root.context
+                )),
+                _ => None,
+            })
+        })
+        .collect();
+    assert_eq!(
+        server_roots,
+        [
+            r#"acme/asgi.py {"application"} Runtime CMD (Dockerfile:2)"#,
+            r#"acme/cfg_app.py {"application"} Runtime uvicorn.Config (acme/__main__.py:2)"#,
+            r#"acme/hatch_app.py {"app"} Runtime tool.hatch.envs.default.scripts.serve (pyproject.toml:10)"#,
+            r#"acme/poe_app.py {"app"} Runtime tool.poe.tasks.start (pyproject.toml:6)"#,
+            r#"acme/run_app.py {"app"} Runtime uvicorn.run (acme/serve.py:4)"#,
+            r#"acme/wsgi.py {"application"} Runtime process web (Procfile:1)"#,
+        ]
+    );
+    // An app outside the project is no entry and no warning.
+    assert!(
+        plan.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
 fn workspace_members_add_entry_roots_and_library_members() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();

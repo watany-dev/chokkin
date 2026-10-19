@@ -55,11 +55,20 @@ pub enum CommandTarget {
         /// Candidates; the first discovered one is the script.
         paths: Vec<String>,
     },
-    /// A module run with `-m`, served by a WSGI/ASGI or task runner, or
-    /// imported by `python -c` code.
+    /// A module run with `-m` or by a task runner, or imported by
+    /// `python -c` code.
     Module {
         /// Dotted module name.
         module: String,
+    },
+    /// The application a WSGI/ASGI server loads; an entry once its module
+    /// resolves to a project file (#1004).
+    App {
+        /// Dotted module name.
+        module: String,
+        /// The attribute path served, when the command names one or the
+        /// server has a default.
+        symbol: Option<String>,
     },
     /// A target the command computes (a variable or substitution) or names
     /// in a shape that is not read.
@@ -201,8 +210,8 @@ pub struct PluginHints {
     /// Scripts CI workflows, local pre-commit hooks and agent skill docs run
     /// by path (#797).
     pub config_script_entries: Vec<ScriptReference>,
-    /// Python code task files and tool configs run (#913); the gap stage
-    /// reads it, since none of it is an entry yet.
+    /// Python code task files and tool configs run (#913). Server apps are
+    /// entries (#1004); the gap stage reads the rest, which is not.
     pub config_command_targets: Vec<CommandTargetRef>,
     /// Non-fatal warnings from plugin extraction.
     pub warnings: Vec<PluginsWarning>,
