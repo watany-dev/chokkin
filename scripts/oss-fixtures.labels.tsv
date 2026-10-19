@@ -922,6 +922,7 @@ fastmcp	CHK003	script:examples/text_me.py:pydantic	tp	-	imports pydantic directl
 fastmcp	CHK003	script:examples/text_me.py:pydantic-settings	tp	-	imports pydantic_settings directly; only transitively installed via fastmcp
 fastmcp	CHK003	script:examples/memory.py:openai	tp	-	imports openai directly; only transitively installed via the pydantic-ai-slim[openai] extra
 fastmcp	CHK003	script:examples/text_me.py:httpx2	tp	-	imports httpx2; the block only declares fastmcp
+openai-python	CHK003	script:examples/realtime/push_to_talk_app.py:typing-extensions	tp	-	imports typing_extensions directly; the block only declares packages that pull it in transitively
 mlflow	CHK004	mlflow/langchain/chat_agent_langgraph.py:langgraph.prebuilt	tp	-	optional try-import (except ImportError) of langgraph, which is not declared but locked in uv.lock as a transitive (CHK004 since #504)
 mlflow	CHK004	mlflow/langchain/chat_agent_langgraph.py:langgraph.prebuilt.tool_node	tp	-	optional try-import (except ImportError) of langgraph, which is not declared but locked in uv.lock as a transitive (CHK004 since #504)
 mlflow	CHK004	mlflow/langchain/databricks_dependencies.py:langgraph.prebuilt	tp	-	optional try-import (except ImportError) of langgraph, which is not declared but locked in uv.lock as a transitive (CHK004 since #504)
