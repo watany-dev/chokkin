@@ -143,7 +143,8 @@ Two alternatives were rejected:
 ### 7. Lowering does not change the exit code
 
 A finding lowered by a gap keeps the severity its rule gives it at that
-confidence. App-mode CHK001 is still `Error` at `Likely` (`rules/chk001.rs`).
+confidence. CHK002 is still `Error` at `Likely`, and CHK001 a `Warning` at
+any confidence (spec §3).
 Lowering protects `--fix` (ADR 0003) and `--confidence` filtering. The exit
 code is protected by the warning that names the gap, which tells the user
 what to fix or ignore. This keeps the ADR 0004 exit-code contract unchanged.

@@ -1381,7 +1381,7 @@ fn binary_deprecated_shim_findings_are_info() {
     assert_eq!(
         severities,
         [
-            "CHK001:acme/legacy.py:error",
+            "CHK001:acme/legacy.py:warning",
             "CHK001:acme/stats.py:info",
             "CHK006:acme/permissions.py:RESOURCE:info",
         ],
@@ -2948,6 +2948,11 @@ fn binary_syntax_error_source_is_skipped_with_a_diagnostic() {
     );
 }
 
+/// The default severity of `code`: an unused file is a warning (spec §3).
+fn severity(code: &str) -> &'static str {
+    if code == "CHK001" { "warning" } else { "error" }
+}
+
 /// `(code, target, severity, confidence)` of each issue in `root`.
 fn issue_levels(root: &std::path::Path) -> Vec<(String, String, String, String)> {
     json_issues(root, &["--no-cache"])
@@ -3178,7 +3183,7 @@ fn binary_computed_command_target_lowers_unused_files() {
         [(
             "CHK001".to_owned(),
             "mypkg/orphan.py".to_owned(),
-            "error".to_owned(),
+            "warning".to_owned(),
             "likely".to_owned()
         )]
     );
@@ -3210,7 +3215,7 @@ fn binary_unresolved_command_target_keeps_unused_files_certain() {
         [(
             "CHK001".to_owned(),
             "mypkg/orphan.py".to_owned(),
-            "error".to_owned(),
+            "warning".to_owned(),
             "certain".to_owned()
         )]
     );
@@ -3442,7 +3447,7 @@ fn binary_unread_django_settings_lower_unused_files_and_distributions() {
         (
             code.to_owned(),
             target.to_owned(),
-            "error".to_owned(),
+            severity(code).to_owned(),
             "likely".to_owned(),
         )
     };
@@ -3590,7 +3595,7 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
         (
             code.to_owned(),
             target.to_owned(),
-            "error".to_owned(),
+            severity(code).to_owned(),
             confidence.to_owned(),
         )
     };
@@ -3735,7 +3740,7 @@ fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
         (
             code.to_owned(),
             target.to_owned(),
-            "error".to_owned(),
+            severity(code).to_owned(),
             confidence.to_owned(),
         )
     };
@@ -3890,7 +3895,7 @@ fn binary_member_entry_outside_the_root_inventory_is_a_skipped_entry() {
         [(
             "CHK001".to_owned(),
             "packages/tool/src/tool/helper.py".to_owned(),
-            "error".to_owned(),
+            "warning".to_owned(),
             "likely".to_owned(),
         )]
     );
@@ -3917,7 +3922,7 @@ fn binary_skipped_entry_lowers_unused_files_and_distributions() {
         (
             code.to_owned(),
             target.to_owned(),
-            "error".to_owned(),
+            severity(code).to_owned(),
             confidence.to_owned(),
         )
     };
@@ -3986,7 +3991,7 @@ fn binary_plugin_entries_outside_the_globs_are_read() {
         (
             code.to_owned(),
             target.to_owned(),
-            "error".to_owned(),
+            severity(code).to_owned(),
             "certain".to_owned(),
         )
     };
@@ -4940,9 +4945,10 @@ fn binary_undecodable_source_is_skipped_with_a_diagnostic() {
         .arg(project.path())
         .output()
         .expect("run chokkin");
+    // The only finding is an unused file, a warning (spec §3).
     assert_eq!(
         output.status.code(),
-        Some(ExitStatus::IssuesFound.code().into())
+        Some(ExitStatus::Success.code().into())
     );
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(stderr.contains("skipped `acme/cyrillic.py`"), "{stderr}");
@@ -6969,9 +6975,9 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
         unused,
         [
             level("acme/commands/cheat_sheet.py", "info", "likely"),
-            level("acme/commands/computed.py", "error", "certain"),
+            level("acme/commands/computed.py", "warning", "certain"),
             level("acme/gunicorn_config.py", "info", "likely"),
-            level("acme/orphan.py", "error", "certain"),
+            level("acme/orphan.py", "warning", "certain"),
         ]
     );
     // The gap reaches the user without `--explain` (ADR 0005 §3).

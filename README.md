@@ -398,8 +398,8 @@ Python is dynamic, and chokkin is static. Things it cannot see:
 - Code reached only through a framework or tool chokkin has no plugin for.
   `--trace` shows exactly why a file was judged unreachable, which is usually
   enough to pick the right `entry` or `ignore`.
-- Users of a library's public API. That is why library mode downgrades
-  `CHK001` / `CHK006` rather than erroring.
+- Users of a library's public API. That is why library mode lowers
+  `CHK001` to `maybe` (hidden by default) and `CHK006` to info.
 
 If a finding looks wrong and `--explain` / `--trace` do not settle it, please
 [open an issue](https://github.com/watany-dev/chokkin/issues) with their

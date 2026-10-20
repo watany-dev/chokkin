@@ -6,7 +6,7 @@
   "issues": [
     {
       "code": "CHK001",
-      "severity": "error",
+      "severity": "warning",
       "confidence": "certain",
       "message": "file `src/smoke/orphan.py` is not reachable from any entry root",
       "fingerprint": "CHK001:src/smoke/orphan.py",

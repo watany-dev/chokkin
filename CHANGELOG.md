@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and it is no longer CHK001 (#1026).
 
 ### Changed
+- CHK001 is a warning in every mode, as the rule table in the README and
+  spec §3 say, instead of an error outside library-mode `maybe`. An unused
+  file is judged by the import graph, which misses files a framework, tool or
+  test loads by name or path, so it no longer fails a default run on its own;
+  `--strict` still counts it. Library mode keeps lowering its confidence.
 - A string literal anywhere in the project that is a whole dotted module name
   (`"pkg.mod"`, `"pkg.mod.attr"`, `"python:pkg.mod"`) and names a project
   file no entry reaches lowers that file's CHK001 to an info note at
