@@ -5,11 +5,14 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::path_util::rel_to_root;
 
+use super::entry_points::EntryPoints;
 use super::error::ManifestError;
 use super::extract::unreadable_reason;
 use super::requirements::extract_requirements_path;
 use super::setuptools_reqs::setuptools_requirement_items;
-use super::types::{DeclaredDependency, DependencyContext, ExtrasState, ProjectMetadata};
+use super::types::{
+    DeclaredDependency, DependencyContext, EntryPointDecl, ExtrasState, ProjectMetadata,
+};
 use super::util::{DependencyPush, path_is_within_root, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
@@ -33,6 +36,7 @@ pub(super) struct SetupCfgExtraction {
     pub files_read: Vec<String>,
     /// Root-relative requirements files `file:` names that do not exist.
     pub files_missing: Vec<String>,
+    pub entry_points: Vec<EntryPointDecl>,
 }
 
 /// Extract manifest data from `setup.cfg`.
@@ -90,6 +94,18 @@ pub(super) fn extract_setup_cfg(
         } else {
             ExtrasState::Partial(lost)
         });
+    }
+
+    let mut entry_points = EntryPoints {
+        rel: &rel,
+        entries: &mut result.entry_points,
+        warnings: &mut result.warnings,
+    };
+    if options.is_some_and(|options| options.contains_key("entry_points")) {
+        entry_points.skip_setup_cfg_option();
+    }
+    for (group, value) in sections.get("options.entry_points").into_iter().flatten() {
+        entry_points.read_setup_cfg_group(group, value);
     }
 
     Ok(result)

@@ -63,7 +63,8 @@ pub struct DeclaredDependency {
 pub struct EntryPointDecl {
     /// Distribution-local name, e.g. `acme-cli`.
     pub name: String,
-    /// `module:attr` or `module` target string as written.
+    /// `module:attr` or `module` target, without `[extras]` or spaces
+    /// around the colon.
     pub target: String,
     /// `console` | `gui` | other group name.
     pub group: String,

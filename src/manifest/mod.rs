@@ -1,6 +1,7 @@
 //! Manifest extraction (pipeline step 3).
 
 mod dependency_groups;
+mod entry_points;
 mod error;
 mod extract;
 pub(crate) mod literals;
