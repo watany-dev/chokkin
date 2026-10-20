@@ -152,12 +152,10 @@ const LOCAL_DAG_BUNDLE: &str = "airflow.dag_processing.bundles.local.LocalDagBun
 fn bundle_folders(config_dir: &str, value: &str) -> Vec<Result<String, String>> {
     use serde_json::Value;
     let value = value.trim();
-    if value.is_empty() {
-        return Vec::new();
-    }
     let items = match serde_json::from_str::<Value>(value) {
         Ok(Value::Array(items)) => items,
         Ok(Value::Null) => return Vec::new(),
+        Err(_) if value.is_empty() => return Vec::new(),
         _ => return vec![Err(value.to_owned())],
     };
     items
