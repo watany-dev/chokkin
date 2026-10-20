@@ -140,15 +140,10 @@ fn config_folders(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) -> 
 const LOCAL_DAG_BUNDLE: &str = "airflow.dag_processing.bundles.local.LocalDagBundle";
 
 /// The DAG folders a `dag_bundle_config_list` value names (Airflow 3,
-/// #1058): `Ok(dir)` for each `LocalDagBundle` whose `kwargs.path` reads as
-/// [`dags_folder`] does, and `Err(text)` for what could not be read. A value
-/// that is not a JSON list, an item without a string `classpath` and an
-/// object `kwargs`, and a `path` that is not a string are gaps with their
-/// JSON text. A bundle of any other class (`GitDagBundle`, S3) loads DAGs
-/// from outside the checkout, so its classpath is a gap, and a `path` that
-/// is absolute, a template or outside the config's tree is a gap with the
-/// path. An empty value, `null` and `[]` configure no bundle, and a local
-/// bundle without a `path` loads `dags_folder`, already read.
+/// #1058): `Ok(dir)` for each `LocalDagBundle` `path`, read as
+/// [`dags_folder`] is, and `Err(text)` for a gap. A bundle of any other
+/// class (`GitDagBundle`, S3) loads DAGs from outside the checkout, so it is
+/// a gap. A local bundle without a `path` loads `dags_folder`, already read.
 fn bundle_folders(config_dir: &str, value: &str) -> Vec<Result<String, String>> {
     use serde_json::Value;
     let value = value.trim();
