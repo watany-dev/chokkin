@@ -712,7 +712,13 @@ def main() -> int:
         tp, fp = precision(findings, code)
         return f"{100 * tp / (tp + fp):.1f}" if tp + fp else "n/a"
 
-    per_project = {c: project_precision(findings, c) for c in ALL_RULES}
+    # Recall sentinels are one-label fixtures, not projects: each would count
+    # as a 100% project in the macro mean, so they stay in the pooled number only.
+    sentinels = {slug for slug, category, _, _ in targets if category == "recall"}
+    per_project = {
+        c: {slug: hits for slug, hits in project_precision(findings, c).items() if slug not in sentinels}
+        for c in ALL_RULES
+    }
 
     def macro_pct(code: str) -> str:
         macro = macro_precision(per_project[code])
@@ -809,9 +815,10 @@ def main() -> int:
         "Stale = labels whose finding is absent from this run. Reported=0 means the",
         "rule emitted nothing on this corpus — precision and recall are both unverified.",
         "Precision % pools every labelled hit (micro); Macro % is the mean of the",
-        "per-project precisions over the (n) projects with a labelled hit, and Max share",
-        "the project holding the most of them (#1065). A large gap or share means one",
-        "project drives the number. Floors apply to Precision % only.",
+        "per-project precisions over the (n) corpus projects with a labelled hit (recall",
+        "sentinels excluded), and Max share the project holding the most of them (#1065).",
+        "A large gap or share means one project drives the number. Floors apply to",
+        "Precision % only.",
         "",
         *oc.md_table(
             ["Rule", "Reported", "Info", "tp", "fp", "deferred", "unknown", "Coverage %", "Precision %",
@@ -828,7 +835,7 @@ def main() -> int:
         "",
         "### Labelled hits by project",
         "",
-        "tp / (tp + fp) per project, most labelled first.",
+        "tp / (tp + fp) per corpus project (recall sentinels excluded), most labelled first.",
         "",
         *(
             oc.md_table(
