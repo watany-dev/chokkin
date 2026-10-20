@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A workspace member that a metapackage root distributes (a root whose wheel
+  targets ship no file, such as hatch `bypass-selection`, and that has no app
+  signal of its own) is scored as a library: its console script into its own
+  package is a CLI shipped with the library, as for a root, so its orphans are
+  `maybe` instead of `certain` (fastmcp's `fastmcp-slim`). Names match after
+  PEP 503 normalization; dependency groups and roots that ship code do not
+  count, and airflow's root keeps `airflow-core` an app through its own
+  console script. `--explain` and `--trace` name the requirement behind the
+  decision (#1060).
+
 ## [0.7.8] - 2026-10-20
 
 ### Added

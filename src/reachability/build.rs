@@ -86,6 +86,10 @@ pub fn analyze_reachability(
             path: file.path.clone(),
             max_confidence: confidence_for_unreachable(mode),
             mode,
+            mode_reason: (mode == ProjectMode::Library)
+                .then(|| entry.member_mode_reason(&file.path))
+                .flatten()
+                .map(str::to_owned),
         };
         if skipped.contains(file.path.as_str()) {
             unread.push(orphan);
@@ -152,6 +156,7 @@ pub(crate) fn apply_member_surfaces(
 fn score_as_app(file: &mut UnreachableFile) {
     file.mode = ProjectMode::App;
     file.max_confidence = confidence_for_unreachable(ProjectMode::App);
+    file.mode_reason = None;
 }
 
 /// Files a plugin's framework glob marks as used, with the glob that matched.
@@ -316,6 +321,7 @@ mod tests {
         EntryPlan {
             mode: ProjectMode::App,
             library_members: Vec::new(),
+            member_mode_reasons: Vec::new(),
             roots: roots
                 .iter()
                 .map(|path| EntryRoot {

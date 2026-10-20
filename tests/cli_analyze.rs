@@ -2368,6 +2368,100 @@ fn layout_shipped_library_member_keeps_library_scoring() {
     );
 }
 
+/// fastmcp: a root whose hatch wheel ships nothing (`bypass-selection`)
+/// over a member `slim/` holding the code, named `[project].name` spelled
+/// apart from the root's requirement on it.
+fn metapackage_workspace(root_project: &str, root_wheel: &str) -> tempfile::TempDir {
+    let root = format!(
+        "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"acme\"\nversion = \"0.1.0\"\n{root_project}\n[tool.hatch.build.targets.wheel]\n{root_wheel}\n\n[tool.uv.workspace]\nmembers = [\"slim\"]\n\n[tool.uv.sources]\nacme-slim = {{ workspace = true }}\n"
+    );
+    write_project(&[
+        ("pyproject.toml", root.as_str()),
+        (
+            "slim/pyproject.toml",
+            "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"Acme.Slim\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.hatch.build.targets.wheel]\npackages = [\"acme\"]\n",
+        ),
+        ("slim/acme/__init__.py", ""),
+        ("slim/acme/cli.py", "def main():\n    pass\n"),
+        ("slim/acme/types.py", "Alias = int\n"),
+    ])
+}
+
+fn chk001_confidence(issues: &[serde_json::Value], target: &str) -> Option<String> {
+    issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK001" && issue["target"] == target)
+        .map(|issue| issue["confidence"].as_str().unwrap_or_default().to_owned())
+}
+
+/// A member a metapackage root distributes is the library its users install,
+/// so its console script into its own package ships with the library and its
+/// orphans are only `maybe` (#1060); `--explain` and `--trace` say why.
+#[test]
+fn binary_metapackage_distributed_member_is_scored_as_library() {
+    let project = metapackage_workspace(
+        "dependencies = [\"Acme_Slim[cli]==0.1.0\"]\n",
+        "bypass-selection = true",
+    );
+    let orphan = "slim/acme/types.py";
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert_eq!(chk001_confidence(&issues, orphan), None, "{issues:?}");
+    let strict = json_issues(project.path(), &["--no-cache", "--strict"]);
+    assert_eq!(
+        chk001_confidence(&strict, orphan).as_deref(),
+        Some("maybe"),
+        "{strict:?}"
+    );
+
+    let reason = "mode: library (workspace member `slim` is `acme-slim`, which the metapackage root distributes as `project.dependencies[0]` in `pyproject.toml:8`, so its console scripts ship with the library)";
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--strict", "--explain"])
+        .arg(format!("CHK001:{orphan}"))
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(stderr.contains(reason), "{stderr}");
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", orphan])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    assert!(
+        stderr.contains(&format!(
+            "  reason: not reachable from any entry root\n  {reason}\n"
+        )),
+        "{stderr}"
+    );
+}
+
+/// The signal stays narrow (#1060): airflow's root is a metapackage with its
+/// own console script, and a dependency group is not distributed, so each
+/// leaves the member's CLI an app signal. (A root that ships code is covered
+/// in `entry::mode`: its wheel's packages narrow discovery to them here.)
+#[test]
+fn binary_member_not_distributed_by_a_metapackage_keeps_app_scoring() {
+    for (root_project, root_wheel) in [
+        (
+            "dependencies = [\"acme-slim\"]\n\n[project.scripts]\nacme-root = \"acme.cli:main\"\n",
+            "bypass-selection = true",
+        ),
+        (
+            "\n[dependency-groups]\ndev = [\"acme-slim\"]\n",
+            "bypass-selection = true",
+        ),
+    ] {
+        let project = metapackage_workspace(root_project, root_wheel);
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(
+            chk001_confidence(&issues, "slim/acme/types.py").as_deref(),
+            Some("certain"),
+            "{root_project}: {issues:?}"
+        );
+    }
+}
+
 /// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
 /// docs entry, so it and the shared modules it imports stay reachable even
 /// with no root `docs/conf.py`, and `--production` drops it like root docs

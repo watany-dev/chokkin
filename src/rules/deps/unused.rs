@@ -576,6 +576,7 @@ mod tests {
                 path: "src/legacy/aws.py".to_owned(),
                 max_confidence: Confidence::Certain,
                 mode: crate::config::ProjectMode::App,
+                mode_reason: None,
             });
 
         let mut resolution = ResolutionIndex::default();

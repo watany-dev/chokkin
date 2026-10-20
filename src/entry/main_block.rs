@@ -85,6 +85,7 @@ mod tests {
             roots,
             warnings: Vec::new(),
             library_members: Vec::new(),
+            member_mode_reasons: Vec::new(),
         };
         add_main_block_roots(&mut plan, &ParseSummary { modules }, &files, production);
         plan.roots

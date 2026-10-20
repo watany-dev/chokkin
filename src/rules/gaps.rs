@@ -2000,6 +2000,7 @@ mod tests {
             path: path.to_owned(),
             max_confidence,
             mode,
+            mode_reason: None,
         };
         let mut reachability = ReachabilityReport::default();
         reachability.unread = vec![

@@ -33,7 +33,9 @@ pub(super) fn chk001_candidates(
             origins: Vec::new(),
             explain: ExplainData {
                 summary: format!("{path} is unreachable from entry roots", path = file.path),
-                details: vec!["reason: NotReachable".to_owned()],
+                details: std::iter::once("reason: NotReachable".to_owned())
+                    .chain(file.mode_reason.clone())
+                    .collect(),
             },
         });
     }
@@ -54,6 +56,7 @@ mod tests {
             path: path.to_owned(),
             max_confidence: Confidence::Certain,
             mode: ProjectMode::App,
+            mode_reason: None,
         });
         let paths = |strict| {
             chk001_candidates(&unreachable, strict)
@@ -79,6 +82,7 @@ mod tests {
                     path: "src/legacy.py".to_owned(),
                     max_confidence: confidence,
                     mode,
+                    mode_reason: None,
                 }];
                 let candidates = chk001_candidates(&unreachable, false);
                 assert_eq!(

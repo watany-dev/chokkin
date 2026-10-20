@@ -89,9 +89,46 @@ pub struct EntryPlan {
     /// Root-relative directories of workspace members that ship as their own
     /// libraries, whatever mode the project itself resolved to (#488).
     pub library_members: Vec<String>,
+    /// Why a library member is one when its own manifest alone would make it
+    /// an app (#1060), for `--trace` and `--explain`.
+    pub member_mode_reasons: Vec<MemberModeReason>,
+}
+
+/// Why a workspace member is judged as a library (#1060).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberModeReason {
+    /// Root-relative directory of the member.
+    pub member: String,
+    /// One line naming the evidence.
+    pub reason: String,
 }
 
 impl EntryPlan {
+    /// Why root-relative `path` is in a library member when every library
+    /// member holding it is one only because a metapackage root distributes
+    /// it (#1060): the innermost one's reason. `None` when a member that is a
+    /// library on its own holds `path`, since that needs no further evidence.
+    #[must_use]
+    pub(crate) fn member_mode_reason(&self, path: &str) -> Option<&str> {
+        let mut innermost: Option<&MemberModeReason> = None;
+        for member in &self.library_members {
+            if !path
+                .strip_prefix(member.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+            {
+                continue;
+            }
+            let entry = self
+                .member_mode_reasons
+                .iter()
+                .find(|entry| entry.member == *member)?;
+            if innermost.is_none_or(|inner| entry.member.len() > inner.member.len()) {
+                innermost = Some(entry);
+            }
+        }
+        innermost.map(|entry| entry.reason.as_str())
+    }
+
     /// Mode that scores an orphan at root-relative `path`.
     #[must_use]
     pub fn mode_for(&self, path: &str) -> ProjectMode {
@@ -181,6 +218,7 @@ mod tests {
             roots: Vec::new(),
             warnings: Vec::new(),
             library_members: vec!["libs/core".to_owned()],
+            member_mode_reasons: Vec::new(),
         }
     }
 
@@ -207,5 +245,24 @@ mod tests {
             app.surface_mode("libs/core/core/x.py", Some(&surface)),
             ProjectMode::Library
         );
+    }
+
+    #[test]
+    fn member_mode_reason_names_only_a_distributed_member_decision() {
+        let mut app = plan(ProjectMode::App);
+        app.library_members.push("libs/slim".to_owned());
+        app.member_mode_reasons.push(MemberModeReason {
+            member: "libs/slim".to_owned(),
+            reason: "mode: library (distributed)".to_owned(),
+        });
+        assert_eq!(
+            app.member_mode_reason("libs/slim/acme/types.py"),
+            Some("mode: library (distributed)")
+        );
+        assert_eq!(app.member_mode_reason("libs/slimmer/x.py"), None);
+        assert_eq!(app.member_mode_reason("libs/core/core/x.py"), None);
+        assert_eq!(app.member_mode_reason("tools/release.py"), None);
+        app.library_members.push("libs/slim/nested".to_owned());
+        assert_eq!(app.member_mode_reason("libs/slim/nested/x.py"), None);
     }
 }

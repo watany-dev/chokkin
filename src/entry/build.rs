@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
-use crate::manifest::LoadedManifest;
+use crate::manifest::{DeclaredDependency, LoadedManifest, normalize_distribution_name};
 use crate::parser::ParseSummary;
 use crate::path_util::{is_submodule, join_rel};
 use crate::plugins::{
@@ -16,9 +16,14 @@ use crate::sources::{
 
 use super::auto::{detect_auto_entries, is_app_entry_file};
 use super::merge::merge_entry_candidates;
-use super::mode::{is_library_member, resolve_project_mode};
+use super::mode::{
+    is_distributed_library_member, is_library_member, metapackage_distributions,
+    resolve_project_mode,
+};
 use super::module::{resolve_module_on_disk, resolve_module_to_path};
-use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
+use super::types::{
+    EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, MemberModeReason,
+};
 
 /// A workspace member as entry construction reads it: its root-relative
 /// directory, manifest, and member-relative sources.
@@ -90,6 +95,11 @@ pub fn build_entry_roots(
     }
 
     let mode = resolve_project_mode(config, manifest, sources, &candidates);
+    let distributed = if mode == ProjectMode::App {
+        metapackage_distributions(config, manifest, sources, &candidates)
+    } else {
+        BTreeMap::new()
+    };
     if mode == ProjectMode::Library {
         collect_library_package_entries(sources, &file_contexts, &mut candidates);
     }
@@ -105,25 +115,67 @@ pub fn build_entry_roots(
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
     warnings.append(&mut member_warnings);
 
+    let (library_members, member_mode_reasons) = library_members(config, members, &distributed);
     EntryPlan {
         mode,
         roots,
         warnings,
-        library_members: library_members(config, members),
+        library_members,
+        member_mode_reasons,
     }
 }
 
 /// Members that ship as their own libraries, whatever mode the project
-/// itself resolves to (#488). An explicit `mode` applies to every member.
-fn library_members(config: &ChokkinConfig, members: &[MemberEntryInput<'_>]) -> Vec<String> {
+/// itself resolves to (#488), with the reason for each one that is a library
+/// only because a metapackage root distributes it (#1060). An explicit
+/// `mode` applies to every member.
+fn library_members(
+    config: &ChokkinConfig,
+    members: &[MemberEntryInput<'_>],
+    distributed: &BTreeMap<String, &DeclaredDependency>,
+) -> (Vec<String>, Vec<MemberModeReason>) {
+    let mut libraries = Vec::new();
+    let mut reasons = Vec::new();
     if config.mode != ProjectMode::Auto {
-        return Vec::new();
+        return (libraries, reasons);
     }
-    members
-        .iter()
-        .filter(|(_, manifest, sources)| is_library_member(manifest, sources))
-        .map(|(path, ..)| (*path).to_owned())
-        .collect()
+    for (path, manifest, sources) in members {
+        if is_library_member(manifest, sources) {
+            libraries.push((*path).to_owned());
+            continue;
+        }
+        let Some(dep) = manifest
+            .metadata
+            .name
+            .as_deref()
+            .and_then(|name| distributed.get(&normalize_distribution_name(name)))
+        else {
+            continue;
+        };
+        if is_distributed_library_member(manifest, sources) {
+            libraries.push((*path).to_owned());
+            reasons.push(MemberModeReason {
+                member: (*path).to_owned(),
+                reason: distributed_member_reason(path, dep),
+            });
+        }
+    }
+    (libraries, reasons)
+}
+
+/// The `--trace` / `--explain` line for a member a metapackage root
+/// distributes (#1060).
+fn distributed_member_reason(member: &str, dep: &DeclaredDependency) -> String {
+    let at = dep
+        .origin
+        .line
+        .map_or_else(String::new, |line| format!(":{line}"));
+    format!(
+        "mode: library (workspace member `{member}` is `{name}`, which the metapackage root distributes as `{label}` in `{file}{at}`, so its console scripts ship with the library)",
+        name = dep.name,
+        label = dep.origin.label,
+        file = dep.origin.file,
+    )
 }
 
 /// Each workspace member's own manifest entry points, as root-relative
