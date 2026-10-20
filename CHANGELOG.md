@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when it moves a CHK005 dependency out of a group in a pyproject.toml with
   no `[project]` (Poetry 1.x), or into a dynamic `project.dependencies`. The
   move is skipped as `unsupported-target`, as `--add-missing` already did.
+- `--fix` skips a CHK005 move out of a dev requirements file as
+  `unsupported-target` instead of failing to parse that file as TOML.
 - With the Airflow plugin on, every `.py` under a directory named exactly
   `dags` is a DAG-folder entry in its path's context, not only files that
   pass the DAG processor's safe-mode check (`airflow` and `dag` in the

@@ -1,5 +1,8 @@
 //! Map issues to concrete manifest edit operations.
 
+use std::ffi::OsStr;
+use std::path::Path;
+
 use crate::config::Confidence;
 use crate::manifest::{
     DeclaredDependency, LoadedManifest, canonical_version_specifiers, is_valid_marker,
@@ -365,9 +368,19 @@ fn plan_move_to_runtime(
         ));
     }
 
-    require_static_project_dependencies(issue, manifest)?;
-
     let source = dev_only[0];
+    // The move rewrites TOML; a dev requirements file is line-based.
+    if Path::new(&source.origin.file).file_name() != Some(OsStr::new("pyproject.toml")) {
+        return Err(skipped(
+            issue,
+            SkippedReason::UnsupportedTarget,
+            &format!(
+                "moving out of `{}` is not supported; only pyproject.toml groups move",
+                source.origin.file
+            ),
+        ));
+    }
+    require_static_project_dependencies(issue, manifest)?;
     // Dropping `git = ...` or `source = "corp"` would resolve the package
     // from the default index instead (#1041).
     if let Some(key) = &source.unportable_key {
@@ -788,6 +801,23 @@ mod tests {
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
         assert!(skipped[0].detail.contains("`git`"), "{}", skipped[0].detail);
+    }
+
+    /// A dev requirements file is not TOML; the move only rewrites
+    /// pyproject.toml, so planning it would preview an edit apply rejects.
+    #[test]
+    fn chk005_move_skips_a_requirements_file_group() {
+        let (actions, skipped) = plan_poetry_dev_move_in("==1.2", None, |manifest| {
+            manifest.dependencies[0].origin.file = "requirements-dev.txt".to_owned();
+        });
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+        assert!(
+            skipped[0].detail.contains("requirements-dev.txt"),
+            "{}",
+            skipped[0].detail
+        );
     }
 
     /// A Poetry 1.x pyproject has no `[project]` table; creating one with only
