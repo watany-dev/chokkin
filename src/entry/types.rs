@@ -89,6 +89,18 @@ pub struct EntryPlan {
     /// Root-relative directories of workspace members that ship as their own
     /// libraries, whatever mode the project itself resolved to (#488).
     pub library_members: Vec<String>,
+    /// Members a metapackage root distributes (#1060): an app member's mode
+    /// stays app, but an orphan its own wheel ships is a library orphan.
+    pub distributed_members: Vec<DistributedMember>,
+}
+
+/// A workspace member that a metapackage root distributes (#1060).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistributedMember {
+    /// Root-relative directory of the member.
+    pub member: String,
+    /// The `--trace` / `--explain` line naming the requirement.
+    pub reason: String,
 }
 
 impl EntryPlan {
@@ -181,6 +193,7 @@ mod tests {
             roots: Vec::new(),
             warnings: Vec::new(),
             library_members: vec!["libs/core".to_owned()],
+            distributed_members: Vec::new(),
         }
     }
 

@@ -18,7 +18,8 @@ use crate::parser::{
 };
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
-    ReachabilityReport, analyze_reachability, apply_member_surfaces, apply_public_surface,
+    ReachabilityReport, analyze_reachability, apply_distributed_surfaces, apply_member_surfaces,
+    apply_public_surface,
 };
 use crate::reporters::{Diagnostic, FileCounts};
 use crate::resolver::{
@@ -317,6 +318,20 @@ fn run_analysis_core(
         .map(|(_, pair)| pair)
         .collect();
     apply_member_surfaces(&mut reachability, &library_surfaces);
+    // A member a metapackage root distributes stays an app; only the orphans
+    // its wheel ships are library orphans (#1060). Widening needs no declared
+    // target: a wrong layout guess only lowers confidence.
+    let distributed_surfaces: Vec<_> = member_surfaces
+        .iter()
+        .filter_map(|pair| {
+            let member = entry
+                .distributed_members
+                .iter()
+                .find(|distributed| distributed.member == pair.0)?;
+            Some((pair, member.reason.as_str()))
+        })
+        .collect();
+    apply_distributed_surfaces(&mut reachability, &distributed_surfaces, &entry);
 
     let stdlib = StdlibRange::new(&target, probe.manifest.metadata.requires_python.as_deref());
     let member_imports: Vec<Vec<String>> = probe

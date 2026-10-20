@@ -1027,6 +1027,7 @@ mod tests {
             path: path.to_owned(),
             max_confidence,
             mode,
+            confidence_reason: None,
         };
         let mut report = ReachabilityReport::default();
         report.unreachable = vec![

@@ -41,6 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project file or several, or a value that is not a list of module names,
   is a gap that lowers CHK001 to likely, with a warning and an `--explain`
   line (#1063).
+- An unused file that the wheel of a workspace member ships is reported as
+  `maybe` instead of `certain` when a metapackage root distributes that member
+  (a root whose wheel targets ship no file, such as hatch `bypass-selection`,
+  and that has no app signal of its own), as in fastmcp's `fastmcp-slim`. The
+  member's console script into its own package is then a CLI shipped with the
+  library. The member is still judged as an app, so files outside its wheel
+  and unused public symbols (CHK006 / CHK007) are reported as before; a
+  member without declared wheel targets ships its layout's packages. Names
+  match after PEP 503 normalization; dependency groups and roots that ship
+  code do not count, and airflow's root distributes nothing because of its own
+  console script. `--explain` and `--trace` name the requirement behind the
+  lower confidence (#1060).
 
 ## [0.7.8] - 2026-10-20
 
