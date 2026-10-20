@@ -5,9 +5,10 @@
 //! weakens, so no rule has to know about unread input itself.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use crate::config::{Confidence, DependencyGroupsConfig, TargetVersion};
-use crate::entry::resolve_module_to_path;
+use crate::entry::{beside_origin, resolve_module_to_path};
 use crate::graph::ProjectGraph;
 use crate::manifest::{
     ExtrasState, InlineScript, LoadedManifest, ManifestWarning, archive_distribution_name,
@@ -25,7 +26,7 @@ use crate::rules::deps::{
     DeclarationBucket, declaration_bucket, declaration_buckets, file_context,
 };
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site};
-use crate::sources::FileContext;
+use crate::sources::{FileContext, is_dockerfile};
 
 /// One piece of input the analysis could not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +124,12 @@ pub enum GapKind {
     /// A distribution a file under such a directory imports, at its first
     /// import: an entry of the source may run that file (#1000).
     UnreadPathSourceImport,
+    /// A Dockerfile below the root runs a server app found only beside it
+    /// (#1061): the module runs in the image's own tree, whose installs and
+    /// layout (`RUN pip install`, `COPY`, `WORKDIR`) are not read, so an
+    /// import under the Dockerfile's directory may be installed or importable
+    /// there.
+    UnreadImageTree,
     /// A Django project's settings could not be found or read, or star-import
     /// a module that is not a project file (#914): the apps, middleware and
     /// URL configuration they name are unknown.
@@ -168,7 +175,9 @@ impl GapKind {
     /// so it caps them and the misplaced ones (#975); an unresolved import may
     /// name what an unused declaration provides. A uv path source without
     /// `[project]` is both under its directory: its entries and its
-    /// declaration list are unread (#1000). A script's own block is read
+    /// declaration list are unread (#1000). An image's own tree is the
+    /// latter, and its layout is unread too, so it also lowers what does not
+    /// resolve there (#1061). A script's own block is read
     /// separately, so no project manifest gap reaches its findings; what the
     /// block itself could not read lowers that script's alone (#936). A
     /// string naming a module may load it, so it lowers that file's absence
@@ -218,7 +227,7 @@ impl GapKind {
                 IssueSubject::Import { .. },
             )
             | (
-                Self::ArchiveRequirement | Self::ArchiveRuntimeRequirement,
+                Self::ArchiveRequirement | Self::ArchiveRuntimeRequirement | Self::UnreadImageTree,
                 RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
                 IssueSubject::Import { .. },
             )
@@ -226,7 +235,8 @@ impl GapKind {
                 Self::RuntimeDependenciesUnknown
                 | Self::InvalidRuntimeRequirement
                 | Self::ArchiveRuntimeRequirement
-                | Self::UnreadPathSource,
+                | Self::UnreadPathSource
+                | Self::UnreadImageTree,
                 RuleId::Chk005,
                 IssueSubject::Distribution { .. },
             )
@@ -290,6 +300,10 @@ impl GapKind {
             Self::UnreadPathSourceImport => {
                 "a file under a uv path source with no `[project]` table imports the \
                  distribution, and the source's entries were not read"
+            },
+            Self::UnreadImageTree => {
+                "a Dockerfile runs the module in its image's own tree, whose installs and layout \
+                 were not read"
             },
             Self::UnreadDjangoSettings => "the Django settings could not be found or read",
             Self::AssumedTargetVersion => {
@@ -369,12 +383,25 @@ impl Gap {
                     |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, &self.file)),
                 )
             },
+            (GapKind::UnreadImageTree, IssueSubject::Import { file, .. }) => {
+                is_under(file, self.image_dir())
+            },
+            (GapKind::UnreadImageTree, IssueSubject::Distribution { .. }) => {
+                candidate.origins.iter().any(
+                    |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, self.image_dir())),
+                )
+            },
             (GapKind::StringModuleRef, subject) => {
                 matches!(subject, IssueSubject::File { path } if self.target.as_deref() == Some(path))
             },
             _ => true,
         };
         in_member && in_site
+    }
+
+    /// The directory of an image's Dockerfile, its usual build context.
+    fn image_dir(&self) -> &str {
+        self.file.rsplit_once('/').map_or("", |(dir, _)| dir)
     }
 
     /// Whether the site is the root of `module`.
@@ -429,6 +456,7 @@ pub fn collect_gaps(
         context,
         &plugins.config_command_targets,
     ));
+    gaps.extend(image_tree_gaps(context, &plugins.config_command_targets));
     gaps.extend(string_module_ref_gaps(context));
     gaps.extend(plugins.unread_settings().map(settings_gap));
     gaps.extend(path_source_gaps(
@@ -654,6 +682,43 @@ fn command_target_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef])
             member: None,
             target: None,
             site: Some((text, line)),
+        })
+        .collect()
+}
+
+/// One gap per Dockerfile below the root and server app it runs that the
+/// root's import roots do not resolve but the Dockerfile's directory does
+/// (#1061), at its first line: that tree is the image's, not the root's. An
+/// app the root resolves is the root's code, so its imports keep their
+/// findings.
+fn image_tree_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef]) -> Vec<Gap> {
+    let known_paths: BTreeSet<String> = context
+        .sources
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    let mut sites: BTreeMap<(&str, String), Option<u32>> = BTreeMap::new();
+    for command in commands {
+        let CommandTarget::App { module, .. } = &command.target else {
+            continue;
+        };
+        let file = command.origin.file.as_str();
+        let own_tree = is_dockerfile(Path::new(file))
+            && resolve_module_to_path(module, &context.sources.layout, &known_paths).is_none()
+            && beside_origin(module, file, &known_paths).is_some();
+        if own_tree {
+            keep_first_line(&mut sites, (file, module.clone()), command.origin.line);
+        }
+    }
+    sites
+        .into_iter()
+        .map(|((file, module), line)| Gap {
+            file: file.to_owned(),
+            kind: GapKind::UnreadImageTree,
+            member: None,
+            target: None,
+            site: Some((module, line)),
         })
         .collect()
 }
@@ -1283,6 +1348,40 @@ mod tests {
             ],
         );
         assert_eq!(found, [likely, kept, kept]);
+    }
+
+    /// An image's tree is the directory of its Dockerfile: the imports there
+    /// become hints, the files and everything outside keep their findings (#1061).
+    #[test]
+    fn unread_image_tree_lowers_imports_under_the_dockerfile_directory() {
+        let under = |module: &str, file: &str| IssueSubject::Import {
+            module: module.to_owned(),
+            file: file.to_owned(),
+            line: Some(1),
+            distribution: None,
+        };
+        let mut image = gap("dev/sim/Dockerfile", GapKind::UnreadImageTree);
+        image.site = Some(("app.main".to_owned(), Some(4)));
+        let mut misplaced = candidate(RuleId::Chk005, distribution("httpx"));
+        misplaced.origins.push(Origin::Import {
+            file: "dev/sim/app/main.py".to_owned(),
+            line: Some(1),
+            module: "httpx".to_owned(),
+        });
+        let found = lowered(
+            &[image],
+            vec![
+                candidate(RuleId::Chk004, under("fastapi", "dev/sim/app/main.py")),
+                candidate(RuleId::Chk010, under("app", "dev/sim/app/main.py")),
+                misplaced,
+                candidate(RuleId::Chk003, under("httpx", "dev/simulator/main.py")),
+                candidate(RuleId::Chk001, file("dev/sim/app/models.py")),
+                candidate(RuleId::Chk002, distribution("httpx")),
+            ],
+        );
+        let hint = (Severity::Info, Confidence::Maybe);
+        let kept = (Severity::Error, Confidence::Certain);
+        assert_eq!(found, [hint, hint, hint, kept, kept, kept]);
     }
 
     /// Plugin references follow the statements, so the first import site is

@@ -7142,6 +7142,41 @@ fn binary_nested_dockerfile_apps_are_entry_roots() {
     }
 }
 
+/// An app found only beside its nested Dockerfile runs in the image's own
+/// tree, whose installs and layout are not read: the imports under that
+/// directory are hints, while an app the root resolves keeps them (#1061).
+#[test]
+fn binary_nested_dockerfile_tree_imports_are_hints() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [tool.chokkin]\nmode = \"app\"\nproject = [\"acme/**/*.py\", \"sim/**/*.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/wsgi.py", "import httpx\napplication = object()\n"),
+        ("deploy/Dockerfile", "FROM python\nCMD gunicorn acme.wsgi\n"),
+        (
+            "sim/Dockerfile",
+            "FROM python\nRUN pip install -r requirements.txt\nCOPY ./app /code/app\n\
+             CMD uvicorn app.main:app\n",
+        ),
+        ("sim/requirements.txt", "fastapi\n"),
+        ("sim/app/__init__.py", ""),
+        (
+            "sim/app/main.py",
+            "import fastapi\nfrom app import models\napp = fastapi.FastAPI()\n",
+        ),
+        ("sim/app/models.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert_eq!(
+        issue_keys(&issues),
+        [("CHK003".to_owned(), "acme/wsgi.py:httpx".to_owned())],
+        "{issues:#?}"
+    );
+}
+
 /// A `__main__` block in a deep `app.py` does not make a library an app:
 /// the rule joins after mode resolution, which reads file names only (#1026).
 #[test]
