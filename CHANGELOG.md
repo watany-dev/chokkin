@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The Sphinx plugin reads a discovered `conf.py` beside an `index.rst` or
+  `index.md` root document as a Sphinx configuration, wherever it is
+  (`--trace` origin `conf.py beside index.rst`), not only `docs/conf.py`.
+  Its `extensions` resolve and its extension files are reached, as
+  mlflow's `docs/api_reference/source/conf.py` and airflow's
+  `providers-summary-docs/conf.py` need. Its top-level names are settings
+  Sphinx reads, not CHK006, even inside a package, and it is docs context
+  wherever it is, so the extensions it loads are no CHK005 against a docs
+  group. A `conf.py` with no root document beside it is not read (#814).
+
+### Fixed
+- A Sphinx `conf.py` that star-imports a first-party module
+  (`from provider_conf import *`) also reads that module's top-level
+  `extensions` assignment, `append` / `extend` / `insert` and `+=`, and
+  resolves its names through that module's own imports and `sys.path`
+  hints, one level deep. Airflow's `sphinx_exts` extensions are no longer
+  CHK001. An `extensions` value in a form not read (`EXTS + [...]`, a
+  comprehension, a tuple) and a star import not followed are a gap
+  (`UnreadSphinxExtensions`) with a plugin warning, which lowers CHK001 and
+  distribution CHK002 to likely (#1062).
+
 ## [0.7.8] - 2026-10-20
 
 ### Added

@@ -38,6 +38,20 @@ pub enum PluginsWarning {
         /// What could not be found or read.
         reason: SettingsUnread,
     },
+    /// A Sphinx `conf.py`, or a module it star-imports, sets `extensions` in
+    /// a form not read or star-imports a module not followed, so the
+    /// extensions it loads are not all known (#1062).
+    #[error(
+        "plugin: sphinx: `extensions` could not all be read (`{what}` in `{path}:{line}`); unused files and dependencies are reported below certain"
+    )]
+    SphinxExtensionsUnread {
+        /// Root-relative file the unread form is in.
+        path: String,
+        /// Its line.
+        line: u32,
+        /// `extensions`, or the module star-imported.
+        what: String,
+    },
     /// Plugin extractor failed non-fatally; analysis continues.
     #[error("plugin: `{}` extraction failed: {detail}", .plugin.as_key())]
     PluginExtractFailed {

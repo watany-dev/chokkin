@@ -292,7 +292,11 @@ pub(super) fn probe_project_with_cache(
 /// rules and symlink policy still apply, so an excluded entry stays a
 /// skipped one; only the named files join, never their directories. A file
 /// discovery found, or one inside a nested project, is not added back, and a
-/// path's own test, docs or dev context outranks the plugin's.
+/// path's own test, docs or dev context outranks the plugin's. A runtime file
+/// discovery found that a plugin names as docs (a Sphinx `conf.py` beside a
+/// root document at a member root, #814) is docs, so the extensions it loads
+/// are no runtime use. Runtime and docs files parse to the same import
+/// contexts, so a cached parse stays valid.
 fn include_plugin_sources(
     loaded: &LoadedConfig,
     manifest: &LoadedManifest,
@@ -301,8 +305,13 @@ fn include_plugin_sources(
     sources: &mut DiscoveredSources,
 ) -> Result<(), SourcesError> {
     let mut entries = BTreeMap::new();
+    let mut docs = BTreeSet::new();
     for entry in discover_plugin_entries(loaded, manifest, sources) {
         let path = entry.spec.path;
+        if entry.context == FileContext::Docs && discovered.contains(&path) {
+            docs.insert(path);
+            continue;
+        }
         let wanted = !discovered.contains(&path)
             && Path::new(&path)
                 .extension()
@@ -310,6 +319,11 @@ fn include_plugin_sources(
             && !under_any(&path, nested);
         if wanted {
             entries.entry(path).or_insert(entry.context);
+        }
+    }
+    for file in &mut sources.files {
+        if file.context == FileContext::Runtime && docs.contains(&file.path) {
+            file.context = FileContext::Docs;
         }
     }
     if entries.is_empty() {

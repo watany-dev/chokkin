@@ -95,7 +95,11 @@ pub fn extract_plugin_hints_with_parse(
             PluginId::Tox | PluginId::Nox | PluginId::PreCommit | PluginId::GithubActions => {
                 (devtools::extract(*plugin, &ctx), Vec::new())
             },
-            PluginId::Sphinx | PluginId::MkDocs => (doctools::extract(*plugin, &ctx), Vec::new()),
+            PluginId::Sphinx | PluginId::MkDocs => {
+                let contrib = doctools::extract(*plugin, &ctx);
+                let warnings = doctools::unread_warnings(&contrib);
+                (contrib, warnings)
+            },
             PluginId::Alembic => (alembic::extract(&ctx), Vec::new()),
             PluginId::Airflow => (airflow::extract(&ctx), Vec::new()),
             PluginId::Dagster => (dagster::extract(&ctx), Vec::new()),

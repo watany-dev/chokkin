@@ -2434,6 +2434,202 @@ fn binary_member_sphinx_conf_is_a_docs_entry() {
     );
 }
 
+/// airflow: each provider's `conf.py` star-imports a shared conf module,
+/// which sets `extensions` from a constants module and appends to it; the
+/// constants module puts the extensions' directory on `sys.path`, so they
+/// resolve there for the `conf.py` (#1062).
+#[test]
+fn binary_sphinx_conf_reads_the_extensions_of_a_star_imported_module() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "docs/conf.py",
+            "import os\n\nos.environ[\"PACKAGE\"] = \"google\"\n\nfrom common.provider_conf import *\n",
+        ),
+        ("src/common/__init__.py", ""),
+        (
+            "src/common/provider_conf.py",
+            "import os\n\nfrom common.constants import BASIC, SWAGGER\n\nextensions = BASIC\n\nif os.environ[\"PACKAGE\"] == \"fab\":\n    extensions.append(SWAGGER)\n\nextensions.append(\"ext_appended\")\nextensions.extend([\"ext_extended\"])\n",
+        ),
+        (
+            "src/common/constants.py",
+            "import os\nimport sys\n\nsys.path.append(os.path.join(os.path.dirname(__file__), \"exts\"))\nBASIC = [\"ext_constant\"]\nSWAGGER = \"ext_swagger\"\n",
+        ),
+        (
+            "src/common/exts/ext_constant.py",
+            "def setup(app):\n    pass\n",
+        ),
+        (
+            "src/common/exts/ext_appended.py",
+            "def setup(app):\n    pass\n",
+        ),
+        (
+            "src/common/exts/ext_extended.py",
+            "def setup(app):\n    pass\n",
+        ),
+        (
+            "src/common/exts/ext_unlisted.py",
+            "def setup(app):\n    pass\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    // An append under `if` is not read; that is no gap, as before.
+    assert_eq!(
+        certain_chk001(&issues),
+        ["src/common/exts/ext_unlisted.py"],
+        "{issues:?}"
+    );
+    assert!(
+        issues.iter().all(|issue| issue["code"] != "CHK006"),
+        "{issues:?}"
+    );
+}
+
+/// mlflow builds its API docs from `docs/api_reference/source`: a discovered
+/// `conf.py` beside a root document (`index.rst` or `index.md`) is a Sphinx
+/// conf wherever it is, and the extensions it names are used; a `conf.py`
+/// with no root document beside it is not one (#814).
+#[test]
+fn binary_sphinx_conf_beside_a_root_document_is_a_docs_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = []\n\n[dependency-groups]\ndocs = [\"sphinx\", \"sphinx-click\", \"sphinx-tabs\", \"sphinx-reredirects\", \"sphinx-design\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("src/demo/__init__.py", ""),
+        (
+            "src/demo/conf.py",
+            "extensions = [\"sphinx_reredirects\"]\n",
+        ),
+        (
+            "docs/api_reference/source/conf.py",
+            "import os\nimport sys\n\nsys.path.insert(0, os.path.abspath(\"exts\"))\n\nextensions = [\"sphinx_click\", \"local_ext\"]\n",
+        ),
+        ("docs/api_reference/source/index.rst", "API\n===\n"),
+        (
+            "docs/api_reference/source/exts/local_ext.py",
+            "def setup(app):\n    pass\n",
+        ),
+        (
+            "docs/guide/conf.py",
+            "extensions = [\"sphinx_tabs.tabs\"]\n",
+        ),
+        ("docs/guide/index.md", "# Guide\n"),
+        // Inside a package its names would be public constants, but Sphinx
+        // reads them from the namespace, and the extensions it loads are
+        // docs use, not runtime.
+        (
+            "src/demo/handbook/conf.py",
+            "project = \"demo\"\nhtml_extra_path = [\"404.html\"]\nextensions = [\"sphinx_design\"]\n",
+        ),
+        ("src/demo/handbook/index.rst", "Handbook\n========\n"),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    assert_eq!(certain_chk001(&issues), ["src/demo/conf.py"], "{issues:?}");
+    assert!(
+        issues
+            .iter()
+            .all(|issue| issue["code"] != "CHK006" && issue["code"] != "CHK005"),
+        "{issues:?}"
+    );
+    // `src/demo/conf.py` is no Sphinx conf, so what it names stays unused.
+    let unused: Vec<String> = issue_keys(&json_issues(project.path(), &["--strict"]))
+        .into_iter()
+        .filter(|(code, _)| code == "CHK002")
+        .map(|(_, target)| target)
+        .collect();
+    assert_eq!(unused, ["sphinx-reredirects"]);
+}
+
+/// `extensions` in a form not read, or a star import not followed where no
+/// `extensions` is assigned, leaves the extensions `sphinx-build` loads
+/// unknown: unused files and distributions fall to likely, and `--explain`
+/// says why (ADR 0005, #1062).
+#[test]
+fn binary_unread_sphinx_extensions_lower_unused_files_and_distributions() {
+    let cases = [
+        (
+            "from common.exts import EXTS\n\nextensions = EXTS + [\"a\"]\n",
+            "`extensions` in `docs/conf.py:3`",
+        ),
+        (
+            "from sphinx_base_conf import *\n",
+            "`sphinx_base_conf` in `docs/conf.py:1`",
+        ),
+        (
+            "from common.shared_conf import *\n",
+            "`extensions` in `src/common/shared_conf.py:1`",
+        ),
+    ];
+    for (conf, site) in cases {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+            ),
+            ("docs/conf.py", conf),
+            ("src/common/__init__.py", ""),
+            ("src/common/exts.py", "EXTS = [\"a\"]\n"),
+            (
+                "src/common/shared_conf.py",
+                "extensions = [ext for ext in [\"a\"]]\n",
+            ),
+            ("src/common/orphan.py", ""),
+        ]);
+        let levels = issue_levels(project.path());
+        assert!(
+            levels.contains(&(
+                "CHK001".to_owned(),
+                "src/common/orphan.py".to_owned(),
+                "warning".to_owned(),
+                "likely".to_owned(),
+            )),
+            "{conf}: {levels:?}"
+        );
+        assert!(
+            levels.contains(&(
+                "CHK002".to_owned(),
+                "requests".to_owned(),
+                "error".to_owned(),
+                "likely".to_owned(),
+            )),
+            "{conf}: {levels:?}"
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK002:requests"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let explain = format!("the Sphinx `extensions` could not all be read: {site}");
+        assert!(stderr.contains(&explain), "{conf}: {stderr}");
+        let warning = format!("plugin: sphinx: `extensions` could not all be read ({site})");
+        assert!(stderr.contains(&warning), "{conf}: {stderr}");
+    }
+
+    // A star import is no gap where `extensions` is assigned.
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "docs/conf.py",
+            "from sphinx_base_conf import *\n\nextensions = []\n",
+        ),
+        ("src/common/__init__.py", ""),
+        ("src/common/orphan.py", ""),
+    ]);
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert!(
+        certain_chk001(&issues).contains(&"src/common/orphan.py".to_owned()),
+        "{issues:?}"
+    );
+}
+
 #[test]
 fn binary_no_auto_workspace_keeps_single_project_analysis() {
     let project = undeclared_monorepo();

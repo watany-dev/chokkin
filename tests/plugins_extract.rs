@@ -1350,6 +1350,70 @@ fn sphinx_extensions_carry_their_string_line() {
     );
 }
 
+/// `docs/conf.py` that star-imports a first-party module reads that
+/// module's `extensions`, resolved through its own imports, at the star
+/// import's line in `conf.py`, and merges them with its own (#1062).
+#[test]
+fn sphinx_conf_reads_the_extensions_of_a_star_imported_module() {
+    let hints = extract_fixture("sphinx_star_conf");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let refs: Vec<(&str, &str, Option<u32>)> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.origin.file.as_str(),
+                reference.origin.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("sphinx_design", "docs/conf.py", Some(3)),
+            ("sphinx.ext.autodoc", "docs/conf.py", Some(1)),
+            ("sphinx_copybutton", "docs/conf.py", Some(1)),
+        ]
+    );
+    assert_eq!(contrib.unread_settings, []);
+    assert_eq!(hints.warnings, []);
+}
+
+/// A discovered `conf.py` beside a root document is a docs entry wherever it
+/// is; one with no root document beside it is no Sphinx conf (#814).
+#[test]
+fn sphinx_conf_beside_a_root_document_is_a_docs_entry() {
+    let hints = extract_fixture("sphinx_root_document");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let entries: Vec<(&str, FileContext, &str)> = contrib
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.spec.path.as_str(),
+                entry.context,
+                entry.origin.label.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [(
+            "docs/api/source/conf.py",
+            FileContext::Docs,
+            "conf.py beside index.rst"
+        )]
+    );
+    let modules: Vec<&str> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| reference.module.as_str())
+        .collect();
+    assert_eq!(modules, ["sphinx_click"]);
+    assert_eq!(contrib.scanned_files, ["docs/api/source/conf.py"]);
+}
+
 #[test]
 fn mkdocs_plugin_records_config_binary() {
     let hints = extract_fixture("mkdocs_config");

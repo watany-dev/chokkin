@@ -185,6 +185,9 @@ impl ProbeWarning {
                 PluginsWarning::PartialSettingsParse { path, .. }
                 | PluginsWarning::PytestConfigUnreadable { path } => (Some(path), None),
                 PluginsWarning::DjangoSettingsUnread { path, line, .. } => (Some(path), *line),
+                PluginsWarning::SphinxExtensionsUnread { path, line, .. } => {
+                    (Some(path), Some(*line))
+                },
                 PluginsWarning::AmbiguousSettings { .. }
                 | PluginsWarning::PluginExtractFailed { .. } => (None, None),
             },
