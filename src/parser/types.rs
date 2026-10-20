@@ -141,9 +141,9 @@ pub struct DynamicImport {
 pub struct NamedLoad {
     /// The callee's last name (`import_string` for `module_loading.import_string`).
     pub call: String,
-    /// The name was written `module:attr`.
+    /// The name was written `pkg.mod:attr`, as a cyclopts lazy command is.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub colon: bool,
+    pub lazy_command: bool,
     /// The load the call makes if it is a loader, `:` written as `.`.
     pub load: DynamicImport,
 }

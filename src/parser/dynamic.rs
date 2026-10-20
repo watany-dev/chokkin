@@ -361,11 +361,12 @@ pub(super) fn str_constant(expr: &Expr) -> Option<&str> {
 
 /// A call that may load the name its first argument spells (#493): the
 /// callee's last name, the name with `:` written as `.`, and whether it was
-/// written `module:attr`. The name is a dotted name of two or more segments
-/// (`"pkg.mod.Cls"`) or a dotted module and attribute (`"pkg:Cls"`,
-/// `"pkg.mod:Cls.attr"`). A one-segment name, a computed string, a name
-/// passed by keyword and a callee that is not a name (`loaders[0](...)`) are
-/// not read, so a file only such a call loads is reported unused.
+/// written `pkg.mod:attr`, the shape of a cyclopts lazy command. The name is
+/// a dotted name of two or more segments (`"pkg.mod.Cls"`) or a dotted
+/// module and attribute (`"pkg:Cls"`, `"pkg.mod:Cls.attr"`). A one-segment
+/// name, a computed string, a name passed by keyword and a callee that is
+/// not a name (`loaders[0](...)`) are not read, so a file only such a call
+/// loads is reported unused.
 #[must_use]
 pub(super) fn named_load(call: &ExprCall) -> Option<(&str, String, bool)> {
     let callee = match &*call.func {
@@ -376,7 +377,7 @@ pub(super) fn named_load(call: &ExprCall) -> Option<(&str, String, bool)> {
     let text = str_constant(call.arguments.args.first()?)?;
     match text.split_once(':') {
         Some((module, attr)) => (is_dotted_identifier(module) && is_dotted_identifier(attr))
-            .then(|| (callee, format!("{module}.{attr}"), true)),
+            .then(|| (callee, format!("{module}.{attr}"), module.contains('.'))),
         None => (text.contains('.') && is_dotted_identifier(text))
             .then(|| (callee, text.to_owned(), false)),
     }
@@ -385,27 +386,28 @@ pub(super) fn named_load(call: &ExprCall) -> Option<(&str, String, bool)> {
 /// Loader APIs that import the module a dotted name starts with and fetch
 /// the rest as attributes (#493): Django's and werkzeug's `import_string`,
 /// celery's `symbol_by_name`, DRF's `import_from_string`, scrapy's
-/// `load_object` and `pkgutil.resolve_name`. They are matched by the
-/// callee's last name, so a project's own helper of the same name (airflow's
-/// `import_string`) counts as well.
-const MODULE_LOADERS: [&str; 5] = [
+/// `load_object`. They are matched by the callee's last name, so a
+/// project's own helper of the same name (airflow's `import_string`) counts
+/// as well. `pkgutil.resolve_name` is left to `module_loaders`: the name is
+/// as common for resolving a host name (`resolve_name("google.com")`).
+const MODULE_LOADERS: [&str; 4] = [
     "import_string",
     "symbol_by_name",
     "import_from_string",
     "load_object",
-    "resolve_name",
 ];
 
 /// Moves each named load whose callee is a loader into its module's dynamic
 /// imports: [`MODULE_LOADERS`], cyclopts' lazy `command("pkg.mod:app")` (a
-/// `module:attr` only, as a command name is a plain word) and the names
-/// `module_loaders` configures (#493). Every other named load is dropped.
+/// dotted `module:attr` only, as a click or typer command name may be
+/// `db:migrate`) and the names `module_loaders` configures (#493). Every
+/// other named load is dropped.
 pub(crate) fn apply_module_loaders(modules: &mut [ParsedModule], configured: &[String]) {
     for module in modules {
         for named in std::mem::take(&mut module.named_loads) {
             let call = named.call.as_str();
             if MODULE_LOADERS.contains(&call)
-                || (named.colon && call == "command")
+                || (named.lazy_command && call == "command")
                 || configured.iter().any(|name| name == call)
             {
                 module.dynamic_imports.push(named.load);
@@ -474,11 +476,10 @@ mod tests {
             let Expr::Call(call) = expr(source) else {
                 panic!("not a call: {source}");
             };
-            named_load(&call).map(|(callee, name, colon)| (callee.to_owned(), name, colon))
+            named_load(&call).map(|(callee, name, lazy)| (callee.to_owned(), name, lazy))
         };
-        let read = |callee: &str, name: &str, colon: bool| {
-            Some((callee.to_owned(), name.to_owned(), colon))
-        };
+        let read =
+            |callee: &str, name: &str, lazy: bool| Some((callee.to_owned(), name.to_owned(), lazy));
         assert_eq!(
             load(r#"import_string("pkg.mod.Cls")"#),
             read("import_string", "pkg.mod.Cls", false)
@@ -488,8 +489,8 @@ mod tests {
             read("symbol_by_name", "pkg.mod.Cls.attr", true)
         );
         assert_eq!(
-            load(r#"resolve_name("pkg:Cls")"#),
-            read("resolve_name", "pkg.Cls", true)
+            load(r#"command("db:migrate")"#),
+            read("command", "db.migrate", false)
         );
         for source in [
             r#"import_string("pkg")"#,

@@ -552,14 +552,14 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     }
 
     fn record_dynamic_imports(&mut self, call: &ExprCall) {
-        if let Some((callee, name, colon)) = named_load(call) {
+        if let Some((callee, name, lazy_command)) = named_load(call) {
             let load = DynamicImport {
                 fetched: true,
                 ..self.dynamic_import(name, call)
             };
             self.parsed.named_loads.push(NamedLoad {
                 call: callee.to_owned(),
-                colon,
+                lazy_command,
                 load,
             });
         }

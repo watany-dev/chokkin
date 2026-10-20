@@ -222,6 +222,22 @@ mod tests {
     }
 
     #[test]
+    fn merge_replaces_module_loaders_per_layer() {
+        let loaders = |names: &[&str]| PartialConfig {
+            module_loaders: Some(names.iter().map(|name| (*name).to_owned()).collect()),
+            ..PartialConfig::default()
+        };
+        let merged = merge_layers(&[loaders(&["a"]), PartialConfig::default(), loaders(&["b"])]);
+        assert_eq!(merged.module_loaders, ["b"]);
+        assert!(
+            merge_layers(&[loaders(&["a"]), loaders(&[])])
+                .module_loaders
+                .is_empty()
+        );
+        assert!(merge_layers(&[]).module_loaders.is_empty());
+    }
+
+    #[test]
     fn merge_keeps_default_dependency_groups_for_missing_keys() {
         let merged = merge_layers(&[PartialConfig {
             dependencies: Some(PartialDependencyGroups {
