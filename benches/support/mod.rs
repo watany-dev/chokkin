@@ -256,3 +256,101 @@ pub(crate) fn synth_workspace_project(n_members: u64) -> TempDir {
     }
     temp
 }
+
+/// A workspace of `n_members` members whose modules hold `n_refs` string
+/// literals shaped like dotted module names each (#1080): half name modules
+/// outside the project, shared by every member, and half are the member's
+/// own, so most resolve nowhere and fall back segment by segment, as
+/// airflow's lazy command and provider strings do. The root has no package,
+/// so its layout is unknown and discovery reads every member, as airflow's.
+pub(crate) fn synth_string_ref_workspace(n_members: u64, n_refs: u64) -> TempDir {
+    let temp = TempDir::new().expect("tempdir");
+    let root = temp.path();
+    write(
+        root,
+        "pyproject.toml",
+        "[project]\nname = \"bench-mono\"\nversion = \"0.1.0\"\n",
+    );
+    for index in 0..n_members {
+        let dir = format!("providers/member-{index}");
+        let package = format!("bench_member_{index}");
+        write(
+            root,
+            &format!("{dir}/pyproject.toml"),
+            &format!("[project]\nname = \"bench-member-{index}\"\nversion = \"0.1.0\"\n"),
+        );
+        write(
+            root,
+            &format!("{dir}/src/{package}/__init__.py"),
+            "from . import refs\n",
+        );
+        let mut refs = String::from("REFS = [\n");
+        for item in 0..n_refs {
+            if item % 2 == 0 {
+                writeln!(refs, "    \"vendor.shared_{item}.hooks.base:Hook\",")
+            } else {
+                writeln!(refs, "    \"{package}.commands.cmd_{item}.command\",")
+            }
+            .expect("write ref");
+        }
+        refs.push_str("]\n");
+        write(root, &format!("{dir}/src/{package}/refs.py"), &refs);
+    }
+    temp
+}
+
+/// A workspace of `n_members` members whose `docs/conf.py` star-imports a
+/// shared conf module, which imports a constants module that edits
+/// `sys.path` amid `docs` and `src` literals, as airflow's provider confs,
+/// `provider_conf` and `conf_constants` do (#1076). Each conf takes the
+/// constants' hints, which name those directories of every member, and
+/// imports `n_refs` modules found nowhere, each looked up in all of them.
+/// The shared modules live in a member, as in airflow's `devel-common`, so
+/// the root has no package and discovery reads every member.
+pub(crate) fn synth_sys_path_hint_workspace(n_members: u64, n_refs: u64) -> TempDir {
+    let temp = TempDir::new().expect("tempdir");
+    let root = temp.path();
+    write(
+        root,
+        "pyproject.toml",
+        "[project]\nname = \"bench-docs\"\nversion = \"0.1.0\"\n",
+    );
+    write(
+        root,
+        "devel/pyproject.toml",
+        "[project]\nname = \"bench-devel\"\nversion = \"0.1.0\"\n",
+    );
+    write(root, "devel/src/sharedconf/__init__.py", "");
+    write(
+        root,
+        "devel/src/sharedconf/base.py",
+        "from sharedconf.constants import LAYOUT\n\nextensions = [\"sphinx.ext.autodoc\"]\n",
+    );
+    write(
+        root,
+        "devel/src/sharedconf/constants.py",
+        concat!(
+            "import os\nimport sys\n\n",
+            "ROOT = os.path.dirname(__file__)\n",
+            "sys.path.append(os.path.join(ROOT, \"exts\"))\n",
+            "LAYOUT = [\"docs\", \"src\"]\n",
+        ),
+    );
+    let mut conf = String::from("from sharedconf.base import *\n");
+    for item in 0..n_refs {
+        writeln!(conf, "import missing_ext_{item}").expect("write import");
+    }
+    write(root, "docs/conf.py", &conf);
+    for index in 0..n_members {
+        let dir = format!("providers/member-{index}");
+        let package = format!("bench_member_{index}");
+        write(
+            root,
+            &format!("{dir}/pyproject.toml"),
+            &format!("[project]\nname = \"bench-member-{index}\"\nversion = \"0.1.0\"\n"),
+        );
+        write(root, &format!("{dir}/src/{package}/__init__.py"), "");
+        write(root, &format!("{dir}/docs/conf.py"), &conf);
+    }
+    temp
+}

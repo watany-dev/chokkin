@@ -21,6 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::parser::ParseSummary;
 use crate::plugins::{PytestImportSettings, SysPathImport, pytest_import_settings};
@@ -52,8 +53,24 @@ pub(crate) struct PytestImportPaths {
     hinted_on_disk: HashMap<String, HashSet<String>>,
     /// Hinted directory → top-level names of the discovered files under it.
     hinted_roots: HashMap<String, HashSet<String>>,
+    /// File → its `hinted` directories indexed by name, shared by the files
+    /// with the same directories.
+    hinted_index: HashMap<String, Arc<HintIndex>>,
     /// Every name in [`Self::hinted_roots`].
     any_hinted_root: HashSet<String>,
+}
+
+/// One file's hinted directories looked up by name: a string-built hint can
+/// name hundreds of directories (airflow's Sphinx confs, #1080), and every
+/// fallback lookup would otherwise walk them all.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct HintIndex {
+    /// Top-level name → the directories with a discovered file under it, in
+    /// lookup order.
+    by_root: HashMap<String, Vec<String>>,
+    /// The names some directory holds as a module or directory, discovered
+    /// or on disk.
+    provides: HashSet<String>,
 }
 
 impl PytestImportPaths {
@@ -167,6 +184,7 @@ impl PytestImportPaths {
             conftest_hinted: Vec::new(),
             hinted_on_disk: HashMap::new(),
             hinted_roots: HashMap::new(),
+            hinted_index: HashMap::new(),
             any_hinted_root: HashSet::new(),
         }
     }
@@ -252,6 +270,19 @@ impl PytestImportPaths {
                 self.hinted.insert(module.path.clone(), found);
             }
         }
+        self.add_imported_hints(imports);
+        self.hinted_on_disk = on_disk
+            .into_iter()
+            .filter_map(|(dir, names)| Some((dir, names?)))
+            .collect();
+        self.hinted_roots = self.hinted_roots();
+        self.hinted_index = self.hinted_index();
+        self.any_hinted_root = self.hinted_roots.values().flatten().cloned().collect();
+        self
+    }
+
+    /// Give each importer the directories its import hints, after its own.
+    fn add_imported_hints(&mut self, imports: &[SysPathImport]) {
         for import in imports {
             if let Some(dirs) = self.hinted.get(&import.imported).cloned() {
                 self.hinted
@@ -260,13 +291,53 @@ impl PytestImportPaths {
                     .extend(dirs);
             }
         }
-        self.hinted_on_disk = on_disk
-            .into_iter()
-            .filter_map(|(dir, names)| Some((dir, names?)))
+    }
+
+    fn hinted_index(&self) -> HashMap<String, Arc<HintIndex>> {
+        // The names `has_module` finds in each hinted directory.
+        let mut names: HashMap<&str, Vec<&str>> = self
+            .hinted_roots
+            .keys()
+            .map(|dir| (dir.as_str(), Vec::new()))
             .collect();
-        self.hinted_roots = self.hinted_roots();
-        self.any_hinted_root = self.hinted_roots.values().flatten().cloned().collect();
-        self
+        let modules = self.files.iter().filter_map(|file| {
+            file.strip_suffix(".py")
+                .or_else(|| file.strip_suffix(".pyi"))
+        });
+        for path in self.dirs.iter().map(String::as_str).chain(modules) {
+            if let Some(names) = names.get_mut(parent_dir(path)) {
+                names.push(file_name(path));
+            }
+        }
+        let mut shared: HashMap<&[String], Arc<HintIndex>> = HashMap::new();
+        self.hinted
+            .iter()
+            .map(|(file, dirs)| {
+                let index = shared.entry(dirs).or_insert_with(|| {
+                    let mut index = HintIndex::default();
+                    for dir in dirs {
+                        for root in self.hinted_roots.get(dir).into_iter().flatten() {
+                            index
+                                .by_root
+                                .entry(root.clone())
+                                .or_default()
+                                .push(dir.clone());
+                        }
+                        let on_disk = self.hinted_on_disk.get(dir).into_iter().flatten();
+                        index.provides.extend(
+                            names
+                                .get(dir.as_str())
+                                .into_iter()
+                                .flatten()
+                                .map(|name| (*name).to_owned())
+                                .chain(on_disk.cloned()),
+                        );
+                    }
+                    Arc::new(index)
+                });
+                (file.clone(), Arc::clone(index))
+            })
+            .collect()
     }
 
     fn hinted_roots(&self) -> HashMap<String, HashSet<String>> {
@@ -349,14 +420,25 @@ impl PytestImportPaths {
         } else {
             self.scripts.contains(file) && self.has_module(parent_dir(file), root)
         };
+        let in_hinted = |dir: &str| {
+            self.has_module(dir, root)
+                || self
+                    .hinted_on_disk
+                    .get(dir)
+                    .is_some_and(|names| names.contains(root))
+        };
         local
-            || self.hinted_dirs(file).any(|dir| {
-                self.has_module(dir, root)
-                    || self
-                        .hinted_on_disk
-                        .get(dir)
-                        .is_some_and(|names| names.contains(root))
-            })
+            || match self.hinted_index.get(file) {
+                // The index keys single path segments.
+                Some(index) if !root.contains('/') => index.provides.contains(root),
+                _ => self
+                    .hinted
+                    .get(file)
+                    .into_iter()
+                    .flatten()
+                    .any(|dir| in_hinted(dir)),
+            }
+            || self.conftest_hinted_dirs(file).any(in_hinted)
     }
 
     /// The file of `module` beside a script, in the script's or test's own
@@ -373,15 +455,22 @@ impl PytestImportPaths {
                 if !self.any_hinted_root.contains(root) {
                     return None;
                 }
-                self.hinted_dirs(file)
-                    // Most hinted directories hold no such name: skip them
-                    // without building paths.
-                    .filter(|dir| {
-                        self.hinted_roots
-                            .get(*dir)
-                            .is_some_and(|roots| roots.contains(root))
-                    })
-                    .find_map(|dir| self.find_module(dir, module))
+                let own = self
+                    .hinted_index
+                    .get(file)
+                    .and_then(|index| index.by_root.get(root))
+                    .into_iter()
+                    .flatten()
+                    .map(String::as_str);
+                own.chain(self.conftest_hinted_dirs(file)
+                        // Most hinted directories hold no such name: skip
+                        // them without building paths.
+                        .filter(|dir| {
+                            self.hinted_roots
+                                .get(*dir)
+                                .is_some_and(|roots| roots.contains(root))
+                        }))
+                .find_map(|dir| self.find_module(dir, module))
             })
     }
 
@@ -401,18 +490,14 @@ impl PytestImportPaths {
             .flatten()
     }
 
-    fn hinted_dirs<'s>(&'s self, file: &'s str) -> impl Iterator<Item = &'s str> {
+    /// The hinted directories of the conftests above `file`, searched after
+    /// the file's own.
+    fn conftest_hinted_dirs<'s>(&'s self, file: &'s str) -> impl Iterator<Item = &'s str> {
         let dir = parent_dir(file);
-        let conftests = self
-            .conftest_hinted
+        self.conftest_hinted
             .iter()
             .filter(move |(conftest_dir, _)| is_same_or_under(dir, conftest_dir))
-            .map(|(_, dirs)| dirs);
-        self.hinted
-            .get(file)
-            .into_iter()
-            .chain(conftests)
-            .flatten()
+            .flat_map(|(_, dirs)| dirs)
             .map(String::as_str)
     }
 
@@ -982,6 +1067,23 @@ mod tests {
             hinting(test, &["utils"]),
         ]);
         assert_eq!(own_first.resolve_fallback(test, "m"), Some("utils/m.py"));
+    }
+
+    #[test]
+    fn sys_path_hint_roots_with_a_slash_walk_the_directories() {
+        let files = ["tests/test_t.py", "tools/pkg/sub/m.py"];
+        let parse = ParseSummary {
+            modules: vec![hinting("tests/test_t.py", &["tools"])],
+        };
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse, &[]);
+        // The name index keys single segments; a nested root still finds its
+        // directory.
+        assert!(paths.provides_fallback("tests/test_t.py", "pkg"));
+        assert!(paths.provides_fallback("tests/test_t.py", "pkg/sub"));
+        assert!(!paths.provides_fallback("tests/test_t.py", "pkg/other"));
     }
 
     #[test]

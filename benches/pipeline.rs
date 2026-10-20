@@ -178,6 +178,39 @@ fn bench_workspace(c: &mut Criterion) {
             analyze_project(black_box(root), None, &overrides, options.clone()).expect("analyze")
         });
     });
+    // Every string literal shaped like a module name is resolved against
+    // every member (#1080), which the members above, holding none, miss.
+    let (members, refs) = (80, 20);
+    let project = support::synth_string_ref_workspace(members, refs);
+    let root = project.path();
+    let report = analyze_project(root, None, &overrides, options.clone()).expect("setup");
+    assert!(
+        report.probe.workspace_members.len() >= usize::try_from(members).expect("member count"),
+        "every nested pyproject must be detected as a member"
+    );
+    assert!(
+        report.probe.sources.files.len() > usize::try_from(members).expect("member count"),
+        "every member's files must be discovered"
+    );
+    group.bench_function(BenchmarkId::new("string_module_refs", members), |b| {
+        b.iter(|| {
+            analyze_project(black_box(root), None, &overrides, options.clone()).expect("analyze")
+        });
+    });
+    // Every conf takes hints naming directories of every member, and each
+    // import found nowhere is looked up in all of them (#1080).
+    let project = support::synth_sys_path_hint_workspace(members, refs);
+    let root = project.path();
+    let report = analyze_project(root, None, &overrides, options.clone()).expect("setup");
+    assert!(
+        report.probe.workspace_members.len() >= usize::try_from(members).expect("member count"),
+        "every nested pyproject must be detected as a member"
+    );
+    group.bench_function(BenchmarkId::new("sys_path_hints", members), |b| {
+        b.iter(|| {
+            analyze_project(black_box(root), None, &overrides, options.clone()).expect("analyze")
+        });
+    });
     group.finish();
 }
 criterion_group!(benches, bench_pipeline, bench_workspace);
