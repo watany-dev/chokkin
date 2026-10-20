@@ -7222,8 +7222,9 @@ fn binary_main_block_does_not_change_project_mode() {
 
 /// A dotted string literal that resolves to a project file may load it by
 /// name (airflow's `lazy_load_command("airflow.cli.commands.x.y")`,
-/// gunicorn's `"python:pkg.config"`), so that file's CHK001 falls to an info
-/// note at likely, and `--explain` names the string (#1026). A computed
+/// gunicorn's `"python:pkg.config"`, celery's `"pkg.backends.redis:Backend"`),
+/// so that file's CHK001 falls to an info note at likely, and `--explain`
+/// names the string (#1026, #493). A computed
 /// string is not recognized and lowers nothing.
 #[test]
 fn binary_dotted_string_literal_lowers_the_named_file() {
@@ -7233,13 +7234,15 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
         ("acme/__init__.py", ""),
         (
             "acme/cli.py",
-            "from acme.loader import lazy_load\nCOMMANDS = {\"cheat\": lazy_load(\"acme.commands.cheat_sheet.run\")}\nGUNICORN = {\"config\": \"python:acme.gunicorn_config\"}\nNAME = \"computed\"\nDYNAMIC = f\"acme.commands.{NAME}\"\n\n\ndef main():\n    return COMMANDS, GUNICORN, DYNAMIC\n",
+            "from acme.loader import lazy_load\nCOMMANDS = {\"cheat\": lazy_load(\"acme.commands.cheat_sheet.run\")}\nGUNICORN = {\"config\": \"python:acme.gunicorn_config\"}\nNAME = \"computed\"\nDYNAMIC = f\"acme.commands.{NAME}\"\nBACKENDS = {\"redis\": \"acme.backends.redis:RedisBackend\"}\n\n\ndef main():\n    return COMMANDS, GUNICORN, DYNAMIC, BACKENDS\n",
         ),
         ("acme/loader.py", "def lazy_load(path):\n    return path\n"),
         ("acme/commands/__init__.py", ""),
         ("acme/commands/cheat_sheet.py", "def run():\n    pass\n"),
         ("acme/commands/computed.py", "WIDTH = 80\n"),
         ("acme/gunicorn_config.py", "workers = 2\n"),
+        ("acme/backends/__init__.py", ""),
+        ("acme/backends/redis.py", "class RedisBackend:\n    pass\n"),
         ("acme/orphan.py", ""),
     ]);
 
@@ -7263,6 +7266,7 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
     assert_eq!(
         unused,
         [
+            level("acme/backends/redis.py", "info", "likely"),
             level("acme/commands/cheat_sheet.py", "info", "likely"),
             level("acme/commands/computed.py", "warning", "certain"),
             level("acme/gunicorn_config.py", "info", "likely"),
@@ -7273,7 +7277,7 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(
         stderr.contains(
-            "parse: `acme/cli.py:2` names `acme.commands.cheat_sheet.run` and 1 more module in strings that may load files no entry reaches; those files are reported as unused at info, if at all"
+            "parse: `acme/cli.py:2` names `acme.commands.cheat_sheet.run` and 2 more modules in strings that may load files no entry reaches; those files are reported as unused at info, if at all"
         ),
         "{stderr}"
     );

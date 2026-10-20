@@ -1333,8 +1333,9 @@ mod tests {
         visitor.into_parsed()
     }
 
-    /// Dotted string literals are kept once each at their first line,
-    /// wherever they appear; computed strings are not seen (#1026).
+    /// Dotted string literals, `pkg.mod:attr` included (#493), are kept once
+    /// each at their first line, wherever they appear; computed strings are
+    /// not seen (#1026).
     #[test]
     fn collects_dotted_string_literals_once_at_their_first_line() {
         let parsed = visit_source(
@@ -1345,7 +1346,14 @@ mod tests {
             .iter()
             .map(|reference| (reference.text.as_str(), reference.line))
             .collect();
-        assert_eq!(refs, [("pkg.cli.run", 2), ("python:pkg.config", 4),]);
+        assert_eq!(
+            refs,
+            [
+                ("pkg.cli.run", 2),
+                ("pkg.mod:attr", 4),
+                ("python:pkg.config", 4),
+            ]
+        );
     }
 
     /// Literal `module:attr` apps passed to uvicorn's `run` and `Config`,

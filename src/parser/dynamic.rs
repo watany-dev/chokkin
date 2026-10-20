@@ -278,21 +278,31 @@ pub(super) fn command_word(expr: &Expr) -> Option<&str> {
 /// A string literal that is a whole dotted module name, which the code may
 /// load by name (airflow's `lazy_load_command("pkg.cli.x.cmd")`, gunicorn's
 /// `"python:pkg.config"`): identifier segments joined by `.`, two or more,
-/// with an optional `python:` prefix (#1026). One segment (`"json"`), a
-/// `module:attr` form, a path (`"a/b.py"`) or a sentence is not one; a
-/// computed string (an f-string or a concatenation with a name) is not a
+/// with an optional `python:` prefix (#1026), and an optional `:attr` after
+/// them (celery's `"pkg.backends.redis:RedisBackend"`, #493). One segment
+/// (`"json"`, `"main:app"`), a path (`"a/b.py"`) or a sentence is not one;
+/// a computed string (an f-string or a concatenation with a name) is not a
 /// literal, so a module loaded that way is not seen and its finding is not
 /// lowered.
 #[must_use]
 pub(super) fn module_ref_literal(expr: &Expr) -> Option<&str> {
     let text = str_constant(expr)?;
-    let module = module_ref_name(text);
-    (module.contains('.') && is_dotted_identifier(module)).then_some(text)
+    let (module, attr) = split_attr(text.strip_prefix("python:").unwrap_or(text));
+    (module.contains('.') && is_dotted_identifier(module) && attr.is_none_or(is_dotted_identifier))
+        .then_some(text)
 }
 
+/// The module a [`module_ref_literal`] names: without its `python:` prefix
+/// and its `:attr`.
 #[must_use]
 pub(crate) fn module_ref_name(text: &str) -> &str {
-    text.strip_prefix("python:").unwrap_or(text)
+    split_attr(text.strip_prefix("python:").unwrap_or(text)).0
+}
+
+/// `pkg.mod:attr` as the module and the attribute.
+fn split_attr(name: &str) -> (&str, Option<&str>) {
+    name.split_once(':')
+        .map_or((name, None), |(module, attr)| (module, Some(attr)))
 }
 
 /// Whether a call adds a directory to `sys.path`: `sys.path.insert` /
@@ -396,9 +406,9 @@ mod tests {
         literal_target(&call, loader, || Some("acme.core".to_owned()))
     }
 
-    /// A whole dotted name, with or without `python:`, is a module reference;
-    /// one segment, `module:attr`, a path, a sentence or a computed string
-    /// is not (#1026).
+    /// A whole dotted name, with or without `python:`, is a module reference,
+    /// and so is `pkg.mod:attr` (#493); one segment, a one-segment module
+    /// before `:`, a path, a sentence or a computed string is not (#1026).
     #[test]
     fn module_ref_literals_are_whole_dotted_names() {
         let module_ref = |source: &str| module_ref_literal(&expr(source)).map(str::to_owned);
@@ -422,9 +432,22 @@ mod tests {
             module_ref(r#""_private.mod2""#),
             Some("_private.mod2".to_owned())
         );
+        assert_eq!(
+            module_ref(r#""pkg.backends.redis:RedisBackend""#),
+            Some("pkg.backends.redis:RedisBackend".to_owned())
+        );
+        assert_eq!(
+            module_ref_name("pkg.backends.redis:RedisBackend"),
+            "pkg.backends.redis"
+        );
+        assert_eq!(module_ref_name("python:pkg.app:make.app"), "pkg.app");
         for source in [
             r#""json""#,
-            r#""pkg.mod:attr""#,
+            r#""pkg:attr""#,
+            r#""pkg.mod:""#,
+            r#""pkg.mod:attr:more""#,
+            r#""pkg.mod:1attr""#,
+            r#""localhost:8080""#,
             r#""pkg/mod.py""#,
             r#""pkg.mod.""#,
             r#"".pkg.mod""#,
