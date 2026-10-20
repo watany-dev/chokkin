@@ -620,7 +620,12 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
             directory = args.get(index).copied();
             index += 1;
         } else if matches!(*arg, "-m" | "--module") {
-            let target = module_target(args.get(index)?);
+            // `uv run -m gunicorn app:app` runs the server as `python -m` does.
+            let (module, rest) = args.get(index..)?.split_first()?;
+            let target = match module_runner(module) {
+                Some(runner) => runner_target(runner, rest),
+                None => module_target(module),
+            };
             return Some(Run::Target(match directory {
                 Some(_) => relocated(target),
                 None => target,
@@ -1046,6 +1051,19 @@ mod tests {
         ] {
             assert_eq!(targets(command), [app], "{command}");
         }
+    }
+
+    /// `uv run -m gunicorn` serves the app as `python -m gunicorn` does.
+    #[test]
+    fn uv_run_module_runners_read_their_app() {
+        assert_eq!(
+            targets("uv run -m gunicorn mypkg.server:app"),
+            ["app mypkg.server:app"]
+        );
+        assert_eq!(
+            targets("uv run --directory web -m gunicorn mypkg.server:app"),
+            ["opaque mypkg.server"]
+        );
     }
 
     #[test]
