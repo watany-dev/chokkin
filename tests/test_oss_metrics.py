@@ -64,6 +64,34 @@ class PrecisionTest(unittest.TestCase):
         self.assertEqual(om.precision([], "CHK003"), (0, 0))
 
 
+class ProjectPrecisionTest(unittest.TestCase):
+    def test_labelled_hits_per_project(self) -> None:
+        findings = [
+            finding("CHK001", "tp", slug="a"),
+            finding("CHK001", "info-expected", slug="a"),
+            finding("CHK001", "tp", "info", slug="b"),
+            finding("CHK001", "unknown", slug="c"),
+            finding("CHK001", "deferred", slug="c"),
+            finding("CHK001", "fp", slug="d"),
+            finding("CHK002", "tp", slug="e"),
+        ]
+        self.assertEqual(om.project_precision(findings, "CHK001"), {"a": (1, 1), "d": (0, 1)})
+        self.assertEqual(om.project_precision([], "CHK001"), {})
+
+    def test_macro_weighs_each_project_equally(self) -> None:
+        # Micro is 28/32 = 87.5%; the big project hides the small one's 50%.
+        per = {"big": (27, 3), "small": (1, 1)}
+        self.assertAlmostEqual(om.macro_precision(per), 70.0)
+        self.assertIsNone(om.macro_precision({}))
+
+    def test_max_share_is_the_project_with_most_labelled_hits(self) -> None:
+        slug, pct = om.max_share({"airflow": (26, 3), "fastmcp": (3, 0), "poetry": (1, 0)})
+        self.assertEqual(slug, "airflow")
+        self.assertAlmostEqual(pct, 100 * 29 / 33)
+        self.assertEqual(om.max_share({"b": (1, 0), "a": (0, 1)}), ("a", 50.0))
+        self.assertIsNone(om.max_share({}))
+
+
 class PrecisionMissesTest(unittest.TestCase):
     def test_a_rule_at_its_floor_passes(self) -> None:
         findings = [finding("CHK003", "fp")] + [finding("CHK003", "tp")] * 9  # 90%
