@@ -76,11 +76,13 @@ correct only at info severity (e.g. a CHK003 for an optional try-import, #504);
 reported at any other severity it counts as `fp`.
 
 Precision: every rule's precision tp / (tp + fp) over its labelled hits is
-recorded in report.md (#656). CHK003 / CHK004 / CHK006 / CHK010 have a floor
-(#701), so a precision drop fails the gate even when the counts hold. CHK002's
-floor is criterion 1: with no unclassified finding, FP rate < 5% is precision
-> 95%. The other rules are recorded only until their labels can carry one
-(#862). CHK001 / CHK004 /
+recorded in report.md (#656), next to its per-project mean (macro) and the
+largest single-project share of its labelled hits, so a rule whose number one
+project drives is visible (#1065); floors use the pooled (micro) precision.
+CHK003 / CHK004 / CHK006 / CHK010 have a floor (#701), so a precision drop
+fails the gate even when the counts hold. CHK002's floor is criterion 1: with
+no unclassified finding, FP rate < 5% is precision > 95%. The other rules are
+recorded only until their labels can carry one (#862). CHK001 / CHK004 /
 CHK006 / CHK010 labels are a per-project stratified sample drawn by
 scripts/sample-precision-labels.py, so their precision is a sample estimate.
 Labels whose finding no longer appears are listed as stale.
@@ -249,6 +251,38 @@ def fp_gate(findings: list[list[str]]) -> tuple[bool, int, int, int]:
 def precision(findings: list[list[str]], code: str) -> tuple[int, int]:
     """(tp, fp) over the labelled hits of `code`; unknown and deferred are left out."""
     return count_hits(findings, code, "tp"), count_hits(findings, code, "fp")
+
+
+def project_precision(findings: list[list[str]], code: str, skip: frozenset[str] = frozenset()) -> dict[str, tuple[int, int]]:
+    """precision() of `code` per project outside `skip`, for the projects with a labelled hit."""
+    rows: dict[str, list[list[str]]] = {}
+    for f in findings:
+        if f[0] not in skip:
+            rows.setdefault(f[0], []).append(f)
+    per = {slug: precision(fs, code) for slug, fs in rows.items()}
+    return {slug: hits for slug, hits in per.items() if sum(hits)}
+
+
+def ranked_projects(per_project: dict[str, tuple[int, int]]) -> list[tuple[str, tuple[int, int]]]:
+    """Projects by labelled hits, most first; a tie goes to the first slug."""
+    return sorted(per_project.items(), key=lambda kv: (-sum(kv[1]), kv[0]))
+
+
+def macro_precision(per_project: dict[str, tuple[int, int]]) -> float | None:
+    """Mean of the per-project precisions in percent, each project weighted
+    equally (#1065); None when no project has a labelled hit."""
+    if not per_project:
+        return None
+    return 100 * statistics.fmean(tp / (tp + fp) for tp, fp in per_project.values())
+
+
+def max_share(per_project: dict[str, tuple[int, int]]) -> tuple[str, float] | None:
+    """The project holding the most labelled hits and its share of them in
+    percent."""
+    if not per_project:
+        return None
+    slug, (tp, fp) = ranked_projects(per_project)[0]
+    return slug, 100 * (tp + fp) / sum(tp + fp for tp, fp in per_project.values())
 
 
 def precision_misses(findings: list[list[str]]) -> list[str]:
@@ -678,6 +712,22 @@ def main() -> int:
         tp, fp = precision(findings, code)
         return f"{100 * tp / (tp + fp):.1f}" if tp + fp else "n/a"
 
+    # Recall sentinels are one-label fixtures, not projects: each would count
+    # as a 100% project in the macro mean, so they stay in the pooled number only.
+    sentinels = frozenset(slug for slug, category, _, _ in targets if category == "recall")
+    per_project = {c: project_precision(findings, c, sentinels) for c in ALL_RULES}
+
+    def macro_pct(code: str) -> str:
+        macro = macro_precision(per_project[code])
+        return "n/a" if macro is None else f"{macro:.1f} ({len(per_project[code])})"
+
+    def share(code: str) -> str:
+        top = max_share(per_project[code])
+        return "n/a" if top is None else f"{top[0]} {top[1]:.0f}%"
+
+    def by_project(code: str) -> str:
+        return ", ".join(f"{slug} {tp}/{tp + fp}" for slug, (tp, fp) in ranked_projects(per_project[code]))
+
     def stale(code: str) -> int:
         # Labels of this rule whose finding is absent from the run: it was
         # fixed, or a clone revision bump moved its target.
@@ -761,17 +811,36 @@ def main() -> int:
         "(scripts/sample-precision-labels.py). Deferred triage is not ground truth.",
         "Stale = labels whose finding is absent from this run. Reported=0 means the",
         "rule emitted nothing on this corpus — precision and recall are both unverified.",
+        "Precision % pools every labelled hit (micro); Macro % is the mean of the",
+        "per-project precisions over the (n) corpus projects with a labelled hit (recall",
+        "sentinels excluded), and Max share the project holding the most of them (#1065).",
+        "A large gap or share means one project drives the number. Floors apply to",
+        "Precision % only.",
         "",
         *oc.md_table(
-            ["Rule", "Reported", "Info", "tp", "fp", "deferred", "unknown", "Coverage %", "Precision %", "Stale"],
+            ["Rule", "Reported", "Info", "tp", "fp", "deferred", "unknown", "Coverage %", "Precision %",
+             "Macro % (n)", "Max share", "Stale"],
             [
                 [
                     c, count(c), info_count(c), count(c, "tp"), count(c, "fp"), count(c, "deferred"),
-                    count(c, "unknown"), coverage(c), precision_pct(c), stale(c),
+                    count(c, "unknown"), coverage(c), precision_pct(c), macro_pct(c), share(c), stale(c),
                 ]
                 for c in ALL_RULES
             ],
-            "lrrrrrrrrr",
+            "lrrrrrrrrrlr",
+        ),
+        "",
+        "### Labelled hits by project",
+        "",
+        "tp / (tp + fp) per corpus project (recall sentinels excluded), most labelled first.",
+        "",
+        *(
+            oc.md_table(
+                ["Rule", "By project"],
+                [[c, by_project(c)] for c in ALL_RULES if per_project[c]],
+            )
+            if any(per_project.values())
+            else ["_No labelled hits on this run._"]
         ),
         "",
         "## CHK003 root-cause buckets",

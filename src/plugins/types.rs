@@ -79,7 +79,8 @@ pub enum CommandTarget {
         symbol: Option<String>,
     },
     /// A target the command computes (a variable or substitution) or names
-    /// in a shape that is not read.
+    /// in a shape that is not read, or a module a tool config names that
+    /// matches no project file or several (#1063).
     Opaque {
         /// The word as written.
         text: String,

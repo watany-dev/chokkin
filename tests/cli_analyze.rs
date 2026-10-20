@@ -3392,6 +3392,146 @@ fn binary_unread_command_target_lowers_unused_files() {
     );
 }
 
+fn chk001_levels(root: &Path, extra: &[&str]) -> Vec<(String, String)> {
+    json_issues(root, &[&["--no-cache"], extra].concat())
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A formatter `[tool.datamodel-codegen] custom-formatters` names in a
+/// member's pyproject is imported by the tool, so the one module of that
+/// name under the member, here in a `dev/` directory off every import root,
+/// is a dev entry: its imports are followed and it is no gap, and
+/// `--production` drops it and holds it back like other dev commands (#1063).
+#[test]
+fn binary_datamodel_codegen_formatter_is_dev_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"sdk\"]\n\n[tool.uv.sources]\nsdk = { workspace = true }\n\n[tool.uv.workspace]\nmembers = [\"sdk\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("main.py", "import sdk\n\nprint(sdk)\n"),
+        (
+            "sdk/pyproject.toml",
+            "[project]\nname = \"sdk\"\nversion = \"0.1.0\"\n\n[tool.datamodel-codegen]\ninput-file-type = \"openapi\"\ncustom-formatters = ['code_formatter']\n",
+        ),
+        ("sdk/src/sdk/__init__.py", ""),
+        ("sdk/src/sdk/orphan.py", ""),
+        ("sdk/dev/code_formatter.py", "import fmt_helper\n"),
+        ("sdk/dev/fmt_helper.py", ""),
+    ]);
+    // `certain` on the orphan shows the formatter is no gap.
+    let certain = |path: &str| (path.to_owned(), "certain".to_owned());
+    assert_eq!(
+        chk001_levels(project.path(), &[]),
+        [certain("sdk/src/sdk/orphan.py")]
+    );
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", "sdk/src/sdk/orphan.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "sdk/dev/code_formatter.py (command: tool.datamodel-codegen.custom-formatters (sdk/pyproject.toml:7))"
+        ),
+        "{stderr}"
+    );
+
+    // The formatter is dev code, which `--production` does not report; what
+    // it imports is unread code again.
+    let likely = |path: &str| (path.to_owned(), "likely".to_owned());
+    assert_eq!(
+        chk001_levels(project.path(), &["--production"]),
+        [
+            likely("sdk/dev/fmt_helper.py"),
+            likely("sdk/src/sdk/orphan.py")
+        ]
+    );
+}
+
+/// A formatter name that resolves through the import roots is an entry, and
+/// one that names no project file, or several, or is not a module name, or a
+/// value that is not a list of names, is a gap: the tool imports code no
+/// entry reaches, so unused files are likely and `--explain` names the
+/// setting (#1063).
+#[test]
+fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
+    let pyproject = |formatters: &str| {
+        format!(
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.datamodel-codegen]\n{formatters}\n"
+        )
+    };
+    let resolved = pyproject("custom_formatters = [\"tools.fmt\"]");
+    let missing = pyproject("custom-formatters = [\"tools.fmt\", \"missing_fmt\"]");
+    let ambiguous = pyproject("custom-formatters = [\"tools.fmt\", \"twin\"]");
+    let shape = pyproject("custom-formatters = \"tools.fmt\"");
+    let path = pyproject("custom-formatters = [\"tools/fmt\"]");
+    let item = pyproject("custom-formatters = [1]");
+    // `import_module` does not strip the name.
+    let padded = pyproject("custom-formatters = [\" tools.fmt\"]");
+    let files = |pyproject: &str| -> tempfile::TempDir {
+        write_project(&[
+            ("pyproject.toml", pyproject),
+            ("main.py", "print(1)\n"),
+            ("orphan.py", ""),
+            ("tools/fmt.py", ""),
+            ("a/twin.py", ""),
+            ("b/twin.py", ""),
+        ])
+    };
+    let certain = |path: &str| (path.to_owned(), "certain".to_owned());
+    let likely = |path: &str| (path.to_owned(), "likely".to_owned());
+    let project = files(&resolved);
+    assert_eq!(
+        chk001_levels(project.path(), &[]),
+        [
+            certain("a/twin.py"),
+            certain("b/twin.py"),
+            certain("orphan.py")
+        ]
+    );
+    for (pyproject, target) in [
+        (&missing, "missing_fmt"),
+        (&ambiguous, "twin"),
+        (&shape, "\"tools.fmt\""),
+        (&path, "tools/fmt"),
+        (&item, "1"),
+        (&padded, " tools.fmt"),
+    ] {
+        let project = files(pyproject);
+        let levels = chk001_levels(project.path(), &[]);
+        assert!(
+            levels.contains(&likely("orphan.py")),
+            "{target}: {levels:?}"
+        );
+        assert!(
+            levels.iter().all(|(_, level)| level == "likely"),
+            "{target}: {levels:?}"
+        );
+        let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK001:orphan.py"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(explain.stderr).expect("utf8");
+        assert!(
+            stderr.contains(&format!(
+                "a command runs Python code no entry reaches: `{target}` in `pyproject.toml:9`"
+            )),
+            "{target}: {stderr}"
+        );
+    }
+}
+
 /// What a Dockerfile or Procfile runs is deployed, so it keeps its own
 /// context and stays a root under `--production`, while a script a Makefile
 /// runs is dev: its dev-group import is not misplaced (#912).
@@ -3582,6 +3722,224 @@ fn binary_django_import_settings_reach_files_in_production() {
         };
         assert!(stderr.contains(evidence), "{setting}: {stderr}");
     }
+}
+
+/// An installed app in the shape of Django's tutorial: what Django loads by
+/// convention from it, and what it reads by name there, is used (#399).
+#[allow(clippy::too_many_lines)]
+fn django_app_project(installed: &str) -> tempfile::TempDir {
+    let settings = format!("INSTALLED_APPS = {installed}\nROOT_URLCONF = 'mysite.urls'\n");
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", &settings),
+        ("mysite/urls.py", "# URLconf\n"),
+        (
+            "mysite/apps.py",
+            "from django.contrib.admin.apps import AdminConfig\n\n\nclass SiteAdminConfig(AdminConfig):\n    default_site = 'mysite.sites.Site'\n",
+        ),
+        ("mysite/models.py", ""),
+        ("mysite/polls/__init__.py", ""),
+        (
+            "mysite/polls/apps.py",
+            "from django import apps\n\n\nclass Unused:\n    name = 'elsewhere'\n\n\nclass PollsConfig(apps.AppConfig):\n    name = 'mysite.polls'\n\n    def ready(self):\n        from . import signals, checks\n",
+        ),
+        (
+            "mysite/polls/models.py",
+            "from django.db import models\n\n\nclass Question(models.Model):\n    pass\n",
+        ),
+        (
+            "mysite/polls/admin.py",
+            "from django.contrib import admin\n\nfrom .models import Question\n\n\n@admin.register(Question)\nclass QuestionAdmin(admin.ModelAdmin):\n    pass\n",
+        ),
+        (
+            "mysite/polls/signals.py",
+            "from django.db.models.signals import post_save\nfrom django.dispatch import receiver\n\n\n@receiver(post_save)\ndef on_save(sender, **kwargs):\n    pass\n",
+        ),
+        (
+            "mysite/polls/checks.py",
+            "from django.core import checks\n\n\n@checks.register()\ndef check_polls(app_configs, **kwargs):\n    return []\n",
+        ),
+        ("mysite/polls/templatetags/__init__.py", ""),
+        (
+            "mysite/polls/templatetags/poll_extras.py",
+            "from django import template\n\nregister = template.Library()\n\n\n@register.filter\ndef shout(value):\n    return value.upper()\n\n\ndef dead():\n    pass\n",
+        ),
+        // Intentionally unused: no `register`, so Django never loads it.
+        (
+            "mysite/polls/templatetags/helpers.py",
+            "def helper():\n    pass\n",
+        ),
+        (
+            "mysite/polls/templatetags/extra/__init__.py",
+            "from django import template\n\nregister = template.Library()\n\n\n@register.simple_tag\ndef now():\n    pass\n\n\ndef dead():\n    pass\n",
+        ),
+        ("mysite/polls/management/__init__.py", ""),
+        ("mysite/polls/management/commands/__init__.py", ""),
+        (
+            "mysite/polls/management/commands/closepoll.py",
+            "from django.core.management.base import BaseCommand\n\n\nclass Command(BaseCommand):\n    def handle(self, *args, **options):\n        pass\n",
+        ),
+        (
+            "mysite/polls/management/commands/notacommand.py",
+            "def run():\n    pass\n",
+        ),
+        (
+            "mysite/polls/management/commands/_shared.py",
+            "class Command:\n    pass\n",
+        ),
+        // Commands that bind `Command` by import, and ones that do not.
+        (
+            "mysite/polls/management/commands/imported.py",
+            "from mysite.polls.base import Command\n",
+        ),
+        (
+            "mysite/polls/management/commands/aliased.py",
+            "from mysite.polls.base import Base as Command\n",
+        ),
+        (
+            "mysite/polls/management/commands/starred.py",
+            "from mysite.polls.base import *\n",
+        ),
+        (
+            "mysite/polls/management/commands/renamed.py",
+            "from mysite.polls.base import Command as Base\n",
+        ),
+        (
+            "mysite/polls/management/commands/deferred.py",
+            "def load():\n    from mysite.polls.base import Command\n",
+        ),
+        (
+            "mysite/polls/management/commands/unrelated.py",
+            "from mysite.polls.base import Base\n",
+        ),
+        (
+            "mysite/polls/base.py",
+            "class Base:\n    pass\n\n\nCommand = Base\n",
+        ),
+        // Not under `templatetags/`, so no library.
+        (
+            "mysite/polls/library.py",
+            "from django import template\n\nregister = template.Library()\n",
+        ),
+        ("mysite/polls/orphan.py", ""),
+    ])
+}
+
+#[test]
+fn binary_django_installed_app_conventions_are_used() {
+    let flagged = |installed: &str| {
+        let project = django_app_project(installed);
+        let mut keys: Vec<String> = issue_keys(&json_issues(
+            project.path(),
+            &["--production", "--no-cache"],
+        ))
+        .into_iter()
+        .filter(|(code, target)| {
+            matches!(code.as_str(), "CHK001" | "CHK006") && target.starts_with("mysite/polls/")
+        })
+        .map(|(code, target)| format!("{code}:{target}"))
+        .collect();
+        keys.sort();
+        keys
+    };
+    let unused = [
+        "CHK001:mysite/polls/library.py",
+        "CHK001:mysite/polls/management/commands/_shared.py",
+        "CHK001:mysite/polls/management/commands/deferred.py",
+        "CHK001:mysite/polls/management/commands/notacommand.py",
+        "CHK001:mysite/polls/management/commands/renamed.py",
+        "CHK001:mysite/polls/management/commands/unrelated.py",
+        "CHK001:mysite/polls/orphan.py",
+        "CHK001:mysite/polls/templatetags/helpers.py",
+        "CHK006:mysite/polls/apps.py:Unused",
+        "CHK006:mysite/polls/templatetags/extra/__init__.py:dead",
+        "CHK006:mysite/polls/templatetags/poll_extras.py:dead",
+    ];
+    for installed in [
+        "['django.contrib.admin', 'mysite.polls']",
+        "['django.contrib.admin.apps.AdminConfig', 'mysite.polls.apps.PollsConfig']",
+        // A config with no `name` inherits the admin's.
+        "['mysite.apps.SiteAdminConfig', 'mysite.polls']",
+        // An `INSTALLED_APPS` not read in full may install the admin (ADR 0005).
+        "['mysite.polls', *EXTRA_APPS]",
+        "['mysite.polls']\nINSTALLED_APPS += ['django.contrib.admin']",
+    ] {
+        assert_eq!(flagged(installed), unused, "{installed}");
+    }
+    // Without the admin, nothing autodiscovers `admin.py`, but Django still
+    // imports `models.py`.
+    let mut without_admin =
+        flagged("['django.contrib.admin.apps.SimpleAdminConfig', 'mysite.polls']");
+    without_admin.retain(|key| {
+        key.starts_with("CHK001") && (key.contains("admin.py") || key.contains("models.py"))
+    });
+    assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
+    // The inherited config makes the package that defines it no app.
+    let project = django_app_project("['mysite.apps.SiteAdminConfig', 'mysite.polls']");
+    let keys = issue_keys(&json_issues(
+        project.path(),
+        &["--production", "--no-cache"],
+    ));
+    assert!(
+        keys.contains(&("CHK001".to_owned(), "mysite/models.py".to_owned())),
+        "{keys:?}"
+    );
+    assert!(
+        !keys
+            .iter()
+            .any(|(_, target)| target.starts_with("mysite/apps.py")),
+        "{keys:?}"
+    );
+}
+
+#[test]
+fn binary_django_trace_names_the_convention() {
+    let project = django_app_project("['mysite.polls']");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--production",
+            "--no-cache",
+            "--trace",
+            "mysite/polls/templatetags/poll_extras.py",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("(Django templatetags)"), "{stderr}");
+}
+
+#[test]
+fn binary_django_receivers_outside_installed_apps_are_used() {
+    // netbox connects receivers from `netbox/search/signals.py`, a module of
+    // the project package that is no installed app; a reusable app has no
+    // settings at all.
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\nentry = ['mysite/main.py']\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/main.py", "from . import hooks\n"),
+        (
+            "mysite/hooks.py",
+            "from django.db.models.signals import post_save\nfrom django.dispatch import receiver\n\n\n@receiver(post_save)\ndef on_save(sender, **kwargs):\n    pass\n\n\ndef dead():\n    pass\n",
+        ),
+    ]);
+    let flagged: Vec<String> = issue_keys(&json_issues(project.path(), &["--no-cache"]))
+        .into_iter()
+        .filter(|(code, target)| code == "CHK006" && target.starts_with("mysite/hooks.py"))
+        .map(|(_, target)| target)
+        .collect();
+    assert_eq!(flagged, ["mysite/hooks.py:dead"]);
 }
 
 #[test]
@@ -7640,6 +7998,72 @@ fn binary_airflow_plugin_roots_its_definitions() {
             ],
             ORPHAN,
             "likely",
+        ),
+        // An Airflow 3 `LocalDagBundle` path is a DAG folder (#1058).
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                (
+                    "airflow.cfg",
+                    "[dag_processor]\ndag_bundle_config_list = [\n    {\"name\": \"etl\", \"classpath\": \"airflow.dag_processing.bundles.local.LocalDagBundle\", \"kwargs\": {\"path\": \"pipelines\"}}\n  ]\n",
+                ),
+                ("pipelines/etl.py", AIRFLOW_DAG),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // A git bundle loads DAGs from another checkout: not read.
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                (
+                    "airflow.cfg",
+                    "[dag_processor]\ndag_bundle_config_list = [{\"name\": \"g\", \"classpath\": \"airflow.providers.git.bundles.git.GitDagBundle\", \"kwargs\": {\"subdir\": \"dags\"}}]\n",
+                ),
+                ("dags/etl.py", AIRFLOW_DAG),
+            ],
+            ORPHAN,
+            "likely",
+        ),
+    ]);
+}
+
+/// airflow's own suites (#1064): a test `dags/` folder holds files the DAG
+/// processor reads by path and skips (`no_dags.py`, an `.airflowignore`
+/// case), and DAGs an e2e suite copies. Without the plugin they stay
+/// unreached.
+#[test]
+fn binary_airflow_plugin_roots_files_under_dags_directories() {
+    let license =
+        "# Licensed to the Apache Software Foundation (ASF)\nfrom __future__ import annotations\n";
+    let files = vec![
+        ("tests/__init__.py", ""),
+        ("tests/unit/__init__.py", ""),
+        ("tests/unit/dags/no_dags.py", license),
+        (
+            "tests/unit/dags/subdir2/subdir3/should_ignore_this.py",
+            license,
+        ),
+        ("tests/integration/otel/dags/otel_test_dag.py", AIRFLOW_DAG),
+    ];
+    assert_orchestration_cases(vec![
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            files.clone(),
+            ORPHAN,
+            "certain",
+        ),
+        (
+            orchestration_pyproject("", ""),
+            files,
+            &[
+                "acme/helper.py",
+                "acme/orphan.py",
+                "tests/integration/otel/dags/otel_test_dag.py",
+                "tests/unit/dags/no_dags.py",
+                "tests/unit/dags/subdir2/subdir3/should_ignore_this.py",
+            ],
+            "certain",
         ),
     ]);
 }
