@@ -4,6 +4,7 @@ mod attributes;
 mod condition;
 mod decorators;
 mod deprecation;
+mod depth;
 mod dynamic;
 mod encoding;
 mod error;
@@ -20,6 +21,7 @@ mod type_checking;
 mod types;
 mod visit;
 
+pub(crate) use depth::parse_walkable_module;
 pub(crate) use dynamic::{apply_module_loaders, module_ref_name};
 pub(crate) use encoding::decode_python_source;
 pub(crate) use error::ParseError;

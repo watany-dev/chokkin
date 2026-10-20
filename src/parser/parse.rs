@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
 use ruff_python_ast::Stmt;
-use ruff_python_parser::ParseError as RuffParseError;
 use serde_json::Value;
 
 use crate::VERSION;
@@ -16,6 +15,7 @@ use crate::config::TargetVersion;
 use crate::discovery::ProjectRoot;
 use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo};
 
+use super::depth::{MAX_AST_DEPTH, Unwalkable, parse_walkable_module};
 use super::encoding::decode_python_source;
 use super::error::ParseError;
 use super::ignores::extract_ignores_with;
@@ -81,7 +81,7 @@ fn parse_python_source(
     target: &TargetVersion,
 ) -> ParsedModule {
     let lines = LineIndex::new(source);
-    let mut parsed = match ruff_python_parser::parse_module(source) {
+    let mut parsed = match parse_walkable_module(source) {
         Ok(module) => {
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &lines);
             visitor.visit_module(source, module.suite());
@@ -91,10 +91,12 @@ fn parse_python_source(
         },
         // Nothing was read past the error, so the module's imports are as
         // unknown as an undecodable file's; an empty module would read as a
-        // module with no imports.
-        Err(error) => {
+        // module with no imports. A tree too deep to walk is as unknown (#1045).
+        Err(unwalkable) => {
             let mut parsed = skipped_module(path);
-            parsed.diagnostics.push(syntax_diagnostic(&lines, &error));
+            parsed
+                .diagnostics
+                .push(unwalkable_diagnostic(&lines, &unwalkable));
             return parsed;
         },
     };
@@ -214,16 +216,18 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnost
 
 /// `text` as Python, or the 0-based line of the cell and what failed there.
 fn python_cell(text: &str) -> Result<String, (usize, String)> {
-    if ruff_python_parser::parse_module(text).is_ok() {
+    if parse_walkable_module(text).is_ok() {
         return Ok(text.to_owned());
     }
     let python = super::ipython::cell_to_python(text)?;
-    match ruff_python_parser::parse_module(&python) {
+    match parse_walkable_module(&python) {
         Ok(_) => Ok(python),
-        Err(error) => {
-            let line = LineIndex::new(&python).line(error.location.start());
-            let line = usize::try_from(line).unwrap_or(1).saturating_sub(1);
-            Err((line, format!("syntax error: {}", error.error)))
+        Err(unwalkable) => {
+            let diagnostic = unwalkable_diagnostic(&LineIndex::new(&python), &unwalkable);
+            let line = usize::try_from(diagnostic.line)
+                .unwrap_or(1)
+                .saturating_sub(1);
+            Err((line, format!("syntax error: {}", diagnostic.message)))
         },
     }
 }
@@ -590,11 +594,18 @@ fn source_fingerprint(
     })
 }
 
-fn syntax_diagnostic(lines: &LineIndex, error: &RuffParseError) -> ParseDiagnostic {
-    // `ParseError`'s own Display appends a byte range; the line is reported separately.
+fn unwalkable_diagnostic(lines: &LineIndex, unwalkable: &Unwalkable) -> ParseDiagnostic {
+    let (start, message) = match unwalkable {
+        // `ParseError`'s own Display appends a byte range; the line is reported separately.
+        Unwalkable::Syntax(error) => (error.location.start(), error.error.to_string()),
+        Unwalkable::TooDeep(start) => (
+            *start,
+            format!("nested deeper than {MAX_AST_DEPTH} levels, which chokkin does not walk"),
+        ),
+    };
     ParseDiagnostic {
-        line: lines.line(error.location.start()),
-        message: error.error.to_string(),
+        line: lines.line(start),
+        message,
         severity: ParseSeverity::Error,
     }
 }
@@ -690,6 +701,49 @@ mod tests {
             sites,
             vec![("shared_task", 4, false), ("app.route", 12, true)]
         );
+    }
+
+    #[test]
+    fn module_nested_past_the_walk_limit_is_skipped_not_walked() {
+        // Deep enough to overflow any thread stack chokkin's walks run on (#1045).
+        let deep = format!("{}1", "-".repeat(100_000));
+        for (source, skipped) in [
+            (format!("import requests\nx = {deep}\n"), true),
+            // A string annotation is parsed apart from the module; it reads
+            // as an annotation that does not parse.
+            (format!("import requests\nx: \"{deep}\" = 1\n"), false),
+        ] {
+            let temp = TempDir::new().expect("tempdir");
+            let root = write_temp_py(temp.path(), "app.py", &source);
+            let parsed = parse_file(
+                &root,
+                "app.py",
+                &empty_layout(),
+                FileContext::Runtime,
+                &TargetVersion::default_py311(),
+            )
+            .expect("parse");
+
+            assert_eq!(parsed.skipped, skipped);
+            let errors: Vec<_> = parsed
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == ParseSeverity::Error)
+                .map(|diagnostic| (diagnostic.line, diagnostic.message.as_str()))
+                .collect();
+            if skipped {
+                assert_eq!(
+                    errors,
+                    [(
+                        2,
+                        "nested deeper than 1000 levels, which chokkin does not walk"
+                    )]
+                );
+            } else {
+                assert!(errors.is_empty());
+                assert_eq!(parsed.imports.len(), 1);
+            }
+        }
     }
 
     #[test]
