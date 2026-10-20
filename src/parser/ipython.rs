@@ -10,6 +10,10 @@
 //! (`%load_ext`) becomes that import. Any other magic is not recognized and
 //! fails the cell, which the caller reports as unread (ADR 0005).
 
+use ruff_python_ast::token::TokenKind;
+use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
+use ruff_text_size::Ranged;
+
 use super::dynamic::is_dotted_identifier;
 
 /// Line magics that neither run the cell's Python nor import a module, so
@@ -198,16 +202,27 @@ fn script_body(args: &str) -> Result<CellBody, String> {
     )
 }
 
-/// Rewrite each line on its own, the first being the cell's line `start`.
-/// A line ending in `\` continues onto the next: `IPython` joins them with a
-/// space before it reads the magic or shell command they make up.
+/// Rewrite each line that starts a statement on its own, the first being the
+/// cell's line `start`. A line ending in `\` continues onto the next:
+/// `IPython` joins them with a space before it reads the magic or shell
+/// command they make up.
 fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (usize, String)> {
-    let mut index = 0;
-    while let Some(line) = lines.get(index) {
+    let starts = statement_starts(lines);
+    let mut next = 0;
+    for (index, line) in lines.iter().enumerate() {
+        if index < next {
+            continue;
+        }
+        if !starts[index] {
+            out.push_str(line);
+            continue;
+        }
         let text = line.trim_end_matches(['\n', '\r']);
         let mut joined = text.to_owned();
         let mut end = index + 1;
-        while let (Some(head), Some(next)) = (joined.strip_suffix('\\'), lines.get(end)) {
+        while let (Some(head), Some(next), Some(false)) =
+            (joined.strip_suffix('\\'), lines.get(end), starts.get(end))
+        {
             joined = format!("{head} {}", next.trim_end_matches(['\n', '\r']));
             end += 1;
         }
@@ -221,9 +236,48 @@ fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (
             },
             None => lines[index..end].iter().for_each(|line| out.push_str(line)),
         }
-        index = end;
+        next = end;
     }
     Ok(())
+}
+
+/// Whether each line starts a statement, the only place `IPython` reads an
+/// escape (#994). A line inside brackets or a string that spans lines, or
+/// after a `\`, continues the statement before it. The lexer's `IPython`
+/// mode reads an escape to the end of its line, so the brackets and quotes
+/// of a shell command open nothing.
+fn statement_starts(lines: &[&str]) -> Vec<bool> {
+    let mut ends = Vec::with_capacity(lines.len());
+    let mut end = 0;
+    for line in lines {
+        end += line.len();
+        ends.push(end);
+    }
+    let mut starts = vec![false; lines.len()];
+    if let Some(first) = starts.first_mut() {
+        *first = true;
+    }
+    let source = lines.concat();
+    let parsed = parse_unchecked(&source, ParseOptions::from(Mode::Ipython));
+    let mut depth = 0_usize;
+    for token in parsed.tokens() {
+        match token.kind() {
+            TokenKind::Lpar | TokenKind::Lsqb | TokenKind::Lbrace => depth += 1,
+            TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace => {
+                depth = depth.saturating_sub(1);
+            },
+            TokenKind::Newline | TokenKind::NonLogicalNewline if depth == 0 => {
+                let end = token.end().to_usize();
+                if let Ok(line) = ends.binary_search(&end)
+                    && let Some(next) = starts.get_mut(line + 1)
+                {
+                    *next = true;
+                }
+            },
+            _ => {},
+        }
+    }
+    starts
 }
 
 /// The Python for one `IPython` line, or `None` when it is plain Python.
@@ -428,6 +482,32 @@ mod tests {
         assert_eq!(
             cell_to_python(cell).as_deref(),
             Ok("x = 1 + \\\n  2\npass\n")
+        );
+        let cell = "# C:\\data\\\n%matplotlib inline\n";
+        assert_eq!(cell_to_python(cell).as_deref(), Ok("# C:\\data\\\npass\n"));
+    }
+
+    #[test]
+    fn lines_inside_brackets_and_strings_continue_their_statement() {
+        let cell = "%matplotlib inline\ntotal = (a\n         % b)\ndoc = \"\"\"\n!important\n\"\"\"\ny = (a\n     # note\n     % b)\n";
+        assert_eq!(
+            cell_to_python(cell).as_deref(),
+            Ok(
+                "pass\ntotal = (a\n         % b)\ndoc = \"\"\"\n!important\n\"\"\"\ny = (a\n     # note\n     % b)\n"
+            )
+        );
+        assert_eq!(
+            cell_to_python("%%time\nx = [1,\n     !ls]\n!ls\n").as_deref(),
+            Ok("\nx = [1,\n     !ls]\npass\n")
+        );
+    }
+
+    #[test]
+    fn escapes_do_not_open_brackets_or_strings() {
+        let cell = "!echo ( \"\"\"\n# done\n\n%pip install x\nx = !echo [\n%ls\n";
+        assert_eq!(
+            cell_to_python(cell).as_deref(),
+            Ok("pass\n# done\n\npass\nx = ...; pass\npass\n")
         );
     }
 
