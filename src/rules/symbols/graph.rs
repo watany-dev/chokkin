@@ -186,6 +186,19 @@ impl ReferenceIndex {
                 },
             }
         }
+        // `import_string("pkg.mod.Cls")` fetches `mod` from `pkg` and `Cls`
+        // from `pkg.mod` (#493).
+        for dynamic in module
+            .dynamic_imports
+            .iter()
+            .filter(|dynamic| dynamic.fetched)
+        {
+            let name = dynamic.module.as_str();
+            for (index, _) in name.match_indices('.') {
+                let segment = name[index + 1..].split('.').next().unwrap_or_default();
+                record(&name[..index], segment);
+            }
+        }
     }
 
     /// `pkg.name` also uses `name` in each module `pkg` star-imports it from

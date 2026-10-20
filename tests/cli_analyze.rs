@@ -7362,8 +7362,9 @@ fn binary_main_block_does_not_change_project_mode() {
 
 /// A dotted string literal that resolves to a project file may load it by
 /// name (airflow's `lazy_load_command("airflow.cli.commands.x.y")`,
-/// gunicorn's `"python:pkg.config"`), so that file's CHK001 falls to an info
-/// note at likely, and `--explain` names the string (#1026). A computed
+/// gunicorn's `"python:pkg.config"`, celery's `"pkg.backends.redis:Backend"`),
+/// so that file's CHK001 falls to an info note at likely, and `--explain`
+/// names the string (#1026, #493). A computed
 /// string is not recognized and lowers nothing.
 #[test]
 fn binary_dotted_string_literal_lowers_the_named_file() {
@@ -7373,13 +7374,15 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
         ("acme/__init__.py", ""),
         (
             "acme/cli.py",
-            "from acme.loader import lazy_load\nCOMMANDS = {\"cheat\": lazy_load(\"acme.commands.cheat_sheet.run\")}\nGUNICORN = {\"config\": \"python:acme.gunicorn_config\"}\nNAME = \"computed\"\nDYNAMIC = f\"acme.commands.{NAME}\"\n\n\ndef main():\n    return COMMANDS, GUNICORN, DYNAMIC\n",
+            "from acme.loader import lazy_load\nCOMMANDS = {\"cheat\": lazy_load(\"acme.commands.cheat_sheet.run\")}\nGUNICORN = {\"config\": \"python:acme.gunicorn_config\"}\nNAME = \"computed\"\nDYNAMIC = f\"acme.commands.{NAME}\"\nBACKENDS = {\"redis\": \"acme.backends.redis:RedisBackend\"}\n\n\ndef main():\n    return COMMANDS, GUNICORN, DYNAMIC, BACKENDS\n",
         ),
         ("acme/loader.py", "def lazy_load(path):\n    return path\n"),
         ("acme/commands/__init__.py", ""),
         ("acme/commands/cheat_sheet.py", "def run():\n    pass\n"),
         ("acme/commands/computed.py", "WIDTH = 80\n"),
         ("acme/gunicorn_config.py", "workers = 2\n"),
+        ("acme/backends/__init__.py", ""),
+        ("acme/backends/redis.py", "class RedisBackend:\n    pass\n"),
         ("acme/orphan.py", ""),
     ]);
 
@@ -7403,6 +7406,7 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
     assert_eq!(
         unused,
         [
+            level("acme/backends/redis.py", "info", "likely"),
             level("acme/commands/cheat_sheet.py", "info", "likely"),
             level("acme/commands/computed.py", "warning", "certain"),
             level("acme/gunicorn_config.py", "info", "likely"),
@@ -7413,7 +7417,7 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(
         stderr.contains(
-            "parse: `acme/cli.py:2` names `acme.commands.cheat_sheet.run` and 1 more module in strings that may load files no entry reaches; those files are reported as unused at info, if at all"
+            "parse: `acme/cli.py:2` names `acme.commands.cheat_sheet.run` and 2 more modules in strings that may load files no entry reaches; those files are reported as unused at info, if at all"
         ),
         "{stderr}"
     );
@@ -7435,6 +7439,63 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
             .expect("run chokkin");
         let stderr = String::from_utf8(explain.stderr).expect("utf8");
         assert!(stderr.contains(reason), "{target}: {stderr}");
+    }
+}
+
+/// A literal a loader API fetches by name (`import_string("pkg.mod.Cls")`,
+/// celery's `symbol_by_name("pkg.mod:Cls")`) imports the module, and the
+/// class it names counts as used; a name nothing resolves is no unresolved
+/// import, since the loader may be handed a bad name on purpose. A function
+/// `module_loaders` names loads its argument the same way; without it the
+/// string only lowers the file it names (#493).
+#[test]
+fn binary_loader_api_strings_import_the_module_they_name() {
+    let base = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    for (pyproject, vision) in [
+        (format!("{base}module_loaders = [\"LazyFeature\"]\n"), None),
+        (
+            base.to_owned(),
+            Some(level("CHK001", "acme/features/vision.py", "info", "likely")),
+        ),
+    ] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject.as_str()),
+            ("acme/__init__.py", ""),
+            (
+                "acme/cli.py",
+                "from acme.loading import LazyFeature, import_string, symbol_by_name\n\n\ndef main():\n    backend = import_string(\"acme.backends.redis.RedisBackend\")\n    worker = symbol_by_name(\"acme.workers:Worker\")\n    missing = import_string(\"a.aa\")\n    feature = LazyFeature(\"acme.features.vision\")\n    return backend, worker, missing, feature\n",
+            ),
+            (
+                "acme/loading.py",
+                "def import_string(path):\n    return path\n\n\ndef symbol_by_name(path):\n    return path\n\n\ndef LazyFeature(path):\n    return path\n",
+            ),
+            ("acme/backends/__init__.py", ""),
+            (
+                "acme/backends/redis.py",
+                "class RedisBackend:\n    pass\n\n\nclass Unused:\n    pass\n",
+            ),
+            ("acme/workers.py", "class Worker:\n    pass\n"),
+            ("acme/features/__init__.py", ""),
+            ("acme/features/vision.py", ""),
+            ("acme/orphan.py", ""),
+        ]);
+        let mut expected: Vec<_> = vision.into_iter().collect();
+        expected.push(level("CHK001", "acme/orphan.py", "warning", "certain"));
+        expected.push(level(
+            "CHK006",
+            "acme/backends/redis.py:Unused",
+            "warning",
+            "likely",
+        ));
+        assert_eq!(issue_levels(project.path()), expected, "{pyproject}");
     }
 }
 
