@@ -168,6 +168,16 @@ pub enum ManifestWarning {
         /// Why it was skipped and what that leaves unchecked.
         reason: String,
     },
+    /// An entry-point declaration could not be read, so it roots nothing
+    /// (#916). Findings are not lowered for it (#888).
+    EntryPointUnreadable {
+        /// Root-relative manifest file.
+        file: String,
+        /// Key path of the declaration, e.g. `tool.poetry.scripts.acme`.
+        label: String,
+        /// Why it was skipped.
+        reason: String,
+    },
     /// A PEP 723 script block was ignored; the file stays a plain source.
     InlineScriptInvalid {
         /// Root-relative script path.
@@ -198,6 +208,7 @@ impl ManifestWarning {
             | Self::RequiresPythonUnreadable { file, .. }
             | Self::InlineScriptRequiresPythonUnreadable { file, .. }
             | Self::InlineScriptInvalid { file, .. }
+            | Self::EntryPointUnreadable { file, .. }
             | Self::LockfileSkipped { file, .. } => *file = join_rel(base, file),
             Self::MetadataConflict {
                 kept_source,

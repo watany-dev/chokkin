@@ -246,7 +246,8 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
         | ManifestWarning::DynamicExtrasUnread { file, .. }
         | ManifestWarning::RequiresPythonUnreadable { file, .. }
         | ManifestWarning::InlineScriptRequiresPythonUnreadable { file, .. }
-        | ManifestWarning::InlineScriptInvalid { file, .. } => (Some(file), None),
+        | ManifestWarning::InlineScriptInvalid { file, .. }
+        | ManifestWarning::EntryPointUnreadable { file, .. } => (Some(file), None),
         // The sections are named, not the file; a conflict spans two files;
         // a missing constraints file does not exist.
         ManifestWarning::PoetryDetected
@@ -571,6 +572,14 @@ fn write_manifest_warning(
         ManifestWarning::InlineScriptInvalid { file, reason } => write!(
             formatter,
             "manifest: ignored PEP 723 script block in `{file}`: {reason}"
+        ),
+        ManifestWarning::EntryPointUnreadable {
+            file,
+            label,
+            reason,
+        } => write!(
+            formatter,
+            "manifest: skipped entry point `{label}` in `{file}`: {reason}"
         ),
         ManifestWarning::DependencyGroupIncludeUndefined {
             file,

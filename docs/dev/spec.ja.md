@@ -208,7 +208,7 @@ Poetry の依存表は、値の table のうち install されるかどうかを
 
 PEP 735 の `{include-group = "..."}` は、group名を PEP 503 と同じ規則で正規化して解決し、推移閉包として展開する。要件は include 先へ複製せず宣言元 group に 1 件だけ置き、`DeclaredDependency.included_via` に include 元から宣言元までの経路 (例: `["all", "dev", "test"]`) を持たせる。§10 の context 判定・CHK005 は宣言元 group と各経路の先頭 group の bucket をすべて有効な宣言先として扱い、CHK002 は有効な bucket がすべて dev のときだけ非 strict で抑制する。CHK009 は宣言元の context だけで判定するので、include だけで重複扱いにはならない。`--fix` は宣言元 group の label (`dependency-groups.<group>[i]`、index は include table も数える) だけを編集し、include 要素は書き換えない。`--explain` には `included via dependency-groups: server -> shared` の行で経路を出す。未定義 group への include (`DependencyGroupIncludeUndefined`) と循環 (`DependencyGroupIncludeCycle`) は manifest warning にして、解析は止めずに循環を切って続ける。
 
-Python packagingのentry pointsは、distributionが提供するcomponentを他のコードやinstallerに知らせる仕組みで、`console_scripts` はインストール時にCLI wrapperを作るために使われる。`chokkin` は `[project.scripts]`、`[project.gui-scripts]`、`[project.entry-points]` をentry rootとして扱う。
+Python packagingのentry pointsは、distributionが提供するcomponentを他のコードやinstallerに知らせる仕組みで、`console_scripts` はインストール時にCLI wrapperを作るために使われる。`chokkin` は `[project.scripts]`、`[project.gui-scripts]`、`[project.entry-points]` をentry rootとして扱う。同じ宣言を Poetry の `[tool.poetry.scripts]` (`name = "pkg.cli:main"` と `{ reference = "...", type = "console" }` の table。旧形式の `callable` も読む) と `[tool.poetry.plugins."group"]`、`setup.cfg` の `[options.entry_points]` (setuptools と同じく、値に改行があれば行ごと、無ければ `,` で区切る)、`setup.py` の `setup(entry_points=...)` (静的に読める dict で、group ごとに行を並べた文字列か文字列の list。または `[group]` 見出しを持つ 1 つの文字列) からも読む (#916)。どの形でも setuptools の group 名 `console_scripts` / `gui_scripts` は `[project.scripts]` / `[project.gui-scripts]` と同じ console / gui として扱い、§8 の mode 判定にも効く。どの形にも当たらない宣言 (文字列でも table でもない値、`type = "file"` の Poetry script、`[options] entry_points = file: ...`、`name = target` の形でない行、静的に読めない `entry_points`、一部の group を読めない dict) は root にせず、`` manifest: skipped entry point `tool.poetry.scripts.x` in `pyproject.toml`: <理由> `` を warning に出す。読めない宣言が CHK001 / CHK006 を下げるかは #888 で扱うので、今は warning だけで gap にはしない。`setup(**kwargs)` が隠しうる `entry_points` は名指しされないので warning も出さない。複数の manifest が同じ entry を宣言しても root が重なるだけなので、すべて読む。
 
 ## 5. 設定ファイル仕様
 
@@ -434,6 +434,8 @@ zero-configにはentry推定が必要。デフォルトでentry扱いにする�
 [project.scripts]
 [project.gui-scripts]
 [project.entry-points.*]
+[tool.poetry.scripts] / [tool.poetry.plugins.*]
+setup.cfg の [options.entry_points] / setup.py の setup(entry_points=...)
 [tool.hatch.*.hooks.custom] / [tool.hatch.build.targets.custom] の path
 __main__.py
 main.py

@@ -5,13 +5,16 @@ use std::path::Path;
 
 use crate::path_util::rel_to_root;
 
+use super::entry_points::EntryPoints;
 use super::error::ManifestError;
 use super::literals::parse_module;
 use super::requirements::{extract_requirements_path, requirements_line_distribution};
 use super::setup_py_eval::{
     DependencyItem, SetupCall, Value, dependency_items, evaluate_setup_call,
 };
-use super::types::{DeclaredDependency, DependencyContext, ExtrasState, ProjectMetadata};
+use super::types::{
+    DeclaredDependency, DependencyContext, EntryPointDecl, ExtrasState, ProjectMetadata,
+};
 use super::util::{DependencyPush, push_dependency, read_text};
 use super::warnings::ManifestWarning;
 
@@ -41,6 +44,8 @@ pub(super) struct SetupPyExtraction {
     /// Distributions a requirement table lists (transformers `_deps`): a
     /// version pin table, not a declaration, so they only name packages.
     pub table_names: Vec<String>,
+    /// `entry_points` declarations, read even when dependencies are not.
+    pub entry_points: Vec<EntryPointDecl>,
 }
 
 /// Extract manifest data from `setup.py` without executing Python.
@@ -71,6 +76,14 @@ pub(super) fn extract_setup_py(
     result.dynamic_name = result.metadata.name.is_none() && call.keyword("name").is_some();
     result.metadata.version = string_keyword(&call, "version");
     result.metadata.requires_python = string_keyword(&call, "python_requires");
+    if let Some(entry_points) = call.keyword("entry_points") {
+        EntryPoints {
+            rel: &rel,
+            entries: &mut result.entry_points,
+            warnings: &mut result.warnings,
+        }
+        .read_setup_py(entry_points);
+    }
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
     // `extras_require` the evaluator could not read, entries of it the

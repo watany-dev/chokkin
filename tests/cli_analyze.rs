@@ -7409,3 +7409,61 @@ fn binary_airflow_on_disk_test_dag_is_no_production_entry() {
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     assert!(!stderr.contains("skipped entry"), "{stderr}");
 }
+
+/// Poetry, setup.cfg and setup.py declare console scripts as
+/// `[project.scripts]` does, and each roots its target (#916).
+#[test]
+fn binary_entry_points_from_every_manifest_root_their_targets() {
+    let manifests = [
+        (
+            "pyproject.toml",
+            "[tool.poetry]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.poetry.scripts]\nacme = \"acme.main:main\"\n",
+        ),
+        (
+            "setup.cfg",
+            "[metadata]\nname = acme\n\n[options.entry_points]\nconsole_scripts =\n    acme = acme.main:main\n",
+        ),
+        (
+            "setup.py",
+            "from setuptools import setup\n\nsetup(\n    name=\"acme\",\n    entry_points={\"console_scripts\": [\"acme = acme.main:main\"]},\n)\n",
+        ),
+    ];
+    for (manifest, text) in manifests {
+        let temp = write_project(&[
+            (manifest, text),
+            ("acme/__init__.py", ""),
+            (
+                "acme/main.py",
+                "def main():\n    pass\n\n\ndef unused():\n    pass\n",
+            ),
+        ]);
+        let keys = issue_keys(&json_issues(temp.path(), &[]));
+        let has = |code: &str, target: &str| keys.contains(&(code.to_owned(), target.to_owned()));
+        assert!(!has("CHK006", "acme/main.py:main"), "{manifest}: {keys:?}");
+        assert!(!has("CHK001", "acme/main.py"), "{manifest}: {keys:?}");
+        assert!(has("CHK006", "acme/main.py:unused"), "{manifest}: {keys:?}");
+    }
+}
+
+/// A declaration none of the forms describes is skipped with a warning.
+#[test]
+fn binary_unreadable_entry_point_is_reported() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[tool.poetry]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.poetry.scripts]\nacme = 1\n",
+        ),
+        ("acme/__init__.py", ""),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "manifest: skipped entry point `tool.poetry.scripts.acme` in `pyproject.toml`: not a string or script table"
+        ),
+        "{stderr}"
+    );
+}

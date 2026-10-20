@@ -9,6 +9,7 @@ use toml::de::{DeTable, Deserializer};
 use crate::path_util::rel_to_root;
 
 use super::dependency_groups::extract_dependency_groups;
+use super::entry_points::EntryPoints;
 use super::error::ManifestError;
 use super::pep508::canonical_version_specifiers;
 use super::pep508_util::{
@@ -122,39 +123,14 @@ pub(super) fn extract_pyproject(
             result.dynamic_extras = Some(dynamic_extras_state(&table));
         }
 
-        if let Some(scripts) = project.get("scripts").and_then(Value::as_table) {
-            push_entry_point_table(
-                scripts,
-                &rel,
-                "console",
-                "project.scripts",
-                &mut result.entry_points,
-            );
-        }
-
-        if let Some(scripts) = project.get("gui-scripts").and_then(Value::as_table) {
-            push_entry_point_table(
-                scripts,
-                &rel,
-                "gui",
-                "project.gui-scripts",
-                &mut result.entry_points,
-            );
-        }
-
-        if let Some(entry_points) = project.get("entry-points").and_then(Value::as_table) {
-            for (group, entries) in entry_points {
-                if let Some(entries_table) = entries.as_table() {
-                    push_entry_point_table(
-                        entries_table,
-                        &rel,
-                        group,
-                        &format!("project.entry-points.{group}"),
-                        &mut result.entry_points,
-                    );
-                }
-            }
-        }
+        entry_points(&rel, &mut result).read_project(project);
+    }
+    if let Some(poetry) = table
+        .get("tool")
+        .and_then(|tool| tool.get("poetry"))
+        .and_then(Value::as_table)
+    {
+        entry_points(&rel, &mut result).read_poetry(poetry);
     }
 
     poetry_metadata_fallback(&table, &mut result.metadata);
@@ -225,26 +201,11 @@ fn push_dependency_array(
     }
 }
 
-fn push_entry_point_table(
-    table: &toml::map::Map<String, Value>,
-    rel: &str,
-    group: &str,
-    label_prefix: &str,
-    entry_points: &mut Vec<EntryPointDecl>,
-) {
-    for (name, target) in table {
-        if let Some(target_str) = target.as_str() {
-            entry_points.push(EntryPointDecl {
-                name: name.clone(),
-                target: target_str.to_owned(),
-                group: group.to_owned(),
-                origin: DependencyOrigin {
-                    file: rel.to_owned(),
-                    line: None,
-                    label: format!("{label_prefix}.{name}"),
-                },
-            });
-        }
+fn entry_points<'a>(rel: &'a str, result: &'a mut PyprojectExtraction) -> EntryPoints<'a> {
+    EntryPoints {
+        rel,
+        entries: &mut result.entry_points,
+        warnings: &mut result.warnings,
     }
 }
 

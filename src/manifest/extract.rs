@@ -110,6 +110,7 @@ pub fn extract_manifest(
             "setup.cfg",
         );
         dependencies.extend(extracted.dependencies);
+        entry_points.extend(extracted.entry_points);
         warnings.extend(extracted.warnings);
         sources.setup_cfg = true;
         extras = extracted.extras;
@@ -146,6 +147,7 @@ pub fn extract_manifest(
             "setup.py",
         );
         sources.setup_py_dynamic_name = extracted.dynamic_name;
+        entry_points.extend(extracted.entry_points);
         if let Some(state) = extracted.extras {
             extras = Some(extras.unwrap_or_default().merge(state));
         }
