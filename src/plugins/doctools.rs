@@ -394,7 +394,8 @@ struct Extensions {
     assigned: bool,
 }
 
-/// The names in `extensions = [...]` and in later top-level
+/// The names in each top-level `extensions = [...]` (a reassignment
+/// `extensions = extensions + [...]` too, which is unread) and
 /// `extensions.append(...)`, `.insert(i, ...)`, `.extend([...])` and
 /// `+= [...]`. A bare name instead of a literal goes through `constant`
 /// (`extensions = BASIC_SPHINX_EXTENSIONS` imported from a constants module,
@@ -402,14 +403,20 @@ struct Extensions {
 /// (#830). Statements under `if` or in a function are not read.
 fn sphinx_extensions(stmts: &[Stmt], constant: &dyn Fn(&str) -> Option<Vec<String>>) -> Extensions {
     let mut read = Extensions::default();
-    if let Some(value) = assigned_value(stmts, "extensions") {
-        read.assigned = true;
-        literal_strings(value, constant, &mut read);
-    }
     let is_extensions =
         |expr: &Expr| matches!(expr, Expr::Name(name) if name.id.as_str() == "extensions");
     for stmt in stmts {
         match stmt {
+            Stmt::Assign(assign) if assign.targets.iter().any(is_extensions) => {
+                read.assigned = true;
+                literal_strings(&assign.value, constant, &mut read);
+            },
+            Stmt::AnnAssign(assign) if is_extensions(&assign.target) => {
+                if let Some(value) = &assign.value {
+                    read.assigned = true;
+                    literal_strings(value, constant, &mut read);
+                }
+            },
             Stmt::Expr(stmt) => {
                 let Expr::Call(call) = &*stmt.value else {
                     continue;
@@ -578,6 +585,20 @@ mod tests {
         assert_eq!(unread, [1, 2, 3, 4]);
         assert!(assigned);
         assert!(!read("extensions.append('a')\n").2);
+    }
+
+    /// Every top-level assignment is read, not only the first: a
+    /// reassignment in a form not read is a gap, not dropped (ADR 0005).
+    #[test]
+    fn each_assignment_of_extensions_is_read() {
+        let (names, unread, assigned) = read(
+            "extensions = ['a']\nextensions = extensions + ['b']\n\
+             extensions: list[str] = ['c']\n",
+        );
+        assert_eq!(names, [("a".to_owned(), 1), ("c".to_owned(), 3)]);
+        assert_eq!(unread, [2]);
+        assert!(assigned);
+        assert!(read("extensions: list[str] = ['a']\n").2);
     }
 
     #[test]
