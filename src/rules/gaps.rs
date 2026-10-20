@@ -748,10 +748,13 @@ fn image_tree_gaps(context: &RuleContext<'_>, commands: &[CommandTargetRef]) -> 
 /// nothing. A name that resolves to nothing (a third-party module, a
 /// sentence of identifiers) hides no project file, so it is no gap.
 fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
-    let index = ModuleIndex::new(
-        &context.sources.layout,
-        context.sources.files.iter().map(|file| file.path.as_str()),
-    );
+    let known_paths: BTreeSet<String> = context
+        .sources
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    let index = ModuleIndex::new(&known_paths, &context.sources.layout);
     let mut gaps = Vec::new();
     for module in &context.parse.modules {
         for reference in &module.module_refs {
@@ -759,7 +762,7 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
             let Some(target) = resolve_dotted_prefix(name, &index) else {
                 continue;
             };
-            if target == module.path || is_reached(target, context.graph, context.reachability) {
+            if target == module.path || is_reached(&target, context.graph, context.reachability) {
                 continue;
             }
             gaps.push(Gap {
@@ -767,7 +770,7 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
                 kind: GapKind::StringModuleRef,
                 member: None,
                 site: Some((reference.text.clone(), Some(reference.line))),
-                target: Some(target.to_owned()),
+                target: Some(target),
             });
         }
     }
@@ -777,7 +780,7 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
 /// The project file `module` names, or else the one its longest prefix of
 /// at least two segments names. A package's `__init__.py` is never a CHK001
 /// candidate, so a name that stops at a package lowers nothing.
-fn resolve_dotted_prefix<'a>(module: &str, index: &ModuleIndex<'a>) -> Option<&'a str> {
+fn resolve_dotted_prefix(module: &str, index: &ModuleIndex<'_>) -> Option<String> {
     let mut candidate = module;
     loop {
         if let Some(path) = index.resolve(candidate) {
@@ -1284,21 +1287,22 @@ mod tests {
             packages: vec!["acme".to_owned()],
             ..Default::default()
         };
-        let index = ModuleIndex::new(
-            &layout,
-            [
-                "acme/__init__.py",
-                "acme/commands/__init__.py",
-                "acme/commands/cheat_sheet.py",
-            ],
-        );
+        let known: BTreeSet<String> = [
+            "acme/__init__.py",
+            "acme/commands/__init__.py",
+            "acme/commands/cheat_sheet.py",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let index = ModuleIndex::new(&known, &layout);
         let resolve = |module: &str| resolve_dotted_prefix(module, &index);
         assert_eq!(
-            resolve("acme.commands.cheat_sheet.run"),
+            resolve("acme.commands.cheat_sheet.run").as_deref(),
             Some("acme/commands/cheat_sheet.py")
         );
         assert_eq!(
-            resolve("acme.commands.cheat_sheet"),
+            resolve("acme.commands.cheat_sheet").as_deref(),
             Some("acme/commands/cheat_sheet.py")
         );
         assert_eq!(resolve("acme.commands.missing.run"), None);

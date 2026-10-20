@@ -16,6 +16,8 @@ Release gate (with --baseline, #325):
      recall sentinels, do not grow over the baseline run
   8. with --with-strict on both runs: no finding labelled `tp` vanishes from
      the --strict output (see Downgrade vs vanish below)
+  9. unless --no-slowdown: no medium or large project's median cold run slows
+     down past the baseline's (see Slowdown below)
 
 Usage:
   scripts/oss-metrics.py [OPTIONS]
@@ -29,8 +31,11 @@ Options:
   -o, --output DIR      Report directory (default: target/oss-metrics)
   -b, --bin PATH        chokkin binary (default: target/release/chokkin)
   -r, --runs N          Timed repetitions per project, median reported (default: 3)
-  --baseline DIR        --output of a baseline run; writes compare.md and
-                        finding-diff.tsv and adds the CHK003 growth criterion
+  --baseline DIR        --output of a baseline run on the same machine; writes
+                        compare.md and finding-diff.tsv and adds the CHK003
+                        growth and slowdown criteria
+  --no-slowdown         Leave the slowdown criterion out, for a baseline that
+                        is not the previous release (CI's v0.4.1)
   --strict              Run chokkin with --strict, which also shows `maybe`
                         findings, so a downgrade stays visible; use a separate
                         --output. A --baseline must be --strict too
@@ -114,6 +119,17 @@ only. The gate fails on a vanished `tp`; vanished findings without a label are
 counted for triage but do not gate, because a release that fixes false
 positives makes hundreds of them vanish.
 
+Slowdown (#1025): criterion 3 covers medium projects only, so a large
+project five times slower passed two releases (transformers in v0.7.4/v0.7.5).
+With --baseline, a medium or large project whose median_ms is at least
+SLOWDOWN_RATIO times the baseline's and SLOWDOWN_MIN_MS over it is re-measured
+over CONFIRM_RUNS cold runs, and fails the gate when that median is still
+slowed. Small projects and sentinels run in tens of ms, where a ratio is noise.
+A project that exited 2 or 3 in either run is left to criteria 2 and 4. Both
+runs must be measured on the same machine, and the baseline should be the
+previous release: CI's baseline is v0.4.1 for criterion 7, which analyzes far
+less than HEAD (llama_index 660 -> 2210 ms), so CI passes --no-slowdown.
+
 chokkin only reads the analyzed projects; nothing from them is executed.
 """
 
@@ -127,6 +143,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 import oss_corpus as oc
@@ -139,6 +156,14 @@ FP_GATE_PCT = 5
 # floor, and a stricter one. CHK005 / CHK007 / CHK008 / CHK009 have too few
 # labelled hits yet and are recorded only (#862).
 PRECISION_FLOORS = {"CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
+# Release-gate slowdown (#1025): two -r 1 runs of one binary on one machine
+# differed by at most 1.13x per medium or large project, the slowdowns between
+# releases that were not regressions stayed under 1.3x (sqlalchemy v0.7.0 ->
+# v0.7.5), and transformers went 5.7x in v0.7.4.
+SLOWDOWN_RATIO = 1.5
+SLOWDOWN_MIN_MS = 500
+SLOWDOWN_SIZES = frozenset({"medium", "large"})
+CONFIRM_RUNS = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -154,6 +179,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--baseline", type=Path)
     p.add_argument("--strict", action="store_true")
     p.add_argument("--with-strict", action="store_true")
+    p.add_argument("--no-slowdown", action="store_true")
     p.add_argument("--build", action="store_true")
     p.add_argument("--clone", action="store_true")
     p.add_argument("--gate", action="store_true")
@@ -305,6 +331,64 @@ def recall_missed(
 
 def too_slow(size: str, median_ms: int) -> bool:
     return size == "medium" and median_ms > MEDIUM_GATE_MS
+
+
+def slowed(base_ms: int, head_ms: int) -> bool:
+    return head_ms >= base_ms * SLOWDOWN_RATIO and head_ms - base_ms >= SLOWDOWN_MIN_MS
+
+
+def medians(run: Path) -> dict[str, tuple[str, int]]:
+    """slug -> (size, median_ms) of the medium and large projects in run's
+    summary.tsv whose analysis finished (exit 0 or 1)."""
+    return {
+        r[0]: (r[2], int(r[4]))
+        for r in tsv_rows(run / "summary.tsv")
+        if r[2] in SLOWDOWN_SIZES and r[3] in ("0", "1")
+    }
+
+
+def slowdowns(base: Path, head: Path) -> list[list]:
+    """[slug, size, base_ms, head_ms] of the projects in both runs' medians
+    whose head median slowed down past base's."""
+    base_ms = medians(base)
+    return [
+        [slug, size, base_ms[slug][1], ms]
+        for slug, (size, ms) in medians(head).items()
+        if slug in base_ms and slowed(base_ms[slug][1], ms)
+    ]
+
+
+def confirm_slowdowns(rows: list[list], rerun: Callable[[str], int]) -> list[list]:
+    """Re-measure each slowed project: `rerun(slug)` is its median over
+    CONFIRM_RUNS cold runs. Appends that median to each row and returns the
+    rows it still finds slowed."""
+    for row in rows:
+        row.append(rerun(row[0]))
+    return [r for r in rows if slowed(r[2], r[4])]
+
+
+def slowdown_md(base: Path, head: Path, rows: list[list]) -> list[str]:
+    """compare.md section of criterion 9; `rows` as confirm_slowdowns left them."""
+    base_ms, head_ms = medians(base), medians(head)
+    both = base_ms.keys() & head_ms.keys()
+    return [
+        "## Run time, medium and large projects",
+        "",
+        f"Median cold run summed over the {len(both)} projects in both runs: "
+        f"{sum(base_ms[s][1] for s in both)} ms -> {sum(head_ms[s][1] for s in both)} ms.",
+        f"A project fails at >= {SLOWDOWN_RATIO:g}x the baseline and >= {SLOWDOWN_MIN_MS} ms over it, "
+        f"in this run and in a re-measure over {CONFIRM_RUNS} runs (#1025).",
+        "",
+        *(
+            oc.md_table(
+                ["Project", "Size", "Base ms", "Head ms", "Re-measured ms", "Result"],
+                [[*r, "❌ FAIL" if slowed(r[2], r[4]) else "✅ noise"] for r in rows],
+                "llrrrl",
+            )
+            if rows
+            else ["_No project slowed down past the criterion._"]
+        ),
+    ]
 
 
 def parse_report(stdout: bytes) -> dict | None:
@@ -526,7 +610,8 @@ def finding_diff_md(rows: list[list[str]], skipped: list[str]) -> list[str]:
 
 
 def compare_md(
-    base: Path, head: Path, report: list[str], diff: tuple[list[list[str]], list[str]], vanish: list[str]
+    base: Path, head: Path, report: list[str], diff: tuple[list[list[str]], list[str]], vanish: list[str],
+    timing: list[str],
 ) -> list[str]:
     """Before/after summary for the CI job page; the full scorecard lists every
     finding and outgrows the job summary limit."""
@@ -581,6 +666,8 @@ def compare_md(
         "",
         *vanish,
         *([""] if vanish else []),
+        *timing,
+        *([""] if timing else []),
         *report[start:end],
     ]
 
@@ -610,6 +697,7 @@ def main() -> int:
             print(f"--with-strict needs a baseline run with --with-strict: {args.baseline}", file=sys.stderr)
             return 2
 
+    extra = ("--strict",) if args.strict else ()
     targets: list[tuple[str, str, str, Path]] = []
     for row in oc.read_manifest(args.manifest):
         proj = args.clones / row["slug"]
@@ -642,7 +730,7 @@ def main() -> int:
 
     for slug, category, size, proj in targets:
         print(f"==> {slug} ({category}/{size})", flush=True)
-        run, median_ms = timed_run(args.bin, proj, args.runs, ("--strict",) if args.strict else ())
+        run, median_ms = timed_run(args.bin, proj, args.runs, extra)
         (out / f"{slug}.json").write_bytes(run.stdout)
         (out / f"{slug}.stderr").write_bytes(run.stderr)
         report = parse_report(run.stdout)
@@ -905,7 +993,21 @@ def main() -> int:
             print("\n".join(vanish))
             if not passes["vanish"]:
                 print("findings vanished from the --strict output; see compare.md", file=sys.stderr)
-        compare = compare_md(args.baseline, out, lines, diff, vanish)
+        timing = []
+        if not args.no_slowdown:
+            projects = {slug: proj for slug, _, _, proj in targets}
+            slow = slowdowns(args.baseline, out)
+            for slug, *_ in slow:
+                print(f"==> {slug}: re-measuring a slowdown over {CONFIRM_RUNS} runs", flush=True)
+            still_slow = confirm_slowdowns(
+                slow, lambda slug: timed_run(args.bin, projects[slug], CONFIRM_RUNS, extra)[1]
+            )
+            timing = slowdown_md(args.baseline, out, slow)
+            print("\n".join(timing))
+            passes["slowdown"] = not still_slow
+            if still_slow:
+                print(f"slower than {args.baseline}: {' '.join(r[0] for r in still_slow)}", file=sys.stderr)
+        compare = compare_md(args.baseline, out, lines, diff, vanish, timing)
         (out / "compare.md").write_text("\n".join(compare) + "\n", encoding="utf-8")
         base_n = chk003_gate_count(args.baseline, set(expect))
         head_n = chk003_gate_count(out, set(expect))

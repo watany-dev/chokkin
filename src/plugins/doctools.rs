@@ -1,8 +1,9 @@
 //! Documentation tool plugin extractors.
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use ruff_python_ast::{Expr, Stmt, Suite};
 use ruff_text_size::{Ranged, TextSize};
@@ -32,7 +33,7 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     let mut contrib = PluginContribution::empty(plugin);
     match plugin {
         PluginId::Sphinx => {
-            let modules = OnceCell::new();
+            let modules = ConfModules::new(ctx.root.path.as_path());
             for (conf, label) in sphinx_confs(ctx) {
                 read_conf(ctx, &conf, &label, &modules, &mut contrib);
             }
@@ -103,7 +104,7 @@ fn read_conf(
     ctx: &PluginContext<'_>,
     conf: &Path,
     label: &str,
-    modules: &OnceCell<HashMap<String, String>>,
+    modules: &ConfModules,
     contrib: &mut PluginContribution,
 ) {
     let root = ctx.root.path.as_path();
@@ -116,7 +117,7 @@ fn read_conf(
     // Sphinx reads its settings from the namespace, so a `conf.py` inside a
     // package (`devel-common/src/docs/rtd-deprecation/conf.py`) is no API.
     contrib.scanned_files.push(file.clone());
-    let module_files = modules.get_or_init(|| module_files(ctx.sources));
+    let module_files = modules.files(ctx.sources);
     let imports = ConfImports::new(&stmts, module_files);
     let lines = LineIndex::new(&contents);
     // Extensions often live in a directory an imported constants module
@@ -124,7 +125,7 @@ fn read_conf(
     for imported in &imports.files {
         push_sys_path_import(contrib, &file, imported);
     }
-    let read = sphinx_extensions(&stmts, &|name| imports.strings(root, &stmts, name));
+    let read = sphinx_extensions(&stmts, &|name| imports.strings(modules, &stmts, name));
     push_unread_extensions(contrib, &file, &lines, &read.unread);
     let mut assigned = read.assigned;
     let mut refs: Vec<(String, TextSize, &str)> = read
@@ -137,19 +138,20 @@ fn read_conf(
         let followed = star
             .file
             .as_ref()
-            .and_then(|path| Some((path, read_module(&root.join(path))?)));
-        let Some((path, (star_contents, star_stmts))) = followed else {
+            .and_then(|path| Some((path, modules.parsed(path)?)));
+        let Some((path, star_module)) = followed else {
             unfollowed.push((file.clone(), star.module.clone(), lines.line(star.start)));
             continue;
         };
-        let star_imports = ConfImports::new(&star_stmts, module_files);
+        let (star_contents, star_stmts) = &*star_module;
+        let star_imports = ConfImports::new(star_stmts, module_files);
         for imported in &star_imports.files {
             push_sys_path_import(contrib, &file, imported);
         }
-        let star_read = sphinx_extensions(&star_stmts, &|name| {
-            star_imports.strings(root, &star_stmts, name)
+        let star_read = sphinx_extensions(star_stmts, &|name| {
+            star_imports.strings(modules, star_stmts, name)
         });
-        let star_lines = LineIndex::new(&star_contents);
+        let star_lines = LineIndex::new(star_contents);
         push_unread_extensions(contrib, path, &star_lines, &star_read.unread);
         assigned |= star_read.assigned;
         refs.extend(
@@ -186,10 +188,45 @@ fn read_conf(
     }
 }
 
-fn read_module(path: &Path) -> Option<(String, Suite)> {
+/// A module's source and statements.
+type Module = (String, Suite);
+
+fn read_module(path: &Path) -> Option<Module> {
     let contents = std::fs::read_to_string(path).ok()?;
     let stmts = parse_module(&contents)?;
     Some((contents, stmts))
+}
+
+/// The first-party modules the `conf.py` files import, each found and read
+/// once: airflow's ~100 provider `conf.py` star-import the same
+/// `provider_conf`, which takes its extensions from `conf_constants` (#1025).
+struct ConfModules<'a> {
+    root: &'a Path,
+    files: OnceCell<HashMap<String, String>>,
+    parsed: RefCell<HashMap<String, Option<Rc<Module>>>>,
+}
+
+impl<'a> ConfModules<'a> {
+    fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            files: OnceCell::new(),
+            parsed: RefCell::default(),
+        }
+    }
+
+    fn files(&self, sources: &DiscoveredSources) -> &HashMap<String, String> {
+        self.files.get_or_init(|| module_files(sources))
+    }
+
+    /// The source and statements of a root-relative file.
+    fn parsed(&self, path: &str) -> Option<Rc<Module>> {
+        self.parsed
+            .borrow_mut()
+            .entry(path.to_owned())
+            .or_insert_with(|| read_module(&self.root.join(path)).map(Rc::new))
+            .clone()
+    }
 }
 
 /// `conf` takes the `sys.path` hints of `module`, a file it imports (#779).
@@ -328,13 +365,13 @@ impl ConfImports {
     /// (`BASIC_SPHINX_EXTENSIONS = [...]`, #779), else in a module it
     /// star-imports. One level only: a name that module imports in turn is
     /// not read.
-    fn strings(&self, root: &Path, stmts: &[Stmt], local: &str) -> Option<Vec<String>> {
+    fn strings(&self, modules: &ConfModules, stmts: &[Stmt], local: &str) -> Option<Vec<String>> {
         if let Some(value) = assigned_value(stmts, local) {
             return constant_strings(value);
         }
         let read = |path: &str, name: &str| {
-            let (_, stmts) = read_module(&root.join(path))?;
-            assigned_value(&stmts, name).and_then(constant_strings)
+            let module = modules.parsed(path)?;
+            assigned_value(&module.1, name).and_then(constant_strings)
         };
         if let Some((path, name)) = self.names.get(local) {
             return read(path, name);
@@ -643,12 +680,12 @@ mod tests {
         let stmts = parse_module("from c import BASE\nBASE = ['local']\nLIST = [f()]\n")
             .expect("valid python");
         let imports = ConfImports::new(&stmts, &HashMap::new());
-        let root = Path::new("/nonexistent");
+        let modules = ConfModules::new(Path::new("/nonexistent"));
         assert_eq!(
-            imports.strings(root, &stmts, "BASE"),
+            imports.strings(&modules, &stmts, "BASE"),
             Some(vec!["local".to_owned()])
         );
-        assert_eq!(imports.strings(root, &stmts, "LIST"), None);
-        assert_eq!(imports.strings(root, &stmts, "MISSING"), None);
+        assert_eq!(imports.strings(&modules, &stmts, "LIST"), None);
+        assert_eq!(imports.strings(&modules, &stmts, "MISSING"), None);
     }
 }

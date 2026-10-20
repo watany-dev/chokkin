@@ -1121,6 +1121,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let mut manifest = LoadedManifest {
             root: crate::discovery::ProjectRoot {

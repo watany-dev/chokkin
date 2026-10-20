@@ -362,6 +362,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let manifest = minimal_manifest(vec![dep]);
         let (sources, parse, mut graph) = reconcile_inputs(&manifest);
@@ -443,6 +444,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let manifest = minimal_manifest(vec![dep]);
         let resolution = ResolutionIndex::default();
@@ -502,6 +504,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let mut manifest = minimal_manifest(vec![
             dep("acme-core", DependencyContext::Runtime),
@@ -575,6 +578,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let manifest = minimal_manifest(vec![dep]);
         let (sources, parse, mut graph) = reconcile_inputs(&manifest);

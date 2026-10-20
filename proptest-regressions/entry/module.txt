@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc a0821bdf1245a45b895f255a20786c7708043c91cdbbeae7c25918a570672e24 # shrinks to layout = LayoutInfo { layout: Src, package_root: "src", packages: ["x"], local_packages: [], inferred_globs: ["src/**/*.{py,pyi,ipynb}", "tests/**/*.{py,pyi,ipynb}", "test/**/*.{py,pyi,ipynb}", "scripts/**/*.{py,pyi,ipynb}", "docs/**/*.{py,pyi,ipynb}", "examples/**/*.{py,pyi,ipynb}", "**/*.ipynb", "conftest.py", "setup.py"], members: [], package_dirs: {} }, paths = {"x.py", "x/__init__.py"}, module = ["x"]
+cc 4cd7e5354675cd999b00cbf7e273751d2df194ddd3f9873cd3ca434601652f8f # shrinks to layout = LayoutInfo { layout: Src, package_root: "src", packages: ["core"], local_packages: [], inferred_globs: ["src/**/*.{py,pyi,ipynb}", "tests/**/*.{py,pyi,ipynb}", "test/**/*.{py,pyi,ipynb}", "scripts/**/*.{py,pyi,ipynb}", "docs/**/*.{py,pyi,ipynb}", "examples/**/*.{py,pyi,ipynb}", "**/*.ipynb", "conftest.py", "setup.py"], members: [], package_dirs: {} }, members = [], paths = {"x.py"}, names = ["x"]

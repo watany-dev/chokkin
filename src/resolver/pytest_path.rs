@@ -56,6 +56,8 @@ pub(crate) struct PytestImportPaths {
     /// File → its `hinted` directories indexed by name, shared by the files
     /// with the same directories.
     hinted_index: HashMap<String, Arc<HintIndex>>,
+    /// Every name in [`Self::hinted_roots`].
+    any_hinted_root: HashSet<String>,
 }
 
 /// One file's hinted directories looked up by name: a string-built hint can
@@ -183,6 +185,7 @@ impl PytestImportPaths {
             hinted_on_disk: HashMap::new(),
             hinted_roots: HashMap::new(),
             hinted_index: HashMap::new(),
+            any_hinted_root: HashSet::new(),
         }
     }
 
@@ -274,6 +277,7 @@ impl PytestImportPaths {
             .collect();
         self.hinted_roots = self.hinted_roots();
         self.hinted_index = self.hinted_index();
+        self.any_hinted_root = self.hinted_roots.values().flatten().cloned().collect();
         self
     }
 
@@ -448,6 +452,9 @@ impl PytestImportPaths {
             .or_else(|| self.resolve_in_own_package(file, module))
             .or_else(|| {
                 let root = import_root(module);
+                if !self.any_hinted_root.contains(root) {
+                    return None;
+                }
                 let own = self
                     .hinted_index
                     .get(file)
