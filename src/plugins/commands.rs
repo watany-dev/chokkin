@@ -52,6 +52,21 @@ impl SourceHits {
             .extend(command_target_refs(command, origin));
     }
 
+    /// [`Self::push_command`] for a command the deployed image or process
+    /// runs (#912).
+    pub(super) fn push_deploy_command(
+        &mut self,
+        command: &str,
+        known: KnownBinary<'_>,
+        origin: &ReferenceOrigin,
+    ) {
+        let start = self.command_targets.len();
+        self.push_command(command, known, origin);
+        for target in self.command_targets.get_mut(start..).unwrap_or_default() {
+            target.deploy = true;
+        }
+    }
+
     pub(super) fn push_module(&mut self, module: &str, origin: &ReferenceOrigin) {
         let module = module.trim();
         if is_dotted_identifier(module) {
@@ -86,6 +101,7 @@ pub(super) fn command_target_refs(
         .filter_map(|target| {
             let target = match target {
                 PythonTarget::Script(run) => script_target(&run)?,
+                PythonTarget::Run(module) => CommandTarget::Run { module },
                 PythonTarget::Module(module) => CommandTarget::Module { module },
                 PythonTarget::App { module, symbol } => CommandTarget::App { module, symbol },
                 PythonTarget::Opaque(text) => CommandTarget::Opaque { text },
@@ -93,6 +109,7 @@ pub(super) fn command_target_refs(
             Some(CommandTargetRef {
                 target,
                 origin: origin.clone(),
+                deploy: false,
             })
         })
         .collect()
@@ -118,6 +135,7 @@ pub(super) fn parsed_server_apps(parse: &ParseSummary) -> impl Iterator<Item = C
                     line: Some(server.line),
                     label: server.call.clone(),
                 },
+                deploy: false,
             })
         })
     })
@@ -241,7 +259,10 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
         .into_iter()
         .filter_map(|target| match target {
             PythonTarget::Script(run) => Some(run),
-            PythonTarget::Module(_) | PythonTarget::App { .. } | PythonTarget::Opaque(_) => None,
+            PythonTarget::Run(_)
+            | PythonTarget::Module(_)
+            | PythonTarget::App { .. }
+            | PythonTarget::Opaque(_) => None,
         })
         .collect()
 }
@@ -250,7 +271,10 @@ pub(super) fn command_scripts(command: &str) -> Vec<ScriptRun> {
 pub(super) enum PythonTarget {
     /// A `.py` file run by path.
     Script(ScriptRun),
-    /// A module run with `-m` or by a task runner, or imported by `-c` code.
+    /// A module run with `-m` (#912).
+    Run(String),
+    /// A module a task runner loads or `-c` code imports, or one run with
+    /// `-m` from a directory the command moves the import root to.
     Module(String),
     /// The application a WSGI/ASGI server loads (#1004).
     App {
@@ -416,7 +440,7 @@ fn python_target(args: &[&str]) -> Option<Run> {
 
 fn module_target(module: &str) -> PythonTarget {
     if is_dotted_identifier(module) {
-        PythonTarget::Module(module.to_owned())
+        PythonTarget::Run(module.to_owned())
     } else {
         PythonTarget::Opaque(module.to_owned())
     }
@@ -490,10 +514,12 @@ fn moves_import_root(arg: &str) -> bool {
 
 /// An app imported from a directory the command changes to or puts on the
 /// import path: which file its module names is unknown, so it is opaque
-/// rather than a guess (ADR 0005).
+/// rather than a guess (ADR 0005). A module run from there is no entry
+/// either, but the gap stage still checks the file it names in the root.
 fn relocated(target: PythonTarget) -> PythonTarget {
     match target {
         PythonTarget::App { module, .. } => PythonTarget::Opaque(module),
+        PythonTarget::Run(module) => PythonTarget::Module(module),
         target => target,
     }
 }
@@ -594,7 +620,16 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
             directory = args.get(index).copied();
             index += 1;
         } else if matches!(*arg, "-m" | "--module") {
-            return Some(Run::Target(module_target(args.get(index)?)));
+            // `uv run -m gunicorn app:app` runs the server as `python -m` does.
+            let (module, rest) = args.get(index..)?.split_first()?;
+            let target = match module_runner(module) {
+                Some(runner) => runner_target(runner, rest),
+                None => module_target(module),
+            };
+            return Some(Run::Target(match directory {
+                Some(_) => relocated(target),
+                None => target,
+            }));
         } else if UV_RUN_VALUE_OPTIONS.contains(arg) {
             index += 1;
         } else if !arg.starts_with('-') {
@@ -926,6 +961,7 @@ mod tests {
                     Some(dir) => format!("script {dir}/{}", run.path),
                     None => format!("script {}", run.path),
                 },
+                PythonTarget::Run(module) => format!("run {module}"),
                 PythonTarget::Module(module) => format!("module {module}"),
                 PythonTarget::App { module, symbol } => match symbol {
                     Some(symbol) => format!("app {module}:{symbol}"),
@@ -1017,16 +1053,35 @@ mod tests {
         }
     }
 
+    /// `uv run -m gunicorn` serves the app as `python -m gunicorn` does.
+    #[test]
+    fn uv_run_module_runners_read_their_app() {
+        assert_eq!(
+            targets("uv run -m gunicorn mypkg.server:app"),
+            ["app mypkg.server:app"]
+        );
+        assert_eq!(
+            targets("uv run --directory web -m gunicorn mypkg.server:app"),
+            ["opaque mypkg.server"]
+        );
+    }
+
     #[test]
     fn command_targets_read_modules_runners_and_code() {
-        assert_eq!(
-            targets("python -m mypkg.modrun --x"),
-            ["module mypkg.modrun"]
-        );
-        assert_eq!(targets("python3 -mmypkg"), ["module mypkg"]);
+        assert_eq!(targets("python -m mypkg.modrun --x"), ["run mypkg.modrun"]);
+        assert_eq!(targets("python3 -mmypkg"), ["run mypkg"]);
         // `-c` after a backslash continuation is still python's (#861).
         assert_eq!(targets("python \\\n  -c 'import mypkg'"), ["module mypkg"]);
-        assert_eq!(targets("uv run -m mypkg.cli"), ["module mypkg.cli"]);
+        assert_eq!(targets("uv run -m mypkg.cli"), ["run mypkg.cli"]);
+        // A module run from another import root names no file there (#912).
+        for command in [
+            "cd tools && python -m gen",
+            "PYTHONPATH=src python -m gen",
+            "uv run --directory tools -m gen",
+            "uv run --directory tools python -m gen",
+        ] {
+            assert_eq!(targets(command), ["module gen"], "{command}");
+        }
         assert_eq!(
             targets("poetry run gunicorn -w 4 -b 0.0.0.0:80 mypkg.server:app"),
             ["app mypkg.server:app"]
