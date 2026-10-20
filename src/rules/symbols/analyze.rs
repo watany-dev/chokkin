@@ -20,8 +20,7 @@ use crate::rules::types::{
 use crate::sources::{DiscoveredSources, FileContext, PublicSurface, member_ships, path_to_module};
 
 use super::conventions::{
-    alembic_script_files, config_star_symbols, convention_symbols, host_hook_symbols,
-    is_codegen_file,
+    config_star_symbols, convention_symbols, host_hook_symbols, is_codegen_file, scanned_files,
 };
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::{collect_external_symbols, dynamically_fetched_classes};
@@ -44,7 +43,7 @@ fn surface_modules<'m>(
         .iter()
         .map(|file| file.path.as_str())
         .collect();
-    let alembic_files = alembic_script_files(plugins);
+    let scanned_files = scanned_files(plugins);
     reachable_modules
         .iter()
         .copied()
@@ -52,7 +51,7 @@ fn surface_modules<'m>(
             !sources.layout.in_local_package(&module.path)
                 && !test_files.contains(module.path.as_str())
                 && !is_codegen_file(&module.path, &all_files)
-                && !alembic_files.contains(module.path.as_str())
+                && !scanned_files.contains(module.path.as_str())
         })
         .collect()
 }

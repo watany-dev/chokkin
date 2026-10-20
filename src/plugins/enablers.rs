@@ -70,6 +70,30 @@ const ENABLERS: &[Enabler] = &[
         dependencies: &["alembic"],
         files: &["alembic.ini"],
     },
+    Enabler {
+        plugin: PluginId::Airflow,
+        dependencies: &[
+            "apache-airflow",
+            "apache-airflow-core",
+            "apache-airflow-task-sdk",
+        ],
+        files: &["airflow.cfg"],
+    },
+    Enabler {
+        plugin: PluginId::Dagster,
+        dependencies: &["dagster"],
+        files: &["workspace.yaml", "dg.toml"],
+    },
+    Enabler {
+        plugin: PluginId::Prefect,
+        dependencies: &["prefect"],
+        files: &["prefect.yaml"],
+    },
+    Enabler {
+        plugin: PluginId::Scrapy,
+        dependencies: &["scrapy"],
+        files: &["scrapy.cfg"],
+    },
 ];
 
 /// One place the enablers look: the project root or a workspace member.
@@ -276,6 +300,35 @@ mod tests {
         let mkdocs = activation(&activations, PluginId::MkDocs);
         assert!(mkdocs.enabled);
         assert_eq!(mkdocs.to_string(), "enabled-by: file mkdocs.yml");
+    }
+
+    #[test]
+    fn orchestration_plugins_enable_from_dependency_or_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("scrapy.cfg"), "[settings]\n").expect("write");
+        std::fs::write(temp.path().join("prefect.yaml"), "name: demo\n").expect("write");
+        let manifest = manifest_at(temp.path(), &["apache-airflow-core", "dagster"]);
+        let activations = resolve_plugin_activations(
+            &crate::config::default_config(),
+            &[EnablerScope {
+                member: None,
+                manifest: &manifest,
+            }],
+        );
+
+        for (plugin, reason) in [
+            (
+                PluginId::Airflow,
+                "enabled-by: dependency apache-airflow-core",
+            ),
+            (PluginId::Dagster, "enabled-by: dependency dagster"),
+            (PluginId::Prefect, "enabled-by: file prefect.yaml"),
+            (PluginId::Scrapy, "enabled-by: file scrapy.cfg"),
+        ] {
+            let activation = activation(&activations, plugin);
+            assert!(activation.enabled, "{plugin:?}");
+            assert_eq!(activation.to_string(), reason);
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Shared helpers for plugin extractors.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::str::CharIndices;
 use std::sync::LazyLock;
@@ -13,7 +13,7 @@ use crate::manifest::ManifestError;
 use crate::manifest::literals::LiteralScan;
 use crate::manifest::util::{path_is_within_root, read_to_string};
 use crate::parser::{LineIndex, ParseSeverity, ParsedModule};
-use crate::path_util::rel_to_root;
+use crate::path_util::{join_rel, rel_to_root};
 use crate::sources::path_to_module;
 
 use super::commands::is_dotted_identifier;
@@ -397,9 +397,13 @@ pub(super) fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -
 }
 
 /// `rel` appended to root-relative `base`, with `.` and `..` folded; `None`
-/// when it climbs out of the root. Either separator is read, as a Windows
+/// when it climbs out of the root or is absolute (`/x`, `\\x`, `C:...`),
+/// which names no place under it. Either separator is read, as a Windows
 /// config or script may use `\`.
 pub(super) fn join_lexical(base: &str, rel: &str) -> Option<String> {
+    if rel.starts_with(['/', '\\']) || rel.get(1..2) == Some(":") {
+        return None;
+    }
     let mut parts: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
     for part in rel.split(['/', '\\']) {
         match part {
@@ -411,6 +415,156 @@ pub(super) fn join_lexical(base: &str, rel: &str) -> Option<String> {
         }
     }
     Some(parts.join("/"))
+}
+
+/// The root, then each workspace member: the directories a framework's
+/// config file is looked for in.
+pub(super) fn project_dirs<'a>(ctx: &PluginContext<'a>) -> impl Iterator<Item = &'a str> {
+    std::iter::once("").chain(
+        ctx.sources
+            .layout
+            .members
+            .iter()
+            .map(|member| member.path.as_str()),
+    )
+}
+
+/// The inventory's context for root-relative `path`; a file it lacks gets
+/// the one its path implies, as discovery would give it.
+pub(super) fn file_context(ctx: &PluginContext<'_>, path: &str) -> crate::sources::FileContext {
+    ctx.sources
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .map_or_else(
+            || crate::sources::assign_file_context(path),
+            |file| file.context,
+        )
+}
+
+/// Discovered `.py` files of `module`: its own file first, then every file
+/// under it when it is a package. Empty when it names no discovered file.
+pub(super) fn module_files<'a>(
+    ctx: &PluginContext<'a>,
+    module: &str,
+) -> Vec<&'a crate::sources::DiscoveredFile> {
+    let sources = ctx.sources;
+    let known: BTreeSet<String> = sources
+        .python_files()
+        .map(|file| file.path.clone())
+        .collect();
+    let Some(path) = crate::entry::resolve_module_to_path(module, &sources.layout, &known) else {
+        return Vec::new();
+    };
+    let package = path.strip_suffix("/__init__.py");
+    let own = sources.python_files().filter(|file| file.path == path);
+    let rest = sources.python_files().filter(|file| {
+        file.path != path
+            && package.is_some_and(|dir| {
+                file.path
+                    .strip_prefix(dir)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+    });
+    own.chain(rest).collect()
+}
+
+/// The file of `module`, or with `tree` every file of its package, with
+/// their context: the inventory's when it has them, else on disk from `dir`
+/// or `dir/src`, as a framework that imports it by name finds it. Files the
+/// layout left out of the inventory then join it as plugin entries (#932).
+pub(super) fn module_paths(
+    ctx: &PluginContext<'_>,
+    dir: &str,
+    module: &str,
+    tree: bool,
+) -> Vec<(String, crate::sources::FileContext)> {
+    let known = module_files(ctx, module);
+    if let Some(first) = known.first() {
+        // The module's own file sorts before the rest of its package.
+        let files = if tree {
+            known.as_slice()
+        } else {
+            std::slice::from_ref(first)
+        };
+        return files
+            .iter()
+            .map(|file| (file.path.clone(), file.context))
+            .collect();
+    }
+    let root = ctx.root.path.as_path();
+    let rel = module.replace('.', "/");
+    for base in [dir.to_owned(), join_rel(dir, "src")] {
+        let file = join_rel(&base, &format!("{rel}.py"));
+        if root.join(&file).is_file() {
+            let context = crate::sources::assign_file_context(&file);
+            return vec![(file, context)];
+        }
+        let package = join_rel(&base, &rel);
+        // A tree is walked as `pkgutil` walks a package's `__path__`, which
+        // a namespace package (no `__init__.py`) has too.
+        let is_package = root.join(&package).join("__init__.py").is_file();
+        if is_package || (tree && root.join(&package).is_dir()) {
+            if !tree {
+                let init = join_rel(&package, "__init__.py");
+                let context = crate::sources::assign_file_context(&init);
+                return vec![(init, context)];
+            }
+            let mut files = BTreeSet::new();
+            walk_py(root, &package, &mut files);
+            return files
+                .into_iter()
+                .map(|file| {
+                    let context = crate::sources::assign_file_context(&file);
+                    (file, context)
+                })
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+/// The `.py` files under root-relative `dir`, as a framework walking a
+/// folder or package finds them. Hidden directories, `__pycache__` and
+/// symlinked directories are not entered; discovery still applies its
+/// exclusions to what is found.
+pub(super) fn walk_py(root: &Path, dir: &str, out: &mut BTreeSet<String>) {
+    walk_py_at(root, dir, 0, out);
+}
+
+fn walk_py_at(root: &Path, dir: &str, depth: usize, out: &mut BTreeSet<String>) {
+    const MAX_DEPTH: usize = 16;
+    let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let path = if dir.is_empty() {
+            name.clone()
+        } else {
+            format!("{dir}/{name}")
+        };
+        if kind.is_dir() {
+            if depth < MAX_DEPTH && !name.starts_with('.') && name != "__pycache__" {
+                walk_py_at(root, &path, depth + 1, out);
+            }
+        } else if is_py_path(&name) {
+            out.insert(path);
+        }
+    }
+}
+
+/// Whether `path` ends in `.py`, as written: the tools load the path they
+/// are given.
+pub(super) fn is_py_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension == "py")
 }
 
 /// Convert a dotted module path to a root-relative `.py` file path.
@@ -620,6 +774,9 @@ mod tests {
         );
         assert_eq!(join_lexical("pkg", ".").as_deref(), Some("pkg"));
         assert_eq!(join_lexical("", "../x"), None);
+        assert_eq!(join_lexical("pkg", "/opt/app/etl.py"), None);
+        assert_eq!(join_lexical("pkg", "\\\\host\\etl.py"), None);
+        assert_eq!(join_lexical("", "C:\\proj\\etl.py"), None);
     }
 
     #[test]
@@ -717,6 +874,178 @@ mod tests {
         assert_eq!(
             find_settings_candidates(temp.path(), &["examples"]),
             ["a/b/c/d/settings.py"]
+        );
+    }
+
+    /// Run `check` on a context over `root`, whose inventory is `files` and
+    /// whose workspace members are `members`.
+    fn with_ctx(
+        root: &Path,
+        files: &[(&str, crate::sources::FileContext)],
+        members: &[&str],
+        check: impl FnOnce(&PluginContext<'_>),
+    ) {
+        use crate::discovery::{ProjectRoot, RootMarker};
+        use crate::manifest::{LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata};
+        use crate::sources::{
+            DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo, MemberLayout,
+        };
+
+        let root = ProjectRoot {
+            path: root.to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: LayoutInfo {
+                members: members
+                    .iter()
+                    .map(|path| MemberLayout {
+                        path: (*path).to_owned(),
+                        layout: LayoutInfo::default(),
+                    })
+                    .collect(),
+                ..LayoutInfo::default()
+            },
+            effective_globs: Vec::new(),
+            files: files
+                .iter()
+                .map(|(path, context)| DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: *context,
+                })
+                .collect(),
+            warnings: Vec::new(),
+        };
+        let manifest = LoadedManifest {
+            root: root.clone(),
+            metadata: ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        };
+        let config = crate::config::default_config();
+        let parse = crate::parser::ParseSummary::default();
+        check(&PluginContext {
+            root: &root,
+            config: &config,
+            sources: &sources,
+            manifest: &manifest,
+            parse: &parse,
+        });
+    }
+
+    fn write_files(root: &Path, paths: &[&str]) {
+        for path in paths {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, "").expect("write");
+        }
+    }
+
+    #[test]
+    fn project_dirs_are_the_root_then_each_member() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        with_ctx(temp.path(), &[], &["packages/etl"], |ctx| {
+            assert_eq!(project_dirs(ctx).collect::<Vec<_>>(), ["", "packages/etl"]);
+        });
+    }
+
+    /// An inventoried file keeps its own context, even one its path would
+    /// not imply; any other file takes the context its path implies.
+    #[test]
+    fn file_context_prefers_the_inventory() {
+        use crate::sources::FileContext;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let files = [
+            ("a/x.py", FileContext::Dev),
+            ("flows/f.py", FileContext::Test),
+        ];
+        with_ctx(temp.path(), &files, &[], |ctx| {
+            assert_eq!(file_context(ctx, "flows/f.py"), FileContext::Test);
+            assert_eq!(file_context(ctx, "tests/t.py"), FileContext::Test);
+            assert_eq!(file_context(ctx, "acme/m.py"), FileContext::Runtime);
+        });
+    }
+
+    /// A module the inventory holds is answered from it, context included,
+    /// without looking at the disk.
+    #[test]
+    fn module_paths_read_the_inventory_first() {
+        use crate::sources::FileContext;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let files = [
+            ("acme/__init__.py", FileContext::Runtime),
+            ("acme/jobs/a.py", FileContext::Test),
+            ("acmex/b.py", FileContext::Runtime),
+        ];
+        with_ctx(temp.path(), &files, &[], |ctx| {
+            assert_eq!(
+                module_paths(ctx, "", "acme", true),
+                [
+                    ("acme/__init__.py".to_owned(), FileContext::Runtime),
+                    ("acme/jobs/a.py".to_owned(), FileContext::Test),
+                ]
+            );
+            assert_eq!(
+                module_paths(ctx, "", "acme", false),
+                [("acme/__init__.py".to_owned(), FileContext::Runtime)]
+            );
+        });
+    }
+
+    /// On disk, a directory without `__init__.py` is walked as a tree but
+    /// names no module by itself.
+    #[test]
+    fn module_paths_on_disk_walk_a_namespace_only_as_a_tree() {
+        use crate::sources::FileContext;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        write_files(temp.path(), &["ns/x.py", "src/pkg/__init__.py"]);
+        with_ctx(temp.path(), &[], &[], |ctx| {
+            assert_eq!(module_paths(ctx, "", "ns", false), []);
+            assert_eq!(
+                module_paths(ctx, "", "ns", true),
+                [("ns/x.py".to_owned(), FileContext::Runtime)]
+            );
+            assert_eq!(
+                module_paths(ctx, "", "pkg", false),
+                [("src/pkg/__init__.py".to_owned(), FileContext::Runtime)]
+            );
+        });
+    }
+
+    /// The walk lists `.py` files only, skips hidden directories and
+    /// `__pycache__`, and enters at most 16 directories below the start.
+    #[test]
+    fn walk_py_skips_hidden_cache_and_too_deep_directories() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let deep: Vec<String> = (1..=16).map(|n| format!("d{n}")).collect();
+        let deep = deep.join("/");
+        let ok = format!("w/{deep}/e.py");
+        let too_deep = format!("w/{deep}/d17/f.py");
+        write_files(
+            temp.path(),
+            &[
+                "w/a.py",
+                "w/notes.txt",
+                "w/.hidden/b.py",
+                "w/__pycache__/c.py",
+                "w/sub/d.py",
+                &ok,
+                &too_deep,
+            ],
+        );
+        let mut found = BTreeSet::new();
+        walk_py(temp.path(), "w", &mut found);
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            ["w/a.py".to_owned(), ok, "w/sub/d.py".to_owned()]
         );
     }
 }
