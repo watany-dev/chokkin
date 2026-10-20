@@ -3303,9 +3303,10 @@ fn binary_datamodel_codegen_formatter_is_dev_entry() {
 }
 
 /// A formatter name that resolves through the import roots is an entry, and
-/// one that names no project file, or several, or a value that is not a list
-/// of names, is a gap: the tool imports code no entry reaches, so unused
-/// files are likely and `--explain` names the setting (#1063).
+/// one that names no project file, or several, or is not a module name, or a
+/// value that is not a list of names, is a gap: the tool imports code no
+/// entry reaches, so unused files are likely and `--explain` names the
+/// setting (#1063).
 #[test]
 fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
     let pyproject = |formatters: &str| {
@@ -3317,6 +3318,7 @@ fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
     let missing = pyproject("custom-formatters = [\"tools.fmt\", \"missing_fmt\"]");
     let ambiguous = pyproject("custom-formatters = [\"tools.fmt\", \"twin\"]");
     let shape = pyproject("custom-formatters = \"tools.fmt\"");
+    let path = pyproject("custom-formatters = [\"tools/fmt\"]");
     let files = |pyproject: &str| -> tempfile::TempDir {
         write_project(&[
             ("pyproject.toml", pyproject),
@@ -3342,6 +3344,7 @@ fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
         (&missing, "missing_fmt"),
         (&ambiguous, "twin"),
         (&shape, "\"tools.fmt\""),
+        (&path, "tools/fmt"),
     ] {
         let project = files(pyproject);
         let levels = chk001_levels(project.path(), &[]);
