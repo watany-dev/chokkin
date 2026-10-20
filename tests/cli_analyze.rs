@@ -3127,7 +3127,7 @@ fn binary_command_run_files_are_entries() {
         [(
             "CHK001".to_owned(),
             "mypkg/orphan.py".to_owned(),
-            "error".to_owned(),
+            "warning".to_owned(),
             "certain".to_owned()
         )]
     );
