@@ -32,7 +32,7 @@ impl EntryPoints<'_> {
     fn push(&mut self, name: &str, target: &str, group: &str, label: String) {
         self.entries.push(EntryPointDecl {
             name: name.to_owned(),
-            target: target.to_owned(),
+            target: object_reference(target),
             group: project_group(group).to_owned(),
             origin: DependencyOrigin {
                 file: self.rel.to_owned(),
@@ -202,6 +202,20 @@ impl EntryPoints<'_> {
             },
             _ => self.skip(label, "not a `name = module:attr` item"),
         }
+    }
+}
+
+/// `module:attr` as the entry-points specification reads it: spaces
+/// around the colon and a trailing `[extras]` are not part of it.
+fn object_reference(target: &str) -> String {
+    let target = target.trim();
+    let target = match target.rsplit_once('[') {
+        Some((reference, extras)) if extras.trim_end().ends_with(']') => reference.trim_end(),
+        _ => target,
+    };
+    match target.split_once(':') {
+        Some((module, attr)) => format!("{}:{}", module.trim_end(), attr.trim_start()),
+        None => target.to_owned(),
     }
 }
 
@@ -458,5 +472,20 @@ mod tests {
                 "entry_points",
             ]
         );
+    }
+
+    #[test]
+    fn targets_drop_extras_and_spaces_around_the_colon() {
+        let (entries, warnings) = read(|reader| {
+            reader.read_setup_cfg_group("console_scripts", "a = acme.cli : main [cli]");
+            reader.read_setup_cfg_group("pytest11", "b = acme.plugin [test]");
+            reader.read_setup_cfg_group("x", "c = acme:main[a,b]\nd = acme:d");
+        });
+        let targets: Vec<&str> = entries.iter().map(|entry| entry.2.as_str()).collect();
+        assert_eq!(
+            targets,
+            ["acme.cli:main", "acme.plugin", "acme:main", "acme:d"]
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 }
