@@ -288,6 +288,10 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
         "opentelemetry-semantic-conventions",
         &["opentelemetry.semconv"],
     ),
+    (
+        "optimum-intel",
+        &["optimum.exporters.openvino", "optimum.intel"],
+    ),
     ("ordered-set", &["ordered_set"]),
     ("orjson", &["orjson"]),
     ("outcome", &["outcome"]),

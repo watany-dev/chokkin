@@ -6333,6 +6333,45 @@ fn sphinx_extensions_themes_and_pytest_plugins_are_used() {
     assert_eq!(unused, ["sphinx-issues"], "{keys:?}");
 }
 
+/// A declared namespace portion beats the shared root's locked distribution:
+/// `optimum-intel` provides `optimum.intel` and `optimum.exporters.openvino`
+/// while `optimum` itself is only its transitive dependency (#1022). The
+/// mapped portion and the unmapped `optimum.habana` both resolve.
+#[test]
+fn declared_namespace_portion_beats_the_locked_root() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\
+             dependencies = [\"optimum-intel[openvino]>=2.1\", \"optimum-habana\"]\n",
+        ),
+        (
+            "uv.lock",
+            "version = 1\n\n\
+             [[package]]\nname = \"acme\"\nversion = \"0.1.0\"\nsource = { editable = \".\" }\n\
+             dependencies = [{ name = \"optimum-intel\" }, { name = \"optimum-habana\" }]\n\n\
+             [[package]]\nname = \"optimum-intel\"\nversion = \"2.1.0\"\n\
+             dependencies = [{ name = \"optimum\" }]\n\n\
+             [[package]]\nname = \"optimum-habana\"\nversion = \"1.0.0\"\n\
+             dependencies = [{ name = \"optimum\" }]\n\n\
+             [[package]]\nname = \"optimum\"\nversion = \"2.0.0\"\n",
+        ),
+        (
+            "acme/__init__.py",
+            "from optimum.intel.openvino import OVModelForFeatureExtraction\n\
+             from optimum.exporters.openvino.convert import export_tokenizer\n\
+             from optimum.habana import GaudiTrainer\n",
+        ),
+    ]);
+
+    let keys = issue_keys(&json_issues(temp.path(), &["--no-cache", "--strict"]));
+    assert!(
+        keys.iter()
+            .all(|(code, _)| !matches!(code.as_str(), "CHK002" | "CHK003" | "CHK004")),
+        "{keys:?}"
+    );
+}
+
 /// airflow's `sphinx-argparse` and `sphinx-autoapi` extensions load as
 /// `sphinxarg` and `autoapi`, which name matching cannot tie to the
 /// distribution (#822).
