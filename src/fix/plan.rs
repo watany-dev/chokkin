@@ -694,23 +694,14 @@ mod tests {
         specifier: &str,
         marker: Option<&str>,
     ) -> (Vec<FixAction>, Vec<SkippedFix>) {
-        plan_poetry_dev_move_with(specifier, marker, None)
+        plan_poetry_dev_move_in(specifier, marker, |_| {})
     }
 
-    fn plan_poetry_dev_move_with(
-        specifier: &str,
-        marker: Option<&str>,
-        unportable_key: Option<&str>,
-    ) -> (Vec<FixAction>, Vec<SkippedFix>) {
-        plan_poetry_dev_move_in(specifier, marker, unportable_key, |manifest| {
-            manifest.sources.pyproject_project_table = true;
-        })
-    }
-
+    /// A `[project]` pyproject declaring `dulwich` in a Poetry dev group,
+    /// changed by `setup` before planning.
     fn plan_poetry_dev_move_in(
         specifier: &str,
         marker: Option<&str>,
-        unportable_key: Option<&str>,
         setup: impl FnOnce(&mut LoadedManifest),
     ) -> (Vec<FixAction>, Vec<SkippedFix>) {
         let mut manifest = manifest_with(vec![DeclaredDependency {
@@ -726,8 +717,9 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
-            unportable_key: unportable_key.map(str::to_owned),
+            unportable_key: None,
         }]);
+        manifest.sources.pyproject_project_table = true;
         setup(&mut manifest);
         let issue = Issue {
             rule: RuleId::Chk005,
@@ -791,7 +783,9 @@ mod tests {
     /// `[project].dependencies`; moving without it changes where it resolves.
     #[test]
     fn chk005_move_skips_a_poetry_source_with_no_pep508_form() {
-        let (actions, skipped) = plan_poetry_dev_move_with("^1.2", None, Some("git"));
+        let (actions, skipped) = plan_poetry_dev_move_in("^1.2", None, |manifest| {
+            manifest.dependencies[0].unportable_key = Some("git".to_owned());
+        });
         assert_eq!(actions, []);
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
@@ -803,20 +797,18 @@ mod tests {
     /// it over setup.py like #581.
     #[test]
     fn chk005_move_skips_a_pyproject_with_no_static_project_dependencies() {
-        let no_table = |_: &mut LoadedManifest| {};
-        let dynamic = |manifest: &mut LoadedManifest| {
-            manifest.sources.pyproject_project_table = true;
+        let (actions, no_table) = plan_poetry_dev_move_in("^1.2", None, |manifest| {
+            manifest.sources.pyproject_project_table = false;
+        });
+        assert_eq!(actions, []);
+        let (actions, dynamic) = plan_poetry_dev_move_in("^1.2", None, |manifest| {
             manifest.metadata.dynamic = vec!["dependencies".to_owned()];
-        };
-        for (setup, detail) in [
-            (
-                &no_table as &dyn Fn(&mut LoadedManifest),
-                "no [project] table",
-            ),
-            (&dynamic, "project.dependencies is dynamic"),
+        });
+        assert_eq!(actions, []);
+        for (skipped, detail) in [
+            (no_table, "no [project] table"),
+            (dynamic, "project.dependencies is dynamic"),
         ] {
-            let (actions, skipped) = plan_poetry_dev_move_in("^1.2", None, None, setup);
-            assert_eq!(actions, []);
             assert_eq!(skipped.len(), 1);
             assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
             assert!(skipped[0].detail.contains(detail), "{}", skipped[0].detail);

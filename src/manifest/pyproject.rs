@@ -448,24 +448,30 @@ fn push_poetry_dependency(
     }
 }
 
-/// The first key a PEP 508 requirement cannot carry, in any form of the
-/// dependency. Only the keys read into name, extras, specifier and marker
-/// carry over; any other key, known (`git`, `path`, `url`, `source`,
-/// `develop`, `allow-prereleases`) or not, picks how Poetry resolves it.
+/// A key a PEP 508 requirement cannot carry, in any form of the dependency,
+/// preferring one that names the source. Only the keys read into name,
+/// extras, specifier and marker carry over; any other key, known (`git`,
+/// `path`, `url`, `source`, `develop`, `allow-prereleases`) or not, picks how
+/// Poetry resolves it.
 fn poetry_unportable_key(value: &Value) -> Option<String> {
-    const CARRIED: [&str; 6] = [
-        "version", "extras", "markers", "platform", "python", "optional",
-    ];
+    const CARRIED: [&str; 5] = ["version", "markers", "platform", "python", "optional"];
+    const SOURCES: [&str; 4] = ["git", "path", "url", "source"];
     let forms = match value {
         Value::Array(forms) => forms.as_slice(),
         _ => std::slice::from_ref(value),
     };
-    forms
+    // `poetry_requirement_name` reads extras from a single table only.
+    let carried = |key: &str| CARRIED.contains(&key) || (key == "extras" && !value.is_array());
+    let keys: Vec<&String> = forms
         .iter()
         .filter_map(Value::as_table)
         .flat_map(toml::Table::keys)
-        .find(|key| !CARRIED.contains(&key.as_str()))
-        .cloned()
+        .filter(|key| !carried(key))
+        .collect();
+    keys.iter()
+        .find(|key| SOURCES.contains(&key.as_str()))
+        .or_else(|| keys.first())
+        .map(|key| (*key).clone())
 }
 
 /// Whether every form of the dependency is `optional = true`.
@@ -1293,6 +1299,8 @@ archive = { url = "https://example.invalid/archive-1.0.tar.gz" }
 corp = { version = "^1", source = "corp" }
 pre = { version = "^1", allow-prereleases = true }
 split = [{ version = "^1", python = "<3.9" }, { git = "https://example.invalid/split.git", python = ">=3.9" }]
+branch = { git = "https://example.invalid/branch.git", branch = "main" }
+multi = [{ version = "^1", extras = ["s3"], python = "<3.12" }, { version = "^1", extras = ["s3"], python = ">=3.12" }]
 "#,
         )
         .expect("valid pyproject");
@@ -1305,10 +1313,13 @@ split = [{ version = "^1", python = "<3.9" }, { git = "https://example.invalid/s
             keys,
             vec![
                 ("archive", Some("url")),
+                ("branch", Some("git")),
                 ("conditional", None),
                 ("corp", Some("source")),
                 ("git", Some("git")),
-                ("local", Some("develop")),
+                ("local", Some("path")),
+                // The requirement name reads extras from a single table only.
+                ("multi", Some("extras")),
                 ("plain", None),
                 ("pre", Some("allow-prereleases")),
                 ("split", Some("git")),

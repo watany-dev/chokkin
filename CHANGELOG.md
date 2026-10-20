@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `--fix` no longer moves a Poetry group dependency whose table says where
   it comes from (`git`, `path`, `url`, `source`, or any key besides
-  `version`, `extras`, `markers`, `platform`, `python` and `optional`) into
+  `version`, `extras`, `markers`, `platform`, `python` and `optional`;
+  `extras` carries over only from a single table, not an array of forms) into
   `[project].dependencies` as a bare name, which would resolve it from the
   default index. The CHK005 move is skipped as `ambiguous` (#1041).
 - `--fix` no longer creates a `[project]` table holding only `dependencies`
