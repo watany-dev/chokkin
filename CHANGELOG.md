@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute counts as a use of that module's symbol (no CHK006), and an
   unresolved name is not CHK010, since tests pass bad names on purpose.
   Strings like `"pkg.mod:Cls"` are also read as module references (#493).
+- The Airflow plugin reads Airflow 3's `[dag_processor]
+  dag_bundle_config_list` from `airflow.cfg`: the `path` of each
+  `LocalDagBundle` is a DAG folder like `dags_folder`, under the same
+  safe-mode check, so DAGs a bundle loads are no longer CHK001. A value that
+  is not a JSON list, a malformed item, a bundle of another class
+  (`GitDagBundle`) and an absolute or templated `path` are gaps that cap
+  CHK001 at `likely` and show in `--explain` (#1058).
 - The Sphinx plugin reads a discovered `conf.py` beside an `index.rst` or
   `index.md` root document as a Sphinx configuration, wherever it is
   (`--trace` origin `conf.py beside index.rst`), not only `docs/conf.py`.
@@ -26,6 +33,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- With the Airflow plugin on, every `.py` under a directory named exactly
+  `dags` is a DAG-folder entry in its path's context, not only files that
+  pass the DAG processor's safe-mode check (`airflow` and `dag` in the
+  text). Test suites read such folders by path, so airflow's
+  `tests/unit/dags/no_dags.py` and the `.airflowignore` case
+  `subdir2/subdir3/should_ignore_this.py` are no longer CHK001. Folders with
+  a partial name (`dags_*`, `*_dags`, `example_dags`) keep the check (#1064).
+- A formatter module that `[tool.datamodel-codegen] custom-formatters` (or
+  `custom_formatters`) names in the root or a workspace member's
+  `pyproject.toml` is no longer CHK001. A name that resolves through the
+  import roots, or else to the only module of that name under that
+  pyproject's directory, is a dev entry root with origin
+  `command: tool.datamodel-codegen.custom-formatters (<file>:<line>)`, so
+  `--production` drops it like other dev commands. A name matching no
+  project file or several, or a value that is not a list of module names,
+  is a gap that lowers CHK001 to likely, with a warning and an `--explain`
+  line (#1063).
+- An unused file that the wheel of a workspace member ships is reported as
+  `maybe` instead of `certain` when a metapackage root distributes that member
+  (a root whose wheel targets ship no file, such as hatch `bypass-selection`,
+  and that has no app signal of its own), as in fastmcp's `fastmcp-slim`. The
+  member's console script into its own package is then a CLI shipped with the
+  library. The member is still judged as an app, so files outside its wheel
+  and unused public symbols (CHK006 / CHK007) are reported as before; a
+  member without declared wheel targets ships its layout's packages. Names
+  match after PEP 503 normalization; dependency groups and roots that ship
+  code do not count, and airflow's root distributes nothing because of its own
+  console script. `--explain` and `--trace` name the requirement behind the
+  lower confidence (#1060).
 - A Sphinx `conf.py` that star-imports a first-party module
   (`from provider_conf import *`) also reads that module's top-level
   `extensions` assignment, `append` / `extend` / `insert` and `+=`, and

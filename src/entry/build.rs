@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
-use crate::manifest::LoadedManifest;
+use crate::manifest::{DeclaredDependency, LoadedManifest, normalize_distribution_name};
 use crate::parser::ParseSummary;
 use crate::path_util::{is_submodule, join_rel};
 use crate::plugins::{
@@ -16,9 +16,13 @@ use crate::sources::{
 
 use super::auto::{detect_auto_entries, is_app_entry_file};
 use super::merge::merge_entry_candidates;
-use super::mode::{is_library_member, resolve_project_mode};
+use super::mode::{
+    is_distributed_library, is_library_member, metapackage_distributions, resolve_project_mode,
+};
 use super::module::{resolve_module_on_disk, resolve_module_to_path};
-use super::types::{EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning};
+use super::types::{
+    DistributedMember, EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning,
+};
 
 /// A workspace member as entry construction reads it: its root-relative
 /// directory, manifest, and member-relative sources.
@@ -90,6 +94,11 @@ pub fn build_entry_roots(
     }
 
     let mode = resolve_project_mode(config, manifest, sources, &candidates);
+    let distributed = if mode == ProjectMode::App {
+        metapackage_distributions(config, manifest, sources, &candidates)
+    } else {
+        BTreeMap::new()
+    };
     if mode == ProjectMode::Library {
         collect_library_package_entries(sources, &file_contexts, &mut candidates);
     }
@@ -110,6 +119,7 @@ pub fn build_entry_roots(
         roots,
         warnings,
         library_members: library_members(config, members),
+        distributed_members: distributed_members(members, &distributed),
     }
 }
 
@@ -124,6 +134,41 @@ fn library_members(config: &ChokkinConfig, members: &[MemberEntryInput<'_>]) -> 
         .filter(|(_, manifest, sources)| is_library_member(manifest, sources))
         .map(|(path, ..)| (*path).to_owned())
         .collect()
+}
+
+/// Members that a metapackage root distributes (#1060), each with the
+/// line naming the requirement. `distributed` is empty unless `mode` is
+/// `auto`, so an explicit `mode` applies to every member here too.
+fn distributed_members(
+    members: &[MemberEntryInput<'_>],
+    distributed: &BTreeMap<String, &DeclaredDependency>,
+) -> Vec<DistributedMember> {
+    members
+        .iter()
+        .filter_map(|(path, manifest, sources)| {
+            let name = normalize_distribution_name(manifest.metadata.name.as_deref()?);
+            let dep = distributed.get(&name)?;
+            is_distributed_library(manifest, sources).then(|| DistributedMember {
+                member: (*path).to_owned(),
+                reason: distributed_member_reason(path, dep),
+            })
+        })
+        .collect()
+}
+
+/// The `--trace` / `--explain` line for an orphan that the wheel of a member
+/// a metapackage root distributes ships (#1060).
+fn distributed_member_reason(member: &str, dep: &DeclaredDependency) -> String {
+    let at = dep
+        .origin
+        .line
+        .map_or_else(String::new, |line| format!(":{line}"));
+    format!(
+        "confidence: library (workspace member `{member}` is `{name}`, which the metapackage root distributes as `{label}` in `{file}{at}`, and its wheel ships this file)",
+        name = dep.name,
+        label = dep.origin.label,
+        file = dep.origin.file,
+    )
 }
 
 /// Each workspace member's own manifest entry points, as root-relative

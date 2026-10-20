@@ -32,6 +32,7 @@ use super::prefect;
 use super::pytest;
 use super::scrapy;
 use super::task_files;
+use super::tool_plugins;
 use super::types::{PluginContribution, PluginEntry, PluginHints};
 
 /// Inputs for [`extract_plugin_hints_with_parse`].
@@ -111,15 +112,20 @@ pub fn extract_plugin_hints_with_parse(
     }
 
     let scan = cached_config_scan(&ctx, config, manifest, cache)?;
-    // From the parse and the walk, which the config scan cache does not key on.
+    // From the parse, the walk, and member pyprojects, which the config scan
+    // cache does not key on.
+    let formatters = tool_plugins::datamodel_codegen_formatters(&ctx);
     let mut command_targets = scan.command_targets;
     command_targets.extend(commands::parsed_server_apps(parse));
     command_targets.extend(task_files::nested_dockerfile_apps(&root.path, dockerfiles));
+    command_targets.extend(formatters.command_targets);
     command_targets.extend(
         contributions
             .iter()
             .flat_map(|contrib: &PluginContribution| contrib.command_targets.iter().cloned()),
     );
+    let mut module_refs = scan.module_refs;
+    module_refs.extend(formatters.module_refs);
 
     Ok(PluginHints {
         contributions,
@@ -127,7 +133,7 @@ pub fn extract_plugin_hints_with_parse(
         config_used_distributions: scan.used_distributions,
         config_declared_distributions: scan.declared_distributions,
         config_provided_binaries: scan.provided_binaries,
-        config_module_refs: scan.module_refs,
+        config_module_refs: module_refs,
         config_script_entries: scan.script_entries,
         config_command_targets: command_targets,
         warnings,

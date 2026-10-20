@@ -1,9 +1,13 @@
 //! `mode = auto` resolution (§8).
 
+use std::collections::BTreeMap;
+
 use crate::config::{ChokkinConfig, ProjectMode};
-use crate::manifest::LoadedManifest;
+use crate::manifest::{
+    DeclaredDependency, DependencyContext, LoadedManifest, normalize_distribution_name,
+};
 use crate::resolver::import_root;
-use crate::sources::{DiscoveredSources, FileContext, LayoutInfo};
+use crate::sources::{DiscoveredSources, FileContext, LayoutInfo, PublicSurface};
 
 use super::auto::detect_auto_entries;
 use super::types::EntryCandidate;
@@ -43,6 +47,65 @@ pub(super) fn resolve_project_mode(
 pub(crate) fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
     names_distribution(manifest)
         && !has_clear_app_signals(manifest, sources, &detect_auto_entries(sources), false)
+}
+
+/// Whether a member that a metapackage root distributes ships as a library
+/// (#1060): its console script into its own package is then a CLI shipped
+/// with the library, as for a root (#652). Its mode stays app (CHK006 /
+/// CHK007 keep app severity); only its wheel's orphans are library orphans.
+#[must_use]
+pub(super) fn is_distributed_library(
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+) -> bool {
+    !has_clear_app_signals(manifest, sources, &detect_auto_entries(sources), true)
+}
+
+/// The distributions an auto-mode root ships as its content, by PEP 503
+/// name, each with the first requirement that names it (#1060).
+///
+/// Only a metapackage counts: a root whose wheel target ships no file
+/// (`bypass-selection`, as for CHK002 in #529) and that shows no app signal
+/// of its own. fastmcp's root ships nothing but `fastmcp-slim`, so that
+/// member is the library its users install. airflow's root is a metapackage
+/// too, but its own `apache-airflow` console script makes it an app, so it
+/// distributes nothing and `airflow-core` is scored as any app member. A
+/// root that ships code and depends on its member is an app using a
+/// library, not one distributing it, and a dependency group is never
+/// distributed.
+#[must_use]
+pub(super) fn metapackage_distributions<'a>(
+    config: &ChokkinConfig,
+    manifest: &'a LoadedManifest,
+    sources: &DiscoveredSources,
+    candidates: &[EntryCandidate],
+) -> BTreeMap<String, &'a DeclaredDependency> {
+    let mut distributions = BTreeMap::new();
+    if config.mode != ProjectMode::Auto
+        || !ships_no_code(manifest, sources)
+        || has_clear_app_signals(manifest, sources, candidates, true)
+    {
+        return distributions;
+    }
+    for dep in &manifest.dependencies {
+        if matches!(dep.context, DependencyContext::Group(_)) {
+            continue;
+        }
+        distributions
+            .entry(normalize_distribution_name(&dep.name))
+            .or_insert(dep);
+    }
+    distributions
+}
+
+/// A declared wheel target that matches no discovered file: a metapackage
+/// (#529).
+fn ships_no_code(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
+    manifest
+        .metadata
+        .wheel_targets
+        .as_ref()
+        .is_some_and(|targets| PublicSurface::resolve(Some(targets), &sources.files).is_none())
 }
 
 /// A `wsgi.py` / `app.py` module of the project's own package (werkzeug)
@@ -357,6 +420,115 @@ mod tests {
         assert!(is_library_member(&manifest, &sources));
         manifest.entry_points.push(console_script("acme.cli:main"));
         assert!(!is_library_member(&manifest, &sources));
+    }
+
+    #[test]
+    fn distributed_member_cli_in_its_own_package_ships_with_the_library() {
+        let mut manifest = empty_manifest();
+        let mut sources = library_sources();
+        manifest.entry_points.push(console_script("acme.cli:main"));
+        assert!(is_distributed_library(&manifest, &sources));
+        manifest.entry_points[0].target = "tools.cli:main".to_owned();
+        assert!(!is_distributed_library(&manifest, &sources));
+        manifest.entry_points[0].target = "acme.cli:main".to_owned();
+        sources.files[0].path = "manage.py".to_owned();
+        assert!(!is_distributed_library(&manifest, &sources));
+    }
+
+    fn requirement(name: &str, context: DependencyContext) -> DeclaredDependency {
+        DeclaredDependency {
+            name: name.to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context,
+            origin: crate::manifest::DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(7),
+                label: "project.dependencies".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+        }
+    }
+
+    /// fastmcp's root: a hatch wheel with `bypass-selection`, so its targets
+    /// match no file, over a member `slim/` that holds the code.
+    fn metapackage_root() -> (LoadedManifest, DiscoveredSources) {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        manifest.metadata.wheel_targets = Some(crate::manifest::WheelTargets {
+            source: "tool.hatch.build.targets.wheel".to_owned(),
+            paths: Vec::new(),
+            find: Vec::new(),
+        });
+        manifest.dependencies = vec![
+            requirement(
+                "acme-slim",
+                DependencyContext::OptionalExtra("all".to_owned()),
+            ),
+            requirement("acme-slim", DependencyContext::Runtime),
+            requirement("acme-remote", DependencyContext::Group("dev".to_owned())),
+            requirement("httpx", DependencyContext::Runtime),
+        ];
+        let mut sources = library_sources();
+        sources.layout = LayoutInfo::new(".", Vec::new());
+        sources.files[0].path = "slim/acme/__init__.py".to_owned();
+        (manifest, sources)
+    }
+
+    fn distributions(
+        config: &crate::config::ChokkinConfig,
+        manifest: &LoadedManifest,
+        sources: &DiscoveredSources,
+        candidates: &[EntryCandidate],
+    ) -> Vec<(String, DependencyContext)> {
+        metapackage_distributions(config, manifest, sources, candidates)
+            .into_iter()
+            .map(|(name, dep)| (name, dep.context.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn a_metapackage_root_distributes_its_non_group_requirements() {
+        let mut config = default_config();
+        config.mode = ProjectMode::Auto;
+        let (manifest, sources) = metapackage_root();
+        assert_eq!(
+            distributions(&config, &manifest, &sources, &[]),
+            [
+                (
+                    "acme-slim".to_owned(),
+                    DependencyContext::OptionalExtra("all".to_owned())
+                ),
+                ("httpx".to_owned(), DependencyContext::Runtime),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_an_auto_mode_metapackage_without_app_signals_distributes() {
+        let mut config = default_config();
+        config.mode = ProjectMode::Auto;
+        let (manifest, sources) = metapackage_root();
+
+        let mut own_cli = manifest.clone();
+        own_cli.entry_points.push(console_script("acme.cli:main"));
+        assert!(distributions(&config, &own_cli, &sources, &[]).is_empty());
+        let app_file = [auto_candidate("app.py")];
+        assert!(distributions(&config, &manifest, &sources, &app_file).is_empty());
+
+        let mut ships_code = manifest.clone();
+        if let Some(targets) = ships_code.metadata.wheel_targets.as_mut() {
+            targets.paths.push("slim/acme".to_owned());
+        }
+        assert!(distributions(&config, &ships_code, &sources, &[]).is_empty());
+        let mut no_targets = manifest.clone();
+        no_targets.metadata.wheel_targets = None;
+        assert!(distributions(&config, &no_targets, &sources, &[]).is_empty());
+
+        config.mode = ProjectMode::App;
+        assert!(distributions(&config, &manifest, &sources, &[]).is_empty());
     }
 
     /// Where a file sits relative to the project's own package `acme`.

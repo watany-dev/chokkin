@@ -86,6 +86,7 @@ pub fn analyze_reachability(
             path: file.path.clone(),
             max_confidence: confidence_for_unreachable(mode),
             mode,
+            confidence_reason: None,
         };
         if skipped.contains(file.path.as_str()) {
             unread.push(orphan);
@@ -143,6 +144,39 @@ pub(crate) fn apply_member_surfaces(
     for file in report.unreachable.iter_mut().chain(&mut report.unread) {
         if member_ships(surfaces.iter().copied(), &file.path) == Some(false) {
             score_as_app(file);
+        }
+    }
+}
+
+/// Re-score app orphans that the wheel of a member a metapackage root
+/// distributes ships as library orphans (#1060).
+///
+/// The member stays an app, so CHK006 / CHK007 keep app severity, but its
+/// users install that wheel and may import any file it ships: as for the
+/// wheel-shipped `__all__` of an app member (§8), only the CHK001 scoring
+/// changes. `surfaces` pairs each such member's root-relative directory and
+/// member-relative surface with the line that names the requirement. A
+/// library member nested inside is judged by its own surface.
+pub(crate) fn apply_distributed_surfaces(
+    report: &mut ReachabilityReport,
+    surfaces: &[(&(String, PublicSurface), &str)],
+    entry: &EntryPlan,
+) {
+    for file in report.unreachable.iter_mut().chain(&mut report.unread) {
+        if entry.in_library_member(&file.path) {
+            continue;
+        }
+        let shipping = surfaces
+            .iter()
+            .filter_map(|((member, surface), reason)| {
+                let rel = file.path.strip_prefix(member.as_str())?.strip_prefix('/')?;
+                Some((member.len(), surface.contains(rel), *reason))
+            })
+            .max_by_key(|(len, ..)| *len);
+        if let Some((_, true, reason)) = shipping {
+            file.mode = ProjectMode::Library;
+            file.max_confidence = confidence_for_unreachable(ProjectMode::Library);
+            file.confidence_reason = Some(reason.to_owned());
         }
     }
 }
@@ -316,6 +350,7 @@ mod tests {
         EntryPlan {
             mode: ProjectMode::App,
             library_members: Vec::new(),
+            distributed_members: Vec::new(),
             roots: roots
                 .iter()
                 .map(|path| EntryRoot {
@@ -624,6 +659,83 @@ mod tests {
                 ("libs/core/docs/conf.py", Confidence::Certain),
                 ("libs/core/pkg/orphan.py", Confidence::Maybe),
                 ("libs/core/plugins/x/pkg/orphan.py", Confidence::Maybe),
+            ]
+        );
+    }
+
+    #[test]
+    fn distributed_member_lowers_only_orphans_its_wheel_ships() {
+        let parse = ParseSummary {
+            modules: [
+                "acme/main.py",
+                "slim/pkg/orphan.py",
+                "slim/scripts/release.py",
+                "slim/libs/core/pkg/orphan.py",
+                "tools/orphan.py",
+            ]
+            .map(|path| parsed(path, &[], false))
+            .into(),
+        };
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let paths: Vec<&str> = parse.modules.iter().map(|m| m.path.as_str()).collect();
+        let sources = flat_sources(root, &paths);
+        let mut graph = graph_for(&sources, &parse, &[]);
+        let mut entry = app_entry(&["acme/main.py"]);
+        entry.library_members = vec!["slim/libs/core".to_owned()];
+        let mut report =
+            analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                .expect("reachability");
+        let core = (
+            "slim/libs/core".to_owned(),
+            PublicSurface {
+                files: ["other.py".to_owned()].into(),
+            },
+        );
+        apply_member_surfaces(&mut report, &[&core]);
+        let slim = (
+            "slim".to_owned(),
+            PublicSurface {
+                files: [
+                    "pkg/orphan.py".to_owned(),
+                    "libs/core/pkg/orphan.py".to_owned(),
+                ]
+                .into(),
+            },
+        );
+        apply_distributed_surfaces(&mut report, &[(&slim, "confidence: library (why)")], &entry);
+
+        let found: Vec<_> = report
+            .unreachable
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_str(),
+                    file.max_confidence,
+                    file.callers_may_import(),
+                    file.confidence_reason.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    "slim/libs/core/pkg/orphan.py",
+                    Confidence::Certain,
+                    false,
+                    None
+                ),
+                (
+                    "slim/pkg/orphan.py",
+                    Confidence::Maybe,
+                    true,
+                    Some("confidence: library (why)")
+                ),
+                ("slim/scripts/release.py", Confidence::Certain, false, None),
+                ("tools/orphan.py", Confidence::Certain, false, None),
             ]
         );
     }

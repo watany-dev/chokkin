@@ -1922,6 +1922,60 @@ fn airflow_safe_mode_loads_dag_looking_files_only() {
     );
 }
 
+/// Every `.py` under a directory named exactly `dags` is a DAG-folder file
+/// in its path's context, whether or not it passes the safe-mode check
+/// (#1064): tests and e2e suites hand the folder or the file to the DAG
+/// processor by path. The partial names keep the check.
+#[test]
+fn airflow_dags_directories_load_every_file() {
+    let license =
+        "# Licensed to the Apache Software Foundation (ASF)\nfrom __future__ import annotations\n";
+    let dag = "from airflow.sdk import dag\n";
+    let hints = orchestration_hints(
+        "\"apache-airflow\"",
+        "",
+        &[
+            ("airflow.cfg", "[core]\ndags_folder = pipelines\n"),
+            ("pipelines/util.py", "def helper():\n    pass\n"),
+            ("dags/__init__.py", ""),
+            ("dags/common/helper.py", "def run():\n    pass\n"),
+            ("tests/__init__.py", ""),
+            ("tests/unit/__init__.py", ""),
+            ("tests/unit/dags/no_dags.py", license),
+            (
+                "tests/unit/dags/subdir2/subdir3/should_ignore_this.py",
+                license,
+            ),
+            ("tests/integration/otel/dags/otel_test_dag.py", dag),
+            ("tests/dags_broken/x.py", "import os\n"),
+            ("tests/Dags/x.py", "import os\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Airflow);
+    let mut entries: Vec<(&str, FileContext)> = contrib
+        .entries
+        .iter()
+        .map(|entry| (entry.spec.path.as_str(), entry.context))
+        .collect();
+    entries.sort_unstable_by_key(|(path, _)| *path);
+    assert_eq!(
+        entries,
+        [
+            ("dags/__init__.py", FileContext::Runtime),
+            ("dags/common/helper.py", FileContext::Runtime),
+            (
+                "tests/integration/otel/dags/otel_test_dag.py",
+                FileContext::Test
+            ),
+            ("tests/unit/dags/no_dags.py", FileContext::Test),
+            (
+                "tests/unit/dags/subdir2/subdir3/should_ignore_this.py",
+                FileContext::Test
+            ),
+        ]
+    );
+}
+
 #[test]
 fn airflow_unreadable_dags_folder_is_a_gap() {
     let hints = orchestration_hints(
@@ -1933,6 +1987,57 @@ fn airflow_unreadable_dags_folder_is_a_gap() {
     assert!(contrib.entries.is_empty());
     assert_eq!(gap_texts(contrib), ["${DAGS}"]);
     assert_eq!(contrib.command_targets[0].origin.file, "airflow.cfg");
+    assert_eq!(contrib.command_targets[0].origin.line, Some(2));
+}
+
+/// Airflow 3's `[dag_processor] dag_bundle_config_list` (#1058): a
+/// `LocalDagBundle` `path` is a DAG folder under the same safe mode, and
+/// what names DAGs elsewhere or does not read is a gap at the key's line.
+#[test]
+fn airflow_local_dag_bundles_are_dag_folders() {
+    let cfg = "[core]\ndag_discovery_safe_mode = True\n\n[dag_processor]\ndag_bundle_config_list = [\n    {\n      \"name\": \"etl\",\n      \"classpath\": \"airflow.dag_processing.bundles.local.LocalDagBundle\",\n      \"kwargs\": {\"path\": \"{AIRFLOW_HOME}/pipelines\", \"refresh_interval\": 0}\n    },\n    {\"name\": \"default\", \"classpath\": \"airflow.dag_processing.bundles.local.LocalDagBundle\", \"kwargs\": {}},\n    {\"name\": \"abs\", \"classpath\": \"airflow.dag_processing.bundles.local.LocalDagBundle\", \"kwargs\": {\"path\": \"/opt/airflow/dags\"}},\n    {\"name\": \"git\", \"classpath\": \"airflow.providers.git.bundles.git.GitDagBundle\", \"kwargs\": {\"subdir\": \"dags\"}}\n  ]\n";
+    let hints = orchestration_hints(
+        "\"apache-airflow\"",
+        "",
+        &[
+            ("airflow.cfg", cfg),
+            ("pipelines/etl.py", "from airflow.sdk import dag\n"),
+            ("pipelines/util.py", "def helper():\n    pass\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Airflow);
+    assert_eq!(sorted_entries(contrib), ["pipelines/etl.py"]);
+    assert_eq!(
+        contrib.entries[0].origin.label, "dag_bundle_config_list",
+        "{:?}",
+        contrib.entries[0].origin
+    );
+    assert_eq!(
+        gap_texts(contrib),
+        [
+            "/opt/airflow/dags",
+            "airflow.providers.git.bundles.git.GitDagBundle"
+        ]
+    );
+    for target in &contrib.command_targets {
+        assert_eq!(target.origin.file, "airflow.cfg");
+        assert_eq!(target.origin.line, Some(5));
+    }
+}
+
+#[test]
+fn airflow_unreadable_dag_bundle_list_is_a_gap() {
+    let hints = orchestration_hints(
+        "\"apache-airflow\"",
+        "",
+        &[(
+            "airflow.cfg",
+            "[dag_processor]\ndag_bundle_config_list = pipelines\n",
+        )],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Airflow);
+    assert!(contrib.entries.is_empty());
+    assert_eq!(gap_texts(contrib), ["pipelines"]);
     assert_eq!(contrib.command_targets[0].origin.line, Some(2));
 }
 
