@@ -1139,8 +1139,11 @@ impl<'a> Visitor<'a> for AnnotationNames<'_> {
         match expr {
             Expr::Name(name) => insert_name(self.0, &name.id),
             Expr::StringLiteral(string) => {
-                if let Ok(parsed) = ruff_python_parser::parse_expression(string.value.to_str()) {
-                    self.visit_expr(parsed.expr());
+                // One nested past the walk limit (#1045) reads like one
+                // that does not parse: its names are not collected.
+                if let Some(parsed) = super::depth::parse_walkable_expression(string.value.to_str())
+                {
+                    self.visit_expr(&parsed);
                 }
             },
             // `Literal["fast"]` and the metadata of `Annotated[T, Field(alias="x")]`

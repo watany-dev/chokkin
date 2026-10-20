@@ -475,11 +475,14 @@ impl Resolver<'_> {
             let core = core.clone();
             match (core.origin, import_map.namespace_candidates(imported)) {
                 // The cache holds the root's first candidate; the pick is per site.
-                (ModuleOrigin::ThirdParty, None) => RootResolution {
+                (ModuleOrigin::ThirdParty, None) => declared_portion(
+                    imported, file, member, scoped, declared,
+                )
+                .unwrap_or_else(|| RootResolution {
                     distribution: root_candidates(&root_name, venv_imports, import_map)
                         .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
                     ..core
-                },
+                }),
                 (ModuleOrigin::Stdlib, _) | (_, None) => core,
                 // A first-party root may share its namespace with a distribution
                 // (`poetry` and `poetry.core`); the local tree wins when it has the
@@ -675,6 +678,34 @@ fn namespace_declared_match(module: &str, declared: &DeclaredNames<'_>) -> Optio
         normalize_distribution_name(&format!("{namespace}-{portion}")),
         declared,
     )
+}
+
+/// A namespace portion declared under its first two segments beats the
+/// shared root's own distribution, however that was found (`optimum-intel`
+/// for `optimum.intel` while `optimum` is only locked, #1022). The file's
+/// script block, its member manifest, or the root must declare it; a locked
+/// portion alone leaves the root's resolution, as the import may well be the
+/// root's own subpackage.
+fn declared_portion(
+    module: &str,
+    file: &str,
+    member: Option<&str>,
+    scoped: &ScopedDeclarations,
+    declared: &DeclaredNames<'_>,
+) -> Option<RootResolution> {
+    let mut segments = module.split('.');
+    let (namespace, portion) = (segments.next()?, segments.next()?);
+    let distribution = normalize_distribution_name(&format!("{namespace}-{portion}"));
+    let names_it =
+        |sets: Option<&BTreeSet<String>>| sets.is_some_and(|names| names.contains(&distribution));
+    (names_it(scoped.scripts.get(file))
+        || names_it(member.and_then(|member| scoped.members.get(member)))
+        || declared.declares(&distribution))
+    .then_some(RootResolution {
+        origin: ModuleOrigin::ThirdParty,
+        distribution: Some(distribution),
+        confidence: ResolveConfidence::Likely,
+    })
 }
 
 /// Affixed counterpart of the declared-or-locked step in

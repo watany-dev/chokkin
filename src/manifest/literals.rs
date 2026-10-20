@@ -15,9 +15,10 @@ pub(crate) struct LiteralScan {
     pub complete: bool,
 }
 
-/// Parse Python source without executing it; `None` on a syntax error.
+/// Parse Python source without executing it; `None` on a syntax error or
+/// nesting too deep to walk (#1045).
 pub(crate) fn parse_module(contents: &str) -> Option<Suite> {
-    ruff_python_parser::parse_module(contents)
+    crate::parser::parse_walkable_module(contents)
         .ok()
         .map(Parsed::into_suite)
 }
@@ -121,5 +122,11 @@ extensions = [
     #[test]
     fn syntax_error_is_none() {
         assert!(parse_module("X = [\"a\",").is_none());
+    }
+
+    #[test]
+    fn nesting_too_deep_to_walk_is_none() {
+        let deep = format!("X = {}1\n", "-".repeat(100_000));
+        assert!(parse_module(&deep).is_none());
     }
 }

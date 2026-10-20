@@ -420,6 +420,13 @@
       ]
     },
     {
+      "distribution": "optimum-intel",
+      "imports": [
+        "optimum.exporters.openvino",
+        "optimum.intel"
+      ]
+    },
+    {
       "distribution": "azure-identity",
       "imports": [
         "azure.identity"
