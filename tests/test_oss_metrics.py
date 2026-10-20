@@ -139,6 +139,103 @@ class TooSlowTest(unittest.TestCase):
         self.assertFalse(om.too_slow("sentinel", 60_000))
 
 
+def write_summary(run: Path, rows: list[tuple[str, str, int, int]]) -> None:
+    """summary.tsv of (slug, size, exit, median_ms) rows."""
+    run.mkdir(parents=True, exist_ok=True)
+    lines = ["slug\tcategory\tsize\texit\tmedian_ms\ttotal\tCHK002\tCHK003"]
+    lines += [f"{slug}\tlib\t{size}\t{code}\t{ms}\t0\t0\t0" for slug, size, code, ms in rows]
+    (run / "summary.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# Medium and large rows of the summary.tsv of v0.7.3 and v0.7.4, -r 1 on one
+# machine: (slug, size, v0.7.3 median_ms, v0.7.4 median_ms). v0.7.4 made
+# transformers 4-6x slower (docs/dev/v0.7.x-uvx-regression-report.ja.md §5).
+V073_V074 = [
+    ("airflow", "large", 2343, 2428),
+    ("attrs", "medium", 23, 26),
+    ("black", "large", 41, 45),
+    ("click", "medium", 24, 29),
+    ("django", "large", 373, 442),
+    ("djangorestframework", "large", 45, 46),
+    ("fastapi", "large", 77, 96),
+    ("fastmcp", "large", 185, 177),
+    ("flask", "medium", 29, 33),
+    ("httpx", "medium", 25, 30),
+    ("jinja", "medium", 30, 33),
+    ("langchain", "large", 313, 357),
+    ("llama_index", "large", 1566, 1570),
+    ("mcp-python-sdk", "large", 126, 119),
+    ("mitmproxy", "large", 72, 78),
+    ("mlflow", "large", 586, 709),
+    ("openai-python", "large", 233, 276),
+    ("pdm", "medium", 47, 51),
+    ("poetry", "medium", 74, 76),
+    ("pydantic", "medium", 100, 123),
+    ("requests", "medium", 19, 23),
+    ("sqlalchemy", "large", 278, 320),
+    ("starlette", "medium", 25, 24),
+    ("streamlit", "large", 207, 210),
+    ("structlog", "medium", 19, 26),
+    ("transformers", "large", 1131, 4219),
+    ("typer", "medium", 33, 35),
+    ("urllib3", "medium", 32, 49),
+    ("uvicorn", "medium", 20, 22),
+    ("virtualenv", "medium", 31, 34),
+    ("werkzeug", "medium", 35, 37),
+]
+
+
+class SlowdownTest(unittest.TestCase):
+    def test_both_the_ratio_and_the_difference_must_be_reached(self) -> None:
+        self.assertTrue(om.slowed(1000, 1500))
+        self.assertFalse(om.slowed(1000, 1499))
+        self.assertFalse(om.slowed(400, 899))  # 2.2x but 499 ms over
+        self.assertTrue(om.slowed(400, 900))
+        self.assertFalse(om.slowed(3000, 3600))  # 600 ms over but 1.2x
+
+    def test_medium_and_large_projects_that_ran_in_both(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [
+                ("medium", "medium", 1, 1000), ("large", "large", 0, 1000), ("small", "small", 1, 100),
+                ("sentinel", "sentinel", 1, 100), ("crashed", "large", 3, 100), ("config", "large", 1, 1000),
+                ("fast", "large", 1, 1000),
+            ])
+            write_summary(head, [
+                ("medium", "medium", 1, 2000), ("large", "large", 0, 1600), ("small", "small", 1, 900),
+                ("sentinel", "sentinel", 1, 900), ("crashed", "large", 1, 2000), ("config", "large", 2, 2000),
+                ("fast", "large", 1, 1100), ("new", "large", 1, 9000),
+            ])
+            self.assertEqual(
+                om.slowdowns(base, head), [["medium", "medium", 1000, 2000], ["large", "large", 1000, 1600]]
+            )
+
+    def test_v0_7_4_fails_on_transformers_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [(slug, size, 0, before) for slug, size, before, _ in V073_V074])
+            write_summary(head, [(slug, size, 0, after) for slug, size, _, after in V073_V074])
+            self.assertEqual(om.slowdowns(base, head), [["transformers", "large", 1131, 4219]])
+
+    def test_a_re_measure_under_the_criterion_clears_the_project(self) -> None:
+        rows = [["noisy", "large", 1000, 1600], ["slow", "large", 1000, 8000]]
+        medians = {"noisy": 1100, "slow": 7900}
+        still = om.confirm_slowdowns(rows, medians.__getitem__)
+        self.assertEqual(still, [["slow", "large", 1000, 8000, 7900]])
+        self.assertEqual(rows[0], ["noisy", "large", 1000, 1600, 1100])
+
+    def test_the_section_lists_each_flagged_project_and_its_result(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [("a", "large", 1, 1000), ("b", "medium", 1, 500), ("s", "small", 1, 50)])
+            write_summary(head, [("a", "large", 1, 8000), ("b", "medium", 1, 600), ("s", "small", 1, 60)])
+            lines = om.slowdown_md(base, head, [["a", "large", 1000, 8000, 7900], ["b", "medium", 500, 1000, 600]])
+            self.assertIn("Median cold run summed over the 2 projects in both runs: 1500 ms -> 8600 ms.", lines)
+            self.assertIn("| a | large | 1000 | 8000 | 7900 | ❌ FAIL |", lines)
+            self.assertIn("| b | medium | 500 | 1000 | 600 | ✅ noise |", lines)
+            self.assertIn("_No project slowed down past the criterion._", om.slowdown_md(base, head, []))
+
+
 class ParseReportTest(unittest.TestCase):
     def test_non_object_output_is_none(self) -> None:
         self.assertEqual(om.parse_report(b'{"issues": []}'), {"issues": []})

@@ -44,9 +44,14 @@ scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head" -r 3 --baseline "$S/metri
 ```
 
 clone は `target/oss-clones/clones.lock.tsv` で固定され、両バージョンで同じ
-checkout を測る。`--baseline` を付けた run は次を書く。
+checkout を測る。baseline と HEAD は**同じマシンで続けて**測る。`--baseline` は
+medium / large project の `median_ms` を比べ、1.5 倍以上かつ 500 ms 以上遅い
+project を cold 3 回で測り直して gate にかける (spec §17、#1025)。別のマシンや
+別の日に測った baseline を渡すと、環境差がそのまま遅化に見える。`--baseline` を
+付けた run は次を書く。
 
-- `compare.md`: CHK002 / CHK003 の before/after、finding-level diff の集計
+- `compare.md`: CHK002 / CHK003 の before/after、medium / large project の実行時間
+  (合計と、測り直した project の結果)、finding-level diff の集計
   (rule 別、project 別の NEW / GONE / CHANGED)、§17 scorecard
 - `finding-diff.tsv`: 動いた finding の一覧。列は
   `status slug code fingerprint before after`、`before` / `after` は
@@ -136,5 +141,5 @@ CHK001 も、1,329 件の GONE のうち strict に残ったのは 270 件だけ
 - rule 別件数の baseline → HEAD と、`compare.md` の finding-level diff の集計
 - 件数が動いた project ごとの内訳と原因の PR (`finding-diff.tsv` から)
 - §3 の「Downgrade vs vanish」表と、other の消失の原因
-- 実行時間 (環境ノイズが大きいので baseline と HEAD を交互に複数回)
+- `compare.md` の実行時間の節と、遅化が気になる project は baseline と HEAD を交互に複数回測った値
 - 実行したコマンド
