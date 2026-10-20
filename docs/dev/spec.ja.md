@@ -1165,7 +1165,7 @@ non-Poetry `pyproject.toml` が `[project]` テーブルを持ち、`project.dep
 `pyproject.toml` に追加する。Poetry形式、requirements系、optional try-import、候補が複数ある場合は
 skipped fix として報告し、suggestion/手動修正に留める。`[project]` の無い `pyproject.toml`
 (依存を setup.py / setup.cfg で宣言し、pyproject には `[tool.*]` だけを置く構成)に `[project]` を
-作ると setuptools がそちらを正とみなしてビルドが壊れるため、UnsupportedTarget で skip する (#581)。
+作ると setuptools がそちらを正とみなしてビルドが壊れるため、UnsupportedTarget で skip する (#581)。CHK005 の `[project].dependencies` への移動も同じ条件で skip する。Poetry 1.x の `pyproject.toml` に `dependencies` だけの `[project]` を作ると、PEP 621 が必須とする `name` を欠いた表になるため。
 
 manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。`--hash` は行内のどの形(`--hash=`・`--hash `・継続行)でも検出してファイルごと編集しない。pipが拒むオプションを含む行も、`--hash` の文字があれば hash 付きとみなす。`\` で継続した requirement は、つないだ行として名前を照合し、属する物理行をまとめて消す (#927)。`setup.cfg` もline-based編集だが、対象は宣言のラベル（`options.install_requires[i]` / `options.extras_require.<extra>[i]`）が指すsection・option・itemに限る。itemの数え方はmanifest抽出と同じ行分類器による（重複sectionは合流、コメント・空行はitemではない）。継続行のitemは行末ごと消し、インライン値のitemは `key =` と行末を残すので、空になったoptionも宣言として残る。他の行のバイト列と行末（CRLF）は変えない。そのindexのitemがもう対象のdistributionを指さなければ編集しない。複数行の `project.dependencies` に追加するentry（CHK003 `--add-missing`、CHK005 の移動）は既存のindentで独立した行に置き、直前のentryの行コメントはそのentryの行に残す。
 

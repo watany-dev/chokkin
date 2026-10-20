@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `version`, `extras`, `markers`, `platform`, `python` and `optional`) into
   `[project].dependencies` as a bare name, which would resolve it from the
   default index. The CHK005 move is skipped as `ambiguous` (#1041).
+- `--fix` no longer creates a `[project]` table holding only `dependencies`
+  when it moves a CHK005 dependency out of a group in a pyproject.toml with
+  no `[project]` (Poetry 1.x), or into a dynamic `project.dependencies`. The
+  move is skipped as `unsupported-target`, as `--add-missing` already did.
 - With the Airflow plugin on, every `.py` under a directory named exactly
   `dags` is a DAG-folder entry in its path's context, not only files that
   pass the DAG processor's safe-mode check (`airflow` and `dag` in the

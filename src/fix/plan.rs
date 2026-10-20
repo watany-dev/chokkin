@@ -204,11 +204,31 @@ fn plan_add_missing_to_manifest(
             "missing dependency insertion currently supports non-Poetry pyproject.toml manifests",
         ));
     }
+    require_static_project_dependencies(issue, manifest)?;
+
+    let name = missing_distribution_name(issue).ok_or_else(|| {
+        skipped(
+            issue,
+            SkippedReason::MissingOrigin,
+            "missing dependency distribution could not be determined",
+        )
+    })?;
+
+    Ok(Some(FixAction::AddMissingDependency { name, file }))
+}
+
+/// `[project].dependencies` must already be the declared runtime list: a new
+/// `[project]` table would take over setup.py/setup.cfg (#581) or, beside
+/// `[tool.poetry]`, lack the `name` PEP 621 requires.
+fn require_static_project_dependencies(
+    issue: &Issue,
+    manifest: &LoadedManifest,
+) -> Result<(), SkippedFix> {
     if !manifest.sources.pyproject_project_table {
         return Err(skipped(
             issue,
             SkippedReason::UnsupportedTarget,
-            "pyproject.toml has no [project] table; dependencies are declared in setup.py/setup.cfg",
+            "pyproject.toml has no [project] table; runtime dependencies are declared elsewhere",
         ));
     }
     if manifest
@@ -223,16 +243,7 @@ fn plan_add_missing_to_manifest(
             "project.dependencies is dynamic",
         ));
     }
-
-    let name = missing_distribution_name(issue).ok_or_else(|| {
-        skipped(
-            issue,
-            SkippedReason::MissingOrigin,
-            "missing dependency distribution could not be determined",
-        )
-    })?;
-
-    Ok(Some(FixAction::AddMissingDependency { name, file }))
+    Ok(())
 }
 
 fn missing_distribution_name(issue: &Issue) -> Option<String> {
@@ -353,6 +364,8 @@ fn plan_move_to_runtime(
             "only a single dev-group declaration can be moved automatically",
         ));
     }
+
+    require_static_project_dependencies(issue, manifest)?;
 
     let source = dev_only[0];
     // Dropping `git = ...` or `source = "corp"` would resolve the package
@@ -689,7 +702,18 @@ mod tests {
         marker: Option<&str>,
         unportable_key: Option<&str>,
     ) -> (Vec<FixAction>, Vec<SkippedFix>) {
-        let manifest = manifest_with(vec![DeclaredDependency {
+        plan_poetry_dev_move_in(specifier, marker, unportable_key, |manifest| {
+            manifest.sources.pyproject_project_table = true;
+        })
+    }
+
+    fn plan_poetry_dev_move_in(
+        specifier: &str,
+        marker: Option<&str>,
+        unportable_key: Option<&str>,
+        setup: impl FnOnce(&mut LoadedManifest),
+    ) -> (Vec<FixAction>, Vec<SkippedFix>) {
+        let mut manifest = manifest_with(vec![DeclaredDependency {
             name: "dulwich".to_owned(),
             extras: Vec::new(),
             marker: marker.map(str::to_owned),
@@ -704,6 +728,7 @@ mod tests {
             included_via: Vec::new(),
             unportable_key: unportable_key.map(str::to_owned),
         }]);
+        setup(&mut manifest);
         let issue = Issue {
             rule: RuleId::Chk005,
             severity: Severity::Error,
@@ -771,6 +796,31 @@ mod tests {
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
         assert!(skipped[0].detail.contains("`git`"), "{}", skipped[0].detail);
+    }
+
+    /// A Poetry 1.x pyproject has no `[project]` table; creating one with only
+    /// `dependencies` is not a valid PEP 621 table, and setuptools would take
+    /// it over setup.py like #581.
+    #[test]
+    fn chk005_move_skips_a_pyproject_with_no_static_project_dependencies() {
+        let no_table = |_: &mut LoadedManifest| {};
+        let dynamic = |manifest: &mut LoadedManifest| {
+            manifest.sources.pyproject_project_table = true;
+            manifest.metadata.dynamic = vec!["dependencies".to_owned()];
+        };
+        for (setup, detail) in [
+            (
+                &no_table as &dyn Fn(&mut LoadedManifest),
+                "no [project] table",
+            ),
+            (&dynamic, "project.dependencies is dynamic"),
+        ] {
+            let (actions, skipped) = plan_poetry_dev_move_in("^1.2", None, None, setup);
+            assert_eq!(actions, []);
+            assert_eq!(skipped.len(), 1);
+            assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+            assert!(skipped[0].detail.contains(detail), "{}", skipped[0].detail);
+        }
     }
 
     #[test]
