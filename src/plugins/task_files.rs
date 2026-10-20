@@ -191,7 +191,7 @@ fn scan_dockerfile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut
             continue;
         };
         let command = docker_command(rest.trim());
-        hits.push_command(&command, known, &origin_at(rel, index, label));
+        hits.push_deploy_command(&command, known, &origin_at(rel, index, label));
     }
 }
 
@@ -215,7 +215,7 @@ fn scan_procfile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut S
             continue;
         }
         let label = format!("process {process}");
-        hits.push_command(command, known, &origin_at(rel, index, &label));
+        hits.push_deploy_command(command, known, &origin_at(rel, index, &label));
     }
 }
 
@@ -571,6 +571,24 @@ mod tests {
                 ("celery".to_owned(), Some(3))
             ]
         );
+    }
+
+    #[test]
+    fn deploy_files_mark_their_command_targets() {
+        let deploy = |scan: fn(&str, &str, KnownBinary<'_>, &mut SourceHits), contents| {
+            let mut hits = SourceHits::default();
+            scan("file", contents, &known, &mut hits);
+            hits.command_targets
+                .into_iter()
+                .map(|target| target.deploy)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            deploy(scan_dockerfile, "CMD [\"python\", \"run.py\"]\n"),
+            [true]
+        );
+        assert_eq!(deploy(scan_procfile, "worker: python -m worker\n"), [true]);
+        assert_eq!(deploy(scan_makefile, "gen:\n\tpython gen.py\n"), [false]);
     }
 
     #[test]

@@ -3076,12 +3076,12 @@ fn binary_unresolved_script_import_lowers_only_its_block() {
 
 const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
 
-/// A command may be the only thing that runs a file, and commands other than
-/// a server's app add no entries (#912, #1004): one that runs Python no entry
-/// reaches lowers unused files to likely and is warned once per file (#913).
+/// Scripts and `-m` modules task files and tool configs run are entries,
+/// so what they import is followed and their commands are no gap (#912).
+/// They are dev roots (#797): `--production` holds them back, and the files
+/// they reach are unread code again (#913).
 #[test]
-fn binary_unread_command_target_lowers_unused_files() {
-    let file = |path: &str| (path.to_owned(), "likely".to_owned());
+fn binary_command_run_files_are_entries() {
     let mut files = vec![
         ("pyproject.toml", COMMAND_PYPROJECT),
         ("mypkg/__init__.py", ""),
@@ -3099,9 +3099,11 @@ fn binary_unread_command_target_lowers_unused_files() {
             "repos:\n  - repo: local\n    hooks:\n      - id: ghgen\n        name: ghgen\n        entry: python -m mypkg.ghgen\n        language: system\n",
         ),
         ("Procfile", "web: gunicorn mypkg.server:app\n"),
+        ("mypkg/gen.py", "from mypkg import genhelper\n"),
+        ("mypkg/genhelper.py", ""),
+        ("mypkg/orphan.py", ""),
     ];
     for path in [
-        "mypkg/gen.py",
         "mypkg/modrun.py",
         "mypkg/toxgen.py",
         "mypkg/ghgen.py",
@@ -3110,6 +3112,75 @@ fn binary_unread_command_target_lowers_unused_files() {
         files.push((path, "app = None\n"));
     }
     let project = write_project(&files);
+    // `certain` on the orphan shows no command is a gap.
+    let unused: Vec<_> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK001")
+        .collect();
+    assert_eq!(
+        unused,
+        [(
+            "CHK001".to_owned(),
+            "mypkg/orphan.py".to_owned(),
+            "error".to_owned(),
+            "certain".to_owned()
+        )]
+    );
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", "mypkg/orphan.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    for root in [
+        "mypkg/ghgen.py (command: pre-commit entry (.pre-commit-config.yaml:6))",
+        "mypkg/toxgen.py (command: tox commands (tox.ini:2))",
+        "mypkg/modrun.py (command: make recipe (Makefile:5))",
+    ] {
+        assert!(stderr.contains(root), "{stderr}");
+    }
+
+    let production: Vec<_> = json_issues(project.path(), &["--no-cache", "--production"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let likely = |path: &str| (path.to_owned(), "likely".to_owned());
+    assert_eq!(
+        production,
+        [
+            likely("mypkg/gen.py"),
+            likely("mypkg/genhelper.py"),
+            likely("mypkg/ghgen.py"),
+            likely("mypkg/modrun.py"),
+            likely("mypkg/orphan.py"),
+            likely("mypkg/toxgen.py"),
+        ]
+    );
+}
+
+/// A module `-c` code imports, a task runner loads, or a relocated `-m` runs
+/// is no entry, so one no entry reaches lowers unused files to likely and is
+/// warned once per file (#913).
+#[test]
+fn binary_unread_command_target_lowers_unused_files() {
+    let project = write_project(&[
+        ("pyproject.toml", COMMAND_PYPROJECT),
+        ("mypkg/__init__.py", ""),
+        ("mypkg/main.py", "def main():\n    pass\n"),
+        ("mypkg/cimp.py", ""),
+        ("mypkg/relmod.py", ""),
+        ("mypkg/tasks.py", ""),
+        (
+            "Makefile",
+            "gen:\n\tpython -c \"import mypkg.cimp\"\n\tcd sub && python -m mypkg.relmod\n\tcelery -A mypkg.tasks worker\n",
+        ),
+    ]);
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--no-cache", "--reporter", "json"])
         .arg(project.path())
@@ -3128,39 +3199,96 @@ fn binary_unread_command_target_lowers_unused_files() {
             )
         })
         .collect();
+    let likely = |path: &str| (path.to_owned(), "likely".to_owned());
     assert_eq!(
         unused,
         [
-            file("mypkg/gen.py"),
-            file("mypkg/ghgen.py"),
-            file("mypkg/modrun.py"),
-            file("mypkg/toxgen.py"),
+            likely("mypkg/cimp.py"),
+            likely("mypkg/relmod.py"),
+            likely("mypkg/tasks.py"),
         ],
         "{parsed}"
     );
     let stderr = String::from_utf8(output.stderr).expect("utf8");
-    for warning in [
-        "plugin: `.pre-commit-config.yaml:6` runs `mypkg.ghgen` as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `Makefile:2` runs `mypkg/gen.py` and 1 more target as Python code no entry reaches; unused files are reported below certain",
-        "plugin: `tox.ini:2` runs `mypkg/toxgen.py` as Python code no entry reaches; unused files are reported below certain",
-    ] {
-        assert!(stderr.contains(warning), "{stderr}");
-    }
-    // The server's app is an entry, so its command is no gap.
-    assert!(!stderr.contains("`Procfile:1`"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "plugin: `Makefile:2` runs `mypkg.cimp` and 2 more targets as Python code no entry reaches; unused files are reported below certain"
+        ),
+        "{stderr}"
+    );
 
     let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
-        .args(["--no-cache", "--explain", "CHK001:mypkg/gen.py"])
+        .args(["--no-cache", "--explain", "CHK001:mypkg/cimp.py"])
         .arg(project.path())
         .output()
         .expect("run chokkin");
     let stderr = String::from_utf8(explain.stderr).expect("utf8");
     assert!(
         stderr.contains(
-            "a command runs Python code no entry reaches: `mypkg.ghgen` in `.pre-commit-config.yaml:6` (and 3 more)"
+            "a command runs Python code no entry reaches: `mypkg.cimp` in `Makefile:2` (and 2 more)"
         ),
         "{stderr}"
     );
+}
+
+/// What a Dockerfile or Procfile runs is deployed, so it keeps its own
+/// context and stays a root under `--production`, while a script a Makefile
+/// runs is dev: its dev-group import is not misplaced (#912).
+#[test]
+fn binary_deploy_command_runs_keep_runtime_context() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\", \"rich\"]\n\n[dependency-groups]\ndev = [\"click\"]\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"*.py\"]\n",
+        ),
+        (
+            "Dockerfile",
+            "FROM python:3.12\nCMD [\"python\", \"run.py\"]\n",
+        ),
+        ("Procfile", "worker: python worker.py\n"),
+        ("Makefile", "gen:\n\tpython gen.py\n"),
+        ("run.py", "import requests\n"),
+        ("worker.py", "import rich\n"),
+        ("gen.py", "import click\n"),
+    ]);
+    for mode in [&["--strict"][..], &["--strict", "--production"]] {
+        let keys = issue_keys(&json_issues(project.path(), mode));
+        assert!(keys.is_empty(), "{mode:?}: {keys:?}");
+    }
+}
+
+/// A file with a `__main__` block or one the wheel ships stays a production
+/// root when a task file also runs it: `make run` runs the flat app and tox
+/// runs the library's module, neither of which is a dev script (#912).
+#[test]
+fn binary_command_runs_keep_main_block_and_shipped_files() {
+    let app = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"*.py\"]\n",
+        ),
+        ("Makefile", "run:\n\tpython bot.py\n"),
+        (
+            "bot.py",
+            "import helpers\n\nif __name__ == \"__main__\":\n    helpers.run()\n",
+        ),
+        (
+            "helpers.py",
+            "import requests\n\n\ndef run():\n    requests.get\n",
+        ),
+    ]);
+    let library = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mymod\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.setuptools]\npy-modules = [\"mymod\"]\n\n[tool.chokkin]\nmode = \"library\"\n",
+        ),
+        ("tox.ini", "[testenv]\ncommands = python -m mymod\n"),
+        ("mymod.py", "import requests\n"),
+    ]);
+    for project in [&app, &library] {
+        let keys = issue_keys(&json_issues(project.path(), &["--production"]));
+        assert!(keys.iter().all(|(code, _)| code == "CHK008"), "{keys:?}");
+    }
 }
 
 /// A computed target may run any file, so it lowers unused files (#913).
@@ -6182,7 +6310,8 @@ fn binary_deferred_imports_of_optional_packages_are_info() {
 #[test]
 fn binary_command_run_scripts_import_dependency_groups_as_dev() {
     // airflow's pre-commit runs `task-sdk/dev/generate_task_sdk_models.py`,
-    // which imports its `codegen` group (#797). The package module run by the
+    // which imports its `codegen` group (#797), even with a `__main__` block
+    // unlike a task file's script (#912). The package module run by the
     // same workflow keeps its runtime context.
     let project = write_project(&[
         (
@@ -6193,7 +6322,10 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
             ".github/workflows/ci.yml",
             "jobs:\n  gen:\n    steps:\n      - run: python tools/gen.py\n      - run: python acme/cli.py\n",
         ),
-        ("tools/gen.py", "import gen_lib\n\ngen_lib.run()\n"),
+        (
+            "tools/gen.py",
+            "import gen_lib\n\nif __name__ == \"__main__\":\n    gen_lib.run()\n",
+        ),
         ("acme/__init__.py", ""),
         ("acme/cli.py", "import pkg_lib\n\npkg_lib.run()\n"),
     ]);
@@ -6209,6 +6341,50 @@ fn binary_command_run_scripts_import_dependency_groups_as_dev() {
         assert!(
             keys.contains(&("CHK005".to_owned(), "pkg-lib".to_owned())),
             "{keys:?}"
+        );
+    }
+}
+
+/// A file another root runs in production keeps its context when a command
+/// also runs it, so `--production` still analyzes the app (#797): the root
+/// `main.py`, a module a console script names and a `FLASK_APP` file (their
+/// dev-group imports are misplaced), a configured entry, and a server app a
+/// Makefile serves.
+#[test]
+fn binary_command_run_runtime_roots_keep_runtime_context() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"flask\", \"gunicorn\", \"httpx\", \"requests\", \"rich\"]\n\n[dependency-groups]\ndev = [\"attrs\", \"click\"]\n\n[project.scripts]\nacme = \"cli:main\"\n\n[tool.chokkin]\nproject = [\"*.py\"]\nentry = [\"serve.py\"]\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  run:\n    steps:\n      - run: python main.py\n      - run: python cli.py\n      - run: python serve.py\n      - run: python hello.py\n      - run: python web.py\n",
+        ),
+        (".flaskenv", "FLASK_APP=hello.py\n"),
+        (
+            "hello.py",
+            "import attrs\nimport flask\n\napp = flask.Flask(__name__)\n",
+        ),
+        ("Makefile", "serve:\n\tgunicorn web:app\n"),
+        ("web.py", "import httpx\n\napp = httpx.Client()\n"),
+        ("main.py", "import helper\nimport requests\n"),
+        ("helper.py", ""),
+        (
+            "cli.py",
+            "import click\n\n\ndef main():\n    click.echo()\n",
+        ),
+        ("serve.py", "import rich\n"),
+    ]);
+    for mode in [&["--strict"][..], &["--strict", "--production"]] {
+        let keys = issue_keys(&json_issues(project.path(), mode));
+        assert_eq!(
+            keys,
+            [
+                ("CHK005".to_owned(), "attrs".to_owned()),
+                ("CHK005".to_owned(), "click".to_owned())
+            ],
+            "{mode:?}: {keys:?}"
         );
     }
 }
