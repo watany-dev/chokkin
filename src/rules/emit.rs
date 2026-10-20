@@ -393,7 +393,7 @@ mod tests {
             path: "src/legacy.py".to_owned(),
             max_confidence: Confidence::Certain,
             mode: ProjectMode::App,
-            mode_reason: None,
+            confidence_reason: None,
         });
 
         let deps = DependencyReport::default();
@@ -506,7 +506,7 @@ mod tests {
             path: "src/legacy.py".to_owned(),
             max_confidence: Confidence::Certain,
             mode: ProjectMode::App,
-            mode_reason: None,
+            confidence_reason: None,
         });
 
         let issues = emit_issues(

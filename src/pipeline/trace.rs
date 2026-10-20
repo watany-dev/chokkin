@@ -82,14 +82,14 @@ fn format_negative_trace(
 ) -> String {
     let mut out = format!("Negative trace for {}:\n\n", escape_control(target));
     out.push_str("  reason: not reachable from any entry root\n");
-    let mode_reason = report
+    let confidence_reason = report
         .unreachable
         .iter()
         .chain(&report.unread)
         .find(|file| file.file == file_id)
-        .and_then(|file| file.mode_reason.as_deref());
-    if let Some(mode_reason) = mode_reason {
-        let _ = writeln!(out, "  {}", escape_control(mode_reason));
+        .and_then(|file| file.confidence_reason.as_deref());
+    if let Some(confidence_reason) = confidence_reason {
+        let _ = writeln!(out, "  {}", escape_control(confidence_reason));
     }
     out.push('\n');
 
@@ -278,21 +278,21 @@ mod tests {
                 path: "src/acme/legacy.py".to_owned(),
                 max_confidence: Confidence::Certain,
                 mode: ProjectMode::App,
-                mode_reason: None,
+                confidence_reason: None,
             },
             UnreachableFile {
                 file: old_api_id,
                 path: "src/acme/old_api.py".to_owned(),
                 max_confidence: Confidence::Certain,
                 mode: ProjectMode::App,
-                mode_reason: None,
+                confidence_reason: None,
             },
         ];
 
         let entry = EntryPlan {
             mode: ProjectMode::App,
             library_members: Vec::new(),
-            member_mode_reasons: Vec::new(),
+            distributed_members: Vec::new(),
             roots: vec![EntryRoot {
                 path: "src/acme/cli.py".to_owned(),
                 symbols: BTreeSet::new(),

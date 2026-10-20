@@ -17,12 +17,11 @@ use crate::sources::{
 use super::auto::{detect_auto_entries, is_app_entry_file};
 use super::merge::merge_entry_candidates;
 use super::mode::{
-    is_distributed_library_member, is_library_member, metapackage_distributions,
-    resolve_project_mode,
+    is_distributed_library, is_library_member, metapackage_distributions, resolve_project_mode,
 };
 use super::module::{resolve_module_on_disk, resolve_module_to_path};
 use super::types::{
-    EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning, MemberModeReason,
+    DistributedMember, EntryCandidate, EntryOrigin, EntryPlan, EntryRoot, EntryWarning,
 };
 
 /// A workspace member as entry construction reads it: its root-relative
@@ -115,63 +114,58 @@ pub fn build_entry_roots(
     roots.retain(|root| retain_existing_root(root, &known_paths, &mut warnings));
     warnings.append(&mut member_warnings);
 
-    let (library_members, member_mode_reasons) = library_members(config, members, &distributed);
     EntryPlan {
         mode,
         roots,
         warnings,
-        library_members,
-        member_mode_reasons,
+        library_members: library_members(config, members),
+        distributed_members: distributed_members(members, &distributed),
     }
 }
 
 /// Members that ship as their own libraries, whatever mode the project
-/// itself resolves to (#488), with the reason for each one that is a library
-/// only because a metapackage root distributes it (#1060). An explicit
-/// `mode` applies to every member.
-fn library_members(
-    config: &ChokkinConfig,
-    members: &[MemberEntryInput<'_>],
-    distributed: &BTreeMap<String, &DeclaredDependency>,
-) -> (Vec<String>, Vec<MemberModeReason>) {
-    let mut libraries = Vec::new();
-    let mut reasons = Vec::new();
+/// itself resolves to (#488). An explicit `mode` applies to every member.
+fn library_members(config: &ChokkinConfig, members: &[MemberEntryInput<'_>]) -> Vec<String> {
     if config.mode != ProjectMode::Auto {
-        return (libraries, reasons);
+        return Vec::new();
     }
-    for (path, manifest, sources) in members {
-        if is_library_member(manifest, sources) {
-            libraries.push((*path).to_owned());
-            continue;
-        }
-        let Some(dep) = manifest
-            .metadata
-            .name
-            .as_deref()
-            .and_then(|name| distributed.get(&normalize_distribution_name(name)))
-        else {
-            continue;
-        };
-        if is_distributed_library_member(manifest, sources) {
-            libraries.push((*path).to_owned());
-            reasons.push(MemberModeReason {
-                member: (*path).to_owned(),
-                reason: distributed_member_reason(path, dep),
-            });
-        }
-    }
-    (libraries, reasons)
+    members
+        .iter()
+        .filter(|(_, manifest, sources)| is_library_member(manifest, sources))
+        .map(|(path, ..)| (*path).to_owned())
+        .collect()
 }
 
-/// The `--trace` / `--explain` line for a member a metapackage root
-/// distributes (#1060).
+/// App members that a metapackage root distributes (#1060), each with the
+/// line naming the requirement. `distributed` is empty unless `mode` is
+/// `auto`, so an explicit `mode` applies to every member here too.
+fn distributed_members(
+    members: &[MemberEntryInput<'_>],
+    distributed: &BTreeMap<String, &DeclaredDependency>,
+) -> Vec<DistributedMember> {
+    members
+        .iter()
+        .filter_map(|(path, manifest, sources)| {
+            let name = normalize_distribution_name(manifest.metadata.name.as_deref()?);
+            let dep = distributed.get(&name)?;
+            (!is_library_member(manifest, sources) && is_distributed_library(manifest, sources))
+                .then(|| DistributedMember {
+                    member: (*path).to_owned(),
+                    reason: distributed_member_reason(path, dep),
+                })
+        })
+        .collect()
+}
+
+/// The `--trace` / `--explain` line for an orphan that the wheel of a member
+/// a metapackage root distributes ships (#1060).
 fn distributed_member_reason(member: &str, dep: &DeclaredDependency) -> String {
     let at = dep
         .origin
         .line
         .map_or_else(String::new, |line| format!(":{line}"));
     format!(
-        "mode: library (workspace member `{member}` is `{name}`, which the metapackage root distributes as `{label}` in `{file}{at}`, so its console scripts ship with the library)",
+        "confidence: library (workspace member `{member}` is `{name}`, which the metapackage root distributes as `{label}` in `{file}{at}`, and its wheel ships this file)",
         name = dep.name,
         label = dep.origin.label,
         file = dep.origin.file,

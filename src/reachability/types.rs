@@ -35,9 +35,10 @@ pub struct UnreachableFile {
     /// mode can differ from the project's, and a library file its wheel does
     /// not ship is scored as in app mode (R-05).
     pub mode: ProjectMode,
-    /// Why `mode` is library when the file's member alone would be an app
-    /// (#1060), for `--trace` and `--explain`.
-    pub mode_reason: Option<String>,
+    /// Why an app member's orphan is scored as a library orphan: the wheel of
+    /// a member a metapackage root distributes ships it (#1060), for
+    /// `--trace` and `--explain`.
+    pub confidence_reason: Option<String>,
 }
 
 impl UnreachableFile {

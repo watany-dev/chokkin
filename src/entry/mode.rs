@@ -51,9 +51,10 @@ pub(crate) fn is_library_member(manifest: &LoadedManifest, sources: &DiscoveredS
 
 /// Whether a member that a metapackage root distributes ships as a library
 /// (#1060): its console script into its own package is then a CLI shipped
-/// with the library, as for a root (#652).
+/// with the library, as for a root (#652). Its mode stays app (CHK006 /
+/// CHK007 keep app severity); only its wheel's orphans are library orphans.
 #[must_use]
-pub(super) fn is_distributed_library_member(
+pub(super) fn is_distributed_library(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> bool {
@@ -68,10 +69,11 @@ pub(super) fn is_distributed_library_member(
 /// (`bypass-selection`, as for CHK002 in #529) and that shows no app signal
 /// of its own. fastmcp's root ships nothing but `fastmcp-slim`, so that
 /// member is the library its users install. airflow's root is a metapackage
-/// too, but its own `apache-airflow` console script makes it an app, so its
-/// CLI member `airflow-core` stays an app. A root that ships code and
-/// depends on its member is an app using a library, not one distributing
-/// it, and a dependency group is never distributed.
+/// too, but its own `apache-airflow` console script makes it an app, so it
+/// distributes nothing and `airflow-core` is scored as any app member. A
+/// root that ships code and depends on its member is an app using a
+/// library, not one distributing it, and a dependency group is never
+/// distributed.
 #[must_use]
 pub(super) fn metapackage_distributions<'a>(
     config: &ChokkinConfig,
@@ -429,14 +431,14 @@ mod tests {
         let mut manifest = empty_manifest();
         let mut sources = library_sources();
         manifest.entry_points.push(console_script("acme.cli:main"));
-        assert!(!is_distributed_library_member(&manifest, &sources));
+        assert!(!is_distributed_library(&manifest, &sources));
         manifest.metadata.name = Some("acme".to_owned());
-        assert!(is_distributed_library_member(&manifest, &sources));
+        assert!(is_distributed_library(&manifest, &sources));
         manifest.entry_points[0].target = "tools.cli:main".to_owned();
-        assert!(!is_distributed_library_member(&manifest, &sources));
+        assert!(!is_distributed_library(&manifest, &sources));
         manifest.entry_points[0].target = "acme.cli:main".to_owned();
         sources.files[0].path = "manage.py".to_owned();
-        assert!(!is_distributed_library_member(&manifest, &sources));
+        assert!(!is_distributed_library(&manifest, &sources));
     }
 
     fn requirement(name: &str, context: DependencyContext) -> DeclaredDependency {

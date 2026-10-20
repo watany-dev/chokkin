@@ -2382,8 +2382,12 @@ fn metapackage_workspace(root_project: &str, root_wheel: &str) -> tempfile::Temp
             "[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n\n[project]\nname = \"Acme.Slim\"\nversion = \"0.1.0\"\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.hatch.build.targets.wheel]\npackages = [\"acme\"]\n",
         ),
         ("slim/acme/__init__.py", ""),
-        ("slim/acme/cli.py", "def main():\n    pass\n"),
+        (
+            "slim/acme/cli.py",
+            "def main():\n    pass\n\n\ndef helper():\n    pass\n",
+        ),
         ("slim/acme/types.py", "Alias = int\n"),
+        ("slim/release.py", "VERSION = 1\n"),
     ])
 }
 
@@ -2394,11 +2398,19 @@ fn chk001_confidence(issues: &[serde_json::Value], target: &str) -> Option<Strin
         .map(|issue| issue["confidence"].as_str().unwrap_or_default().to_owned())
 }
 
+fn severity_of(issues: &[serde_json::Value], code: &str, target: &str) -> Option<String> {
+    issues
+        .iter()
+        .find(|issue| issue["code"] == code && issue["target"] == target)
+        .map(|issue| issue["severity"].as_str().unwrap_or_default().to_owned())
+}
+
 /// A member a metapackage root distributes is the library its users install,
-/// so its console script into its own package ships with the library and its
-/// orphans are only `maybe` (#1060); `--explain` and `--trace` say why.
+/// so an orphan its own wheel ships is only `maybe` (#1060); `--explain` and
+/// `--trace` say why. The member stays an app: an orphan outside its wheel
+/// keeps app confidence, and its unused public symbols keep CHK006 warning.
 #[test]
-fn binary_metapackage_distributed_member_is_scored_as_library() {
+fn binary_metapackage_distributed_member_wheel_orphans_are_library_orphans() {
     let project = metapackage_workspace(
         "dependencies = [\"Acme_Slim[cli]==0.1.0\"]\n",
         "bypass-selection = true",
@@ -2406,6 +2418,16 @@ fn binary_metapackage_distributed_member_is_scored_as_library() {
     let orphan = "slim/acme/types.py";
     let issues = json_issues(project.path(), &["--no-cache"]);
     assert_eq!(chk001_confidence(&issues, orphan), None, "{issues:?}");
+    assert_eq!(
+        chk001_confidence(&issues, "slim/release.py").as_deref(),
+        Some("certain"),
+        "{issues:?}"
+    );
+    assert_eq!(
+        severity_of(&issues, "CHK006", "slim/acme/cli.py:helper").as_deref(),
+        Some("warning"),
+        "{issues:?}"
+    );
     let strict = json_issues(project.path(), &["--no-cache", "--strict"]);
     assert_eq!(
         chk001_confidence(&strict, orphan).as_deref(),
@@ -2413,7 +2435,7 @@ fn binary_metapackage_distributed_member_is_scored_as_library() {
         "{strict:?}"
     );
 
-    let reason = "mode: library (workspace member `slim` is `acme-slim`, which the metapackage root distributes as `project.dependencies[0]` in `pyproject.toml:8`, so its console scripts ship with the library)";
+    let reason = "confidence: library (workspace member `slim` is `acme-slim`, which the metapackage root distributes as `project.dependencies[0]` in `pyproject.toml:8`, and its wheel ships this file)";
     let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--no-cache", "--strict", "--explain"])
         .arg(format!("CHK001:{orphan}"))

@@ -184,7 +184,7 @@ mod tests {
             )]),
             warnings: Vec::new(),
             library_members: Vec::new(),
-            member_mode_reasons: Vec::new(),
+            distributed_members: Vec::new(),
         };
         plan.push_candidate(candidate(FileContext::Runtime, EntryOrigin::Script));
         plan.push_candidate(candidate(FileContext::Dev, EntryOrigin::Script));

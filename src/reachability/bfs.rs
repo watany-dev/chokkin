@@ -597,7 +597,7 @@ mod tests {
         EntryPlan {
             mode: ProjectMode::App,
             library_members: Vec::new(),
-            member_mode_reasons: Vec::new(),
+            distributed_members: Vec::new(),
             roots: vec![EntryRoot {
                 path: "src/acme/main.py".to_owned(),
                 symbols: BTreeSet::new(),
@@ -1334,7 +1334,7 @@ mod tests {
                 } else {
                     Vec::new()
                 },
-                member_mode_reasons: Vec::new(),
+                distributed_members: Vec::new(),
                 roots,
                 warnings: Vec::new(),
             }
