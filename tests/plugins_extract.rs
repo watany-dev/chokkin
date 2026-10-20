@@ -48,6 +48,7 @@ fn extract_at(path: &Path) -> chokkin::internals::PluginHints {
         manifest: &manifest,
         parse: &parse,
         cache: None,
+        dockerfiles: &[],
     })
     .expect("extract plugin hints")
 }

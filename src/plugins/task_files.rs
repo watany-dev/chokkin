@@ -10,13 +10,14 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 use crate::path_util::rel_to_root;
+use crate::sources::is_dockerfile;
 
 use super::commands::{KnownBinary, SourceHits};
 use super::config_text::{
     PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, origin_at, read_root_file,
     toml_words, yaml_block_body,
 };
-use super::types::ReferenceOrigin;
+use super::types::{CommandTarget, CommandTargetRef, ReferenceOrigin};
 
 /// Candidates in the order make / just search them; only the first found is read.
 const MAKEFILE_NAMES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
@@ -94,27 +95,28 @@ fn dockerfile_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(is_dockerfile_name)
-        })
+        .filter(|path| path.is_file() && is_dockerfile(path))
         .collect();
     paths.sort();
     paths
 }
 
-fn is_dockerfile_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".dockerignore") {
-        return false;
+/// The server apps the Dockerfiles at `paths` (root-relative, below the root)
+/// run (#1061). The rest of such a file is not read: its commands run in the
+/// image's own tree, which the root's import roots and manifest do not
+/// describe, so its binaries, scripts and opaque commands would be findings
+/// or gaps about the wrong project. An unreadable file adds nothing.
+pub(super) fn nested_dockerfile_apps(root: &Path, paths: &[String]) -> Vec<CommandTargetRef> {
+    let mut hits = SourceHits::default();
+    for rel in paths {
+        if let Ok(contents) = std::fs::read_to_string(root.join(rel)) {
+            scan_dockerfile(rel, &contents, &|_| false, &mut hits);
+        }
     }
-    matches!(lower.as_str(), "dockerfile" | "containerfile")
-        || lower.ends_with(".dockerfile")
-        || lower.starts_with("dockerfile.")
-        || lower.starts_with("containerfile.")
+    hits.command_targets
+        .into_iter()
+        .filter(|command| matches!(command.target, CommandTarget::App { .. }))
+        .collect()
 }
 
 fn scan_makefile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut SourceHits) {
@@ -613,19 +615,34 @@ mod tests {
         );
     }
 
+    /// Only the server apps of a nested Dockerfile count, under its own path.
     #[test]
-    fn dockerfile_names_are_matched_case_insensitively() {
-        for name in [
-            "Dockerfile",
-            "dockerfile",
-            "api.Dockerfile",
-            "Dockerfile.dev",
-            "Containerfile",
-        ] {
-            assert!(is_dockerfile_name(name), "{name}");
-        }
-        assert!(!is_dockerfile_name("Dockerfile.dockerignore"));
-        assert!(!is_dockerfile_name("docker-compose.yml"));
+    fn nested_dockerfiles_add_server_apps_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("svc")).expect("mkdir");
+        std::fs::write(
+            temp.path().join("svc/Dockerfile"),
+            "FROM python\nRUN pip install -r requirements.txt && pytest\n\
+             CMD [\"python\", \"run.py\"]\nCMD [\"uvicorn\", \"app.main:app\"]\n",
+        )
+        .expect("write");
+        let apps = nested_dockerfile_apps(
+            temp.path(),
+            &["svc/Dockerfile".to_owned(), "gone/Dockerfile".to_owned()],
+        );
+        let found: Vec<_> = apps
+            .iter()
+            .map(|command| {
+                format!(
+                    "{:?} {}:{:?} {}",
+                    command.target, command.origin.file, command.origin.line, command.origin.label
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [r#"App { module: "app.main", symbol: Some("app") } svc/Dockerfile:Some(4) CMD"#]
+        );
     }
 
     #[test]

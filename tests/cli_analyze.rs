@@ -7073,6 +7073,75 @@ fn binary_main_block_files_are_entry_roots() {
     );
 }
 
+/// A Dockerfile below the root serves its app too (#1061): the module
+/// resolves from the root first, then from the Dockerfile's directory, the
+/// usual build context. A Dockerfile the gitignore drops is not read.
+#[test]
+fn binary_nested_dockerfile_apps_are_entry_roots() {
+    let cmd = "FROM python\nWORKDIR /code\nCOPY ./app /code/app\n\
+               CMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\"]\n";
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+             [tool.chokkin]\nmode = \"app\"\n\
+             project = [\"acme/**/*.py\", \"dev/**/*.py\", \"other/**/*.py\"]\n",
+        ),
+        (".gitignore", "other/Dockerfile\n"),
+        ("acme/__init__.py", ""),
+        ("acme/cli.py", "def main():\n    pass\n"),
+        ("acme/wsgi.py", "application = object()\n"),
+        ("deploy/Dockerfile", "FROM python\nCMD gunicorn acme.wsgi\n"),
+        ("dev/sim/Dockerfile", cmd),
+        ("dev/sim/app/__init__.py", ""),
+        ("dev/sim/app/main.py", "app = object()\n"),
+        ("other/Dockerfile", cmd),
+        ("other/app/__init__.py", ""),
+        ("other/app/main.py", "app = object()\n"),
+        ("skip/Dockerfile", cmd),
+        ("skip/app/__init__.py", ""),
+        ("skip/app/main.py", "app = object()\n"),
+    ]);
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert_eq!(
+        issue_keys(&issues),
+        [("CHK001".to_owned(), "other/app/main.py".to_owned())],
+        "{issues:#?}"
+    );
+
+    // An app beside its Dockerfile that discovery left out is a skipped read.
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--no-exit-code"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: skipped entry `skip/app/main.py`: not a discovered source file"),
+        "{stderr}"
+    );
+
+    // The orphan's negative trace lists the entry roots with their origins.
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--no-exit-code",
+            "--trace",
+            "other/app/main.py",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for root in [
+        "acme/wsgi.py (command: CMD (deploy/Dockerfile:2))",
+        "dev/sim/app/main.py (command: CMD (dev/sim/Dockerfile:4))",
+    ] {
+        assert!(stderr.contains(root), "{root}\n{stderr}");
+    }
+}
+
 /// A `__main__` block in a deep `app.py` does not make a library an app:
 /// the rule joins after mode resolution, which reads file names only (#1026).
 #[test]

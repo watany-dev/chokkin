@@ -55,6 +55,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
+        dockerfiles: &[],
     })
     .expect("plugin hints");
     let entry = build_entry_roots(

@@ -11,7 +11,7 @@ use crate::plugins::{
     parse_uvicorn_script_target,
 };
 use crate::sources::{
-    DiscoveredSources, FileContext, LayoutInfo, PublicSurface, assign_file_context,
+    DiscoveredSources, FileContext, LayoutInfo, PublicSurface, assign_file_context, is_dockerfile,
 };
 
 use super::auto::{detect_auto_entries, is_app_entry_file};
@@ -189,6 +189,7 @@ fn collect_member_entries(
 /// A target that maps to no discovered file: skipped when a file is there
 /// that discovery left out, its imports unread like a skipped path entry's;
 /// unmapped when no file is, since it runs nothing chokkin could read (#933).
+/// The file may also sit beside the `.py` file or Dockerfile that names it.
 /// `--production` leaves out a test or dev file on purpose, so its target is
 /// unmapped as it was before #933, not a skipped read.
 fn unresolved_target(
@@ -198,7 +199,14 @@ fn unresolved_target(
     sources: &DiscoveredSources,
     production: bool,
 ) -> EntryWarning {
-    match resolve_module_on_disk(module, &sources.layout, &sources.root.path) {
+    let on_disk = |path: &str| {
+        path.split('/')
+            .fold(sources.root.path.clone(), |dir, part| dir.join(part))
+            .is_file()
+    };
+    let path = resolve_module_on_disk(module, &sources.layout, &sources.root.path)
+        .or_else(|| beside_origin_where(module, file, &on_disk));
+    match path {
         Some(path) if !production || assign_file_context(&path).is_included_in_production() => {
             EntryWarning::MissingEntryPath { path }
         },
@@ -524,7 +532,8 @@ fn command_label(origin: &ReferenceOrigin) -> String {
 /// and reads the attribute, so the file is a root with that symbol, in the
 /// file's own context: `CMD ["uvicorn", "pkg.asgi:app"]` serves production
 /// code. A `uvicorn.run` call in a script also finds the module next to the
-/// script, which `python script.py` puts on `sys.path`. A module that maps to
+/// script, which `python script.py` puts on `sys.path`, and a Dockerfile next
+/// to itself, its usual build context (#1061). A module that maps to
 /// no discovered file is a third-party or missing app and adds nothing,
 /// unless the file is on disk and discovery left it out.
 #[allow(clippy::too_many_arguments)]
@@ -542,7 +551,7 @@ fn collect_server_app_entries(
             continue;
         };
         let Some(path) = resolve_module_to_path(module, &sources.layout, known_paths)
-            .or_else(|| beside_script(module, &command.origin.file, known_paths))
+            .or_else(|| beside_origin(module, &command.origin.file, known_paths))
         else {
             let warning = unresolved_target(
                 module,
@@ -570,18 +579,30 @@ fn collect_server_app_entries(
     }
 }
 
-/// The discovered module `module` names in the directory of `script`, a `.py`
-/// file.
-fn beside_script(module: &str, script: &str, known_paths: &BTreeSet<String>) -> Option<String> {
-    let script = std::path::Path::new(script);
-    if script.extension().is_none_or(|ext| ext != "py") {
+/// The discovered module `module` names in the directory of `origin`, a `.py`
+/// file or a Dockerfile.
+pub(crate) fn beside_origin(
+    module: &str,
+    origin: &str,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    beside_origin_where(module, origin, &|path| known_paths.contains(path))
+}
+
+fn beside_origin_where(
+    module: &str,
+    origin: &str,
+    exists: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let origin = std::path::Path::new(origin);
+    if origin.extension().is_none_or(|ext| ext != "py") && !is_dockerfile(origin) {
         return None;
     }
-    let dir = script.parent()?.to_str()?;
+    let dir = origin.parent()?.to_str()?;
     let stem = join_rel(dir, &module.replace('.', "/"));
     [format!("{stem}.py"), format!("{stem}/__init__.py")]
         .into_iter()
-        .find(|path| known_paths.contains(path))
+        .find(|path| exists(path))
 }
 
 #[allow(clippy::too_many_arguments)]
