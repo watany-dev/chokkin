@@ -573,6 +573,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let manifest = LoadedManifest {
             root: ProjectRoot {
@@ -747,6 +748,7 @@ mod tests {
                     origin: origin.clone(),
                     opaque: false,
                     included_via: Vec::new(),
+                    unportable_key: None,
                 })
                 .collect(),
             constraints: Vec::new(),

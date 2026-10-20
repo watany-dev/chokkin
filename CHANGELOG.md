@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- `--fix` no longer moves a Poetry group dependency whose table says where
+  it comes from (`git`, `path`, `url`, `source`, or any key besides
+  `version`, `extras`, `markers`, `platform`, `python` and `optional`) into
+  `[project].dependencies` as a bare name, which would resolve it from the
+  default index. The CHK005 move is skipped as `ambiguous` (#1041).
 - With the Airflow plugin on, every `.py` under a directory named exactly
   `dags` is a DAG-folder entry in its path's context, not only files that
   pass the DAG processor's safe-mode check (`airflow` and `dag` in the

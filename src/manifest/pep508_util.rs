@@ -130,6 +130,7 @@ fn parse_with(
         origin,
         opaque,
         included_via: Vec::new(),
+        unportable_key: None,
     })
 }
 

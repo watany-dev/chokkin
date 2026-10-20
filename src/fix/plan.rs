@@ -355,6 +355,15 @@ fn plan_move_to_runtime(
     }
 
     let source = dev_only[0];
+    // Dropping `git = ...` or `source = "corp"` would resolve the package
+    // from the default index instead (#1041).
+    if let Some(key) = &source.unportable_key {
+        return Err(skipped(
+            issue,
+            SkippedReason::Ambiguous,
+            &format!("`{key}` has no PEP 508 requirement form"),
+        ));
+    }
     let mut dep = (*source).clone();
     // A Poetry-only constraint (`^1.2`) is not a PEP 440 specifier.
     if dep.origin.label.starts_with("tool.poetry.")
@@ -461,6 +470,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         }]);
         let issue = Issue {
             rule: RuleId::Chk002,
@@ -517,6 +527,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         }]);
         let report_for = |rule, confidence| IssueReport {
             issues: vec![Issue {
@@ -607,6 +618,7 @@ mod tests {
             },
             opaque,
             included_via: Vec::new(),
+            unportable_key: None,
         };
         let manifest = manifest_with(vec![declaration(0, false), declaration(1, true)]);
         let report = IssueReport {
@@ -669,6 +681,14 @@ mod tests {
         specifier: &str,
         marker: Option<&str>,
     ) -> (Vec<FixAction>, Vec<SkippedFix>) {
+        plan_poetry_dev_move_with(specifier, marker, None)
+    }
+
+    fn plan_poetry_dev_move_with(
+        specifier: &str,
+        marker: Option<&str>,
+        unportable_key: Option<&str>,
+    ) -> (Vec<FixAction>, Vec<SkippedFix>) {
         let manifest = manifest_with(vec![DeclaredDependency {
             name: "dulwich".to_owned(),
             extras: Vec::new(),
@@ -682,6 +702,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: unportable_key.map(str::to_owned),
         }]);
         let issue = Issue {
             rule: RuleId::Chk005,
@@ -739,6 +760,17 @@ mod tests {
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
         assert!(skipped[0].detail.contains("PEP 508"));
+    }
+
+    /// #1041: `git = ...` or `source = "corp"` cannot follow the name into
+    /// `[project].dependencies`; moving without it changes where it resolves.
+    #[test]
+    fn chk005_move_skips_a_poetry_source_with_no_pep508_form() {
+        let (actions, skipped) = plan_poetry_dev_move_with("^1.2", None, Some("git"));
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
+        assert!(skipped[0].detail.contains("`git`"), "{}", skipped[0].detail);
     }
 
     #[test]
@@ -959,6 +991,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         }]);
         let script_issue = |rule| Issue {
             rule,
@@ -1028,6 +1061,7 @@ mod tests {
             origin: origin.clone(),
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         }]);
         let issue = |location, subject| Issue {
             rule: RuleId::Chk002,
@@ -1091,6 +1125,7 @@ mod tests {
                 },
                 opaque: false,
                 included_via: Vec::new(),
+                unportable_key: None,
             };
         assert_eq!(
             rebuild_requirement_string(&dep(&["testing"], Some(">=8, <9"), None)),
