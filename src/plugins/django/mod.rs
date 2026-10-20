@@ -2,6 +2,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+mod apps;
 mod settings_refs;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -90,6 +91,7 @@ struct Lookup {
 pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Django);
     let mut warnings = Vec::new();
+    apps::receivers(ctx, &mut contrib);
     let root = ctx.root.path.as_path();
     let has_manage = root.join("manage.py").is_file();
     let known: BTreeSet<String> = ctx.sources.files.iter().map(|f| f.path.clone()).collect();
@@ -196,7 +198,8 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         },
     });
 
-    read_settings(ctx, &settings_rel, &lookup, &mut contrib, &mut warnings);
+    let installed = read_settings(ctx, &settings_rel, &lookup, &mut contrib, &mut warnings);
+    apps::extract(ctx, &lookup, &installed, &mut contrib);
 
     contrib
         .framework_used_globs
@@ -369,7 +372,7 @@ fn read_settings(
     lookup: &Lookup,
     contrib: &mut PluginContribution,
     warnings: &mut Vec<PluginsWarning>,
-) {
+) -> apps::Installed {
     let root = ctx.root.path.as_path();
     let mut queue = VecDeque::from([settings_rel.to_owned()]);
     let mut visited = BTreeSet::from([settings_rel.to_owned()]);
@@ -377,6 +380,7 @@ fn read_settings(
     let mut unfollowed: Option<(String, String, u32)> = None;
     let mut called: Option<(String, String, u32)> = None;
     let mut urlconf_read = false;
+    let mut installed = apps::Installed::default();
 
     while let Some(rel) = queue.pop_front() {
         let contents = read_to_string(&abs_path(root, &rel)).ok();
@@ -394,6 +398,7 @@ fn read_settings(
                     SettingsUnread::Unreadable { path: rel },
                 );
             }
+            installed.incomplete = true;
             continue;
         };
         let lines = LineIndex::new(&contents);
@@ -424,6 +429,12 @@ fn read_settings(
         }
         partial.sort();
         partial.dedup();
+        // A second mention may be a `+=` or `.append()`, which is not read.
+        if partial.iter().any(|field| field == "INSTALLED_APPS")
+            || contents.matches("INSTALLED_APPS").count() > 1
+        {
+            installed.incomplete = true;
+        }
         if !partial.is_empty() {
             warnings.push(PluginsWarning::PartialSettingsParse {
                 path: rel.clone(),
@@ -437,6 +448,9 @@ fn read_settings(
                     module: module.clone(),
                     origin: origin(*start, field),
                 });
+                if field == "INSTALLED_APPS" {
+                    installed.apps.push((module.clone(), origin(*start, field)));
+                }
             }
         }
 
@@ -508,10 +522,9 @@ fn read_settings(
             }
         }
 
-        if called.is_none()
-            && let Some((call, start)) = settings_call(&stmts)
-        {
-            called = Some((call, rel.clone(), lines.line(start)));
+        if let Some((call, start)) = settings_call(&stmts) {
+            installed.incomplete = true;
+            called.get_or_insert_with(|| (call, rel.clone(), lines.line(start)));
         }
 
         for (module, start) in star_imports(&stmts, &rel, ctx) {
@@ -526,6 +539,7 @@ fn read_settings(
                 },
                 // Not a project file, or past the limit: either may set a field.
                 _ => {
+                    installed.incomplete = true;
                     let shown = module.unwrap_or_else(|| "*".to_owned());
                     unfollowed.get_or_insert_with(|| (shown, rel.clone(), lines.line(start)));
                 },
@@ -539,7 +553,7 @@ fn read_settings(
         .iter()
         .all(|field| assigned.contains(field))
     {
-        return;
+        return installed;
     }
     if let Some((module, file, line)) = unfollowed {
         let site = import_site(&file, Some(line));
@@ -560,6 +574,7 @@ fn read_settings(
             SettingsUnread::UnreadCall { call, site },
         );
     }
+    installed
 }
 
 // Django's import_string uses a final dot; retain the colon form already read
