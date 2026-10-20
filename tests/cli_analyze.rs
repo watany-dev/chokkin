@@ -3236,6 +3236,146 @@ fn binary_unread_command_target_lowers_unused_files() {
     );
 }
 
+fn chk001_levels(root: &Path, extra: &[&str]) -> Vec<(String, String)> {
+    json_issues(root, &[&["--no-cache"], extra].concat())
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .map(|issue| {
+            (
+                issue["target"].as_str().unwrap_or_default().to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A formatter `[tool.datamodel-codegen] custom-formatters` names in a
+/// member's pyproject is imported by the tool, so the one module of that
+/// name under the member, here in a `dev/` directory off every import root,
+/// is a dev entry: its imports are followed and it is no gap, and
+/// `--production` drops it and holds it back like other dev commands (#1063).
+#[test]
+fn binary_datamodel_codegen_formatter_is_dev_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"sdk\"]\n\n[tool.uv.sources]\nsdk = { workspace = true }\n\n[tool.uv.workspace]\nmembers = [\"sdk\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("main.py", "import sdk\n\nprint(sdk)\n"),
+        (
+            "sdk/pyproject.toml",
+            "[project]\nname = \"sdk\"\nversion = \"0.1.0\"\n\n[tool.datamodel-codegen]\ninput-file-type = \"openapi\"\ncustom-formatters = ['code_formatter']\n",
+        ),
+        ("sdk/src/sdk/__init__.py", ""),
+        ("sdk/src/sdk/orphan.py", ""),
+        ("sdk/dev/code_formatter.py", "import fmt_helper\n"),
+        ("sdk/dev/fmt_helper.py", ""),
+    ]);
+    // `certain` on the orphan shows the formatter is no gap.
+    let certain = |path: &str| (path.to_owned(), "certain".to_owned());
+    assert_eq!(
+        chk001_levels(project.path(), &[]),
+        [certain("sdk/src/sdk/orphan.py")]
+    );
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", "sdk/src/sdk/orphan.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "sdk/dev/code_formatter.py (command: tool.datamodel-codegen.custom-formatters (sdk/pyproject.toml:7))"
+        ),
+        "{stderr}"
+    );
+
+    // The formatter is dev code, which `--production` does not report; what
+    // it imports is unread code again.
+    let likely = |path: &str| (path.to_owned(), "likely".to_owned());
+    assert_eq!(
+        chk001_levels(project.path(), &["--production"]),
+        [
+            likely("sdk/dev/fmt_helper.py"),
+            likely("sdk/src/sdk/orphan.py")
+        ]
+    );
+}
+
+/// A formatter name that resolves through the import roots is an entry, and
+/// one that names no project file, or several, or is not a module name, or a
+/// value that is not a list of names, is a gap: the tool imports code no
+/// entry reaches, so unused files are likely and `--explain` names the
+/// setting (#1063).
+#[test]
+fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
+    let pyproject = |formatters: &str| {
+        format!(
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.datamodel-codegen]\n{formatters}\n"
+        )
+    };
+    let resolved = pyproject("custom_formatters = [\"tools.fmt\"]");
+    let missing = pyproject("custom-formatters = [\"tools.fmt\", \"missing_fmt\"]");
+    let ambiguous = pyproject("custom-formatters = [\"tools.fmt\", \"twin\"]");
+    let shape = pyproject("custom-formatters = \"tools.fmt\"");
+    let path = pyproject("custom-formatters = [\"tools/fmt\"]");
+    let item = pyproject("custom-formatters = [1]");
+    // `import_module` does not strip the name.
+    let padded = pyproject("custom-formatters = [\" tools.fmt\"]");
+    let files = |pyproject: &str| -> tempfile::TempDir {
+        write_project(&[
+            ("pyproject.toml", pyproject),
+            ("main.py", "print(1)\n"),
+            ("orphan.py", ""),
+            ("tools/fmt.py", ""),
+            ("a/twin.py", ""),
+            ("b/twin.py", ""),
+        ])
+    };
+    let certain = |path: &str| (path.to_owned(), "certain".to_owned());
+    let likely = |path: &str| (path.to_owned(), "likely".to_owned());
+    let project = files(&resolved);
+    assert_eq!(
+        chk001_levels(project.path(), &[]),
+        [
+            certain("a/twin.py"),
+            certain("b/twin.py"),
+            certain("orphan.py")
+        ]
+    );
+    for (pyproject, target) in [
+        (&missing, "missing_fmt"),
+        (&ambiguous, "twin"),
+        (&shape, "\"tools.fmt\""),
+        (&path, "tools/fmt"),
+        (&item, "1"),
+        (&padded, " tools.fmt"),
+    ] {
+        let project = files(pyproject);
+        let levels = chk001_levels(project.path(), &[]);
+        assert!(
+            levels.contains(&likely("orphan.py")),
+            "{target}: {levels:?}"
+        );
+        assert!(
+            levels.iter().all(|(_, level)| level == "likely"),
+            "{target}: {levels:?}"
+        );
+        let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", "CHK001:orphan.py"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(explain.stderr).expect("utf8");
+        assert!(
+            stderr.contains(&format!(
+                "a command runs Python code no entry reaches: `{target}` in `pyproject.toml:9`"
+            )),
+            "{target}: {stderr}"
+        );
+    }
+}
+
 /// What a Dockerfile or Procfile runs is deployed, so it keeps its own
 /// context and stays a root under `--production`, while a script a Makefile
 /// runs is dev: its dev-group import is not misplaced (#912).

@@ -1,14 +1,20 @@
 //! Tool plugins named in config: pytest `addopts` (`-p`, plugin options),
-//! mypy `plugins`, and type-checker configs (ty, pyright, basedpyright).
+//! mypy `plugins`, type-checker configs (ty, pyright, basedpyright), and
+//! datamodel-codegen `custom-formatters`.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use super::commands::SourceHits;
+use crate::entry::resolve_module_to_path;
+use crate::path_util::rel_to_root;
+
+use super::commands::{SourceHits, is_dotted_identifier};
 use super::config_text::{
-    PyprojectDoc, ini_section_line, ini_value, origin_at, read_root_file, toml_words,
+    PyprojectDoc, ini_section_line, ini_value, origin_at, read_root_file, toml_key_line, toml_words,
 };
+use super::context::PluginContext;
 use super::plugin_map::pytest_option_distribution;
-use super::types::{BinaryUsage, ReferenceOrigin};
+use super::types::{BinaryUsage, CommandTarget, CommandTargetRef, ReferenceOrigin};
 
 /// (file, section) pairs pytest reads `addopts` from, besides pyproject.
 const PYTEST_INI_SECTIONS: [(&str, &str); 3] = [
@@ -141,6 +147,140 @@ fn push_mypy_plugins(hits: &mut SourceHits, plugins: &str, origin: &ReferenceOri
     }
 }
 
+const DATAMODEL_CODEGEN_TABLE: &str = "tool.datamodel-codegen";
+/// datamodel-codegen reads its pyproject keys with `-` turned into `_`.
+const FORMATTER_KEYS: [&str; 2] = ["custom-formatters", "custom_formatters"];
+
+/// The formatter modules `[tool.datamodel-codegen] custom-formatters` names
+/// in the root and each workspace member's `pyproject.toml` (#1063).
+/// datamodel-codegen imports each one while it generates code, so a name
+/// that resolves through the import roots, or else to the one module of that
+/// name under the pyproject's directory (where the tool is run), is a dev
+/// command target: an entry, dev unless something else runs it. Anything
+/// else is an opaque target the gap stage reports, lowering CHK001: a value
+/// that is not an array of module names, or a name matching no file or
+/// several. A name matching no project file may be an installed formatter,
+/// so it is also a module reference, whose distribution counts as used.
+/// Profiles (`[tool.datamodel-codegen.profiles.*]`) are not read.
+///
+/// Read outside the config scan cache, which keys on root inputs only: the
+/// member pyprojects and the inventory decide the result. A pyproject that
+/// does not parse fails manifest loading first, which reports it.
+pub(super) fn datamodel_codegen_formatters(ctx: &PluginContext<'_>) -> SourceHits {
+    let root = ctx.root.path.as_path();
+    let known: BTreeSet<String> = ctx
+        .sources
+        .python_files()
+        .map(|file| file.path.clone())
+        .collect();
+    let dirs: BTreeSet<&str> = std::iter::once("")
+        .chain(
+            ctx.sources
+                .layout
+                .members
+                .iter()
+                .map(|member| member.path.as_str()),
+        )
+        .collect();
+    let mut hits = SourceHits::default();
+    for dir in dirs {
+        let path = root.join(dir).join("pyproject.toml");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(table) = toml::from_str::<toml::Table>(&text) else {
+            continue;
+        };
+        let Some(codegen) = table
+            .get("tool")
+            .and_then(|tool| tool.get("datamodel-codegen"))
+        else {
+            continue;
+        };
+        for key in FORMATTER_KEYS {
+            let Some(value) = codegen.get(key) else {
+                continue;
+            };
+            let origin = ReferenceOrigin {
+                file: rel_to_root(root, &path),
+                line: toml_key_line(&text, DATAMODEL_CODEGEN_TABLE, key),
+                label: format!("{DATAMODEL_CODEGEN_TABLE}.{key}"),
+            };
+            let names: Vec<Result<&str, String>> = match value.as_array() {
+                Some(items) => items
+                    .iter()
+                    .map(|item| item.as_str().ok_or_else(|| item.to_string()))
+                    .collect(),
+                None => vec![Err(value.to_string())],
+            };
+            for name in names {
+                let target = match name {
+                    Ok(module) if is_dotted_identifier(module) => {
+                        match formatter_files(ctx, dir, module, &known).as_slice() {
+                            [path] => CommandTarget::Script {
+                                paths: vec![path.clone()],
+                            },
+                            found => {
+                                if found.is_empty() {
+                                    hits.push_module(module, &origin);
+                                }
+                                CommandTarget::Opaque {
+                                    text: module.to_owned(),
+                                }
+                            },
+                        }
+                    },
+                    Ok(text) => CommandTarget::Opaque {
+                        text: text.to_owned(),
+                    },
+                    Err(text) => CommandTarget::Opaque { text },
+                };
+                hits.command_targets.push(CommandTargetRef {
+                    target,
+                    origin: origin.clone(),
+                    deploy: false,
+                });
+            }
+        }
+    }
+    hits
+}
+
+/// The files `module` may name: the one it resolves to through the import
+/// roots, else every module of that name under `dir`.
+fn formatter_files(
+    ctx: &PluginContext<'_>,
+    dir: &str,
+    module: &str,
+    known: &BTreeSet<String>,
+) -> Vec<String> {
+    resolve_module_to_path(module, &ctx.sources.layout, known)
+        .map_or_else(|| module_files_under(dir, module, known), |path| vec![path])
+}
+
+/// Discovered files under `dir` that are `module`, as a module or a package,
+/// at any depth.
+fn module_files_under(dir: &str, module: &str, known: &BTreeSet<String>) -> Vec<String> {
+    let stem = module.replace('.', "/");
+    let names = [format!("/{stem}.py"), format!("/{stem}/__init__.py")];
+    known
+        .iter()
+        .filter(|path| {
+            let rel = if dir.is_empty() {
+                Some(path.as_str())
+            } else {
+                path.strip_prefix(dir)
+                    .and_then(|rest| rest.strip_prefix('/'))
+            };
+            rel.is_some_and(|rel| {
+                let rel = format!("/{rel}");
+                names.iter().any(|name| rel.ends_with(name.as_str()))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +323,28 @@ mod tests {
         );
         assert_eq!(hits.distributions, ["django-stubs"]);
         assert_eq!(modules(&hits), ["pydantic.mypy", "custom"]);
+    }
+
+    #[test]
+    fn module_files_under_match_whole_path_parts_below_dir() {
+        let known: BTreeSet<String> = [
+            "task-sdk/dev/fmt.py",
+            "task-sdk/dev/myfmt.py",
+            "task-sdk/pkg/fmt/__init__.py",
+            "task-sdk-extra/fmt.py",
+            "other/fmt.py",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        let under = |dir, module| module_files_under(dir, module, &known);
+        assert_eq!(
+            under("task-sdk", "fmt"),
+            ["task-sdk/dev/fmt.py", "task-sdk/pkg/fmt/__init__.py"]
+        );
+        assert_eq!(under("task-sdk/dev", "fmt"), ["task-sdk/dev/fmt.py"]);
+        assert_eq!(under("task-sdk", "dev.fmt"), ["task-sdk/dev/fmt.py"]);
+        assert_eq!(under("", "fmt").len(), 4);
+        assert!(under("task-sdk", "missing").is_empty());
     }
 }
