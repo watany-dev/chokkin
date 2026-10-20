@@ -627,13 +627,17 @@ mod tests {
             ),
             (
                 "examples/dynamic/setup.py",
-                "import setuptools\n\ndef main():\n    setuptools.setup(name=NAME)\n\nmain()\n",
+                "def main():\n    import setuptools\n    setuptools.setup(name=NAME)\n\nmain()\n",
             ),
             ("examples/legacy/setup.py", "print \"python 2\"\n"),
             ("examples/legacy/pyproject.toml", "[build-system]\n"),
             (
                 "examples/alias/setup.py",
                 "from setuptools import setup as _setup\n_setup(name=\"alias\")\n",
+            ),
+            (
+                "examples/skbuild/setup.py",
+                "from skbuild import setup\nsetup(name=\"native\")\n",
             ),
             ("scripts/setup.py", "import os\nos.makedirs(\"var\")\n"),
             ("tools/setup.py", "import django\ndjango.setup()\n"),
@@ -655,6 +659,7 @@ mod tests {
             "examples/alias/setup.py",
             "examples/dynamic/setup.py",
             "examples/legacy/legacy.py",
+            "examples/skbuild/setup.py",
             "scripts/setup.py",
             "tools/setup.py",
             "sub/sub/cli.py",
@@ -668,6 +673,7 @@ mod tests {
                 "examples/dynamic".to_owned(),
                 "examples/imagepipe".to_owned(),
                 "examples/legacy".to_owned(),
+                "examples/skbuild".to_owned(),
             ])
         );
     }
