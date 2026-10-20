@@ -104,23 +104,36 @@ impl EntryPoints<'_> {
 
     /// `[options.entry_points]`: each option is a group whose value lists
     /// `name = target` items as setuptools' `_parse_list` splits them, by
-    /// line, or by comma when the value is one line.
+    /// line, or by comma when the value is one line. A comma inside
+    /// `[extras]` does not split: the ini reader drops the newline before a
+    /// lone continuation line, which setuptools splits by line, and on the
+    /// key's own line such an item would not build.
     pub(super) fn read_setup_cfg_group(&mut self, group: &str, value: &str) {
         let label = format!("options.entry_points.{group}");
         if group.is_empty() {
             return self.skip(label, "no group name");
         }
-        let items: Vec<&str> = if value.contains('\n') {
-            value.lines().collect()
-        } else {
-            value.split(',').collect()
-        };
-        for item in items {
+        if value.contains('\n') {
+            for item in value.lines() {
+                self.read_item(group, &label, item);
+            }
+            return;
+        }
+        let mut depth = 0_usize;
+        for item in value.split(|c| {
+            match c {
+                '[' => depth += 1,
+                ']' => depth = depth.saturating_sub(1),
+                _ => {},
+            }
+            c == ',' && depth == 0
+        }) {
             self.read_item(group, &label, item);
         }
     }
 
-    /// `[options] entry_points = file: ...`, which chokkin does not read.
+    /// `[options] entry_points = ...`, a `file:` or an inline ini string,
+    /// which chokkin does not read.
     pub(super) fn skip_setup_cfg_option(&mut self) {
         self.skip(
             "options.entry_points",
@@ -200,7 +213,10 @@ impl EntryPoints<'_> {
                 let name = name.trim();
                 self.push(name, target.trim(), group, format!("{label}.{name}"));
             },
-            _ => self.skip(label, "not a `name = module:attr` item"),
+            _ => self.skip(
+                label,
+                &format!("`{item}` is not a `name = module:attr` item"),
+            ),
         }
     }
 }
@@ -480,11 +496,20 @@ mod tests {
             reader.read_setup_cfg_group("console_scripts", "a = acme.cli : main [cli]");
             reader.read_setup_cfg_group("pytest11", "b = acme.plugin [test]");
             reader.read_setup_cfg_group("x", "c = acme:main[a,b]\nd = acme:d");
+            // `key =` then one indented line, which reaches here without its
+            // leading newline: setuptools splits that by line.
+            reader.read_setup_cfg_group("y", "e = acme:e [a,b]");
         });
         let targets: Vec<&str> = entries.iter().map(|entry| entry.2.as_str()).collect();
         assert_eq!(
             targets,
-            ["acme.cli:main", "acme.plugin", "acme:main", "acme:d"]
+            [
+                "acme.cli:main",
+                "acme.plugin",
+                "acme:main",
+                "acme:d",
+                "acme:e"
+            ]
         );
         assert!(warnings.is_empty(), "{warnings:?}");
     }
