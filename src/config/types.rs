@@ -348,6 +348,9 @@ pub struct ChokkinConfig {
     pub exclude: Vec<String>,
     /// Glob patterns of vendored code: analyzed, but never reported.
     pub vendored: Vec<String>,
+    /// Functions that import the module a dotted string argument names and
+    /// fetch the rest as attributes, beyond the built-in loaders (#493).
+    pub module_loaders: Vec<String>,
     /// Dependency group mappings.
     pub dependencies: DependencyGroupsConfig,
     /// User overrides for distribution → import module names.

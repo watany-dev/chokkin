@@ -341,6 +341,9 @@ vendored = [             # analyzed and traced, but never reported
   "**/_vendor/**",
   "**/third_party/**",
 ]
+# functions besides import_string / symbol_by_name that import the module
+# a dotted string argument names
+module_loaders = ["LazyFeature"]
 
 [tool.chokkin.dependencies]
 dev_groups = ["dev", "test", "tests", "lint", "docs"]

@@ -270,6 +270,9 @@ vendored = [             # 解析・到達性の追跡はするがissueは出さ
   "**/_vendor/**",
   "**/third_party/**",
 ]
+# import_string / symbol_by_name 以外で、引数の dotted name の文字列の
+# module を import する関数
+module_loaders = ["LazyFeature"]
 
 [tool.chokkin.dependencies]
 dev_groups = ["dev", "test", "tests", "lint", "docs"]
