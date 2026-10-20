@@ -3430,6 +3430,7 @@ fn binary_django_import_settings_reach_files_in_production() {
 
 /// An installed app in the shape of Django's tutorial: what Django loads by
 /// convention from it, and what it reads by name there, is used (#399).
+#[allow(clippy::too_many_lines)]
 fn django_app_project(installed: &str) -> tempfile::TempDir {
     let settings = format!("INSTALLED_APPS = {installed}\nROOT_URLCONF = 'mysite.urls'\n");
     write_project(&[
@@ -3452,7 +3453,7 @@ fn django_app_project(installed: &str) -> tempfile::TempDir {
         ("mysite/polls/__init__.py", ""),
         (
             "mysite/polls/apps.py",
-            "from django.apps import AppConfig\n\n\nclass PollsConfig(AppConfig):\n    name = 'mysite.polls'\n\n    def ready(self):\n        from . import signals, checks\n\n\nclass Unused:\n    pass\n",
+            "from django import apps\n\n\nclass Unused:\n    name = 'elsewhere'\n\n\nclass PollsConfig(apps.AppConfig):\n    name = 'mysite.polls'\n\n    def ready(self):\n        from . import signals, checks\n",
         ),
         (
             "mysite/polls/models.py",
@@ -3498,6 +3499,40 @@ fn django_app_project(installed: &str) -> tempfile::TempDir {
             "mysite/polls/management/commands/_shared.py",
             "class Command:\n    pass\n",
         ),
+        // Commands that bind `Command` by import, and ones that do not.
+        (
+            "mysite/polls/management/commands/imported.py",
+            "from mysite.polls.base import Command\n",
+        ),
+        (
+            "mysite/polls/management/commands/aliased.py",
+            "from mysite.polls.base import Base as Command\n",
+        ),
+        (
+            "mysite/polls/management/commands/starred.py",
+            "from mysite.polls.base import *\n",
+        ),
+        (
+            "mysite/polls/management/commands/renamed.py",
+            "from mysite.polls.base import Command as Base\n",
+        ),
+        (
+            "mysite/polls/management/commands/deferred.py",
+            "def load():\n    from mysite.polls.base import Command\n",
+        ),
+        (
+            "mysite/polls/management/commands/unrelated.py",
+            "from mysite.polls.base import Base\n",
+        ),
+        (
+            "mysite/polls/base.py",
+            "class Base:\n    pass\n\n\nCommand = Base\n",
+        ),
+        // Not under `templatetags/`, so no library.
+        (
+            "mysite/polls/library.py",
+            "from django import template\n\nregister = template.Library()\n",
+        ),
         ("mysite/polls/orphan.py", ""),
     ])
 }
@@ -3520,8 +3555,12 @@ fn binary_django_installed_app_conventions_are_used() {
         keys
     };
     let unused = [
+        "CHK001:mysite/polls/library.py",
         "CHK001:mysite/polls/management/commands/_shared.py",
+        "CHK001:mysite/polls/management/commands/deferred.py",
         "CHK001:mysite/polls/management/commands/notacommand.py",
+        "CHK001:mysite/polls/management/commands/renamed.py",
+        "CHK001:mysite/polls/management/commands/unrelated.py",
         "CHK001:mysite/polls/orphan.py",
         "CHK001:mysite/polls/templatetags/helpers.py",
         "CHK006:mysite/polls/apps.py:Unused",
@@ -3539,10 +3578,13 @@ fn binary_django_installed_app_conventions_are_used() {
     ] {
         assert_eq!(flagged(installed), unused, "{installed}");
     }
-    // Without the admin, nothing autodiscovers `admin.py`.
+    // Without the admin, nothing autodiscovers `admin.py`, but Django still
+    // imports `models.py`.
     let mut without_admin =
         flagged("['django.contrib.admin.apps.SimpleAdminConfig', 'mysite.polls']");
-    without_admin.retain(|key| key.contains("admin.py"));
+    without_admin.retain(|key| {
+        key.starts_with("CHK001") && (key.contains("admin.py") || key.contains("models.py"))
+    });
     assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
     // The inherited config makes the package that defines it no app.
     let project = django_app_project("['mysite.apps.SiteAdminConfig', 'mysite.polls']");
@@ -3560,6 +3602,23 @@ fn binary_django_installed_app_conventions_are_used() {
             .any(|(_, target)| target.starts_with("mysite/apps.py")),
         "{keys:?}"
     );
+}
+
+#[test]
+fn binary_django_trace_names_the_convention() {
+    let project = django_app_project("['mysite.polls']");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--production",
+            "--no-cache",
+            "--trace",
+            "mysite/polls/templatetags/poll_extras.py",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("(Django templatetags)"), "{stderr}");
 }
 
 #[test]

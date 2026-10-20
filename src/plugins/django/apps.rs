@@ -1,7 +1,6 @@
 //! Modules Django loads by convention from each installed app (#399).
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use ruff_python_ast::{Expr, Stmt};
 
@@ -237,21 +236,18 @@ fn config_classes(ctx: &PluginContext<'_>, path: &str) -> Vec<String> {
 }
 
 /// Under `templatetags/`, which Django walks recursively for libraries; the
-/// package itself is none.
+/// package itself is none. A stub or notebook there needs no extension check:
+/// neither is reachable through a module reference.
 fn is_templatetag(rest: &str) -> bool {
     rest.strip_prefix("templatetags/")
-        .is_some_and(|tail| is_py(tail) && tail != "__init__.py")
+        .is_some_and(|tail| tail != "__init__.py")
 }
 
 /// A module directly in `management/commands/` that Django lists as a
 /// command: not a package and not starting with `_`.
 fn is_command(rest: &str) -> bool {
     rest.strip_prefix("management/commands/")
-        .is_some_and(|name| is_py(name) && !name.contains('/') && !name.starts_with('_'))
-}
-
-fn is_py(path: &str) -> bool {
-    Path::new(path).extension().is_some_and(|ext| ext == "py")
+        .is_some_and(|name| !name.contains('/') && !name.starts_with('_'))
 }
 
 /// Whether the module binds `name` at its top level, as a definition, an
