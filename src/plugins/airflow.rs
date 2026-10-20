@@ -64,7 +64,11 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
         else {
             continue;
         };
-        let load_all = configured.is_some_and(|folder| folder.load_all);
+        // A folder named `dags` is the one tests, e2e suites and SDK examples
+        // hand the DAG processor or copy by path (#1064): a file that fails
+        // the safe-mode check there (`no_dags.py`, an `.airflowignore` case)
+        // is still read, so every `.py` under it is a DAG-folder file.
+        let load_all = configured.is_some_and(|folder| folder.load_all) || under_dags_dir(path);
         if (load_all || looks_like_dag_file(&root.join(path))) && seen.insert(path.clone()) {
             contrib.entries.push(PluginEntry {
                 spec: EntrySpec {
@@ -163,6 +167,14 @@ fn named_dag_dir(path: &str) -> Option<&str> {
     }
 }
 
+/// Whether a directory of `path` is named exactly `dags`, Airflow's default
+/// DAG folder name. The partial names [`named_dag_dir`] also accepts
+/// (`example_dags` subpackages, `dags_corrupted`) keep the safe-mode check.
+fn under_dags_dir(path: &str) -> bool {
+    path.rsplit_once('/')
+        .is_some_and(|(dir, _)| dir.split('/').any(|name| name == "dags"))
+}
+
 /// The DAG processor's safe mode: it loads a file only when its text holds
 /// both `airflow` and `dag`, case-insensitively.
 fn looks_like_dag_file(path: &Path) -> bool {
@@ -192,6 +204,18 @@ mod tests {
         assert_eq!(named_dag_dir("dagster/x.py"), None);
         assert_eq!(named_dag_dir("etl.py"), None);
         assert_eq!(named_dag_dir("src/daggy/x.py"), None);
+    }
+
+    #[test]
+    fn under_dags_dir_needs_a_directory_named_dags() {
+        assert!(under_dags_dir("dags/etl.py"));
+        assert!(under_dags_dir("tests/unit/dags/subdir2/subdir3/x.py"));
+        assert!(under_dags_dir("dags/example_dags/x.py"));
+        assert!(!under_dags_dir("dags.py"));
+        assert!(!under_dags_dir("tests/dags_with_system_exit/a.py"));
+        assert!(!under_dags_dir("airflow/example_dags/x.py"));
+        assert!(!under_dags_dir("Dags/etl.py"));
+        assert!(!under_dags_dir("src/dags"));
     }
 
     #[test]

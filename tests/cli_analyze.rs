@@ -7427,6 +7427,46 @@ fn binary_airflow_plugin_roots_its_definitions() {
     ]);
 }
 
+/// airflow's own suites (#1064): a test `dags/` folder holds files the DAG
+/// processor reads by path and skips (`no_dags.py`, an `.airflowignore`
+/// case), and DAGs an e2e suite copies. Without the plugin they stay
+/// unreached.
+#[test]
+fn binary_airflow_plugin_roots_files_under_dags_directories() {
+    let license =
+        "# Licensed to the Apache Software Foundation (ASF)\nfrom __future__ import annotations\n";
+    let files = vec![
+        ("tests/__init__.py", ""),
+        ("tests/unit/__init__.py", ""),
+        ("tests/unit/dags/no_dags.py", license),
+        (
+            "tests/unit/dags/subdir2/subdir3/should_ignore_this.py",
+            license,
+        ),
+        ("tests/integration/otel/dags/otel_test_dag.py", AIRFLOW_DAG),
+    ];
+    assert_orchestration_cases(vec![
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            files.clone(),
+            ORPHAN,
+            "certain",
+        ),
+        (
+            orchestration_pyproject("", ""),
+            files,
+            &[
+                "acme/helper.py",
+                "acme/orphan.py",
+                "tests/integration/otel/dags/otel_test_dag.py",
+                "tests/unit/dags/no_dags.py",
+                "tests/unit/dags/subdir2/subdir3/should_ignore_this.py",
+            ],
+            "certain",
+        ),
+    ]);
+}
+
 #[test]
 fn binary_dagster_plugin_roots_its_definitions() {
     assert_orchestration_cases(vec![

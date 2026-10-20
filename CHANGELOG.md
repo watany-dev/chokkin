@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- With the Airflow plugin on, every `.py` under a directory named exactly
+  `dags` is a DAG-folder entry in its path's context, not only files that
+  pass the DAG processor's safe-mode check (`airflow` and `dag` in the
+  text). Test suites read such folders by path, so airflow's
+  `tests/unit/dags/no_dags.py` and the `.airflowignore` case
+  `subdir2/subdir3/should_ignore_this.py` are no longer CHK001. Folders with
+  a partial name (`dags_*`, `*_dags`, `example_dags`) keep the check (#1064).
+
 ## [0.7.8] - 2026-10-20
 
 ### Added
