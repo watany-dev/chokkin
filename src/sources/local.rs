@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::manifest::{LoadedManifest, ProjectMetadata, UvSourceKind, UvToolSettings};
+use crate::path_util::resolve_under_root;
 
 use super::layout::infer_layout;
 use super::types::DiscoveredFile;
@@ -26,7 +27,8 @@ pub struct LocalTrees {
 
 impl LocalTrees {
     /// A `path` source's tree is read here, never cached, so it cannot go
-    /// stale; a tree without packages falls back to the distribution name.
+    /// stale; a tree outside the root or without packages falls back to the
+    /// distribution name.
     #[must_use]
     pub fn new(
         manifest: &LoadedManifest,
@@ -66,6 +68,8 @@ impl LocalTrees {
             .map(|source| source.name.clone())
             .collect();
         let mut path_imports: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let root = &manifest.root.path;
+        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
         for source in &manifest.uv.sources {
             let UvSourceKind::Path(path) = &source.kind else {
                 continue;
@@ -74,12 +78,15 @@ impl LocalTrees {
                 name: Some(source.name.clone()),
                 ..ProjectMetadata::default()
             };
-            let (layout, _) = infer_layout(
-                &manifest.root.path.join(path),
-                &metadata,
-                &UvToolSettings::default(),
-            );
-            let mut packages = layout.packages;
+            // Probe warns about a tree outside the root (#1042).
+            let mut packages = match resolve_under_root(&canonical_root, &root.join(path)) {
+                Ok(Some(dir)) => {
+                    infer_layout(&dir, &metadata, &UvToolSettings::default())
+                        .0
+                        .packages
+                },
+                Ok(None) | Err(_) => Vec::new(),
+            };
             if packages.is_empty() {
                 packages.push(source.name.replace('-', "_"));
             }
@@ -410,5 +417,32 @@ mod tests {
             trees.path_imports(),
             &BTreeMap::from([("my_lib".to_owned(), vec!["my-lib".to_owned()])])
         );
+    }
+
+    #[test]
+    fn path_source_outside_the_root_is_not_read() {
+        let root = tempfile::TempDir::new().expect("tempdir");
+        let outside = tempfile::TempDir::new().expect("tempdir");
+        let package_dir = outside.path().join("pkg");
+        std::fs::create_dir_all(&package_dir).expect("mkdir");
+        std::fs::write(package_dir.join("__init__.py"), "").expect("write");
+        let escape = format!(
+            "../{}",
+            outside.path().file_name().expect("name").to_string_lossy()
+        );
+        for path in [outside.path().to_string_lossy().into_owned(), escape] {
+            let manifest = manifest_at(
+                root.path(),
+                vec![UvSource {
+                    name: "my-lib".to_owned(),
+                    kind: UvSourceKind::Path(path),
+                }],
+            );
+            let trees = LocalTrees::new(&manifest, &[], &default_config());
+            assert_eq!(
+                trees.path_imports(),
+                &BTreeMap::from([("my_lib".to_owned(), vec!["my-lib".to_owned()])])
+            );
+        }
     }
 }
