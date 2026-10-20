@@ -126,6 +126,26 @@ pub struct DynamicImport {
     /// loaded modules define may be fetched by name (#728).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub computed_getattr: bool,
+    /// Loads by a loader API (`import_string("pkg.mod.Cls")`, #493) only:
+    /// the name may end in attributes the call fetches, so each segment
+    /// counts as used in the one before it, and a name nothing resolves is
+    /// no unresolved import (the loader may be handed a bad name on purpose).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fetched: bool,
+}
+
+/// A call whose first argument is a literal dotted name (`f("pkg.mod.Cls")`,
+/// `f("pkg.mod:Cls")`), kept until the configured loader names are known
+/// (#493): the parse cache does not depend on configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NamedLoad {
+    /// The callee's last name (`import_string` for `module_loading.import_string`).
+    pub call: String,
+    /// The name was written `pkg.mod:attr`, as a cyclopts lazy command is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lazy_command: bool,
+    /// The load the call makes if it is a loader, `:` written as `.`.
+    pub load: DynamicImport,
 }
 
 /// Attribute access against an imported module binding (`module.attr`).
@@ -373,6 +393,10 @@ pub struct ParsedModule {
     /// the module they name (#1026): each distinct literal at its first line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub module_refs: Vec<ModuleRef>,
+    /// Calls that may load a name; `apply_module_loaders`
+    /// moves the loader calls among them into `dynamic_imports` (#493).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub named_loads: Vec<NamedLoad>,
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,

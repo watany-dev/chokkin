@@ -118,7 +118,8 @@ fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
     })
 }
 
-/// Checks serde cannot express: root-relative paths and known rule codes.
+/// Checks serde cannot express: root-relative paths, known rule codes and
+/// loader function names.
 fn validate(path: &Path, config: &PartialConfig) -> Result<(), ConfigError> {
     ensure_relative_all(
         path,
@@ -144,6 +145,7 @@ fn validate(path: &Path, config: &PartialConfig) -> Result<(), ConfigError> {
         "vendored",
         config.vendored.iter().flatten().map(String::as_str),
     )?;
+    ensure_function_names(path, config.module_loaders.iter().flatten())?;
     ensure_known_rules(
         path,
         "ignore",
@@ -250,6 +252,29 @@ fn ensure_known_rules<'a>(
     Ok(())
 }
 
+/// A `module_loaders` entry is matched against a callee's last name, so a
+/// qualified `pkg.LazyFeature` would never match (#493).
+fn ensure_function_names<'a>(
+    path: &Path,
+    names: impl Iterator<Item = &'a String>,
+) -> Result<(), ConfigError> {
+    for name in names {
+        let identifier = name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+        if !identifier {
+            return Err(validation_error(
+                path,
+                format!("module_loaders.{name}"),
+                "must be a function name without its module (`LazyFeature`, not `pkg.LazyFeature`)",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validation_error(path: &Path, field: String, message: &str) -> ConfigError {
     ConfigError::Validation {
         path: path.to_path_buf(),
@@ -311,6 +336,23 @@ mod tests {
         assert!(
             matches!(err, ConfigError::Validation { ref field, .. } if field == "severity.chk001")
         );
+    }
+
+    #[test]
+    fn module_loaders_are_function_names() {
+        let path = Path::new(".chokkin.toml");
+        let config: PartialConfig =
+            toml::from_str("module_loaders = [\"LazyFeature\", \"_load\"]").expect("valid");
+        validate(path, &config).expect("function names");
+        for name in ["pkg.LazyFeature", "", "1st", "load()"] {
+            let config: PartialConfig =
+                toml::from_str(&format!("module_loaders = [{name:?}]")).expect("valid toml");
+            let err = validate(path, &config).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::Validation { ref field, .. } if *field == format!("module_loaders.{name}")),
+                "{name}"
+            );
+        }
     }
 
     #[test]
