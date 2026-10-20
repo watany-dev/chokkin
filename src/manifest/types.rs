@@ -56,6 +56,11 @@ pub struct DeclaredDependency {
     /// other groups, each ordered from the including group to the declaring one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub included_via: Vec<Vec<String>>,
+    /// A key of the declaration's table that a PEP 508 requirement cannot
+    /// carry (Poetry `git`, `path`, `url`, `source`, ...), so `--fix` does
+    /// not rewrite the declaration as one (#1041).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unportable_key: Option<String>,
 }
 
 /// Console script or entry-point declaration from packaging metadata.

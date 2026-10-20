@@ -443,6 +443,7 @@ mod tests {
                 },
                 opaque: false,
                 included_via: Vec::new(),
+                unportable_key: None,
             }],
             constraints: Vec::new(),
             uv: crate::manifest::UvToolSettings::default(),
@@ -608,6 +609,7 @@ mod tests {
             },
             opaque: false,
             included_via: Vec::new(),
+            unportable_key: None,
         });
         manifest.sources.pyproject_toml = true;
         manifest.sources.poetry = true;

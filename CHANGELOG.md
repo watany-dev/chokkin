@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming a module was looked up in each workspace member over every project
   file, which made airflow's run 1.5 s -> 4.5 s. Only the files whose path
   ends in the name are looked at now; output is unchanged (airflow 1.8 s).
+- `--fix` no longer moves a Poetry group dependency whose table says where
+  it comes from (`git`, `path`, `url`, `source`, or any key besides
+  `version`, `extras`, `markers`, `platform`, `python` and `optional`;
+  `extras` carries over only from a single table, not an array of forms) into
+  `[project].dependencies` as a bare name, which would resolve it from the
+  default index. The CHK005 move is skipped as `ambiguous` (#1041).
+- `--fix` no longer creates a `[project]` table holding only `dependencies`
+  when it moves a CHK005 dependency out of a group in a pyproject.toml with
+  no `[project]` (Poetry 1.x), or into a dynamic `project.dependencies`. The
+  move is skipped as `unsupported-target`, as `--add-missing` already did.
+- `--fix` skips a CHK005 move out of a dev requirements file as
+  `unsupported-target` instead of failing to parse that file as TOML.
 - With the Airflow plugin on, every `.py` under a directory named exactly
   `dags` is a DAG-folder entry in its path's context, not only files that
   pass the DAG processor's safe-mode check (`airflow` and `dag` in the
