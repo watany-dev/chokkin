@@ -455,6 +455,7 @@ fn push_editable_dependency(
         origin,
         opaque,
         included_via: Vec::new(),
+        unportable_key: None,
     });
 }
 

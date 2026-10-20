@@ -1212,6 +1212,7 @@ mod tests {
                 },
                 opaque: false,
                 included_via: Vec::new(),
+                unportable_key: None,
             });
         let config = crate::config::default_config();
         let sources = DiscoveredSources {
@@ -1275,6 +1276,7 @@ mod tests {
                 },
                 opaque: false,
                 included_via: Vec::new(),
+                unportable_key: None,
             });
         let config = crate::config::default_config();
         let sources = DiscoveredSources {

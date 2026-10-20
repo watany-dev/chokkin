@@ -444,7 +444,34 @@ fn push_poetry_dependency(
     if let Some(dep) = dependencies.get_mut(pushed) {
         dep.specifier = poetry_version_constraint(value);
         dep.marker = poetry_marker(value);
+        dep.unportable_key = poetry_unportable_key(value);
     }
+}
+
+/// A key a PEP 508 requirement cannot carry, in any form of the dependency,
+/// preferring one that names the source. Only the keys read into name,
+/// extras, specifier and marker carry over; any other key, known (`git`,
+/// `path`, `url`, `source`, `develop`, `allow-prereleases`) or not, picks how
+/// Poetry resolves it.
+fn poetry_unportable_key(value: &Value) -> Option<String> {
+    const CARRIED: [&str; 5] = ["version", "markers", "platform", "python", "optional"];
+    const SOURCES: [&str; 4] = ["git", "path", "url", "source"];
+    let forms = match value {
+        Value::Array(forms) => forms.as_slice(),
+        _ => std::slice::from_ref(value),
+    };
+    // `poetry_requirement_name` reads extras from a single table only.
+    let carried = |key: &str| CARRIED.contains(&key) || (key == "extras" && !value.is_array());
+    let keys: Vec<&String> = forms
+        .iter()
+        .filter_map(Value::as_table)
+        .flat_map(toml::Table::keys)
+        .filter(|key| !carried(key))
+        .collect();
+    keys.iter()
+        .find(|key| SOURCES.contains(&key.as_str()))
+        .or_else(|| keys.first())
+        .map(|key| (*key).clone())
 }
 
 /// Whether every form of the dependency is `optional = true`.
@@ -1254,6 +1281,48 @@ wrapped = { version = "*", markers = "os_name == 'nt' or\nos_name == 'java'", py
                     "wrapped",
                     Some("(os_name == 'nt' or\nos_name == 'java') and (python_version < \"3.9\")")
                 ),
+            ]
+        );
+    }
+
+    /// #1041: keys that pick where a dependency comes from are kept so
+    /// `--fix` does not rewrite it as a bare requirement.
+    #[test]
+    fn poetry_keys_with_no_pep508_form_are_recorded() {
+        let result = extract(
+            r#"[tool.poetry.group.dev.dependencies]
+plain = "^1.2"
+conditional = { version = "^1", python = "<3.9", markers = "os_name == 'nt'", extras = ["x"] }
+git = { git = "https://example.invalid/git.git", rev = "abc" }
+local = { path = "../local", develop = true }
+archive = { url = "https://example.invalid/archive-1.0.tar.gz" }
+corp = { version = "^1", source = "corp" }
+pre = { version = "^1", allow-prereleases = true }
+split = [{ version = "^1", python = "<3.9" }, { git = "https://example.invalid/split.git", python = ">=3.9" }]
+branch = { git = "https://example.invalid/branch.git", branch = "main" }
+multi = [{ version = "^1", extras = ["s3"], python = "<3.12" }, { version = "^1", extras = ["s3"], python = ">=3.12" }]
+"#,
+        )
+        .expect("valid pyproject");
+        let keys: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), dep.unportable_key.as_deref()))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                ("archive", Some("url")),
+                ("branch", Some("git")),
+                ("conditional", None),
+                ("corp", Some("source")),
+                ("git", Some("git")),
+                ("local", Some("path")),
+                // The requirement name reads extras from a single table only.
+                ("multi", Some("extras")),
+                ("plain", None),
+                ("pre", Some("allow-prereleases")),
+                ("split", Some("git")),
             ]
         );
     }

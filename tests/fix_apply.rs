@@ -88,6 +88,102 @@ fn fix_moves_direct_reference_with_extras_to_runtime() {
     );
 }
 
+/// #1041: a Poetry group declaration that names where the package comes
+/// from (`git`, `path`, `url`, `source`) has no PEP 508 form, so it stays.
+#[test]
+fn fix_keeps_poetry_sourced_group_dependencies_in_their_group() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let pyproject = temp.path().join("pyproject.toml");
+    let before = r#"[project]
+name = "acme"
+version = "0.1.0"
+dependencies = []
+
+[tool.poetry.group.dev.dependencies]
+gitdep = { git = "https://example.invalid/gitdep.git", rev = "abc" }
+pathdep = { path = "../pathdep", develop = true }
+urldep = { url = "https://example.invalid/urldep-1.0.tar.gz" }
+corpdep = { version = "^1", source = "corp" }
+plaindep = "^1.2"
+"#;
+    std::fs::write(&pyproject, before).expect("write pyproject");
+    std::fs::create_dir_all(temp.path().join("acme")).expect("mkdir");
+    std::fs::write(temp.path().join("acme/__init__.py"), "").expect("write init");
+    std::fs::write(
+        temp.path().join("acme/main.py"),
+        "import corpdep\nimport gitdep\nimport pathdep\nimport plaindep\nimport urldep\n",
+    )
+    .expect("write main");
+
+    let report = analyze_project(
+        temp.path(),
+        None,
+        &RuntimeOverrides::default(),
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let fix_report = report.fix.expect("fix report");
+    let names = |subjects: Vec<&chokkin::internals::IssueSubject>| {
+        let mut names: Vec<String> = subjects
+            .into_iter()
+            .filter_map(|subject| match subject {
+                chokkin::internals::IssueSubject::Distribution { name } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(
+        names(
+            fix_report
+                .applied
+                .iter()
+                .filter(|fix| fix.rule == RuleId::Chk005)
+                .map(|fix| &fix.subject)
+                .collect()
+        ),
+        ["plaindep"]
+    );
+    let skipped: Vec<_> = fix_report
+        .skipped
+        .iter()
+        .filter(|fix| fix.rule == RuleId::Chk005)
+        .collect();
+    assert_eq!(
+        names(skipped.iter().map(|fix| &fix.subject).collect()),
+        ["corpdep", "gitdep", "pathdep", "urldep"]
+    );
+    assert!(
+        skipped
+            .iter()
+            .all(|fix| fix.reason.to_string() == "ambiguous"),
+        "{skipped:?}"
+    );
+
+    let after = std::fs::read_to_string(&pyproject).expect("read pyproject after fix");
+    let doc: toml::Table = toml::from_str(&after).expect("valid toml");
+    let deps = doc["project"]["dependencies"].as_array().expect("array");
+    assert_eq!(
+        deps.iter()
+            .filter_map(toml::Value::as_str)
+            .collect::<Vec<_>>(),
+        ["plaindep"],
+        "{after}"
+    );
+    let dev = doc["tool"]["poetry"]["group"]["dev"]["dependencies"]
+        .as_table()
+        .expect("dev table");
+    assert_eq!(
+        dev.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["corpdep", "gitdep", "pathdep", "urldep"],
+        "{after}"
+    );
+}
+
 /// #730: an import behind an `except ImportError: x = None` guard is not
 /// moved to the runtime dependencies.
 #[test]
