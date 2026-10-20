@@ -2,9 +2,9 @@
 
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use ruff_python_ast::{Expr, Stmt};
+use ruff_python_ast::{Expr, Stmt, Suite};
 use ruff_text_size::{Ranged, TextSize};
 
 use crate::config::{EntrySpec, PluginId};
@@ -17,8 +17,14 @@ use crate::sources::{DiscoveredSources, FileContext, path_to_module};
 use super::context::PluginContext;
 use super::types::{
     ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin, SysPathImport,
+    UnreadSettings,
 };
 use super::util::{origin_for_file, push_binary};
+use super::warnings::PluginsWarning;
+
+/// The root documents `sphinx-build` starts from, one of which marks a
+/// `conf.py` beside it as a Sphinx configuration (#814).
+const SPHINX_ROOT_DOCUMENTS: [&str; 2] = ["index.rst", "index.md"];
 
 /// Extract static Sphinx and `MkDocs` hints.
 #[must_use]
@@ -26,12 +32,9 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     let mut contrib = PluginContribution::empty(plugin);
     match plugin {
         PluginId::Sphinx => {
-            let root = ctx.root.path.as_path();
             let modules = OnceCell::new();
-            extract_sphinx(ctx, root, &modules, &mut contrib);
-            // Monorepos keep docs per member (`providers/*/docs/conf.py`).
-            for member in &ctx.sources.layout.members {
-                extract_sphinx(ctx, &root.join(&member.path), &modules, &mut contrib);
+            for (conf, label) in sphinx_confs(ctx) {
+                read_conf(ctx, &conf, &label, &modules, &mut contrib);
             }
         },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
@@ -41,52 +44,204 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     contrib
 }
 
-fn extract_sphinx(
+/// The Sphinx `conf.py` files and the label of each entry: `docs/conf.py` at
+/// the root and in each member (`providers/*/docs/conf.py`), then any
+/// discovered `conf.py` beside a root document (#814), which `sphinx-build`
+/// may be given as its source directory wherever it is
+/// (`docs/api_reference/source/conf.py`). A `conf.py` with neither is some
+/// other module's configuration (`django/urls/conf.py`) and is left alone.
+fn sphinx_confs(ctx: &PluginContext<'_>) -> Vec<(PathBuf, String)> {
+    let root = ctx.root.path.as_path();
+    let mut confs: Vec<(PathBuf, String)> = Vec::new();
+    let members = ctx
+        .sources
+        .layout
+        .members
+        .iter()
+        .map(|member| root.join(&member.path));
+    for dir in std::iter::once(root.to_path_buf()).chain(members) {
+        let conf = dir.join("docs").join("conf.py");
+        if conf.is_file() && !confs.iter().any(|(known, _)| *known == conf) {
+            confs.push((conf, "docs/conf.py".to_owned()));
+        }
+    }
+    for file in ctx.sources.python_files() {
+        let path = root.join(&file.path);
+        if path.file_name().is_none_or(|name| name != "conf.py")
+            || confs.iter().any(|(known, _)| *known == path)
+        {
+            continue;
+        }
+        let document = path.parent().and_then(|dir| {
+            SPHINX_ROOT_DOCUMENTS
+                .into_iter()
+                .find(|document| dir.join(document).is_file())
+        });
+        if let Some(document) = document {
+            confs.push((path, format!("conf.py beside {document}")));
+        }
+    }
+    confs
+}
+
+/// Record a `conf.py` as a docs entry `sphinx-build` runs, and the
+/// extensions and theme it names.
+///
+/// A top-level `from m import *` of a first-party module runs `m` as part of
+/// `conf.py` (airflow's provider `conf.py` and the `provider_conf` they
+/// share, #1062), so `m`'s own top-level `extensions` statements count too,
+/// one level deep. Their names are referenced from the star import's line in
+/// `conf.py` (#830) and resolve with `conf.py`'s `sys.path` hints, which take
+/// those of `m`'s imports as well (#779); a name `m` binds resolves through
+/// `m`'s own imports. The names merge as a union, so a later
+/// `extensions = [...]` in `conf.py` that replaces `m`'s list keeps both.
+///
+/// What is not read is a gap (ADR 0005): an `extensions` value of a form not
+/// read, in either file, and a star import not followed when neither file
+/// assigns `extensions` (the unread module may be the one that does).
+fn read_conf(
     ctx: &PluginContext<'_>,
-    dir: &Path,
+    conf: &Path,
+    label: &str,
     modules: &OnceCell<HashMap<String, String>>,
     contrib: &mut PluginContribution,
 ) {
     let root = ctx.root.path.as_path();
-    let conf = dir.join("docs").join("conf.py");
-    if conf.is_file() {
-        push_entry(contrib, root, &conf, FileContext::Docs, "docs/conf.py");
-        push_binary(
-            contrib,
-            "sphinx-build",
-            origin_for_file(root, &conf, "docs/conf.py"),
-        );
-        if let Ok(contents) = std::fs::read_to_string(&conf)
-            && let Some(stmts) = parse_module(&contents)
-        {
-            let file = rel_to_root(root, &conf);
-            let imports =
-                ConfImports::new(&stmts, modules.get_or_init(|| module_files(ctx.sources)));
-            // Extensions often live in a directory an imported constants
-            // module appends to `sys.path` (airflow's `conf_constants`).
-            for imported in &imports.files {
-                contrib.sys_path_imports.push(SysPathImport {
-                    importer: file.clone(),
-                    imported: imported.clone(),
-                });
-            }
-            let theme = declared_theme(&stmts, ctx.manifest);
-            let refs = sphinx_extensions(&stmts, &|name| imports.strings(root, name))
-                .into_iter()
-                .map(|(module, start)| (module, start, "extensions"))
-                .chain(theme.map(|(module, start)| (module, start, "html_theme")));
-            let lines = LineIndex::new(&contents);
-            for (module, start, label) in refs {
-                contrib.module_refs.push(ModuleReference {
-                    module,
-                    origin: ReferenceOrigin {
-                        file: file.clone(),
-                        line: Some(lines.line(start)),
-                        label: label.to_owned(),
-                    },
-                });
-            }
+    push_entry(contrib, root, conf, FileContext::Docs, label);
+    push_binary(contrib, "sphinx-build", origin_for_file(root, conf, label));
+    let Some((contents, stmts)) = read_module(conf) else {
+        return;
+    };
+    let file = rel_to_root(root, conf);
+    // Sphinx reads its settings from the namespace, so a `conf.py` inside a
+    // package (`devel-common/src/docs/rtd-deprecation/conf.py`) is no API.
+    contrib.scanned_files.push(file.clone());
+    let module_files = modules.get_or_init(|| module_files(ctx.sources));
+    let imports = ConfImports::new(&stmts, module_files);
+    let lines = LineIndex::new(&contents);
+    // Extensions often live in a directory an imported constants module
+    // appends to `sys.path` (airflow's `conf_constants`).
+    for imported in &imports.files {
+        push_sys_path_import(contrib, &file, imported);
+    }
+    let read = sphinx_extensions(&stmts, &|name| imports.strings(root, &stmts, name));
+    push_unread_extensions(contrib, &file, &lines, &read.unread);
+    let mut assigned = read.assigned;
+    let mut refs: Vec<(String, TextSize, &str)> = read
+        .names
+        .into_iter()
+        .map(|(module, start)| (module, start, "extensions"))
+        .collect();
+    let mut unfollowed: Vec<(String, String, u32)> = Vec::new();
+    for star in &imports.stars {
+        let followed = star
+            .file
+            .as_ref()
+            .and_then(|path| Some((path, read_module(&root.join(path))?)));
+        let Some((path, (star_contents, star_stmts))) = followed else {
+            unfollowed.push((file.clone(), star.module.clone(), lines.line(star.start)));
+            continue;
+        };
+        let star_imports = ConfImports::new(&star_stmts, module_files);
+        for imported in &star_imports.files {
+            push_sys_path_import(contrib, &file, imported);
         }
+        let star_read = sphinx_extensions(&star_stmts, &|name| {
+            star_imports.strings(root, &star_stmts, name)
+        });
+        let star_lines = LineIndex::new(&star_contents);
+        push_unread_extensions(contrib, path, &star_lines, &star_read.unread);
+        assigned |= star_read.assigned;
+        refs.extend(
+            star_read
+                .names
+                .into_iter()
+                .map(|(module, _)| (module, star.start, "extensions")),
+        );
+        // One level: what the star-imported module star-imports is not read.
+        unfollowed.extend(star_imports.stars.iter().map(|nested| {
+            (
+                path.clone(),
+                nested.module.clone(),
+                star_lines.line(nested.start),
+            )
+        }));
+    }
+    if !assigned {
+        for (path, module, line) in unfollowed {
+            push_unread(contrib, path, module, line);
+        }
+    }
+    let theme = declared_theme(&stmts, ctx.manifest);
+    refs.extend(theme.map(|(module, start)| (module, start, "html_theme")));
+    for (module, start, label) in refs {
+        contrib.module_refs.push(ModuleReference {
+            module,
+            origin: ReferenceOrigin {
+                file: file.clone(),
+                line: Some(lines.line(start)),
+                label: label.to_owned(),
+            },
+        });
+    }
+}
+
+fn read_module(path: &Path) -> Option<(String, Suite)> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let stmts = parse_module(&contents)?;
+    Some((contents, stmts))
+}
+
+/// `conf` takes the `sys.path` hints of `module`, a file it imports (#779).
+fn push_sys_path_import(contrib: &mut PluginContribution, conf: &str, module: &str) {
+    contrib.sys_path_imports.push(SysPathImport {
+        importer: conf.to_owned(),
+        imported: module.to_owned(),
+    });
+}
+
+fn push_unread_extensions(
+    contrib: &mut PluginContribution,
+    file: &str,
+    lines: &LineIndex,
+    unread: &[TextSize],
+) {
+    for start in unread {
+        push_unread(
+            contrib,
+            file.to_owned(),
+            "extensions".to_owned(),
+            lines.line(*start),
+        );
+    }
+}
+
+/// One warning per gap the Sphinx plugin recorded, so the lowered findings
+/// are not the only trace of it (ADR 0005 §3).
+pub(super) fn unread_warnings(contrib: &PluginContribution) -> Vec<PluginsWarning> {
+    contrib
+        .unread_settings
+        .iter()
+        .filter_map(|unread| {
+            let (what, line) = unread.site.as_ref()?;
+            Some(PluginsWarning::SphinxExtensionsUnread {
+                path: unread.file.clone(),
+                line: (*line)?,
+                what: what.clone(),
+            })
+        })
+        .collect()
+}
+
+/// One gap per site: a module many `conf.py` files star-import is read once
+/// for each of them.
+fn push_unread(contrib: &mut PluginContribution, file: String, what: String, line: u32) {
+    let unread = UnreadSettings {
+        file,
+        site: Some((what, Some(line))),
+    };
+    if !contrib.unread_settings.contains(&unread) {
+        contrib.unread_settings.push(unread);
     }
 }
 
@@ -97,6 +252,19 @@ struct ConfImports {
     names: HashMap<String, (String, String)>,
     /// Root-relative files of the imported modules.
     files: Vec<String>,
+    /// Top-level `from m import *`, in source order.
+    stars: Vec<StarImport>,
+}
+
+/// A top-level `from m import *`.
+struct StarImport {
+    /// Root-relative file of `m` when it is a first-party module imported
+    /// absolutely; `None` for one not followed.
+    file: Option<String>,
+    /// `m` as written, with the leading dots of a relative import.
+    module: String,
+    /// Offset of the statement.
+    start: TextSize,
 }
 
 impl ConfImports {
@@ -104,16 +272,31 @@ impl ConfImports {
         let mut imports = Self::default();
         for stmt in stmts {
             match stmt {
-                Stmt::ImportFrom(from) if from.level == 0 => {
-                    let Some(file) = from
+                Stmt::ImportFrom(from) => {
+                    let file = from
                         .module
                         .as_ref()
-                        .and_then(|module| module_files.get(module.as_str()))
-                    else {
+                        .filter(|_| from.level == 0)
+                        .and_then(|module| module_files.get(module.as_str()));
+                    if from.names.iter().any(|alias| alias.name.as_str() == "*") {
+                        imports.stars.push(StarImport {
+                            file: file.cloned(),
+                            module: format!(
+                                "{}{}",
+                                ".".repeat(from.level as usize),
+                                from.module.as_ref().map_or("", |module| module.as_str())
+                            ),
+                            start: from.start(),
+                        });
+                    }
+                    let Some(file) = file else {
                         continue;
                     };
                     imports.add_file(file);
                     for alias in &from.names {
+                        if alias.name.as_str() == "*" {
+                            continue;
+                        }
                         let local = alias.asname.as_ref().unwrap_or(&alias.name);
                         imports
                             .names
@@ -139,25 +322,37 @@ impl ConfImports {
         }
     }
 
-    /// The strings the imported module assigns to the name `conf.py` binds
-    /// as `local` (`BASIC_SPHINX_EXTENSIONS = [...]`); one level only.
-    fn strings(&self, root: &Path, local: &str) -> Vec<String> {
-        let Some((path, name)) = self.names.get(local) else {
-            return Vec::new();
+    /// The strings a bare name in `stmts` binds, `None` when they cannot be
+    /// read: the module's own top-level assignment, else the one in the
+    /// first-party module it imports the name from
+    /// (`BASIC_SPHINX_EXTENSIONS = [...]`, #779), else in a module it
+    /// star-imports. One level only: a name that module imports in turn is
+    /// not read.
+    fn strings(&self, root: &Path, stmts: &[Stmt], local: &str) -> Option<Vec<String>> {
+        if let Some(value) = assigned_value(stmts, local) {
+            return constant_strings(value);
+        }
+        let read = |path: &str, name: &str| {
+            let (_, stmts) = read_module(&root.join(path))?;
+            assigned_value(&stmts, name).and_then(constant_strings)
         };
-        let Some(stmts) = std::fs::read_to_string(root.join(path))
-            .ok()
-            .and_then(|contents| parse_module(&contents))
-        else {
-            return Vec::new();
-        };
-        assigned_value(&stmts, name)
-            .map(|value| literal_strings(value, &|_| Vec::new()))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(module, _)| module)
-            .collect()
+        if let Some((path, name)) = self.names.get(local) {
+            return read(path, name);
+        }
+        self.stars
+            .iter()
+            .filter_map(|star| star.file.as_deref())
+            .find_map(|path| read(path, local))
     }
+}
+
+/// The strings of a string or of a list of strings only.
+fn constant_strings(value: &Expr) -> Option<Vec<String>> {
+    string_value(value).map(|value| vec![value]).or_else(|| {
+        string_list(value)
+            .filter(|scan| scan.complete)
+            .map(|scan| scan.values)
+    })
 }
 
 /// Module name → root-relative file of the discovered sources, the first
@@ -187,23 +382,41 @@ fn declared_theme(stmts: &[Stmt], manifest: &LoadedManifest) -> Option<(String, 
         .then_some((theme, value.start()))
 }
 
-/// The names in `extensions = [...]` and in later top-level
-/// `extensions.append(...)`, `.extend([...])` and `+= [...]`, each with the
-/// offset of the string that names it. A bare name instead of a literal goes
-/// through `constant` (`extensions = BASIC_SPHINX_EXTENSIONS` imported from a
-/// constants module, #779) and takes the name's offset, so the reference stays
-/// in `conf.py` (#830).
-fn sphinx_extensions(
-    stmts: &[Stmt],
-    constant: &dyn Fn(&str) -> Vec<String>,
-) -> Vec<(String, TextSize)> {
-    let mut names = assigned_value(stmts, "extensions")
-        .map(|value| literal_strings(value, constant))
-        .unwrap_or_default();
+/// What a module's top-level `extensions` statements name.
+#[derive(Debug, Default)]
+struct Extensions {
+    /// Each name with the offset of the string or bare name that names it.
+    names: Vec<(String, TextSize)>,
+    /// Offsets of the values not read: neither a string, a list of strings,
+    /// nor a bare name bound to one. A partial list keeps the strings it has.
+    unread: Vec<TextSize>,
+    /// Whether the module assigns `extensions`.
+    assigned: bool,
+}
+
+/// The names in each top-level `extensions = [...]` (a reassignment
+/// `extensions = extensions + [...]` too, which is unread) and
+/// `extensions.append(...)`, `.insert(i, ...)`, `.extend([...])` and
+/// `+= [...]`. A bare name instead of a literal goes through `constant`
+/// (`extensions = BASIC_SPHINX_EXTENSIONS` imported from a constants module,
+/// #779) and takes the name's offset, so the reference stays in `conf.py`
+/// (#830). Statements under `if` or in a function are not read.
+fn sphinx_extensions(stmts: &[Stmt], constant: &dyn Fn(&str) -> Option<Vec<String>>) -> Extensions {
+    let mut read = Extensions::default();
     let is_extensions =
         |expr: &Expr| matches!(expr, Expr::Name(name) if name.id.as_str() == "extensions");
     for stmt in stmts {
         match stmt {
+            Stmt::Assign(assign) if assign.targets.iter().any(is_extensions) => {
+                read.assigned = true;
+                literal_strings(&assign.value, constant, &mut read);
+            },
+            Stmt::AnnAssign(assign) if is_extensions(&assign.target) => {
+                if let Some(value) = &assign.value {
+                    read.assigned = true;
+                    literal_strings(value, constant, &mut read);
+                }
+            },
             Stmt::Expr(stmt) => {
                 let Expr::Call(call) = &*stmt.value else {
                     continue;
@@ -211,38 +424,48 @@ fn sphinx_extensions(
                 let Expr::Attribute(method) = &*call.func else {
                     continue;
                 };
-                let [argument] = &*call.arguments.args else {
+                if !is_extensions(&method.value) {
+                    continue;
+                }
+                let (("append" | "extend", [argument]) | ("insert", [_, argument])) =
+                    (method.attr.as_str(), &*call.arguments.args)
+                else {
                     continue;
                 };
-                if is_extensions(&method.value)
-                    && matches!(method.attr.as_str(), "append" | "extend")
-                {
-                    names.extend(literal_strings(argument, constant));
-                }
+                literal_strings(argument, constant, &mut read);
             },
             Stmt::AugAssign(assign) if is_extensions(&assign.target) => {
-                names.extend(literal_strings(&assign.value, constant));
+                literal_strings(&assign.value, constant, &mut read);
             },
             _ => {},
         }
     }
-    names
+    read
 }
 
 /// The strings of a string or list literal, or of the constant a name binds,
-/// with their offsets.
-fn literal_strings(expr: &Expr, constant: &dyn Fn(&str) -> Vec<String>) -> Vec<(String, TextSize)> {
-    match expr {
-        Expr::Name(name) => constant(name.id.as_str())
-            .into_iter()
-            .map(|value| (value, name.start()))
-            .collect(),
-        _ => string_value(expr)
-            .map(|value| vec![(value, expr.start())])
-            .or_else(|| {
-                string_list(expr).map(|scan| scan.values.into_iter().zip(scan.starts).collect())
-            })
-            .unwrap_or_default(),
+/// with their offsets; a value of another form is unread.
+fn literal_strings(
+    expr: &Expr,
+    constant: &dyn Fn(&str) -> Option<Vec<String>>,
+    read: &mut Extensions,
+) {
+    if let Expr::Name(name) = expr {
+        match constant(name.id.as_str()) {
+            Some(values) => read
+                .names
+                .extend(values.into_iter().map(|value| (value, name.start()))),
+            None => read.unread.push(name.start()),
+        }
+    } else if let Some(value) = string_value(expr) {
+        read.names.push((value, expr.start()));
+    } else if let Some(scan) = string_list(expr) {
+        read.names.extend(scan.values.into_iter().zip(scan.starts));
+        if !scan.complete {
+            read.unread.push(expr.start());
+        }
+    } else {
+        read.unread.push(expr.start());
     }
 }
 
@@ -282,23 +505,29 @@ fn push_entry(
 mod tests {
     use super::*;
 
+    fn read(source: &str) -> (Vec<(String, u32)>, Vec<u32>, bool) {
+        let stmts = parse_module(source).expect("valid python");
+        let lines = LineIndex::new(source);
+        let read = sphinx_extensions(&stmts, &|name| match name {
+            "BASE" => Some(vec!["ext_constant".to_owned()]),
+            _ => None,
+        });
+        (
+            read.names
+                .into_iter()
+                .map(|(module, start)| (module, lines.line(start)))
+                .collect(),
+            read.unread.iter().map(|start| lines.line(*start)).collect(),
+            read.assigned,
+        )
+    }
+
     fn extensions(source: &str) -> Vec<String> {
-        extension_lines(source)
+        read(source)
+            .0
             .into_iter()
             .map(|(module, _)| module)
             .collect()
-    }
-
-    fn extension_lines(source: &str) -> Vec<(String, u32)> {
-        let stmts = parse_module(source).expect("valid python");
-        let lines = LineIndex::new(source);
-        sphinx_extensions(&stmts, &|name| match name {
-            "BASE" => vec!["ext_constant".to_owned()],
-            _ => Vec::new(),
-        })
-        .into_iter()
-        .map(|(module, start)| (module, lines.line(start)))
-        .collect()
     }
 
     #[test]
@@ -307,18 +536,26 @@ mod tests {
             extensions(
                 "extensions = ['a']\nextensions.append('b')\n\
                  extensions.extend(['c'])\nextensions += ['d']\n\
+                 extensions.insert(0, 'e')\n\
                  templates.append('x')\nextensions.remove('a')\n"
             ),
-            ["a", "b", "c", "d"]
+            ["a", "b", "c", "d", "e"]
         );
     }
 
     #[test]
-    fn a_bare_name_reads_the_imported_constant() {
+    fn a_bare_name_reads_the_constant_it_binds() {
+        let (names, unread, assigned) =
+            read("extensions = BASE\nextensions.extend(BASE)\nextensions += MISSING\n");
         assert_eq!(
-            extensions("extensions = BASE\nextensions.extend(BASE)\nextensions += MISSING\n"),
-            ["ext_constant", "ext_constant"]
+            names,
+            [
+                ("ext_constant".to_owned(), 1),
+                ("ext_constant".to_owned(), 2)
+            ]
         );
+        assert_eq!(unread, [3]);
+        assert!(assigned);
     }
 
     /// An imported constant's extensions point at the name in `conf.py`, not
@@ -326,7 +563,7 @@ mod tests {
     #[test]
     fn extensions_take_the_line_of_their_string_or_name() {
         assert_eq!(
-            extension_lines("extensions = [\n    'a',\n    'b',\n]\nextensions += BASE\n"),
+            read("extensions = [\n    'a',\n    'b',\n]\nextensions += BASE\n").0,
             [
                 ("a".to_owned(), 2),
                 ("b".to_owned(), 3),
@@ -335,11 +572,45 @@ mod tests {
         );
     }
 
+    /// A value of a form not read is a gap at its line, and a partial list
+    /// keeps the strings it has (ADR 0005, #1062).
+    #[test]
+    fn values_of_other_forms_are_unread() {
+        let (names, unread, assigned) = read(
+            "extensions = ['a', EXTRA]\nextensions += BASE + ['b']\n\
+             extensions.append(f'ext_{x}')\nextensions.extend(load())\n\
+             if x:\n    extensions.append(y)\n",
+        );
+        assert_eq!(names, [("a".to_owned(), 1)]);
+        assert_eq!(unread, [1, 2, 3, 4]);
+        assert!(assigned);
+        assert!(!read("extensions.append('a')\n").2);
+    }
+
+    /// Every top-level assignment is read, not only the first: a
+    /// reassignment in a form not read is a gap, not dropped (ADR 0005).
+    #[test]
+    fn each_assignment_of_extensions_is_read() {
+        let (names, unread, assigned) = read(
+            "extensions = ['a']\nextensions = extensions + ['b']\n\
+             extensions: list[str] = ['c']\n",
+        );
+        assert_eq!(names, [("a".to_owned(), 1), ("c".to_owned(), 3)]);
+        assert_eq!(unread, [2]);
+        assert!(assigned);
+        assert!(read("extensions: list[str] = ['a']\n").2);
+        assert_eq!(
+            read("html_theme: str = 'alabaster'\n"),
+            (vec![], vec![], false)
+        );
+    }
+
     #[test]
     fn conf_imports_keep_first_party_modules_once() {
         let stmts = parse_module(
             "import os\nfrom common.constants import EXTS as BASE, OTHER\n\
-             import common.constants\nfrom . import local\nfrom sphinx import addnodes\n",
+             import common.constants\nfrom . import local\nfrom sphinx import addnodes\n\
+             from common.constants import *\nfrom theme import *\nfrom .base import *\n",
         )
         .expect("valid python");
         let module_files = HashMap::from([(
@@ -350,7 +621,34 @@ mod tests {
         assert_eq!(imports.files, ["src/common/constants.py"]);
         let file = "src/common/constants.py".to_owned();
         assert_eq!(imports.names["BASE"], (file.clone(), "EXTS".to_owned()));
-        assert_eq!(imports.names["OTHER"], (file, "OTHER".to_owned()));
+        assert_eq!(imports.names["OTHER"], (file.clone(), "OTHER".to_owned()));
         assert_eq!(imports.names.len(), 2);
+        let stars: Vec<_> = imports
+            .stars
+            .iter()
+            .map(|star| (star.file.clone(), star.module.as_str()))
+            .collect();
+        assert_eq!(
+            stars,
+            [
+                (Some(file), "common.constants"),
+                (None, "theme"),
+                (None, ".base"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_local_constant_shadows_an_imported_one() {
+        let stmts = parse_module("from c import BASE\nBASE = ['local']\nLIST = [f()]\n")
+            .expect("valid python");
+        let imports = ConfImports::new(&stmts, &HashMap::new());
+        let root = Path::new("/nonexistent");
+        assert_eq!(
+            imports.strings(root, &stmts, "BASE"),
+            Some(vec!["local".to_owned()])
+        );
+        assert_eq!(imports.strings(root, &stmts, "LIST"), None);
+        assert_eq!(imports.strings(root, &stmts, "MISSING"), None);
     }
 }

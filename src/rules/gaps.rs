@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::config::{Confidence, DependencyGroupsConfig, TargetVersion};
+use crate::config::{Confidence, DependencyGroupsConfig, PluginId, TargetVersion};
 use crate::entry::{beside_origin, resolve_module_to_path};
 use crate::graph::ProjectGraph;
 use crate::manifest::{
@@ -134,6 +134,11 @@ pub enum GapKind {
     /// a module that is not a project file (#914): the apps, middleware and
     /// URL configuration they name are unknown.
     UnreadDjangoSettings,
+    /// A Sphinx `conf.py`, or a module it star-imports, sets `extensions`
+    /// in a form not read, or star-imports a module not followed where
+    /// neither assigns `extensions` (#1062): the extensions it loads are
+    /// unknown, and an extension may be any file or distribution.
+    UnreadSphinxExtensions,
     /// The root `requires-python` could not be read, so the assumed py311
     /// decided that a module only other minors ship is not stdlib (#924):
     /// the import's findings may be wrong.
@@ -182,6 +187,8 @@ impl GapKind {
     /// block itself could not read lowers that script's alone (#936). A
     /// string naming a module may load it, so it lowers that file's absence
     /// finding to a note (#1026).
+    // One table, so each gap's lowering is read in one place.
+    #[allow(clippy::too_many_lines)]
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
             (
@@ -190,7 +197,8 @@ impl GapKind {
                 | Self::UnreadNotebookCells
                 | Self::OpaqueDynamicImport
                 | Self::UnreadCommandTarget
-                | Self::UnreadDjangoSettings,
+                | Self::UnreadDjangoSettings
+                | Self::UnreadSphinxExtensions,
                 RuleId::Chk001,
                 _,
             )
@@ -199,7 +207,8 @@ impl GapKind {
                 | Self::SkippedEntry
                 | Self::UnreadPublicModule
                 | Self::UnreadNotebookCells
-                | Self::UnreadDjangoSettings,
+                | Self::UnreadDjangoSettings
+                | Self::UnreadSphinxExtensions,
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
             )
@@ -306,6 +315,7 @@ impl GapKind {
                  were not read"
             },
             Self::UnreadDjangoSettings => "the Django settings could not be found or read",
+            Self::UnreadSphinxExtensions => "the Sphinx `extensions` could not all be read",
             Self::AssumedTargetVersion => {
                 "`requires-python` could not be read, so py311 decided the module is not stdlib"
             },
@@ -458,7 +468,11 @@ pub fn collect_gaps(
     ));
     gaps.extend(image_tree_gaps(context, &plugins.config_command_targets));
     gaps.extend(string_module_ref_gaps(context));
-    gaps.extend(plugins.unread_settings().map(settings_gap));
+    gaps.extend(
+        plugins
+            .unread_settings()
+            .map(|(plugin, unread)| settings_gap(plugin, unread)),
+    );
     gaps.extend(path_source_gaps(
         &context.resolution.imports,
         unread_path_sources,
@@ -829,12 +843,17 @@ fn path_source_gaps(imports: &[ResolvedImport], dirs: &[String]) -> Vec<Gap> {
     dir_gaps.chain(import_gaps).collect()
 }
 
-/// Settings decide what Django runs in every member, so the gap lowers the
+/// Settings decide what Django runs in every member, and an extension
+/// `sphinx-build` loads may be any module on its path, so the gap lowers the
 /// whole project's findings.
-fn settings_gap(unread: &UnreadSettings) -> Gap {
+fn settings_gap(plugin: PluginId, unread: &UnreadSettings) -> Gap {
+    let kind = match plugin {
+        PluginId::Sphinx => GapKind::UnreadSphinxExtensions,
+        _ => GapKind::UnreadDjangoSettings,
+    };
     Gap {
         file: unread.file.clone(),
-        kind: GapKind::UnreadDjangoSettings,
+        kind,
         member: None,
         target: None,
         site: unread.site.clone(),
@@ -1186,11 +1205,12 @@ mod tests {
     }
 
     #[test]
-    fn unread_module_skipped_entry_and_django_settings_cap_absence_findings_but_not_script_ones() {
+    fn unread_module_skipped_entry_and_framework_config_cap_absence_findings_but_not_script_ones() {
         for gap in [
             gap("acme/latin.py", GapKind::UnreadModule),
             gap("manage.py", GapKind::SkippedEntry),
             gap("manage.py", GapKind::UnreadDjangoSettings),
+            gap("docs/conf.py", GapKind::UnreadSphinxExtensions),
         ] {
             let found = lowered(
                 &[gap],

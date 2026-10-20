@@ -1350,6 +1350,119 @@ fn sphinx_extensions_carry_their_string_line() {
     );
 }
 
+/// `docs/conf.py` that star-imports a first-party module reads that
+/// module's `extensions`, resolved through its own imports, at the star
+/// import's line in `conf.py`, and merges them with its own (#1062).
+#[test]
+fn sphinx_conf_reads_the_extensions_of_a_star_imported_module() {
+    let hints = extract_fixture("sphinx_star_conf");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let refs: Vec<(&str, &str, Option<u32>)> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| {
+            (
+                reference.module.as_str(),
+                reference.origin.file.as_str(),
+                reference.origin.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        refs,
+        [
+            ("sphinx_design", "docs/conf.py", Some(3)),
+            ("sphinx.ext.autodoc", "docs/conf.py", Some(1)),
+            ("sphinx_copybutton", "docs/conf.py", Some(1)),
+        ]
+    );
+    assert_eq!(contrib.unread_settings, []);
+    assert_eq!(hints.warnings, []);
+}
+
+/// A discovered `conf.py` beside a root document is a docs entry wherever it
+/// is; one with no root document beside it is no Sphinx conf (#814).
+#[test]
+fn sphinx_conf_beside_a_root_document_is_a_docs_entry() {
+    let hints = extract_fixture("sphinx_root_document");
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let entries: Vec<(&str, FileContext, &str)> = contrib
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.spec.path.as_str(),
+                entry.context,
+                entry.origin.label.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [(
+            "docs/api/source/conf.py",
+            FileContext::Docs,
+            "conf.py beside index.rst"
+        )]
+    );
+    let modules: Vec<&str> = contrib
+        .module_refs
+        .iter()
+        .map(|reference| reference.module.as_str())
+        .collect();
+    assert_eq!(modules, ["sphinx_click"]);
+    assert_eq!(contrib.scanned_files, ["docs/api/source/conf.py"]);
+}
+
+/// Plugin hints for a project with `files` written.
+fn project_hints(files: &[(&str, &str)]) -> chokkin::internals::PluginHints {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    for (path, text) in files {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, text).expect("write file");
+    }
+    extract_at(root)
+}
+
+/// `docs/conf.py` beside a root document is one entry, and another module
+/// beside it is none (#814).
+#[test]
+fn sphinx_docs_conf_beside_a_root_document_is_one_entry() {
+    let hints = project_hints(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("docs/conf.py", ""),
+        ("docs/index.rst", "Docs\n====\n"),
+        ("docs/helpers.py", ""),
+    ]);
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    assert_eq!(entry_paths(contrib), ["docs/conf.py"]);
+}
+
+/// A star import not followed is no gap when a star-imported module that is
+/// followed assigns `extensions` (#1062).
+#[test]
+fn sphinx_star_import_not_followed_is_no_gap_where_a_followed_one_assigns() {
+    let hints = project_hints(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        (
+            "docs/conf.py",
+            "from common.provider_conf import *\nfrom sphinx_base_conf import *\n",
+        ),
+        ("src/common/__init__.py", ""),
+        ("src/common/provider_conf.py", "extensions = [\"a\"]\n"),
+    ]);
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    assert_eq!(contrib.unread_settings, []);
+}
+
 #[test]
 fn mkdocs_plugin_records_config_binary() {
     let hints = extract_fixture("mkdocs_config");

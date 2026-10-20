@@ -146,8 +146,8 @@ pub struct FrameworkUsedGlob {
 }
 
 /// Configuration a framework reads that the plugin could not find or read,
-/// such as the Django settings (#914): what it would have explained is
-/// unknown.
+/// such as the Django settings (#914) or the Sphinx `extensions` (#1062):
+/// what it would have explained is unknown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadSettings {
     /// Root-relative file the gap is in: the settings module, or the file
@@ -155,7 +155,8 @@ pub struct UnreadSettings {
     pub file: String,
     /// What in `file` could not be found or read and its line, which
     /// `--explain` shows in place of the file: a settings module or star
-    /// import, or `DJANGO_SETTINGS_MODULE` set in a form not read.
+    /// import, `DJANGO_SETTINGS_MODULE` set in a form not read, or an
+    /// `extensions` value.
     pub site: Option<(String, Option<u32>)>,
 }
 
@@ -188,8 +189,8 @@ pub struct PluginContribution {
     pub command_targets: Vec<CommandTargetRef>,
     /// Entry files whose top-level names the framework reads itself, by
     /// loading them by path or scanning them for definitions: alembic's
-    /// scripts, DAG files, a scrapy settings module. Their names are no API
-    /// surface (#667, #401).
+    /// scripts, DAG files, a scrapy settings module, a Sphinx `conf.py`.
+    /// Their names are no API surface (#667, #401, #814).
     pub scanned_files: Vec<String>,
 }
 
@@ -296,11 +297,15 @@ impl PluginHints {
             .flat_map(|contrib| contrib.sys_path_imports.iter())
     }
 
-    /// Iterate all settings plugins could not find or read.
-    pub fn unread_settings(&self) -> impl Iterator<Item = &UnreadSettings> {
-        self.contributions
-            .iter()
-            .flat_map(|contrib| contrib.unread_settings.iter())
+    /// Iterate all settings plugins could not find or read, with the plugin
+    /// whose they are.
+    pub fn unread_settings(&self) -> impl Iterator<Item = (PluginId, &UnreadSettings)> {
+        self.contributions.iter().flat_map(|contrib| {
+            contrib
+                .unread_settings
+                .iter()
+                .map(|unread| (contrib.plugin, unread))
+        })
     }
 
     /// Iterate all framework-used globs.

@@ -1,0 +1,7 @@
+[project]
+name = "sphinx-root-document"
+version = "0.1.0"
+dependencies = ["sphinx", "sphinx-click"]
+
+[tool.chokkin.plugins]
+sphinx = true

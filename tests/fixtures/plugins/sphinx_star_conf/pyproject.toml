@@ -1,0 +1,7 @@
+[project]
+name = "sphinx-star-conf"
+version = "0.1.0"
+dependencies = ["sphinx", "sphinx-copybutton", "sphinx-design"]
+
+[tool.chokkin.plugins]
+sphinx = true
