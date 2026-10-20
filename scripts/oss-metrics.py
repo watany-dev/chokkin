@@ -253,14 +253,14 @@ def precision(findings: list[list[str]], code: str) -> tuple[int, int]:
     return count_hits(findings, code, "tp"), count_hits(findings, code, "fp")
 
 
-def project_precision(findings: list[list[str]], code: str) -> dict[str, tuple[int, int]]:
-    """(tp, fp) of `code` per project, for the projects with a labelled hit."""
-    per: dict[str, list[int]] = {}
+def project_precision(findings: list[list[str]], code: str, skip: frozenset[str] = frozenset()) -> dict[str, tuple[int, int]]:
+    """precision() of `code` per project outside `skip`, for the projects with a labelled hit."""
+    rows: dict[str, list[list[str]]] = {}
     for f in findings:
-        verdict = effective(f[3])
-        if f[1] == code and is_hit(f[7]) and verdict in ("tp", "fp"):
-            per.setdefault(f[0], [0, 0])[0 if verdict == "tp" else 1] += 1
-    return {slug: (tp, fp) for slug, (tp, fp) in per.items()}
+        if f[0] not in skip:
+            rows.setdefault(f[0], []).append(f)
+    per = {slug: precision(fs, code) for slug, fs in rows.items()}
+    return {slug: hits for slug, hits in per.items() if sum(hits)}
 
 
 def ranked_projects(per_project: dict[str, tuple[int, int]]) -> list[tuple[str, tuple[int, int]]]:
@@ -714,11 +714,8 @@ def main() -> int:
 
     # Recall sentinels are one-label fixtures, not projects: each would count
     # as a 100% project in the macro mean, so they stay in the pooled number only.
-    sentinels = {slug for slug, category, _, _ in targets if category == "recall"}
-    per_project = {
-        c: {slug: hits for slug, hits in project_precision(findings, c).items() if slug not in sentinels}
-        for c in ALL_RULES
-    }
+    sentinels = frozenset(slug for slug, category, _, _ in targets if category == "recall")
+    per_project = {c: project_precision(findings, c, sentinels) for c in ALL_RULES}
 
     def macro_pct(code: str) -> str:
         macro = macro_precision(per_project[code])

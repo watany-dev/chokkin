@@ -78,6 +78,10 @@ class ProjectPrecisionTest(unittest.TestCase):
         self.assertEqual(om.project_precision(findings, "CHK001"), {"a": (1, 1), "d": (0, 1)})
         self.assertEqual(om.project_precision([], "CHK001"), {})
 
+    def test_skipped_projects_are_left_out(self) -> None:
+        findings = [finding("CHK002", "tp", slug="sentinel"), finding("CHK002", "fp", slug="a")]
+        self.assertEqual(om.project_precision(findings, "CHK002", frozenset({"sentinel"})), {"a": (0, 1)})
+
     def test_macro_weighs_each_project_equally(self) -> None:
         # Micro is 28/32 = 87.5%; the big project hides the small one's 50%.
         per = {"big": (27, 3), "small": (1, 1)}
