@@ -219,14 +219,11 @@ fn base_name(base: &Expr) -> Option<&str> {
 /// (`AppConfig`, `PluginConfig`): Django picks the default one from the
 /// module, so no importer names it.
 fn config_classes(ctx: &PluginContext<'_>, path: &str) -> Vec<String> {
-    let Some(stmts) = read_to_string(&abs_path(ctx.root.path.as_path(), path))
+    read_to_string(&abs_path(ctx.root.path.as_path(), path))
         .ok()
         .and_then(|contents| parse_module(&contents))
-    else {
-        return Vec::new();
-    };
-    stmts
-        .iter()
+        .unwrap_or_default()
+        .into_iter()
         .filter_map(|stmt| match stmt {
             Stmt::ClassDef(def)
                 if def
