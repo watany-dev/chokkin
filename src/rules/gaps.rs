@@ -754,13 +754,12 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         .iter()
         .map(|file| file.path.clone())
         .collect();
-    let index = ModuleIndex::new(&known_paths);
-    let layout = &context.sources.layout;
+    let index = ModuleIndex::new(&known_paths, &context.sources.layout);
     let mut gaps = Vec::new();
     for module in &context.parse.modules {
         for reference in &module.module_refs {
             let name = crate::parser::module_ref_name(&reference.text);
-            let Some(target) = resolve_dotted_prefix(name, layout, &index) else {
+            let Some(target) = resolve_dotted_prefix(name, &index) else {
                 continue;
             };
             if target == module.path || is_reached(&target, context.graph, context.reachability) {
@@ -781,14 +780,10 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
 /// The project file `module` names, or else the one its longest prefix of
 /// at least two segments names. A package's `__init__.py` is never a CHK001
 /// candidate, so a name that stops at a package lowers nothing.
-fn resolve_dotted_prefix(
-    module: &str,
-    layout: &crate::sources::LayoutInfo,
-    index: &ModuleIndex<'_>,
-) -> Option<String> {
+fn resolve_dotted_prefix(module: &str, index: &ModuleIndex<'_>) -> Option<String> {
     let mut candidate = module;
     loop {
-        if let Some(path) = index.resolve(candidate, layout) {
+        if let Some(path) = index.resolve(candidate) {
             return (!path.ends_with("__init__.py")).then_some(path);
         }
         let (prefix, _) = candidate.rsplit_once('.')?;
@@ -1300,8 +1295,8 @@ mod tests {
         .into_iter()
         .map(str::to_owned)
         .collect();
-        let index = ModuleIndex::new(&known);
-        let resolve = |module: &str| resolve_dotted_prefix(module, &layout, &index);
+        let index = ModuleIndex::new(&known, &layout);
+        let resolve = |module: &str| resolve_dotted_prefix(module, &index);
         assert_eq!(
             resolve("acme.commands.cheat_sheet.run").as_deref(),
             Some("acme/commands/cheat_sheet.py")

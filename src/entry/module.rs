@@ -18,16 +18,18 @@ pub(crate) fn resolve_module_to_path(
 }
 
 /// Project files by each `/`-bounded tail of their path, for resolving many
-/// names over one file set. A name resolves only to a file whose path ends in
-/// it, so a lookup walks the workspace members over those few files, or not
-/// at all: airflow's 11k string literals walked its 133 members over every
-/// file for 3 s (#1025).
+/// names over one file set. The directories a name may resolve under are the
+/// same for every name, so each is ranked once in the order
+/// [`resolve_module_to_path`] tries them, and a lookup ranks only the few
+/// files whose path ends in the name: airflow's 11k string literals walked
+/// its 133 members over every file for 3 s (#1025).
 pub(crate) struct ModuleIndex<'a> {
     by_tail: HashMap<&'a str, Vec<&'a str>>,
+    base_rank: HashMap<String, usize>,
 }
 
 impl<'a> ModuleIndex<'a> {
-    pub(crate) fn new(known_paths: &'a BTreeSet<String>) -> Self {
+    pub(crate) fn new(known_paths: &'a BTreeSet<String>, layout: &LayoutInfo) -> Self {
         let mut by_tail: HashMap<&str, Vec<&str>> = HashMap::new();
         for path in known_paths {
             let tails = path.match_indices('/').map(|(slash, _)| &path[slash + 1..]);
@@ -35,22 +37,43 @@ impl<'a> ModuleIndex<'a> {
                 by_tail.entry(tail).or_default().push(path);
             }
         }
-        Self { by_tail }
+        let mut bases = Vec::new();
+        push_bases(layout, "", &mut bases);
+        let mut base_rank = HashMap::new();
+        for (rank, base) in bases.into_iter().enumerate() {
+            base_rank.entry(base).or_insert(rank);
+        }
+        Self { by_tail, base_rank }
     }
 
     /// What [`resolve_module_to_path`] returns over the indexed files.
-    pub(crate) fn resolve(&self, module: &str, layout: &LayoutInfo) -> Option<String> {
+    pub(crate) fn resolve(&self, module: &str) -> Option<String> {
         let suffix = normalize_module_target(module).replace('.', "/");
-        let files: Vec<&str> = [format!("{suffix}.py"), format!("{suffix}/__init__.py")]
+        [format!("{suffix}.py"), format!("{suffix}/__init__.py")]
             .iter()
-            .filter_map(|tail| self.by_tail.get(tail.as_str()))
-            .flatten()
-            .copied()
-            .collect();
-        if files.is_empty() {
-            return None;
-        }
-        resolve_in(&suffix, layout, "", &|path| files.contains(&path))
+            .enumerate()
+            .flat_map(|(kind, tail)| {
+                let files = self.by_tail.get(tail.as_str()).into_iter().flatten();
+                files.filter_map(move |path| {
+                    let base = path.strip_suffix(tail.as_str())?;
+                    let base = base.strip_suffix('/').unwrap_or(base);
+                    Some(((self.base_rank.get(base)?, kind), *path))
+                })
+            })
+            .min()
+            .map(|(_, path)| path.to_owned())
+    }
+}
+
+/// The directories [`resolve_in`] joins a name to, in its order.
+fn push_bases(layout: &LayoutInfo, prefix: &str, bases: &mut Vec<String>) {
+    let package_root = package_root(layout);
+    if !package_root.is_empty() {
+        bases.push(join_rel(prefix, package_root));
+    }
+    bases.push(prefix.to_owned());
+    for member in &layout.members {
+        push_bases(&member.layout, &join_rel(prefix, &member.path), bases);
     }
 }
 
@@ -80,11 +103,7 @@ fn resolve_in(
     prefix: &str,
     exists: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
-    let package_root = match layout.layout {
-        ProjectLayout::Src | ProjectLayout::PackageRoot => layout.package_root.as_str(),
-        ProjectLayout::Unknown => "src",
-        ProjectLayout::Flat => "",
-    };
+    let package_root = package_root(layout);
     std::iter::once(package_root)
         .chain((!package_root.is_empty()).then_some(""))
         .flat_map(|root| {
@@ -102,6 +121,14 @@ fn resolve_in(
                 )
             })
         })
+}
+
+fn package_root(layout: &LayoutInfo) -> &str {
+    match layout.layout {
+        ProjectLayout::Src | ProjectLayout::PackageRoot => layout.package_root.as_str(),
+        ProjectLayout::Unknown => "src",
+        ProjectLayout::Flat => "",
+    }
 }
 
 /// Normalize Django `AppConfig` targets to their package root when applicable.
@@ -349,10 +376,10 @@ mod tests {
                         .collect(),
                     ..layout
                 };
-                let index = ModuleIndex::new(&paths);
+                let index = ModuleIndex::new(&paths, &layout);
                 for name in &names {
                     prop_assert_eq!(
-                        index.resolve(name, &layout),
+                        index.resolve(name),
                         resolve_module_to_path(name, &layout, &paths),
                         "{}",
                         name
