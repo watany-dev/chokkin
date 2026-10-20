@@ -429,10 +429,11 @@ pub(super) fn is_dotted_identifier(module: &str) -> bool {
 mod tests {
     use ruff_python_ast::Expr;
 
+    use super::super::types::{DynamicImport, NamedLoad, ParsedModule};
     use super::{
-        LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path,
-        literal_target, module_prefix, module_ref_literal, module_ref_name, named_load, python_run,
-        sys_path_hint,
+        LiteralTarget, Loader, LoaderNames, PythonRun, apply_module_loaders, command_word,
+        edits_sys_path, literal_target, module_prefix, module_ref_literal, module_ref_name,
+        named_load, python_run, sys_path_hint,
     };
 
     fn expr(source: &str) -> Expr {
@@ -505,6 +506,41 @@ mod tests {
         ] {
             assert_eq!(load(source), None, "{source}");
         }
+    }
+
+    /// Built-in loaders, configured names and a dotted lazy `command` are
+    /// kept; any other callee, and `command` given `db:migrate`, is dropped.
+    #[test]
+    fn module_loaders_keep_only_loader_calls() {
+        let named = |call: &str, lazy_command: bool| NamedLoad {
+            call: call.to_owned(),
+            lazy_command,
+            load: DynamicImport {
+                module: format!("{call}.{lazy_command}"),
+                ..DynamicImport::default()
+            },
+        };
+        let mut modules = [ParsedModule {
+            named_loads: vec![
+                named("import_string", false),
+                named("LazyFeature", false),
+                named("command", true),
+                named("command", false),
+                named("helper", true),
+            ],
+            ..ParsedModule::default()
+        }];
+        apply_module_loaders(&mut modules, &["LazyFeature".to_owned()]);
+        let kept: Vec<_> = modules[0]
+            .dynamic_imports
+            .iter()
+            .map(|load| load.module.as_str())
+            .collect();
+        assert_eq!(
+            kept,
+            ["import_string.false", "LazyFeature.false", "command.true"]
+        );
+        assert!(modules[0].named_loads.is_empty());
     }
 
     #[test]
