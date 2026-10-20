@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attribute counts as a use of that module's symbol (no CHK006), and an
   unresolved name is not CHK010, since tests pass bad names on purpose.
   Strings like `"pkg.mod:Cls"` are also read as module references (#493).
+- The Airflow plugin reads Airflow 3's `[dag_processor]
+  dag_bundle_config_list` from `airflow.cfg`: the `path` of each
+  `LocalDagBundle` is a DAG folder like `dags_folder`, under the same
+  safe-mode check, so DAGs a bundle loads are no longer CHK001. A value that
+  is not a JSON list, a malformed item, a bundle of another class
+  (`GitDagBundle`) and an absolute or templated `path` are gaps that cap
+  CHK001 at `likely` and show in `--explain` (#1058).
 
 ### Fixed
 - With the Airflow plugin on, every `.py` under a directory named exactly
