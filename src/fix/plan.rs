@@ -697,8 +697,6 @@ mod tests {
         plan_poetry_dev_move_in(specifier, marker, |_| {})
     }
 
-    /// A `[project]` pyproject declaring `dulwich` in a Poetry dev group,
-    /// changed by `setup` before planning.
     fn plan_poetry_dev_move_in(
         specifier: &str,
         marker: Option<&str>,
