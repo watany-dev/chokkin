@@ -12,7 +12,10 @@ use crate::entry::{
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
-use crate::parser::{ParseSeverity, ParseSummary, ParsedModule, parse_project_sources_with_cache};
+use crate::parser::{
+    ParseSeverity, ParseSummary, ParsedModule, apply_module_loaders,
+    parse_project_sources_with_cache,
+};
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
     ReachabilityReport, analyze_reachability, apply_distributed_surfaces, apply_member_surfaces,
@@ -616,7 +619,8 @@ fn parse_with_member_files(
     let member_paths: HashSet<String> = member_files.iter().map(|file| file.path.clone()).collect();
     let mut sources = probe.sources.clone();
     sources.files.extend(member_files);
-    let parse = parse_project_sources_with_cache(&probe.root, &sources, target, Some(cache))?;
+    let mut parse = parse_project_sources_with_cache(&probe.root, &sources, target, Some(cache))?;
+    apply_module_loaders(&mut parse.modules, &probe.effective_config.module_loaders);
     let (members, modules) = parse
         .modules
         .into_iter()
@@ -715,7 +719,9 @@ fn parse_production_tests(
         files: probe.production_tests.clone(),
         ..probe.sources.clone()
     };
-    Ok(parse_project_sources_with_cache(&probe.root, &tests, target, None)?.modules)
+    let mut modules = parse_project_sources_with_cache(&probe.root, &tests, target, None)?.modules;
+    apply_module_loaders(&mut modules, &probe.effective_config.module_loaders);
+    Ok(modules)
 }
 
 fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
