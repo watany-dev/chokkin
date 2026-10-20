@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The Airflow plugin reads Airflow 3's `[dag_processor]
+  dag_bundle_config_list` from `airflow.cfg`: the `path` of each
+  `LocalDagBundle` is a DAG folder like `dags_folder`, under the same
+  safe-mode check, so DAGs a bundle loads are no longer CHK001. A value that
+  is not a JSON list, a malformed item, a bundle of another class
+  (`GitDagBundle`) and an absolute or templated `path` are gaps that cap
+  CHK001 at `likely` and show in `--explain` (#1058).
+
 ### Fixed
 - With the Airflow plugin on, every `.py` under a directory named exactly
   `dags` is a DAG-folder entry in its path's context, not only files that

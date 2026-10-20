@@ -7424,6 +7424,32 @@ fn binary_airflow_plugin_roots_its_definitions() {
             ORPHAN,
             "likely",
         ),
+        // An Airflow 3 `LocalDagBundle` path is a DAG folder (#1058).
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                (
+                    "airflow.cfg",
+                    "[dag_processor]\ndag_bundle_config_list = [\n    {\"name\": \"etl\", \"classpath\": \"airflow.dag_processing.bundles.local.LocalDagBundle\", \"kwargs\": {\"path\": \"pipelines\"}}\n  ]\n",
+                ),
+                ("pipelines/etl.py", AIRFLOW_DAG),
+            ],
+            ORPHAN,
+            "certain",
+        ),
+        // A git bundle loads DAGs from another checkout: not read.
+        (
+            orchestration_pyproject("\"apache-airflow\"", ""),
+            vec![
+                (
+                    "airflow.cfg",
+                    "[dag_processor]\ndag_bundle_config_list = [{\"name\": \"g\", \"classpath\": \"airflow.providers.git.bundles.git.GitDagBundle\", \"kwargs\": {\"subdir\": \"dags\"}}]\n",
+                ),
+                ("dags/etl.py", AIRFLOW_DAG),
+            ],
+            ORPHAN,
+            "likely",
+        ),
     ]);
 }
 
