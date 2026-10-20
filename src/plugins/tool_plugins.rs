@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::entry::resolve_module_to_path;
-use crate::path_util::{join_rel, rel_to_root};
+use crate::path_util::rel_to_root;
 
 use super::commands::{SourceHits, is_dotted_identifier};
 use super::config_text::{
@@ -209,7 +209,7 @@ pub(super) fn datamodel_codegen_formatters(ctx: &PluginContext<'_>) -> SourceHit
             let names: Vec<Result<&str, String>> = match value.as_array() {
                 Some(items) => items
                     .iter()
-                    .map(|item| item.as_str().map(str::trim).ok_or_else(|| item.to_string()))
+                    .map(|item| item.as_str().ok_or_else(|| item.to_string()))
                     .collect(),
                 None => vec![Err(value.to_string())],
             };
@@ -254,22 +254,15 @@ fn formatter_files(
     module: &str,
     known: &BTreeSet<String>,
 ) -> Vec<String> {
-    resolve_module_to_path(module, &ctx.sources.layout, known).map_or_else(
-        || {
-            module_files_under(dir, module, known)
-                .into_iter()
-                .cloned()
-                .collect()
-        },
-        |path| vec![path],
-    )
+    resolve_module_to_path(module, &ctx.sources.layout, known)
+        .map_or_else(|| module_files_under(dir, module, known), |path| vec![path])
 }
 
 /// Discovered files under `dir` that are `module`, as a module or a package,
 /// at any depth.
-fn module_files_under<'a>(dir: &str, module: &str, known: &'a BTreeSet<String>) -> Vec<&'a String> {
+fn module_files_under(dir: &str, module: &str, known: &BTreeSet<String>) -> Vec<String> {
     let stem = module.replace('.', "/");
-    let names = [format!("{stem}.py"), join_rel(&stem, "__init__.py")];
+    let names = [format!("/{stem}.py"), format!("/{stem}/__init__.py")];
     known
         .iter()
         .filter(|path| {
@@ -280,14 +273,11 @@ fn module_files_under<'a>(dir: &str, module: &str, known: &'a BTreeSet<String>) 
                     .and_then(|rest| rest.strip_prefix('/'))
             };
             rel.is_some_and(|rel| {
-                names.iter().any(|name| {
-                    rel == name
-                        || rel
-                            .strip_suffix(name.as_str())
-                            .is_some_and(|parent| parent.ends_with('/'))
-                })
+                let rel = format!("/{rel}");
+                names.iter().any(|name| rel.ends_with(name.as_str()))
             })
         })
+        .cloned()
         .collect()
 }
 

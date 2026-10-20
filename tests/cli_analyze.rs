@@ -3319,6 +3319,9 @@ fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
     let ambiguous = pyproject("custom-formatters = [\"tools.fmt\", \"twin\"]");
     let shape = pyproject("custom-formatters = \"tools.fmt\"");
     let path = pyproject("custom-formatters = [\"tools/fmt\"]");
+    let item = pyproject("custom-formatters = [1]");
+    // `import_module` does not strip the name.
+    let padded = pyproject("custom-formatters = [\" tools.fmt\"]");
     let files = |pyproject: &str| -> tempfile::TempDir {
         write_project(&[
             ("pyproject.toml", pyproject),
@@ -3345,6 +3348,8 @@ fn binary_unresolved_datamodel_codegen_formatter_is_gap() {
         (&ambiguous, "twin"),
         (&shape, "\"tools.fmt\""),
         (&path, "tools/fmt"),
+        (&item, "1"),
+        (&padded, " tools.fmt"),
     ] {
         let project = files(pyproject);
         let levels = chk001_levels(project.path(), &[]);
