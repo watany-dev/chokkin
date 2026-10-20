@@ -208,11 +208,13 @@ fn script_body(args: &str) -> Result<CellBody, String> {
 /// command they make up.
 fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (usize, String)> {
     let starts = statement_starts(lines);
-    let mut index = 0;
-    while let Some(line) = lines.get(index) {
+    let mut next = 0;
+    for (index, line) in lines.iter().enumerate() {
+        if index < next {
+            continue;
+        }
         if !starts[index] {
             out.push_str(line);
-            index += 1;
             continue;
         }
         let text = line.trim_end_matches(['\n', '\r']);
@@ -234,7 +236,7 @@ fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (
             },
             None => lines[index..end].iter().for_each(|line| out.push_str(line)),
         }
-        index = end;
+        next = end;
     }
     Ok(())
 }
