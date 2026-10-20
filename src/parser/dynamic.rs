@@ -7,6 +7,7 @@ use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator
 
 use super::attributes::is_receiver;
 use super::relative::resolve_relative_name;
+use super::types::ParsedModule;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Loader {
@@ -278,21 +279,31 @@ pub(super) fn command_word(expr: &Expr) -> Option<&str> {
 /// A string literal that is a whole dotted module name, which the code may
 /// load by name (airflow's `lazy_load_command("pkg.cli.x.cmd")`, gunicorn's
 /// `"python:pkg.config"`): identifier segments joined by `.`, two or more,
-/// with an optional `python:` prefix (#1026). One segment (`"json"`), a
-/// `module:attr` form, a path (`"a/b.py"`) or a sentence is not one; a
-/// computed string (an f-string or a concatenation with a name) is not a
+/// with an optional `python:` prefix (#1026), and an optional `:attr` after
+/// them (celery's `"pkg.backends.redis:RedisBackend"`, #493). One segment
+/// (`"json"`, `"main:app"`), a path (`"a/b.py"`) or a sentence is not one;
+/// a computed string (an f-string or a concatenation with a name) is not a
 /// literal, so a module loaded that way is not seen and its finding is not
 /// lowered.
 #[must_use]
 pub(super) fn module_ref_literal(expr: &Expr) -> Option<&str> {
     let text = str_constant(expr)?;
-    let module = module_ref_name(text);
-    (module.contains('.') && is_dotted_identifier(module)).then_some(text)
+    let (module, attr) = split_attr(text.strip_prefix("python:").unwrap_or(text));
+    (module.contains('.') && is_dotted_identifier(module) && attr.is_none_or(is_dotted_identifier))
+        .then_some(text)
 }
 
+/// The module a [`module_ref_literal`] names: without its `python:` prefix
+/// and its `:attr`.
 #[must_use]
 pub(crate) fn module_ref_name(text: &str) -> &str {
-    text.strip_prefix("python:").unwrap_or(text)
+    split_attr(text.strip_prefix("python:").unwrap_or(text)).0
+}
+
+/// `pkg.mod:attr` as the module and the attribute.
+fn split_attr(name: &str) -> (&str, Option<&str>) {
+    name.split_once(':')
+        .map_or((name, None), |(module, attr)| (module, Some(attr)))
 }
 
 /// Whether a call adds a directory to `sys.path`: `sys.path.insert` /
@@ -348,6 +359,63 @@ pub(super) fn str_constant(expr: &Expr) -> Option<&str> {
     }
 }
 
+/// A call that may load the name its first argument spells (#493): the
+/// callee's last name, the name with `:` written as `.`, and whether it was
+/// written `pkg.mod:attr`, the shape of a cyclopts lazy command. The name is
+/// a dotted name of two or more segments (`"pkg.mod.Cls"`) or a dotted
+/// module and attribute (`"pkg:Cls"`, `"pkg.mod:Cls.attr"`). A one-segment
+/// name, a computed string, a name passed by keyword and a callee that is
+/// not a name (`loaders[0](...)`) are not read, so a file only such a call
+/// loads is reported unused.
+#[must_use]
+pub(super) fn named_load(call: &ExprCall) -> Option<(&str, String, bool)> {
+    let callee = match &*call.func {
+        Expr::Name(name) => name.id.as_str(),
+        Expr::Attribute(attribute) => attribute.attr.as_str(),
+        _ => return None,
+    };
+    let text = str_constant(call.arguments.args.first()?)?;
+    match text.split_once(':') {
+        Some((module, attr)) => (is_dotted_identifier(module) && is_dotted_identifier(attr))
+            .then(|| (callee, format!("{module}.{attr}"), module.contains('.'))),
+        None => (text.contains('.') && is_dotted_identifier(text))
+            .then(|| (callee, text.to_owned(), false)),
+    }
+}
+
+/// Loader APIs that import the module a dotted name starts with and fetch
+/// the rest as attributes (#493): Django's and werkzeug's `import_string`,
+/// celery's `symbol_by_name`, DRF's `import_from_string`, scrapy's
+/// `load_object`. They are matched by the callee's last name, so a
+/// project's own helper of the same name (airflow's `import_string`) counts
+/// as well. `pkgutil.resolve_name` is left to `module_loaders`: the name is
+/// as common for resolving a host name (`resolve_name("google.com")`).
+const MODULE_LOADERS: [&str; 4] = [
+    "import_string",
+    "symbol_by_name",
+    "import_from_string",
+    "load_object",
+];
+
+/// Moves each named load whose callee is a loader into its module's dynamic
+/// imports: [`MODULE_LOADERS`], cyclopts' lazy `command("pkg.mod:app")` (a
+/// dotted `module:attr` only, as a click or typer command name may be
+/// `db:migrate`) and the names `module_loaders` configures (#493). Every
+/// other named load is dropped.
+pub(crate) fn apply_module_loaders(modules: &mut [ParsedModule], configured: &[String]) {
+    for module in modules {
+        for named in std::mem::take(&mut module.named_loads) {
+            let call = named.call.as_str();
+            if MODULE_LOADERS.contains(&call)
+                || (named.lazy_command && call == "command")
+                || configured.iter().any(|name| name == call)
+            {
+                module.dynamic_imports.push(named.load);
+            }
+        }
+    }
+}
+
 pub(super) fn is_dotted_identifier(module: &str) -> bool {
     module.split('.').all(|part| {
         part.chars()
@@ -361,10 +429,11 @@ pub(super) fn is_dotted_identifier(module: &str) -> bool {
 mod tests {
     use ruff_python_ast::Expr;
 
+    use super::super::types::{DynamicImport, NamedLoad, ParsedModule};
     use super::{
-        LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path,
-        literal_target, module_prefix, module_ref_literal, module_ref_name, python_run,
-        sys_path_hint,
+        LiteralTarget, Loader, LoaderNames, PythonRun, apply_module_loaders, command_word,
+        edits_sys_path, literal_target, module_prefix, module_ref_literal, module_ref_name,
+        named_load, python_run, sys_path_hint,
     };
 
     fn expr(source: &str) -> Expr {
@@ -396,9 +465,84 @@ mod tests {
         literal_target(&call, loader, || Some("acme.core".to_owned()))
     }
 
-    /// A whole dotted name, with or without `python:`, is a module reference;
-    /// one segment, `module:attr`, a path, a sentence or a computed string
-    /// is not (#1026).
+    /// A whole dotted name, with or without `python:`, is a module reference,
+    /// and so is `pkg.mod:attr` (#493); one segment, a one-segment module
+    /// before `:`, a path, a sentence or a computed string is not (#1026).
+    /// A loader call names a dotted name or a `module:attr` in its first
+    /// positional argument; one segment, a keyword or a computed string is
+    /// not read, nor is a callee without a name (#493).
+    #[test]
+    fn named_loads_read_the_first_literal_dotted_name() {
+        let load = |source: &str| {
+            let Expr::Call(call) = expr(source) else {
+                panic!("not a call: {source}");
+            };
+            named_load(&call).map(|(callee, name, lazy)| (callee.to_owned(), name, lazy))
+        };
+        let read =
+            |callee: &str, name: &str, lazy: bool| Some((callee.to_owned(), name.to_owned(), lazy));
+        assert_eq!(
+            load(r#"import_string("pkg.mod.Cls")"#),
+            read("import_string", "pkg.mod.Cls", false)
+        );
+        assert_eq!(
+            load(r#"kombu.utils.symbol_by_name("pkg.mod:Cls.attr", default=None)"#),
+            read("symbol_by_name", "pkg.mod.Cls.attr", true)
+        );
+        assert_eq!(
+            load(r#"command("db:migrate")"#),
+            read("command", "db.migrate", false)
+        );
+        for source in [
+            r#"import_string("pkg")"#,
+            r#"import_string(":Cls")"#,
+            r#"import_string("pkg.mod:")"#,
+            r#"import_string("pkg:a:b")"#,
+            r#"import_string("pkg/mod.py")"#,
+            r#"import_string(f"pkg.{name}")"#,
+            r#"import_string(name, "pkg.mod")"#,
+            r#"import_string(dotted_path="pkg.mod")"#,
+            r#"loaders[0]("pkg.mod")"#,
+        ] {
+            assert_eq!(load(source), None, "{source}");
+        }
+    }
+
+    /// Built-in loaders, configured names and a dotted lazy `command` are
+    /// kept; any other callee, and `command` given `db:migrate`, is dropped.
+    #[test]
+    fn module_loaders_keep_only_loader_calls() {
+        let named = |call: &str, lazy_command: bool| NamedLoad {
+            call: call.to_owned(),
+            lazy_command,
+            load: DynamicImport {
+                module: format!("{call}.{lazy_command}"),
+                ..DynamicImport::default()
+            },
+        };
+        let mut modules = [ParsedModule {
+            named_loads: vec![
+                named("import_string", false),
+                named("LazyFeature", false),
+                named("command", true),
+                named("command", false),
+                named("helper", true),
+            ],
+            ..ParsedModule::default()
+        }];
+        apply_module_loaders(&mut modules, &["LazyFeature".to_owned()]);
+        let kept: Vec<_> = modules[0]
+            .dynamic_imports
+            .iter()
+            .map(|load| load.module.as_str())
+            .collect();
+        assert_eq!(
+            kept,
+            ["import_string.false", "LazyFeature.false", "command.true"]
+        );
+        assert!(modules[0].named_loads.is_empty());
+    }
+
     #[test]
     fn module_ref_literals_are_whole_dotted_names() {
         let module_ref = |source: &str| module_ref_literal(&expr(source)).map(str::to_owned);
@@ -422,9 +566,22 @@ mod tests {
             module_ref(r#""_private.mod2""#),
             Some("_private.mod2".to_owned())
         );
+        assert_eq!(
+            module_ref(r#""pkg.backends.redis:RedisBackend""#),
+            Some("pkg.backends.redis:RedisBackend".to_owned())
+        );
+        assert_eq!(
+            module_ref_name("pkg.backends.redis:RedisBackend"),
+            "pkg.backends.redis"
+        );
+        assert_eq!(module_ref_name("python:pkg.app:make.app"), "pkg.app");
         for source in [
             r#""json""#,
-            r#""pkg.mod:attr""#,
+            r#""pkg:attr""#,
+            r#""pkg.mod:""#,
+            r#""pkg.mod:attr:more""#,
+            r#""pkg.mod:1attr""#,
+            r#""localhost:8080""#,
             r#""pkg/mod.py""#,
             r#""pkg.mod.""#,
             r#"".pkg.mod""#,

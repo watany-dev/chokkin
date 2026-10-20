@@ -47,6 +47,7 @@ pub(super) struct PartialConfig {
     pub confidence: Option<Confidence>,
     pub exclude: Option<Vec<String>>,
     pub vendored: Option<Vec<String>>,
+    pub module_loaders: Option<Vec<String>>,
     pub dependencies: Option<PartialDependencyGroups>,
     pub package_module_map: Option<BTreeMap<String, Vec<String>>>,
     pub binary_map: Option<BTreeMap<String, String>>,
@@ -100,6 +101,7 @@ pub fn default_config() -> ChokkinConfig {
             "**/externals/**".to_owned(),
             "**/third_party/**".to_owned(),
         ],
+        module_loaders: Vec::new(),
         dependencies: DependencyGroupsConfig {
             dev_groups: vec![
                 "dev".to_owned(),
@@ -153,6 +155,9 @@ pub(super) fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
         }
         if let Some(vendored) = &layer.vendored {
             config.vendored.clone_from(vendored);
+        }
+        if let Some(module_loaders) = &layer.module_loaders {
+            config.module_loaders.clone_from(module_loaders);
         }
         if let Some(dependencies) = &layer.dependencies {
             dependencies.apply_to(&mut config.dependencies);
@@ -214,6 +219,22 @@ mod tests {
             merged.explicit_plugins.into_iter().collect::<Vec<_>>(),
             [PluginId::Celery]
         );
+    }
+
+    #[test]
+    fn merge_replaces_module_loaders_per_layer() {
+        let loaders = |names: &[&str]| PartialConfig {
+            module_loaders: Some(names.iter().map(|name| (*name).to_owned()).collect()),
+            ..PartialConfig::default()
+        };
+        let merged = merge_layers(&[loaders(&["a"]), PartialConfig::default(), loaders(&["b"])]);
+        assert_eq!(merged.module_loaders, ["b"]);
+        assert!(
+            merge_layers(&[loaders(&["a"]), loaders(&[])])
+                .module_loaders
+                .is_empty()
+        );
+        assert!(merge_layers(&[]).module_loaders.is_empty());
     }
 
     #[test]
