@@ -295,8 +295,8 @@ pub(super) fn probe_project_with_cache(
 /// path's own test, docs or dev context outranks the plugin's. A runtime file
 /// discovery found that a plugin names as docs (a Sphinx `conf.py` beside a
 /// root document, #814) is docs, so the extensions it loads are no runtime
-/// use. Runtime and docs files parse to the same import
-/// contexts, so a cached parse stays valid.
+/// use. Runtime and docs files parse to the same import contexts, so a cached
+/// parse stays valid.
 fn include_plugin_sources(
     loaded: &LoadedConfig,
     manifest: &LoadedManifest,
