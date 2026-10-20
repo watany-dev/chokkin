@@ -1,5 +1,5 @@
 //! Airflow plugin: the DAG files the DAG processor loads by path from the
-//! DAG folder (#401).
+//! DAG folder and local DAG bundles (#401, #1058).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -89,7 +89,8 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     contrib
 }
 
-/// `[core] dags_folder` from `airflow.cfg` in the root and each workspace
+/// `[core] dags_folder` and the `LocalDagBundle` paths of `[dag_processor]
+/// dag_bundle_config_list` from `airflow.cfg` in the root and each workspace
 /// member. `{AIRFLOW_HOME}` and a relative path are read from the config's
 /// directory, the `AIRFLOW_HOME` airflow finds it in; an absolute path or
 /// any other substitution names a folder not known here, so it is a gap.
@@ -103,22 +104,75 @@ fn config_folders(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) -> 
             continue;
         };
         let file = rel_to_root(root, &path);
+        // Safe mode is the DAG processor's, so it covers every bundle.
         let load_all = ini_value(&contents, "core", "dag_discovery_safe_mode")
             .is_some_and(|(_, value)| is_false(&value));
-        let Some((index, value)) = ini_value(&contents, "core", "dags_folder") else {
-            continue;
-        };
-        let origin = origin_at(&file, index, "dags_folder");
-        match dags_folder(dir, &value) {
-            Some(dir) => folders.push(DagFolder {
-                dir,
-                load_all,
-                origin,
-            }),
-            None => contrib.push_gap(&value, origin),
+        if let Some((index, value)) = ini_value(&contents, "core", "dags_folder") {
+            let origin = origin_at(&file, index, "dags_folder");
+            match dags_folder(dir, &value) {
+                Some(dir) => folders.push(DagFolder {
+                    dir,
+                    load_all,
+                    origin,
+                }),
+                None => contrib.push_gap(&value, origin),
+            }
+        }
+        if let Some((index, value)) =
+            ini_value(&contents, "dag_processor", "dag_bundle_config_list")
+        {
+            let origin = origin_at(&file, index, "dag_bundle_config_list");
+            for bundle in bundle_folders(dir, &value) {
+                match bundle {
+                    Ok(dir) => folders.push(DagFolder {
+                        dir,
+                        load_all,
+                        origin: origin.clone(),
+                    }),
+                    Err(text) => contrib.push_gap(&text, origin.clone()),
+                }
+            }
         }
     }
     folders
+}
+
+const LOCAL_DAG_BUNDLE: &str = "airflow.dag_processing.bundles.local.LocalDagBundle";
+
+/// The DAG folders a `dag_bundle_config_list` value names (Airflow 3,
+/// #1058): `Ok(dir)` for each `LocalDagBundle` `path`, read as
+/// [`dags_folder`] is, and `Err(text)` for a gap. A bundle of any other
+/// class (`GitDagBundle`, S3) loads DAGs from outside the checkout, so it is
+/// a gap. A local bundle without a `path` loads `dags_folder`, already read.
+fn bundle_folders(config_dir: &str, value: &str) -> Vec<Result<String, String>> {
+    use serde_json::Value;
+    let value = value.trim();
+    let items = match serde_json::from_str::<Value>(value) {
+        Ok(Value::Array(items)) => items,
+        Ok(Value::Null) => return Vec::new(),
+        Err(_) if value.is_empty() => return Vec::new(),
+        _ => return vec![Err(value.to_owned())],
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let classpath = item.get("classpath").and_then(Value::as_str);
+            let kwargs = item.get("kwargs").and_then(Value::as_object);
+            let (Some(classpath), Some(kwargs)) = (classpath, kwargs) else {
+                return Some(Err(item.to_string()));
+            };
+            if classpath != LOCAL_DAG_BUNDLE {
+                return Some(Err(classpath.to_owned()));
+            }
+            match kwargs.get("path") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(path)) => {
+                    Some(dags_folder(config_dir, path).ok_or_else(|| path.clone()))
+                },
+                Some(_) => Some(Err(item.to_string())),
+            }
+        })
+        .collect()
 }
 
 fn dags_folder(config_dir: &str, value: &str) -> Option<String> {
@@ -238,6 +292,70 @@ mod tests {
         assert_eq!(dags_folder("", "${DAGS_DIR}"), None);
         assert_eq!(dags_folder("", "~/dags"), None);
         assert_eq!(dags_folder("", "../outside"), None);
+    }
+
+    fn local_bundle(kwargs: &str) -> String {
+        format!(r#"[{{"name": "b", "classpath": "{LOCAL_DAG_BUNDLE}", "kwargs": {kwargs}}}]"#)
+    }
+
+    #[test]
+    fn bundle_folders_reads_local_bundle_paths() {
+        assert_eq!(
+            bundle_folders("", &local_bundle(r#"{"path": "pipelines"}"#)),
+            [Ok("pipelines".to_owned())]
+        );
+        assert_eq!(
+            bundle_folders(
+                "deploy",
+                &local_bundle(r#"{"path": "$AIRFLOW_HOME/flows"}"#)
+            ),
+            [Ok("deploy/flows".to_owned())]
+        );
+        // A local bundle without a `path` loads `dags_folder`.
+        assert_eq!(bundle_folders("", &local_bundle("{}")), []);
+        assert_eq!(bundle_folders("", &local_bundle(r#"{"path": null}"#)), []);
+        assert_eq!(bundle_folders("", ""), []);
+        assert_eq!(bundle_folders("", "[]"), []);
+        assert_eq!(bundle_folders("", "null"), []);
+        // Split over lines, as `ini_value` joins indented continuations.
+        let multi = format!(
+            "[\n{{\n\"name\": \"a\",\n\"classpath\": \"{LOCAL_DAG_BUNDLE}\",\n\"kwargs\": {{\"path\": \"a\"}}\n}},\n{{\"name\": \"b\", \"classpath\": \"{LOCAL_DAG_BUNDLE}\", \"kwargs\": {{\"path\": \"b/dags\", \"refresh_interval\": 0}}}}\n]"
+        );
+        assert_eq!(
+            bundle_folders("", &multi),
+            [Ok("a".to_owned()), Ok("b/dags".to_owned())]
+        );
+    }
+
+    #[test]
+    fn bundle_folders_reports_what_it_cannot_read() {
+        let git = r#"[{"name": "g", "classpath": "airflow.providers.git.bundles.git.GitDagBundle", "kwargs": {"subdir": "dags"}}]"#;
+        assert_eq!(
+            bundle_folders("", git),
+            [Err(
+                "airflow.providers.git.bundles.git.GitDagBundle".to_owned()
+            )]
+        );
+        for path in [
+            "/opt/dags",
+            "../outside",
+            "${BUNDLE}",
+            "~/dags",
+            "{{ var }}",
+        ] {
+            let value = local_bundle(&format!(r#"{{"path": "{path}"}}"#));
+            assert_eq!(bundle_folders("", &value), [Err(path.to_owned())], "{path}");
+        }
+        assert_eq!(bundle_folders("", "dags"), [Err("dags".to_owned())]);
+        assert_eq!(
+            bundle_folders("", r#"{"name": "b"}"#),
+            [Err(r#"{"name": "b"}"#.to_owned())]
+        );
+        assert_eq!(bundle_folders("", "[1]"), [Err("1".to_owned())]);
+        let no_kwargs = format!(r#"[{{"name": "b", "classpath": "{LOCAL_DAG_BUNDLE}"}}]"#);
+        assert!(matches!(bundle_folders("", &no_kwargs)[..], [Err(_)]));
+        let number = local_bundle(r#"{"path": 1}"#);
+        assert!(matches!(bundle_folders("", &number)[..], [Err(_)]));
     }
 
     #[test]
