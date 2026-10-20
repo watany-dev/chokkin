@@ -1374,6 +1374,7 @@ mod tests {
                 candidate(RuleId::Chk004, under("fastapi", "dev/sim/app/main.py")),
                 candidate(RuleId::Chk010, under("app", "dev/sim/app/main.py")),
                 misplaced,
+                candidate(RuleId::Chk005, distribution("rich")),
                 candidate(RuleId::Chk003, under("httpx", "dev/simulator/main.py")),
                 candidate(RuleId::Chk001, file("dev/sim/app/models.py")),
                 candidate(RuleId::Chk002, distribution("httpx")),
@@ -1381,7 +1382,7 @@ mod tests {
         );
         let hint = (Severity::Info, Confidence::Maybe);
         let kept = (Severity::Error, Confidence::Certain);
-        assert_eq!(found, [hint, hint, hint, kept, kept, kept]);
+        assert_eq!(found, [hint, hint, hint, kept, kept, kept, kept]);
     }
 
     /// Plugin references follow the statements, so the first import site is
