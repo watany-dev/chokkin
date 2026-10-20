@@ -6036,6 +6036,50 @@ fn binary_checks_inline_scripts_inside_skipped_nested_projects() {
     );
 }
 
+/// click 8.1's `examples/*/` are `setup.py`-only projects with their own
+/// `install_requires` (#1078): they are skipped like a nested `[project]`.
+#[test]
+fn binary_skips_setup_py_only_nested_projects() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"click\"\nversion = \"8.1.7\"\nrequires-python = \">=3.7\"\n",
+        ),
+        ("src/click/__init__.py", "import os\n"),
+        (
+            "examples/imagepipe/setup.py",
+            "from setuptools import setup\n\nsetup(\n    name=\"click-example-imagepipe\",\n    py_modules=[\"imagepipe\"],\n    install_requires=[\"click\", \"pillow\"],\n)\n",
+        ),
+        (
+            "examples/imagepipe/imagepipe.py",
+            "import click\nfrom PIL import Image\n",
+        ),
+        (
+            "examples/repo/setup.py",
+            "from setuptools import setup\n\nsetup(name=\"click-example-repo\", install_requires=[\"click\"])\n",
+        ),
+        ("examples/repo/repo.py", "import click\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--strict", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("workspace: skipped 2 nested projects"),
+        "{stderr}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues = issue_keys(parsed["issues"].as_array().expect("issues"));
+    assert!(
+        issues
+            .iter()
+            .all(|(_, target)| !target.starts_with("examples/")),
+        "{issues:?}"
+    );
+}
+
 /// langchain's workflows run `python .github/scripts/check_diff.py` (#734).
 #[test]
 fn binary_github_scripts_are_entry_roots() {

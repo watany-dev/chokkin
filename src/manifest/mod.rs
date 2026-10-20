@@ -47,6 +47,7 @@ pub(crate) use requirements::{
 pub use script::discover_inline_scripts;
 pub(crate) use script::{InlineScript, inline_script_target};
 pub(crate) use setup_cfg::{IniLine, ini_lines};
+pub(crate) use setup_py::builds_distribution;
 pub(crate) use setuptools_reqs::setuptools_requirement_items;
 pub(crate) use types::{
     DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,

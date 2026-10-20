@@ -9,6 +9,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::{WalkBuilder, WalkState};
 
 use crate::discovery::ProjectRoot;
+use crate::manifest::builds_distribution;
 use crate::sources::build_glob_set;
 
 use super::error::ConfigError;
@@ -233,23 +234,26 @@ fn is_skipped_member_scan_dir(name: &str) -> bool {
         )
 }
 
-/// Directories under `root` holding a `[project]` that is neither a
-/// workspace member, nor contains one, nor is a package (`llama_index` ships a
-/// stray `pyproject.toml` inside `premai/`), shallowest first: an example app with
-/// its own dependencies is an independent project the root manifest does
-/// not describe (#694).
+/// Directories under `root` holding a `[project]` or a `setup.py` that
+/// builds a distribution (#1078) that is neither a workspace member nor
+/// contains one, nor is a root path source analyzed as the root's (#1000), nor
+/// is a package (`llama_index` ships a stray `pyproject.toml` inside `premai/`),
+/// shallowest first: an example app with its own dependencies is an
+/// independent project the root manifest does not describe (#694).
 pub(crate) fn nested_projects<'a>(
     root: &Path,
     files: impl IntoIterator<Item = &'a str>,
     members: &[ResolvedWorkspaceMember],
+    path_sources: &[String],
 ) -> BTreeSet<String> {
     let holds_member = |dir: &str| {
-        members.iter().any(|member| {
-            member
-                .path
-                .strip_prefix(dir)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-        })
+        path_sources.iter().any(|path| path == dir)
+            || members.iter().any(|member| {
+                member
+                    .path
+                    .strip_prefix(dir)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+            })
     };
     let mut checked: BTreeMap<&str, bool> = BTreeMap::new();
     let mut projects = BTreeSet::new();
@@ -264,7 +268,8 @@ pub(crate) fn nested_projects<'a>(
                 let dir_path = root.join(dir);
                 !holds_member(dir)
                     && !dir_path.join("__init__.py").is_file()
-                    && declares_project(&dir_path.join("pyproject.toml"))
+                    && (declares_project(&dir_path.join("pyproject.toml"))
+                        || builds_distribution(&dir_path.join("setup.py")))
             });
             if project {
                 projects.insert(dir.to_owned());
@@ -606,8 +611,64 @@ mod tests {
             "tests/fixtures/demo/app.py",
         ];
         assert_eq!(
-            nested_projects(temp.path(), files, &members),
+            nested_projects(temp.path(), files, &members, &[]),
             BTreeSet::from(["examples/app".to_owned()])
+        );
+    }
+
+    #[test]
+    fn nested_projects_include_setup_py_distributions() {
+        // #1078: click 8.1's `examples/*/` are `setup.py`-only projects.
+        let temp = tempfile::tempdir().expect("tempdir");
+        for (file, text) in [
+            (
+                "examples/imagepipe/setup.py",
+                "from setuptools import setup\nsetup(name=\"imagepipe\", install_requires=[\"pillow\"])\n",
+            ),
+            (
+                "examples/dynamic/setup.py",
+                "import setuptools\n\ndef main():\n    setuptools.setup(name=NAME)\n\nmain()\n",
+            ),
+            ("examples/legacy/setup.py", "print \"python 2\"\n"),
+            ("examples/legacy/pyproject.toml", "[build-system]\n"),
+            (
+                "examples/alias/setup.py",
+                "from setuptools import setup as _setup\n_setup(name=\"alias\")\n",
+            ),
+            ("scripts/setup.py", "import os\nos.makedirs(\"var\")\n"),
+            ("tools/setup.py", "import django\ndjango.setup()\n"),
+            ("sub/setup.py", "from setuptools import setup\nsetup()\n"),
+            ("pkg/inner/__init__.py", ""),
+            (
+                "pkg/inner/setup.py",
+                "from setuptools import setup\nsetup()\n",
+            ),
+            (
+                "tests/demo/setup.py",
+                "from setuptools import setup\nsetup()\n",
+            ),
+        ] {
+            write(temp.path(), file, text);
+        }
+        let files = [
+            "examples/imagepipe/imagepipe.py",
+            "examples/alias/setup.py",
+            "examples/dynamic/setup.py",
+            "examples/legacy/legacy.py",
+            "scripts/setup.py",
+            "tools/setup.py",
+            "sub/sub/cli.py",
+            "pkg/inner/setup.py",
+            "tests/demo/setup.py",
+        ];
+        assert_eq!(
+            nested_projects(temp.path(), files, &[], &["sub".to_owned()]),
+            BTreeSet::from([
+                "examples/alias".to_owned(),
+                "examples/dynamic".to_owned(),
+                "examples/imagepipe".to_owned(),
+                "examples/legacy".to_owned(),
+            ])
         );
     }
 
