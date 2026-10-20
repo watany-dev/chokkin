@@ -36,7 +36,6 @@ pub(super) struct SetupCfgExtraction {
     pub files_read: Vec<String>,
     /// Root-relative requirements files `file:` names that do not exist.
     pub files_missing: Vec<String>,
-    /// `[options.entry_points]` declarations.
     pub entry_points: Vec<EntryPointDecl>,
 }
 

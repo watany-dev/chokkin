@@ -19,7 +19,6 @@ pub(super) struct EntryPoints<'a> {
     pub warnings: &'a mut Vec<ManifestWarning>,
 }
 
-/// The `[project]` group a setuptools group name stands for.
 fn project_group(group: &str) -> &str {
     match group {
         "console_scripts" => "console",
@@ -50,7 +49,6 @@ impl EntryPoints<'_> {
         });
     }
 
-    /// `[project.scripts]`, `[project.gui-scripts]` and `[project.entry-points]`.
     pub(super) fn read_project(&mut self, project: &toml::Table) {
         for (key, group) in [("scripts", "console"), ("gui-scripts", "gui")] {
             if let Some(scripts) = project.get(key) {
@@ -62,7 +60,6 @@ impl EntryPoints<'_> {
         }
     }
 
-    /// `[tool.poetry.scripts]` and `[tool.poetry.plugins."group"]`.
     pub(super) fn read_poetry(&mut self, poetry: &toml::Table) {
         if let Some(scripts) = poetry.get("scripts") {
             self.read_toml_group(scripts, "console", "tool.poetry.scripts", true);
@@ -235,7 +232,6 @@ fn object_reference(target: &str) -> String {
     }
 }
 
-/// The target of a Poetry script table, or why it is none.
 fn poetry_script(script: &toml::Table) -> Result<&str, &'static str> {
     match script.get("type").map(Toml::as_str) {
         None | Some(Some("console")) => {},
