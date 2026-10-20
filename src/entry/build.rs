@@ -136,7 +136,7 @@ fn library_members(config: &ChokkinConfig, members: &[MemberEntryInput<'_>]) -> 
         .collect()
 }
 
-/// App members that a metapackage root distributes (#1060), each with the
+/// Members that a metapackage root distributes (#1060), each with the
 /// line naming the requirement. `distributed` is empty unless `mode` is
 /// `auto`, so an explicit `mode` applies to every member here too.
 fn distributed_members(
@@ -148,11 +148,10 @@ fn distributed_members(
         .filter_map(|(path, manifest, sources)| {
             let name = normalize_distribution_name(manifest.metadata.name.as_deref()?);
             let dep = distributed.get(&name)?;
-            (!is_library_member(manifest, sources) && is_distributed_library(manifest, sources))
-                .then(|| DistributedMember {
-                    member: (*path).to_owned(),
-                    reason: distributed_member_reason(path, dep),
-                })
+            is_distributed_library(manifest, sources).then(|| DistributedMember {
+                member: (*path).to_owned(),
+                reason: distributed_member_reason(path, dep),
+            })
         })
         .collect()
 }

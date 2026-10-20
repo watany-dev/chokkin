@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and that has no app signal of its own), as in fastmcp's `fastmcp-slim`. The
   member's console script into its own package is then a CLI shipped with the
   library. The member is still judged as an app, so files outside its wheel
-  and unused public symbols (CHK006 / CHK007) are reported as before. Names
+  and unused public symbols (CHK006 / CHK007) are reported as before; a
+  member without declared wheel targets ships its layout's packages. Names
   match after PEP 503 normalization; dependency groups and roots that ship
   code do not count, and airflow's root distributes nothing because of its own
   console script. `--explain` and `--trace` name the requirement behind the

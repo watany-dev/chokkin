@@ -89,8 +89,8 @@ pub struct EntryPlan {
     /// Root-relative directories of workspace members that ship as their own
     /// libraries, whatever mode the project itself resolved to (#488).
     pub library_members: Vec<String>,
-    /// App members a metapackage root distributes (#1060): their mode stays
-    /// app, but an orphan their own wheel ships is a library orphan.
+    /// Members a metapackage root distributes (#1060): an app member's mode
+    /// stays app, but an orphan its own wheel ships is a library orphan.
     pub distributed_members: Vec<DistributedMember>,
 }
 

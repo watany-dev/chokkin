@@ -58,8 +58,7 @@ pub(super) fn is_distributed_library(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> bool {
-    names_distribution(manifest)
-        && !has_clear_app_signals(manifest, sources, &detect_auto_entries(sources), true)
+    !has_clear_app_signals(manifest, sources, &detect_auto_entries(sources), true)
 }
 
 /// The distributions an auto-mode root ships as its content, by PEP 503
@@ -89,10 +88,7 @@ pub(super) fn metapackage_distributions<'a>(
         return distributions;
     }
     for dep in &manifest.dependencies {
-        if matches!(
-            dep.context,
-            DependencyContext::Group(_) | DependencyContext::Build
-        ) {
+        if matches!(dep.context, DependencyContext::Group(_)) {
             continue;
         }
         distributions
@@ -431,8 +427,6 @@ mod tests {
         let mut manifest = empty_manifest();
         let mut sources = library_sources();
         manifest.entry_points.push(console_script("acme.cli:main"));
-        assert!(!is_distributed_library(&manifest, &sources));
-        manifest.metadata.name = Some("acme".to_owned());
         assert!(is_distributed_library(&manifest, &sources));
         manifest.entry_points[0].target = "tools.cli:main".to_owned();
         assert!(!is_distributed_library(&manifest, &sources));
@@ -475,7 +469,6 @@ mod tests {
             ),
             requirement("acme-slim", DependencyContext::Runtime),
             requirement("acme-remote", DependencyContext::Group("dev".to_owned())),
-            requirement("hatchling", DependencyContext::Build),
             requirement("httpx", DependencyContext::Runtime),
         ];
         let mut sources = library_sources();

@@ -2458,6 +2458,30 @@ fn binary_metapackage_distributed_member_wheel_orphans_are_library_orphans() {
     );
 }
 
+/// A distributed member without declared wheel targets ships its layout's
+/// packages (#733), so its orphans there are library orphans too (#1060).
+#[test]
+fn binary_metapackage_distributed_member_without_wheel_targets_ships_its_layout() {
+    let project = metapackage_workspace(
+        "dependencies = [\"acme-slim\"]\n",
+        "bypass-selection = true",
+    );
+    let manifest = project.path().join("slim").join("pyproject.toml");
+    let layout = std::fs::read_to_string(&manifest)
+        .expect("read member manifest")
+        .replace(
+            "\n[tool.hatch.build.targets.wheel]\npackages = [\"acme\"]\n",
+            "",
+        );
+    std::fs::write(&manifest, layout).expect("write member manifest");
+    let issues = json_issues(project.path(), &["--no-cache", "--strict"]);
+    assert_eq!(
+        chk001_confidence(&issues, "slim/acme/types.py").as_deref(),
+        Some("maybe"),
+        "{issues:?}"
+    );
+}
+
 /// The signal stays narrow (#1060): airflow's root is a metapackage with its
 /// own console script, and a dependency group is not distributed, so each
 /// leaves the member's CLI an app signal. A distributed member with a GUI

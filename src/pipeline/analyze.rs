@@ -303,23 +303,23 @@ fn run_analysis_core(
         .iter()
         .map(|input| (input.member.path.clone(), shipped_surface(input)))
         .collect();
-    let declared_surfaces = || {
-        probe
-            .workspace_inputs
-            .iter()
-            .zip(&member_surfaces)
-            .filter(|(input, (_, surface))| {
-                input.manifest.metadata.wheel_targets.is_some() && !surface.files.is_empty()
-            })
-            .map(|(_, pair)| pair)
-    };
-    let library_surfaces: Vec<_> = declared_surfaces()
-        .filter(|(member, _)| entry.library_members.contains(member))
+    let library_surfaces: Vec<_> = probe
+        .workspace_inputs
+        .iter()
+        .zip(&member_surfaces)
+        .filter(|(input, (member, surface))| {
+            input.manifest.metadata.wheel_targets.is_some()
+                && !surface.files.is_empty()
+                && entry.library_members.contains(member)
+        })
+        .map(|(_, pair)| pair)
         .collect();
     apply_member_surfaces(&mut reachability, &library_surfaces);
     // A member a metapackage root distributes stays an app; only the orphans
-    // its own wheel ships are library orphans (#1060).
-    let distributed_surfaces: Vec<_> = declared_surfaces()
+    // its wheel ships are library orphans (#1060). Widening needs no declared
+    // target: a wrong layout guess only lowers confidence.
+    let distributed_surfaces: Vec<_> = member_surfaces
+        .iter()
         .filter_map(|pair| {
             let member = entry
                 .distributed_members
