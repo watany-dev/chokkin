@@ -13,8 +13,6 @@ use super::super::types::{ModuleReference, PluginContribution, ReferenceOrigin};
 use super::super::util::{decorator_suffix, push_used_symbol};
 use super::{Lookup, PluginContext, abs_path, module_path};
 
-/// The `INSTALLED_APPS` strings read from the settings, each with where it
-/// is listed.
 #[derive(Default)]
 pub(super) struct Installed {
     pub apps: Vec<(String, ReferenceOrigin)>,
@@ -64,7 +62,7 @@ pub(super) fn receivers(ctx: &PluginContext<'_>, contrib: &mut PluginContributio
 /// fails to load there, so it is left to the import graph; one that does
 /// not parse may bind it and is reachable. An app that is not a project
 /// package (third party, or a value that names neither a package nor an
-/// `AppConfig` in a project module) adds nothing, as before. Signals and
+/// `AppConfig` in a project module) adds nothing. Signals and
 /// checks are reached through the imports in `AppConfig.ready()`.
 pub(super) fn extract(
     ctx: &PluginContext<'_>,
@@ -270,7 +268,6 @@ fn binds(module: &ParsedModule, name: &str) -> bool {
         })
 }
 
-/// The module's symbols with a decorator `matches` accepts.
 fn decorated(module: &ParsedModule, matches: impl Fn(&str) -> bool) -> Vec<String> {
     module
         .symbols

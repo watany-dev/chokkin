@@ -365,7 +365,7 @@ fn push_unread(
 }
 
 /// Read the settings module and the project modules it star-imports: each
-/// field is read from every file that sets it. Returns the installed apps.
+/// field is read from every file that sets it.
 fn read_settings(
     ctx: &PluginContext<'_>,
     settings_rel: &str,
