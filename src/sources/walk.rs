@@ -385,8 +385,6 @@ fn forms_loop(path: &Path) -> bool {
     true
 }
 
-/// Whether `path` names a Dockerfile or Containerfile: `Dockerfile`,
-/// `Dockerfile.dev`, `api.dockerfile`, any case.
 pub(crate) fn is_dockerfile(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
