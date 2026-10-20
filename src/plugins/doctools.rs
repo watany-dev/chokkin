@@ -599,6 +599,10 @@ mod tests {
         assert_eq!(unread, [2]);
         assert!(assigned);
         assert!(read("extensions: list[str] = ['a']\n").2);
+        assert_eq!(
+            read("html_theme: str = 'alabaster'\n"),
+            (vec![], vec![], false)
+        );
     }
 
     #[test]
