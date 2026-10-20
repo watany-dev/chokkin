@@ -7,11 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-10-20
+
 ### Added
 - A file with a module-level `if __name__ == "__main__":` block is an entry
   root (`--trace` origin `auto: main-block`), at any depth and whatever its
   name, since it is written to be run as a script. Its imports count as used
   and it is no longer CHK001 (#1026).
+- Scripts (`python X.py`) and `-m` modules that task files and tool configs
+  run (Makefile, justfile, tox, local pre-commit hooks, PDM / poe / hatch
+  scripts, GitLab CI, `scripts/*.sh`, Dockerfile, Procfile) are entry roots
+  with origin `command: <label> (<file>:<line>)`. Task-file targets are dev
+  entries; Dockerfile and Procfile targets keep the file's own context and
+  count as production roots. A `-m` relocated by `cd`, `--directory` or
+  `PYTHONPATH=` stays a gap (#912).
+- A `module:attr` app that a WSGI/ASGI server loads (gunicorn, uvicorn,
+  hypercorn, daphne, waitress-serve, granian) from any command source, and a
+  literal app string passed to `uvicorn.run` / `uvicorn.Config`, is an entry
+  root when the module resolves to a discovered file, with the attribute as
+  its used symbol. Task files also read `[tool.poe.tasks]` and hatch
+  environment scripts. Options that move the import root (`--app-dir`,
+  `--chdir`, `PYTHONPATH=`, a poe task's `cwd`, ...) are gaps (#1004).
+- Plugins root the files Airflow, Dagster, Prefect and Scrapy load by path or
+  module name: Airflow DAG folders, Dagster code locations (`[tool.dagster]`,
+  dg projects, `workspace.yaml`) and modules building `Definitions`, Prefect
+  deployment entrypoints, and Scrapy settings, `SPIDER_MODULES` and named
+  components. A value that is not a literal is a gap (#401).
 
 ### Changed
 - CHK001 is a warning in every mode, as the rule table in the README and
@@ -27,6 +48,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gunicorn's `python:` config no longer report as unused files (#1026).
 
 ### Fixed
+- Files a plugin names as entries by path (Django `manage.py` and settings,
+  Sphinx `docs/conf.py`, Alembic `alembic/env.py`) join the inventory even
+  when the layout's globs or an explicit `[tool.chokkin] project` leave them
+  out, so their imports count and the skipped-entry warning no longer lowers
+  unrelated findings. Only the named file joins, not its directory (#932).
+- Every layout reads root `examples/**`, `docs/**` and `**/*.ipynb`. A
+  notebook outside the shipped package is dev context, so its imports no
+  longer make dev-group dependencies CHK002; a notebook inside the package
+  stays runtime. Workspace members under `examples/` keep their own layout
+  (#1023).
+- PEP 723 script CHK002 marks a runtime peer used when its provider is used,
+  sharing the project-level table, which now also covers transformers,
+  evaluate, datasets, torchmetrics and inspect-ai backends. An argv list
+  passed to `subprocess` (`["transformers", "serve", model]`) counts as a
+  command use.
+- Flask `--app` / `FLASK_APP` values that are file paths (`hello.py`,
+  `./app.py:create_app()`, `pkg/app`) are read as `flask.cli` reads them, and
+  a module name for a root file the layout names no module for resolves to
+  that file, so the app and its helpers are no longer CHK001 (#866).
+- `--probe`, `--trace`, `--explain`, fatal errors, the baseline summary and
+  `--init` escape control characters, bidi embedding / override / isolate
+  characters (U+202A–U+202E, U+2066–U+2069) and U+2028 / U+2029 in project
+  text, as the reporters do. Fatal errors keep their line breaks; JSON and
+  SARIF output are unchanged (#996).
 - Django's usual dotted `WSGI_APPLICATION` and `ASGI_APPLICATION` targets
   are recognized alongside the previously supported colon notation.
   Unread targets report a settings gap; unset handlers remain optional.
