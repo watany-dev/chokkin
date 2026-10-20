@@ -3428,6 +3428,111 @@ fn binary_django_import_settings_reach_files_in_production() {
     }
 }
 
+/// An installed app in the shape of Django's tutorial: what Django loads by
+/// convention from it, and what it reads by name there, is used (#399).
+fn django_app_project(installed: &str) -> tempfile::TempDir {
+    let settings = format!("INSTALLED_APPS = [{installed}]\nROOT_URLCONF = 'mysite.urls'\n");
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", &settings),
+        ("mysite/urls.py", "# URLconf\n"),
+        ("mysite/polls/__init__.py", ""),
+        (
+            "mysite/polls/apps.py",
+            "from django.apps import AppConfig\n\n\nclass PollsConfig(AppConfig):\n    name = 'mysite.polls'\n\n    def ready(self):\n        from . import signals, checks\n\n\nclass Unused:\n    pass\n",
+        ),
+        (
+            "mysite/polls/models.py",
+            "from django.db import models\n\n\nclass Question(models.Model):\n    pass\n",
+        ),
+        (
+            "mysite/polls/admin.py",
+            "from django.contrib import admin\n\nfrom .models import Question\n\n\n@admin.register(Question)\nclass QuestionAdmin(admin.ModelAdmin):\n    pass\n",
+        ),
+        (
+            "mysite/polls/signals.py",
+            "from django.db.models.signals import post_save\nfrom django.dispatch import receiver\n\n\n@receiver(post_save)\ndef on_save(sender, **kwargs):\n    pass\n",
+        ),
+        (
+            "mysite/polls/checks.py",
+            "from django.core import checks\n\n\n@checks.register()\ndef check_polls(app_configs, **kwargs):\n    return []\n",
+        ),
+        ("mysite/polls/templatetags/__init__.py", ""),
+        (
+            "mysite/polls/templatetags/poll_extras.py",
+            "from django import template\n\nregister = template.Library()\n\n\n@register.filter\ndef shout(value):\n    return value.upper()\n\n\ndef dead():\n    pass\n",
+        ),
+        // Intentionally unused: no `register`, so Django never loads it.
+        (
+            "mysite/polls/templatetags/helpers.py",
+            "def helper():\n    pass\n",
+        ),
+        ("mysite/polls/management/__init__.py", ""),
+        ("mysite/polls/management/commands/__init__.py", ""),
+        (
+            "mysite/polls/management/commands/closepoll.py",
+            "from django.core.management.base import BaseCommand\n\n\nclass Command(BaseCommand):\n    def handle(self, *args, **options):\n        pass\n",
+        ),
+        (
+            "mysite/polls/management/commands/notacommand.py",
+            "def run():\n    pass\n",
+        ),
+        (
+            "mysite/polls/management/commands/_shared.py",
+            "class Command:\n    pass\n",
+        ),
+        ("mysite/polls/orphan.py", ""),
+    ])
+}
+
+#[test]
+fn binary_django_installed_app_conventions_are_used() {
+    let flagged = |installed: &str| {
+        let project = django_app_project(installed);
+        let mut keys: Vec<String> = issue_keys(&json_issues(
+            project.path(),
+            &["--production", "--no-cache"],
+        ))
+        .into_iter()
+        .filter(|(code, target)| {
+            matches!(code.as_str(), "CHK001" | "CHK006") && target.starts_with("mysite/polls/")
+        })
+        .map(|(code, target)| format!("{code}:{target}"))
+        .collect();
+        keys.sort();
+        keys
+    };
+    let unused = [
+        "CHK001:mysite/polls/management/commands/_shared.py",
+        "CHK001:mysite/polls/management/commands/notacommand.py",
+        "CHK001:mysite/polls/orphan.py",
+        "CHK001:mysite/polls/templatetags/helpers.py",
+        "CHK006:mysite/polls/apps.py:Unused",
+        "CHK006:mysite/polls/templatetags/poll_extras.py:dead",
+    ];
+    for installed in [
+        "'django.contrib.admin', 'mysite.polls'",
+        "'django.contrib.admin.apps.AdminConfig', 'mysite.polls.apps.PollsConfig'",
+    ] {
+        assert_eq!(flagged(installed), unused, "{installed}");
+    }
+    // Without the admin, nothing autodiscovers `admin.py`.
+    let mut without_admin =
+        flagged("'django.contrib.admin.apps.SimpleAdminConfig', 'mysite.polls'");
+    without_admin.retain(|key| key.contains("admin.py"));
+    assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
+    // An `INSTALLED_APPS` not read in full may install it (ADR 0005).
+    assert_eq!(flagged("'mysite.polls', *EXTRA_APPS"), unused);
+}
+
 #[test]
 fn binary_django_import_settings_explain_the_setting_line() {
     let project = write_project(&[

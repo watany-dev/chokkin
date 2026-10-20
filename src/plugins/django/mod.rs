@@ -2,6 +2,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+mod apps;
 mod settings_refs;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -196,7 +197,8 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         },
     });
 
-    read_settings(ctx, &settings_rel, &lookup, &mut contrib, &mut warnings);
+    let installed = read_settings(ctx, &settings_rel, &lookup, &mut contrib, &mut warnings);
+    apps::extract(ctx, &lookup, &installed, &mut contrib);
 
     contrib
         .framework_used_globs
@@ -362,14 +364,14 @@ fn push_unread(
 }
 
 /// Read the settings module and the project modules it star-imports: each
-/// field is read from every file that sets it.
+/// field is read from every file that sets it. Returns the installed apps.
 fn read_settings(
     ctx: &PluginContext<'_>,
     settings_rel: &str,
     lookup: &Lookup,
     contrib: &mut PluginContribution,
     warnings: &mut Vec<PluginsWarning>,
-) {
+) -> apps::Installed {
     let root = ctx.root.path.as_path();
     let mut queue = VecDeque::from([settings_rel.to_owned()]);
     let mut visited = BTreeSet::from([settings_rel.to_owned()]);
@@ -377,6 +379,10 @@ fn read_settings(
     let mut unfollowed: Option<(String, String, u32)> = None;
     let mut called: Option<(String, String, u32)> = None;
     let mut urlconf_read = false;
+    let mut installed = apps::Installed {
+        complete: true,
+        ..apps::Installed::default()
+    };
 
     while let Some(rel) = queue.pop_front() {
         let contents = read_to_string(&abs_path(root, &rel)).ok();
@@ -424,6 +430,9 @@ fn read_settings(
         }
         partial.sort();
         partial.dedup();
+        if partial.iter().any(|field| field == "INSTALLED_APPS") {
+            installed.complete = false;
+        }
         if !partial.is_empty() {
             warnings.push(PluginsWarning::PartialSettingsParse {
                 path: rel.clone(),
@@ -437,6 +446,9 @@ fn read_settings(
                     module: module.clone(),
                     origin: origin(*start, field),
                 });
+                if field == "INSTALLED_APPS" {
+                    installed.apps.push((module.clone(), origin(*start, field)));
+                }
             }
         }
 
@@ -539,7 +551,7 @@ fn read_settings(
         .iter()
         .all(|field| assigned.contains(field))
     {
-        return;
+        return installed;
     }
     if let Some((module, file, line)) = unfollowed {
         let site = import_site(&file, Some(line));
@@ -560,6 +572,7 @@ fn read_settings(
             SettingsUnread::UnreadCall { call, site },
         );
     }
+    installed
 }
 
 // Django's import_string uses a final dot; retain the colon form already read
