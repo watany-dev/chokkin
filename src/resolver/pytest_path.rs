@@ -1070,6 +1070,23 @@ mod tests {
     }
 
     #[test]
+    fn sys_path_hint_roots_with_a_slash_walk_the_directories() {
+        let files = ["tests/test_t.py", "tools/pkg/sub/m.py"];
+        let parse = ParseSummary {
+            modules: vec![hinting("tests/test_t.py", &["tools"])],
+        };
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse, &[]);
+        // The name index keys single segments; a nested root still finds its
+        // directory.
+        assert!(paths.provides_fallback("tests/test_t.py", "pkg"));
+        assert!(paths.provides_fallback("tests/test_t.py", "pkg/sub"));
+        assert!(!paths.provides_fallback("tests/test_t.py", "pkg/other"));
+    }
+
+    #[test]
     fn root_conftest_hints_apply_to_every_file() {
         let files = [
             "conftest.py",
