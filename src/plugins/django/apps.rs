@@ -10,7 +10,7 @@ use crate::manifest::util::read_to_string;
 use crate::parser::ParsedModule;
 
 use super::super::types::{ModuleReference, PluginContribution, ReferenceOrigin};
-use super::super::util::push_used_symbol;
+use super::super::util::{decorator_suffix, push_used_symbol};
 use super::{Lookup, PluginContext, abs_path, module_path};
 
 /// The `INSTALLED_APPS` strings read from the settings, each with where it
@@ -18,9 +18,32 @@ use super::{Lookup, PluginContext, abs_path, module_path};
 #[derive(Default)]
 pub(super) struct Installed {
     pub apps: Vec<(String, ReferenceOrigin)>,
-    /// `false` when some `INSTALLED_APPS` was not a list of string literals,
-    /// so an app may be installed that `apps` does not show.
-    pub complete: bool,
+    /// `true` when the settings may install an app `apps` does not show.
+    pub incomplete: bool,
+}
+
+/// What `@receiver` decorates is connected to a signal once its module is
+/// imported, in an installed app or not; the decorator is the reference.
+pub(super) fn receivers(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) {
+    for module in &ctx.parse.modules {
+        let Some(name) = crate::sources::path_to_module(&module.path, &ctx.sources.layout) else {
+            continue;
+        };
+        for symbol in &module.symbols {
+            if symbol
+                .decorators
+                .iter()
+                .any(|decorator| decorator_suffix(decorator).1 == "receiver")
+            {
+                let origin = ReferenceOrigin {
+                    file: module.path.clone(),
+                    line: Some(symbol.line),
+                    label: "Django signal receiver".to_owned(),
+                };
+                push_used_symbol(contrib, &name, &symbol.name, &origin);
+            }
+        }
+    }
 }
 
 /// Make the modules Django imports from each first-party installed app
@@ -35,8 +58,7 @@ pub(super) struct Installed {
 /// - each module directly in `management/commands/` that binds `Command`
 ///   and does not start with `_`, and its `Command` (`manage.py`).
 ///
-/// In any module of the app, what `@register` decorates is used too, and in
-/// any module at all, what `@receiver` decorates.
+/// In any module of the app, what `@register` decorates is used too.
 ///
 /// A templatetag or command module that does not bind the name Django reads
 /// fails to load there, so it is left to the import graph; one that does
@@ -52,7 +74,7 @@ pub(super) fn extract(
 ) {
     // An `INSTALLED_APPS` that was not read may install the admin, so its
     // modules stay reachable (ADR 0005).
-    let mut admin = !installed.complete
+    let mut admin = installed.incomplete
         || installed
             .apps
             .iter()
@@ -66,29 +88,15 @@ pub(super) fn extract(
             push_used_symbol(contrib, module, class, &relabel(origin, CONFIG_LABEL));
         }
         admin |= app.admin_config;
-        apps.entry(app.dir).or_insert_with(|| origin.clone());
+        if let Some(dir) = app.dir {
+            apps.entry(dir).or_insert_with(|| origin.clone());
+        }
     }
 
     for module in &ctx.parse.modules {
         let Some(name) = crate::sources::path_to_module(&module.path, &ctx.sources.layout) else {
             continue;
         };
-        // Connected to a signal once the module is imported, whether or not
-        // it belongs to an app; the decorator is the reference.
-        for symbol in &module.symbols {
-            if symbol
-                .decorators
-                .iter()
-                .any(|decorator| names(decorator, "receiver"))
-            {
-                let origin = ReferenceOrigin {
-                    file: module.path.clone(),
-                    line: Some(symbol.line),
-                    label: "Django signal receiver".to_owned(),
-                };
-                push_used_symbol(contrib, &name, &symbol.name, &origin);
-            }
-        }
         // The innermost app, when one is nested in another's package.
         let Some((dir, rest)) = apps
             .keys()
@@ -104,7 +112,9 @@ pub(super) fn extract(
         // Registered with the system checks or the admin; this holds in a
         // module no convention loads, as `ready()` imports `checks.py`.
         let registered = relabel(origin, "Django registration");
-        for symbol in decorated(module, |decorator| names(decorator, "register")) {
+        for symbol in decorated(module, |decorator| {
+            decorator_suffix(decorator).1 == "register"
+        }) {
             push_used_symbol(contrib, &name, &symbol, &registered);
         }
         let (label, used): (&str, Vec<String>) = match rest {
@@ -134,19 +144,10 @@ pub(super) fn extract(
 
 const CONFIG_LABEL: &str = "Django app config";
 
-/// Whether `decorator` is `name` or an attribute of that name
-/// (`@checks.register()`, `@admin.register(Model)`, `@dispatch.receiver`).
-fn names(decorator: &str, name: &str) -> bool {
-    decorator == name
-        || decorator
-            .strip_suffix(name)
-            .is_some_and(|head| head.ends_with('.'))
-}
-
-/// A first-party installed app: its package directory, the `AppConfig` its
-/// `INSTALLED_APPS` value names, and whether that config is the admin's.
+/// An installed value read from the project: the app package directory, the
+/// `AppConfig` it names, and whether that config is the admin's.
 struct App {
-    dir: String,
+    dir: Option<String>,
     config: Option<(String, String)>,
     admin_config: bool,
 }
@@ -159,13 +160,16 @@ fn installs_admin(value: &str) -> bool {
 }
 
 /// The project package an `INSTALLED_APPS` value installs: the package
-/// itself, or the one an `AppConfig` subclass names with a literal `name`,
-/// else the package of the module that defines the config.
+/// itself, or the one an `AppConfig` subclass in a project module names. A
+/// literal `name` names a package, which may be no project one; one that is
+/// not a literal is taken to name the package of the module that defines the
+/// config, where Django apps keep it; with no `name`, the config inherits a
+/// third-party one (`AdminConfig`).
 fn resolve_app(ctx: &PluginContext<'_>, lookup: &Lookup, value: &str) -> Option<App> {
     let root = ctx.root.path.as_path();
     if let Some(dir) = package_dir(ctx, lookup, value) {
         return Some(App {
-            dir,
+            dir: Some(dir),
             config: None,
             admin_config: false,
         });
@@ -175,25 +179,21 @@ fn resolve_app(ctx: &PluginContext<'_>, lookup: &Lookup, value: &str) -> Option<
     let stmts = read_to_string(&abs_path(root, &path))
         .ok()
         .and_then(|contents| parse_module(&contents));
-    let class_def = stmts.as_deref().and_then(|stmts| {
-        stmts.iter().find_map(|stmt| match stmt {
-            Stmt::ClassDef(def) if def.name.as_str() == class => Some(def),
-            _ => None,
-        })
+    let class_def = stmts.as_deref()?.iter().find_map(|stmt| match stmt {
+        Stmt::ClassDef(def) if def.name.as_str() == class => Some(def),
+        _ => None,
+    })?;
+    let dir = assigned_value(&class_def.body, "name").and_then(|name| match string_value(name) {
+        Some(name) => package_dir(ctx, lookup, &name),
+        None => path.rsplit_once('/').map(|(dir, _)| dir.to_owned()),
     });
-    let dir = class_def
-        .and_then(|def| assigned_value(&def.body, "name"))
-        .and_then(string_value)
-        .and_then(|name| package_dir(ctx, lookup, &name))
-        .or_else(|| path.rsplit_once('/').map(|(dir, _)| dir.to_owned()))?;
     Some(App {
         dir,
         config: Some((module.to_owned(), class.to_owned())),
-        admin_config: class_def.is_some_and(|def| {
-            def.bases()
-                .iter()
-                .any(|base| base_name(base) == Some("AdminConfig"))
-        }),
+        admin_config: class_def
+            .bases()
+            .iter()
+            .any(|base| base_name(base) == Some("AdminConfig")),
     })
 }
 
@@ -241,10 +241,11 @@ fn config_classes(ctx: &PluginContext<'_>, path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Under `templatetags/`, which Django walks recursively for libraries.
+/// Under `templatetags/`, which Django walks recursively for libraries; the
+/// package itself is none.
 fn is_templatetag(rest: &str) -> bool {
     rest.strip_prefix("templatetags/")
-        .is_some_and(|tail| is_py(tail) && !tail.ends_with("__init__.py"))
+        .is_some_and(|tail| is_py(tail) && tail != "__init__.py")
 }
 
 /// A module directly in `management/commands/` that Django lists as a

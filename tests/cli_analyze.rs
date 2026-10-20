@@ -3431,7 +3431,7 @@ fn binary_django_import_settings_reach_files_in_production() {
 /// An installed app in the shape of Django's tutorial: what Django loads by
 /// convention from it, and what it reads by name there, is used (#399).
 fn django_app_project(installed: &str) -> tempfile::TempDir {
-    let settings = format!("INSTALLED_APPS = [{installed}]\nROOT_URLCONF = 'mysite.urls'\n");
+    let settings = format!("INSTALLED_APPS = {installed}\nROOT_URLCONF = 'mysite.urls'\n");
     write_project(&[
         (
             "pyproject.toml",
@@ -3444,6 +3444,11 @@ fn django_app_project(installed: &str) -> tempfile::TempDir {
         ("mysite/__init__.py", ""),
         ("mysite/settings.py", &settings),
         ("mysite/urls.py", "# URLconf\n"),
+        (
+            "mysite/apps.py",
+            "from django.contrib.admin.apps import AdminConfig\n\n\nclass SiteAdminConfig(AdminConfig):\n    default_site = 'mysite.sites.Site'\n",
+        ),
+        ("mysite/models.py", ""),
         ("mysite/polls/__init__.py", ""),
         (
             "mysite/polls/apps.py",
@@ -3474,6 +3479,10 @@ fn django_app_project(installed: &str) -> tempfile::TempDir {
         (
             "mysite/polls/templatetags/helpers.py",
             "def helper():\n    pass\n",
+        ),
+        (
+            "mysite/polls/templatetags/extra/__init__.py",
+            "from django import template\n\nregister = template.Library()\n\n\n@register.simple_tag\ndef now():\n    pass\n\n\ndef dead():\n    pass\n",
         ),
         ("mysite/polls/management/__init__.py", ""),
         ("mysite/polls/management/commands/__init__.py", ""),
@@ -3516,42 +3525,55 @@ fn binary_django_installed_app_conventions_are_used() {
         "CHK001:mysite/polls/orphan.py",
         "CHK001:mysite/polls/templatetags/helpers.py",
         "CHK006:mysite/polls/apps.py:Unused",
+        "CHK006:mysite/polls/templatetags/extra/__init__.py:dead",
         "CHK006:mysite/polls/templatetags/poll_extras.py:dead",
     ];
     for installed in [
-        "'django.contrib.admin', 'mysite.polls'",
-        "'django.contrib.admin.apps.AdminConfig', 'mysite.polls.apps.PollsConfig'",
+        "['django.contrib.admin', 'mysite.polls']",
+        "['django.contrib.admin.apps.AdminConfig', 'mysite.polls.apps.PollsConfig']",
+        // A config with no `name` inherits the admin's.
+        "['mysite.apps.SiteAdminConfig', 'mysite.polls']",
+        // An `INSTALLED_APPS` not read in full may install the admin (ADR 0005).
+        "['mysite.polls', *EXTRA_APPS]",
+        "['mysite.polls']\nINSTALLED_APPS += ['django.contrib.admin']",
     ] {
         assert_eq!(flagged(installed), unused, "{installed}");
     }
     // Without the admin, nothing autodiscovers `admin.py`.
     let mut without_admin =
-        flagged("'django.contrib.admin.apps.SimpleAdminConfig', 'mysite.polls'");
+        flagged("['django.contrib.admin.apps.SimpleAdminConfig', 'mysite.polls']");
     without_admin.retain(|key| key.contains("admin.py"));
     assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
-    // An `INSTALLED_APPS` not read in full may install it (ADR 0005).
-    assert_eq!(flagged("'mysite.polls', *EXTRA_APPS"), unused);
+    // The inherited config makes the package that defines it no app.
+    let project = django_app_project("['mysite.apps.SiteAdminConfig', 'mysite.polls']");
+    let keys = issue_keys(&json_issues(
+        project.path(),
+        &["--production", "--no-cache"],
+    ));
+    assert!(
+        keys.contains(&("CHK001".to_owned(), "mysite/models.py".to_owned())),
+        "{keys:?}"
+    );
+    assert!(
+        !keys
+            .iter()
+            .any(|(_, target)| target.starts_with("mysite/apps.py")),
+        "{keys:?}"
+    );
 }
 
 #[test]
 fn binary_django_receivers_outside_installed_apps_are_used() {
     // netbox connects receivers from `netbox/search/signals.py`, a module of
-    // the project package that is no installed app.
+    // the project package that is no installed app; a reusable app has no
+    // settings at all.
     let project = write_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
-        ),
-        (
-            "manage.py",
-            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\nentry = ['mysite/main.py']\n",
         ),
         ("mysite/__init__.py", ""),
-        (
-            "mysite/settings.py",
-            "INSTALLED_APPS = []\nROOT_URLCONF = 'mysite.urls'\n",
-        ),
-        ("mysite/urls.py", "from . import hooks\n"),
+        ("mysite/main.py", "from . import hooks\n"),
         (
             "mysite/hooks.py",
             "from django.db.models.signals import post_save\nfrom django.dispatch import receiver\n\n\n@receiver(post_save)\ndef on_save(sender, **kwargs):\n    pass\n\n\ndef dead():\n    pass\n",

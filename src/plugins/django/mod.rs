@@ -91,6 +91,7 @@ struct Lookup {
 pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Django);
     let mut warnings = Vec::new();
+    apps::receivers(ctx, &mut contrib);
     let root = ctx.root.path.as_path();
     let has_manage = root.join("manage.py").is_file();
     let known: BTreeSet<String> = ctx.sources.files.iter().map(|f| f.path.clone()).collect();
@@ -379,10 +380,7 @@ fn read_settings(
     let mut unfollowed: Option<(String, String, u32)> = None;
     let mut called: Option<(String, String, u32)> = None;
     let mut urlconf_read = false;
-    let mut installed = apps::Installed {
-        complete: true,
-        ..apps::Installed::default()
-    };
+    let mut installed = apps::Installed::default();
 
     while let Some(rel) = queue.pop_front() {
         let contents = read_to_string(&abs_path(root, &rel)).ok();
@@ -400,6 +398,7 @@ fn read_settings(
                     SettingsUnread::Unreadable { path: rel },
                 );
             }
+            installed.incomplete = true;
             continue;
         };
         let lines = LineIndex::new(&contents);
@@ -430,8 +429,11 @@ fn read_settings(
         }
         partial.sort();
         partial.dedup();
-        if partial.iter().any(|field| field == "INSTALLED_APPS") {
-            installed.complete = false;
+        // A second mention may be a `+=` or `.append()`, which is not read.
+        if partial.iter().any(|field| field == "INSTALLED_APPS")
+            || contents.matches("INSTALLED_APPS").count() > 1
+        {
+            installed.incomplete = true;
         }
         if !partial.is_empty() {
             warnings.push(PluginsWarning::PartialSettingsParse {
@@ -520,10 +522,9 @@ fn read_settings(
             }
         }
 
-        if called.is_none()
-            && let Some((call, start)) = settings_call(&stmts)
-        {
-            called = Some((call, rel.clone(), lines.line(start)));
+        if let Some((call, start)) = settings_call(&stmts) {
+            installed.incomplete = true;
+            called.get_or_insert_with(|| (call, rel.clone(), lines.line(start)));
         }
 
         for (module, start) in star_imports(&stmts, &rel, ctx) {
@@ -538,6 +539,7 @@ fn read_settings(
                 },
                 // Not a project file, or past the limit: either may set a field.
                 _ => {
+                    installed.incomplete = true;
                     let shown = module.unwrap_or_else(|| "*".to_owned());
                     unfollowed.get_or_insert_with(|| (shown, rel.clone(), lines.line(start)));
                 },
