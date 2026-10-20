@@ -55,6 +55,10 @@ pub(super) struct Collected {
     /// path: a library's tests still show which public names are called
     /// (#588), and keeping them spares a second walk (#844).
     pub held_tests: Vec<DiscoveredFile>,
+    /// Root-relative Dockerfiles below the root, sorted: their server apps are
+    /// entries (#1061). The project globs do not apply; the exclusions and
+    /// ignore rules do.
+    pub dockerfiles: Vec<String>,
     /// What the walk could not read.
     pub warnings: Vec<SourcesWarning>,
 }
@@ -381,6 +385,35 @@ fn forms_loop(path: &Path) -> bool {
     true
 }
 
+pub(crate) fn is_dockerfile(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".dockerignore") {
+        return false;
+    }
+    matches!(lower.as_str(), "dockerfile" | "containerfile")
+        || lower.ends_with(".dockerfile")
+        || lower.starts_with("dockerfile.")
+        || lower.starts_with("containerfile.")
+}
+
+/// `entry`, at `rel`, as a Dockerfile below the root that is neither excluded
+/// nor ignored (#1061).
+fn nested_dockerfile(
+    entry: &DirEntry,
+    rel: &Path,
+    exclude_matcher: &GlobSet,
+    gitignored: &dyn Fn(&Path, bool) -> bool,
+) -> Option<String> {
+    if entry.depth() < 2 || !is_dockerfile(entry.path()) {
+        return None;
+    }
+    let rel_str = normalize_rel_path(rel);
+    (!exclude_matcher.is_match(&rel_str) && !gitignored(rel, false)).then_some(rel_str)
+}
+
 /// The source kind `path`'s extension names, or `None` for a file the
 /// walk does not collect.
 fn source_kind(path: &Path) -> Option<FileKind> {
@@ -426,6 +459,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
 
     let mut files = Vec::new();
     let mut held_tests = Vec::new();
+    let mut dockerfiles = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
     let gitignored =
@@ -454,11 +488,11 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        let Some(kind) = source_kind(path) else {
+        let Ok(rel) = path.strip_prefix(&root) else {
             continue;
         };
-
-        let Ok(rel) = path.strip_prefix(&root) else {
+        let Some(kind) = source_kind(path) else {
+            dockerfiles.extend(nested_dockerfile(&entry, rel, exclude_matcher, &gitignored));
             continue;
         };
         let rel_str = normalize_rel_path(rel);
@@ -492,10 +526,12 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
+    dockerfiles.sort();
     symlinks.finish(&mut warnings);
     Ok(Collected {
         files,
         held_tests,
+        dockerfiles,
         warnings,
     })
 }
@@ -545,6 +581,21 @@ mod tests {
             fs::create_dir_all(parent).expect("create parent");
         }
         fs::write(path, contents).expect("write file");
+    }
+
+    #[test]
+    fn dockerfile_names_are_matched_case_insensitively() {
+        for name in [
+            "Dockerfile",
+            "dockerfile",
+            "api.Dockerfile",
+            "Dockerfile.dev",
+            "Containerfile",
+        ] {
+            assert!(is_dockerfile(Path::new(name)), "{name}");
+        }
+        assert!(!is_dockerfile(Path::new("Dockerfile.dockerignore")));
+        assert!(!is_dockerfile(Path::new("docker-compose.yml")));
     }
 
     #[test]
@@ -610,6 +661,14 @@ mod tests {
         write_file(&root.join("tests/test_module.py"), "");
         write_file(&root.join("local/extra.py"), "");
         write_file(&root.join("src/acme/generated/models.py"), "");
+        for dockerfile in [
+            "Dockerfile",
+            "svc/Dockerfile",
+            "local/api.dockerfile",
+            "src/acme/generated/Dockerfile",
+        ] {
+            write_file(&root.join(dockerfile), "FROM python\n");
+        }
 
         let layout = LayoutInfo {
             inferred_globs: vec![
@@ -635,12 +694,22 @@ mod tests {
             cache: &cache,
             dirs: None,
         };
-        let files = collect_files(&options).expect("collect").files;
-        let paths: Vec<_> = files.iter().map(|file| file.path.as_str()).collect();
+        let collected = collect_files(&options).expect("collect");
+        let paths: Vec<_> = collected
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
         assert!(paths.contains(&"src/acme/module.py"));
         assert!(paths.contains(&"tests/test_module.py"));
         assert!(!paths.contains(&"local/extra.py"));
         assert!(!paths.contains(&"src/acme/generated/models.py"));
+        // Dockerfiles below the root ignore the project globs, not the
+        // exclusions (#1061); the root's own are read by `task_files`.
+        assert_eq!(
+            collected.dockerfiles,
+            ["local/api.dockerfile", "svc/Dockerfile"]
+        );
     }
 
     #[test]

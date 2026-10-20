@@ -54,6 +54,9 @@ pub struct ProbeReport {
     /// name is called from outside (#588). Kept from the one walk rather
     /// than walking again (#844).
     pub production_tests: Vec<DiscoveredFile>,
+    /// Dockerfiles below the root, root-relative and sorted, outside nested
+    /// projects: their server apps are entries (#1061).
+    pub dockerfiles: Vec<String>,
     /// Resolved workspace members below the project root.
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Member-scoped manifest and source inventories.
@@ -216,6 +219,8 @@ pub(super) fn probe_project_with_cache(
         )
     };
     drop_nested_projects(&root.path, &mut sources, &nested);
+    let mut dockerfiles = discovery.dockerfiles;
+    dockerfiles.retain(|path| !under_any(path, &nested));
     // Before `drop_dev_only_members`: a dropped member is read, just not analyzed.
     let (path_source_warnings, unread_path_sources) =
         unread_path_sources(&root.path, &manifest, &loaded.workspace_members);
@@ -268,6 +273,7 @@ pub(super) fn probe_project_with_cache(
         manifest,
         sources,
         production_tests: discovery.held_tests,
+        dockerfiles,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,

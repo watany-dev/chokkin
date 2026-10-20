@@ -31,6 +31,7 @@ use super::flask;
 use super::prefect;
 use super::pytest;
 use super::scrapy;
+use super::task_files;
 use super::types::{PluginContribution, PluginEntry, PluginHints};
 
 /// Inputs for [`extract_plugin_hints_with_parse`].
@@ -48,6 +49,8 @@ pub struct PluginExtractRequest<'a> {
     pub parse: &'a ParseSummary,
     /// Disk cache used for the generic config scan.
     pub cache: Option<&'a CacheOptions>,
+    /// Dockerfiles below the root, root-relative (#1061).
+    pub dockerfiles: &'a [String],
 }
 
 /// Extract framework hints, optionally caching generic config scan results.
@@ -61,6 +64,7 @@ pub fn extract_plugin_hints_with_parse(
         manifest,
         parse,
         cache,
+        dockerfiles,
     } = *request;
     let ctx = PluginContext {
         root,
@@ -103,9 +107,10 @@ pub fn extract_plugin_hints_with_parse(
     }
 
     let scan = cached_config_scan(&ctx, config, manifest, cache)?;
-    // From the parse, which the config scan cache does not key on.
+    // From the parse and the walk, which the config scan cache does not key on.
     let mut command_targets = scan.command_targets;
     command_targets.extend(commands::parsed_server_apps(parse));
+    command_targets.extend(task_files::nested_dockerfile_apps(&root.path, dockerfiles));
     command_targets.extend(
         contributions
             .iter()
@@ -312,6 +317,7 @@ mod tests {
             manifest: &manifest,
             parse: &ParseSummary::default(),
             cache: None,
+            dockerfiles: &[],
         })
         .expect("extract hints");
         assert_eq!(hints.contributions, []);
@@ -368,6 +374,7 @@ mod tests {
             manifest: &manifest,
             parse: &ParseSummary::default(),
             cache: Some(cache),
+            dockerfiles: &[],
         })
         .expect("extract hints")
         .config_binary_usages
@@ -395,6 +402,7 @@ mod tests {
             manifest: &manifest,
             parse: &parse,
             cache: Some(&cache),
+            dockerfiles: &[],
         };
 
         let first = extract_plugin_hints_with_parse(&request).expect("first extract");

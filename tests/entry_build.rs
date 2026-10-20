@@ -58,6 +58,7 @@ fn load_pipeline(path: &Path) -> PipelineInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
+        dockerfiles: &[],
     })
     .expect("plugin hints");
     let config = loaded.effective;

@@ -33,4 +33,5 @@ pub(crate) use types::MemberLayout;
 pub use types::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
 };
+pub(crate) use walk::is_dockerfile;
 pub use warnings::SourcesWarning;

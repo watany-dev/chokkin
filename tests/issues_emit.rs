@@ -58,6 +58,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
+        dockerfiles: &[],
     })
     .expect("plugin hints");
     let entry = build_entry_roots(&loaded.effective, &manifest, &sources, &[], &plugins, false);

@@ -50,6 +50,7 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
+        dockerfiles: &[],
     })
     .expect("plugin hints");
     let entry = build_entry_roots(
