@@ -3,6 +3,9 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
+use ruff_python_ast::Stmt;
+use ruff_python_ast::visitor::{Visitor, walk_stmt};
+
 use crate::path_util::rel_to_root;
 
 use super::entry_points::EntryPoints;
@@ -46,6 +49,54 @@ pub(super) struct SetupPyExtraction {
     pub table_names: Vec<String>,
     /// `entry_points` declarations, read even when dependencies are not.
     pub entry_points: Vec<EntryPointDecl>,
+}
+
+/// Whether the `setup.py` at `path` builds a distribution (#1078): it imports
+/// `setuptools` or `distutils`, or a `setup` from any module (`skbuild`,
+/// `numpy.distutils.core`), anywhere, even inside `main()` and under an alias.
+/// One that cannot be read, decoded or parsed counts too, since the file name
+/// is what pip installs a directory by. One that parses without such an import
+/// is a script under that name (`django.setup()`), and a missing file is no
+/// project.
+pub(crate) fn builds_distribution(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return path.is_file();
+    };
+    let Some(stmts) = crate::parser::decode_python_source(bytes)
+        .as_deref()
+        .and_then(parse_module)
+    else {
+        return true;
+    };
+    let mut finder = SetupImportFinder(false);
+    finder.visit_body(&stmts);
+    finder.0
+}
+
+struct SetupImportFinder(bool);
+
+impl<'a> Visitor<'a> for SetupImportFinder {
+    fn visit_stmt(&mut self, stmt: &'a Stmt) {
+        let is_build_module =
+            |module: &str| matches!(module.split('.').next(), Some("setuptools" | "distutils"));
+        self.0 |= match stmt {
+            Stmt::Import(import) => import
+                .names
+                .iter()
+                .any(|alias| is_build_module(alias.name.as_str())),
+            Stmt::ImportFrom(import) => {
+                import.module.as_deref().is_some_and(is_build_module)
+                    || import
+                        .names
+                        .iter()
+                        .any(|alias| alias.name.as_str() == "setup")
+            },
+            _ => false,
+        };
+        if !self.0 {
+            walk_stmt(self, stmt);
+        }
+    }
 }
 
 /// Extract manifest data from `setup.py` without executing Python.

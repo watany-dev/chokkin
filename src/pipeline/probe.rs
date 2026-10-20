@@ -209,6 +209,9 @@ pub(super) fn probe_project_with_cache(
         .chain(&discovery.held_tests)
         .map(|file| file.path.clone())
         .collect();
+    // Before `drop_dev_only_members`: a dropped member is read, just not analyzed.
+    let (path_source_warnings, unread_path_sources) =
+        unread_path_sources(&root.path, &manifest, &loaded.workspace_members);
     let nested = if overrides.no_auto_workspace == Some(true) {
         BTreeSet::new()
     } else {
@@ -216,14 +219,12 @@ pub(super) fn probe_project_with_cache(
             &root.path,
             sources.files.iter().map(|file| file.path.as_str()),
             &loaded.workspace_members,
+            &unread_path_sources,
         )
     };
     drop_nested_projects(&root.path, &mut sources, &nested);
     let mut dockerfiles = discovery.dockerfiles;
     dockerfiles.retain(|path| !under_any(path, &nested));
-    // Before `drop_dev_only_members`: a dropped member is read, just not analyzed.
-    let (path_source_warnings, unread_path_sources) =
-        unread_path_sources(&root.path, &manifest, &loaded.workspace_members);
     let member_count = loaded.workspace_members.len();
     if loaded.effective.production {
         drop_dev_only_members(
