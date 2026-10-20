@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A formatter module that `[tool.datamodel-codegen] custom-formatters` (or
+  `custom_formatters`) names in the root or a workspace member's
+  `pyproject.toml` is no longer CHK001. A name that resolves through the
+  import roots, or else to the only module of that name under that
+  pyproject's directory, is a dev entry root with origin
+  `command: tool.datamodel-codegen.custom-formatters (<file>:<line>)`, so
+  `--production` drops it like other dev commands. A name matching no
+  project file or several, or a value that is not a list of module names,
+  is a gap that lowers CHK001 to likely, with a warning and an `--explain`
+  line (#1063).
+
 ## [0.7.8] - 2026-10-20
 
 ### Added
