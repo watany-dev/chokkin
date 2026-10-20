@@ -2460,7 +2460,8 @@ fn binary_metapackage_distributed_member_wheel_orphans_are_library_orphans() {
 
 /// The signal stays narrow (#1060): airflow's root is a metapackage with its
 /// own console script, and a dependency group is not distributed, so each
-/// leaves the member's CLI an app signal. (A root that ships code is covered
+/// leaves the member's CLI an app signal. A distributed member with a GUI
+/// script is an app whatever ships it. (A root that ships code is covered
 /// in `entry::mode`: its wheel's packages narrow discovery to them here.)
 #[test]
 fn binary_member_not_distributed_by_a_metapackage_keeps_app_scoring() {
@@ -2482,6 +2483,21 @@ fn binary_member_not_distributed_by_a_metapackage_keeps_app_scoring() {
             "{root_project}: {issues:?}"
         );
     }
+
+    let project = metapackage_workspace(
+        "dependencies = [\"acme-slim\"]\n",
+        "bypass-selection = true",
+    );
+    let manifest = project.path().join("slim").join("pyproject.toml");
+    let gui = std::fs::read_to_string(&manifest).expect("read member manifest")
+        + "\n[project.gui-scripts]\nacme-gui = \"acme.cli:main\"\n";
+    std::fs::write(&manifest, gui).expect("write member manifest");
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert_eq!(
+        chk001_confidence(&issues, "slim/acme/types.py").as_deref(),
+        Some("certain"),
+        "{issues:?}"
+    );
 }
 
 /// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
