@@ -312,7 +312,7 @@ Python は動的で、chokkin は static です。見えないものがありま
 
 - 実行時データから名前で読み込まれる module(DB から読む plugin registry、非リテラルな名前の `importlib.import_module(f"{pkg}.{name}")`)。`entry` として宣言するか、その path の rule を ignore してください。
 - chokkin に plugin がない framework やツール経由でのみ到達するコード。`--trace` が「なぜ未到達と判定したか」を出すので、そこから適切な `entry` や `ignore` を選べます。
-- library の public API を使う利用者。library mode が `CHK001` / `CHK006` を error にせず格下げするのはこのためです。
+- library の public API を使う利用者。library mode が `CHK001` を `maybe`(既定では非表示)に、`CHK006` を info に格下げするのはこのためです。
 
 finding がおかしく見えて、`--explain` / `--trace` でも決着しない場合は、その出力を添えて [issue](https://github.com/watany-dev/chokkin/issues) を立ててください。
 

@@ -411,7 +411,9 @@ mod tests {
         );
         assert_eq!(issues.issues.len(), 1);
         assert_eq!(issues.issues[0].rule, RuleId::Chk001);
-        assert_eq!(issues.exit_status, ExitStatus::IssuesFound);
+        assert_eq!(issues.issues[0].severity, Severity::Warning);
+        // A warning fails only a `--strict` run (spec §3, §16).
+        assert_eq!(issues.exit_status, ExitStatus::Success);
     }
 
     #[test]

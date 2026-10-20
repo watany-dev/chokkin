@@ -767,9 +767,10 @@ mod tests {
 
         /// §8 / §11 written out: a file of a library that its wheel ships
         /// (or every file, when no wheel target is declared) may be imported
-        /// by a caller, so it is `maybe` and a warning; a reachable module
-        /// read only in part lowers the rest to `likely`; a deprecated shim
-        /// is info; and the exit status counts what the run counts (§7, E1).
+        /// by a caller, so it is `maybe`; a reachable module read only in
+        /// part lowers the rest to `likely`; a deprecated shim is info and
+        /// every other candidate a warning (§3); and the exit status counts
+        /// what the run counts (§7, E1).
         fn expected(&self) -> (Option<(Severity, Confidence)>, ExitStatus) {
             let library = self.place.library_root() || self.place.in_member();
             let ships = if self.place.in_member() {
@@ -787,10 +788,8 @@ mod tests {
             };
             let severity = if self.shim {
                 Severity::Info
-            } else if callers_may_import {
-                Severity::Warning
             } else {
-                Severity::Error
+                Severity::Warning
             };
             let floor = if self.strict {
                 Confidence::Maybe

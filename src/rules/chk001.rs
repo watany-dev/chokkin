@@ -1,13 +1,15 @@
 //! CHK001 unused file candidate generation (pipeline step 12).
 
-use crate::config::{Confidence, ProjectMode};
 use crate::reachability::UnreachableFile;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Severity};
 use crate::sources::is_test_data_path;
 
 /// Build CHK001 candidates from unreachable files.
 ///
-/// Unreachable test data is skipped unless `strict`.
+/// Unreachable test data is skipped unless `strict`. Every candidate is a
+/// warning (spec §3): unreachability from the import graph misses files a
+/// framework, a tool or a test loads by name or path, so it does not fail a
+/// default run on its own. Library mode lowers confidence, not severity.
 #[must_use]
 pub(super) fn chk001_candidates(
     unreachable: &[UnreachableFile],
@@ -19,16 +21,13 @@ pub(super) fn chk001_candidates(
         if !strict && is_test_data_path(&file.path) {
             continue;
         }
-        let confidence = file.max_confidence;
-        let severity = chk001_severity(file.mode, confidence);
-
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,
             subject: IssueSubject::File {
                 path: file.path.clone(),
             },
-            severity,
-            confidence,
+            severity: Severity::Warning,
+            confidence: file.max_confidence,
             message: format!("file `{}` is not reachable from any entry root", file.path),
             workspace_member: None,
             origins: Vec::new(),
@@ -42,18 +41,10 @@ pub(super) fn chk001_candidates(
     candidates
 }
 
-fn chk001_severity(mode: ProjectMode, confidence: Confidence) -> Severity {
-    if mode == ProjectMode::Library && confidence == Confidence::Maybe {
-        Severity::Warning
-    } else {
-        Severity::Error
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ProjectMode;
+    use crate::config::{Confidence, ProjectMode};
     use crate::graph::FileId;
 
     #[test]
@@ -78,21 +69,27 @@ mod tests {
     }
 
     #[test]
-    fn only_library_maybe_is_downgraded_to_warning() {
-        let cases = [
-            (ProjectMode::App, Confidence::Certain, Severity::Error),
-            (ProjectMode::App, Confidence::Likely, Severity::Error),
-            (ProjectMode::App, Confidence::Maybe, Severity::Error),
-            (ProjectMode::Library, Confidence::Certain, Severity::Error),
-            (ProjectMode::Library, Confidence::Likely, Severity::Error),
-            (ProjectMode::Library, Confidence::Maybe, Severity::Warning),
-        ];
-        for (mode, confidence, expected) in cases {
-            assert_eq!(
-                chk001_severity(mode, confidence),
-                expected,
-                "{mode:?} x {confidence:?}"
-            );
+    fn every_candidate_is_a_warning_at_the_file_confidence() {
+        let modes = [ProjectMode::App, ProjectMode::Library];
+        let confidences = [Confidence::Certain, Confidence::Likely, Confidence::Maybe];
+        for mode in modes {
+            for confidence in confidences {
+                let unreachable = [UnreachableFile {
+                    file: FileId(0),
+                    path: "src/legacy.py".to_owned(),
+                    max_confidence: confidence,
+                    mode,
+                }];
+                let candidates = chk001_candidates(&unreachable, false);
+                assert_eq!(
+                    candidates
+                        .iter()
+                        .map(|candidate| (candidate.severity, candidate.confidence))
+                        .collect::<Vec<_>>(),
+                    [(Severity::Warning, confidence)],
+                    "{mode:?} x {confidence:?}"
+                );
+            }
         }
     }
 }
