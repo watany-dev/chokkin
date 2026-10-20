@@ -219,6 +219,7 @@ impl PluginContribution {
                 text: text.to_owned(),
             },
             origin,
+            deploy: false,
         });
     }
 }
