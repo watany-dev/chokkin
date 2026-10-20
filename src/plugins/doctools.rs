@@ -194,13 +194,10 @@ fn read_module(path: &Path) -> Option<(String, Suite)> {
 
 /// `conf` takes the `sys.path` hints of `module`, a file it imports (#779).
 fn push_sys_path_import(contrib: &mut PluginContribution, conf: &str, module: &str) {
-    let import = SysPathImport {
+    contrib.sys_path_imports.push(SysPathImport {
         importer: conf.to_owned(),
         imported: module.to_owned(),
-    };
-    if conf != module && !contrib.sys_path_imports.contains(&import) {
-        contrib.sys_path_imports.push(import);
-    }
+    });
 }
 
 fn push_unread_extensions(

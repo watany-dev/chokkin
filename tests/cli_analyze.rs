@@ -2369,9 +2369,8 @@ fn layout_shipped_library_member_keeps_library_scoring() {
 }
 
 /// Monorepos keep Sphinx docs per member: each member's `docs/conf.py` is a
-/// docs entry, so it and the shared modules it imports stay reachable even
-/// with no root `docs/conf.py`, and `--production` drops it like root docs
-/// (#612).
+/// docs entry beside the root's, so it and the shared modules it imports stay
+/// reachable, and `--production` drops it like root docs (#612).
 #[test]
 fn binary_member_sphinx_conf_is_a_docs_entry() {
     let project = write_project(&[
@@ -2386,6 +2385,7 @@ fn binary_member_sphinx_conf_is_a_docs_entry() {
         ("core/src/core/__init__.py", ""),
         ("core/src/core/main.py", "def main():\n    pass\n"),
         ("core/src/core/orphan.py", ""),
+        ("docs/conf.py", ""),
         (
             "providers/google/pyproject.toml",
             "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n\n[project]\nname = \"provider-google\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.flit.module]\nname = \"google_provider\"\n",
