@@ -1450,6 +1450,19 @@ llama_index / transformers / openai-python / langchain、commit SHA pinned) は
 失敗する。exit 2 (CLI/config error) も gate で 0 件を要求する。この corpus の CHK002
 も他の project と同じくラベル付けを必須とし、FP 率の分母に入れる (#529)。
 
+cold 実行の基準は medium project の 2s だけで、large project の遅化はどの gate
+にも掛からなかった (v0.7.4 / v0.7.5 の transformers 5.7 倍、
+`docs/dev/v0.7.x-uvx-regression-report.ja.md` §5)。`oss-metrics.py --baseline` は
+同じマシンで測った baseline と medium / large project ごとの `median_ms` を比べ、
+**1.5 倍以上かつ 500 ms 以上**遅い project を cold 3 回で測り直し、なお両方を超えれば
+gate を失敗させる (#1025)。片方だけでは足りない理由は、同じバイナリの `-r 1` 2 回で
+project ごとに最大 1.13 倍、release 間の regression でない遅化も 1.3 倍未満
+(v0.7.0 → v0.7.5 の sqlalchemy +26%) 揺れ、数十 ms の project では比が意味を持たない
+ため。small project と recall sentinel は対象外、どちらかの run で exit 2 / 3 の
+project は crash / config error の基準に任せる。比べる相手は直前の release で、
+`oss-metrics.yml` の baseline (v0.4.1、CHK003 件数の基準用) は解析範囲が今より
+ずっと狭い (llama_index 660 → 2,210 ms) ので、CI は `--no-slowdown` でこの基準を外す。
+
 **現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
 CHK002 誤検知率 **0.0% (0 FP / 2 reported)**、recall sentinel **2/2 検出**、
 crash 0、cold 実行 medium 最遅でも 2s 以内。scorecard は

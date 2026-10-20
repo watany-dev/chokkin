@@ -80,10 +80,12 @@ jobs:
       - name: Measure HEAD
         # The gate verdict is recorded and enforced in the last step so the
         # report and artifacts are produced even when it fails. --baseline
-        # adds the spec §17 Phase 4 CHK003 growth criterion to the gate.
+        # adds the spec §17 Phase 4 CHK003 growth criterion to the gate. The
+        # slowdown criterion (#1025) compares with the previous release, and
+        # v0.4.1 analyzes too little for its run time to compare.
         run: |
           status=0
-          scripts/oss-metrics.py -o target/oss-metrics --baseline target/oss-metrics-baseline --gate || status=$?
+          scripts/oss-metrics.py -o target/oss-metrics --baseline target/oss-metrics-baseline --no-slowdown --gate || status=$?
           echo "$status" >target/oss-metrics/gate.status
       - name: Determinism / schema / crash gate
         # The 20 clones plus the recall sentinels; enforced in the last step.

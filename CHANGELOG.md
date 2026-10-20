@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- A cold run of a large workspace is fast again: since 0.7.8 every string
+  naming a module was looked up in each workspace member over every project
+  file, which made airflow's run 1.5 s -> 4.5 s. Only the files whose path
+  ends in the name are looked at now; output is unchanged (airflow 1.8 s).
 - `--fix` no longer moves a Poetry group dependency whose table says where
   it comes from (`git`, `path`, `url`, `source`, or any key besides
   `version`, `extras`, `markers`, `platform`, `python` and `optional`;

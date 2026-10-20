@@ -52,6 +52,8 @@ pub(crate) struct PytestImportPaths {
     hinted_on_disk: HashMap<String, HashSet<String>>,
     /// Hinted directory → top-level names of the discovered files under it.
     hinted_roots: HashMap<String, HashSet<String>>,
+    /// Every name in [`Self::hinted_roots`].
+    any_hinted_root: HashSet<String>,
 }
 
 impl PytestImportPaths {
@@ -165,6 +167,7 @@ impl PytestImportPaths {
             conftest_hinted: Vec::new(),
             hinted_on_disk: HashMap::new(),
             hinted_roots: HashMap::new(),
+            any_hinted_root: HashSet::new(),
         }
     }
 
@@ -262,6 +265,7 @@ impl PytestImportPaths {
             .filter_map(|(dir, names)| Some((dir, names?)))
             .collect();
         self.hinted_roots = self.hinted_roots();
+        self.any_hinted_root = self.hinted_roots.values().flatten().cloned().collect();
         self
     }
 
@@ -366,6 +370,9 @@ impl PytestImportPaths {
             .or_else(|| self.resolve_in_own_package(file, module))
             .or_else(|| {
                 let root = import_root(module);
+                if !self.any_hinted_root.contains(root) {
+                    return None;
+                }
                 self.hinted_dirs(file)
                     // Most hinted directories hold no such name: skip them
                     // without building paths.

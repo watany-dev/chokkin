@@ -1,6 +1,6 @@
 //! First-party module → file path resolution for entry targets.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::path_util::join_rel;
@@ -15,6 +15,66 @@ pub(crate) fn resolve_module_to_path(
 ) -> Option<String> {
     let suffix = normalize_module_target(module).replace('.', "/");
     resolve_in(&suffix, layout, "", &|path| known_paths.contains(path))
+}
+
+/// Project files by each `/`-bounded tail of their path, for resolving many
+/// names over one file set. The directories a name may resolve under are the
+/// same for every name, so each is ranked once in the order
+/// [`resolve_module_to_path`] tries them, and a lookup ranks only the few
+/// files whose path ends in the name: airflow's 11k string literals walked
+/// its 133 members over every file for 3 s (#1025).
+pub(crate) struct ModuleIndex<'a> {
+    by_tail: HashMap<&'a str, Vec<&'a str>>,
+    base_rank: HashMap<String, usize>,
+}
+
+impl<'a> ModuleIndex<'a> {
+    pub(crate) fn new(known_paths: &'a BTreeSet<String>, layout: &LayoutInfo) -> Self {
+        let mut by_tail: HashMap<&str, Vec<&str>> = HashMap::new();
+        for path in known_paths {
+            let tails = path.match_indices('/').map(|(slash, _)| &path[slash + 1..]);
+            for tail in std::iter::once(path.as_str()).chain(tails) {
+                by_tail.entry(tail).or_default().push(path);
+            }
+        }
+        let mut bases = Vec::new();
+        push_bases(layout, "", &mut bases);
+        let mut base_rank = HashMap::new();
+        for (rank, base) in bases.into_iter().enumerate() {
+            base_rank.entry(base).or_insert(rank);
+        }
+        Self { by_tail, base_rank }
+    }
+
+    /// What [`resolve_module_to_path`] returns over the indexed files.
+    pub(crate) fn resolve(&self, module: &str) -> Option<String> {
+        let suffix = normalize_module_target(module).replace('.', "/");
+        [format!("{suffix}.py"), format!("{suffix}/__init__.py")]
+            .iter()
+            .enumerate()
+            .flat_map(|(kind, tail)| {
+                let files = self.by_tail.get(tail.as_str()).into_iter().flatten();
+                files.filter_map(move |path| {
+                    let base = path.strip_suffix(tail.as_str())?;
+                    let base = base.strip_suffix('/').unwrap_or(base);
+                    Some(((self.base_rank.get(base)?, kind), *path))
+                })
+            })
+            .min()
+            .map(|(_, path)| path.to_owned())
+    }
+}
+
+/// The directories [`resolve_in`] joins a name to, in its order.
+fn push_bases(layout: &LayoutInfo, prefix: &str, bases: &mut Vec<String>) {
+    let package_root = package_root(layout);
+    if !package_root.is_empty() {
+        bases.push(join_rel(prefix, package_root));
+    }
+    bases.push(prefix.to_owned());
+    for member in &layout.members {
+        push_bases(&member.layout, &join_rel(prefix, &member.path), bases);
+    }
 }
 
 /// Where `module` would resolve if every `.py` file under `root` were
@@ -43,11 +103,7 @@ fn resolve_in(
     prefix: &str,
     exists: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
-    let package_root = match layout.layout {
-        ProjectLayout::Src | ProjectLayout::PackageRoot => layout.package_root.as_str(),
-        ProjectLayout::Unknown => "src",
-        ProjectLayout::Flat => "",
-    };
+    let package_root = package_root(layout);
     std::iter::once(package_root)
         .chain((!package_root.is_empty()).then_some(""))
         .flat_map(|root| {
@@ -65,6 +121,14 @@ fn resolve_in(
                 )
             })
         })
+}
+
+fn package_root(layout: &LayoutInfo) -> &str {
+    match layout.layout {
+        ProjectLayout::Src | ProjectLayout::PackageRoot => layout.package_root.as_str(),
+        ProjectLayout::Unknown => "src",
+        ProjectLayout::Flat => "",
+    }
 }
 
 /// Normalize Django `AppConfig` targets to their package root when applicable.
@@ -273,6 +337,55 @@ mod tests {
 
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(256)))]
+
+            /// The index answers what the resolver answers over the same
+            /// files, for any name, layout and workspace member (#1025).
+            #[test]
+            fn module_index_agrees_with_the_resolver(
+                layout in layout_strategy(),
+                members in prop::collection::vec(
+                    (prop::sample::select(&["svc/a", "svc/b", "x"][..]), layout_strategy()),
+                    0..3,
+                ),
+                paths in prop::collection::btree_set(
+                    (
+                        prop::sample::select(&["", "svc/a/", "svc/b/src/", "x/lib/"][..]),
+                        prop::collection::vec(prop::sample::select(PARTS), 1..5),
+                        any::<bool>(),
+                    )
+                        .prop_map(|(member, parts, init)| {
+                            let stem = parts.join("/");
+                            let file = if init { "/__init__.py" } else { ".py" };
+                            format!("{member}{stem}{file}")
+                        }),
+                    0..12,
+                ),
+                names in prop::collection::vec(
+                    (prop::collection::vec(prop::sample::select(PARTS), 1..5), any::<bool>())
+                        .prop_map(|(parts, app_config)| {
+                            let name = parts.join(".");
+                            if app_config { format!("{name}.AcmeAppConfig") } else { name }
+                        }),
+                    1..8,
+                ),
+            ) {
+                let layout = LayoutInfo {
+                    members: members
+                        .into_iter()
+                        .map(|(path, layout)| MemberLayout { path: path.to_owned(), layout })
+                        .collect(),
+                    ..layout
+                };
+                let index = ModuleIndex::new(&paths, &layout);
+                for name in &names {
+                    prop_assert_eq!(
+                        index.resolve(name),
+                        resolve_module_to_path(name, &layout, &paths),
+                        "{}",
+                        name
+                    );
+                }
+            }
 
             /// Every package file's module name resolves back to that file,
             /// so entry targets and the module index agree on which file a
