@@ -371,13 +371,31 @@ mod tests {
     }
 
     #[test]
+    fn only_poetry_scripts_take_script_tables() {
+        let mut warnings = Vec::new();
+        EntryPoints {
+            rel: "f",
+            entries: &mut Vec::new(),
+            warnings: &mut warnings,
+        }
+        .read_project(&toml("scripts = { b = { reference = \"acme:b\" } }"));
+        assert!(
+            matches!(
+                &warnings[..],
+                [ManifestWarning::EntryPointUnreadable { reason, .. }] if reason == "not a string"
+            ),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
     fn setup_cfg_groups_split_like_setuptools() {
         let (entries, warnings) = read(|reader| {
             reader.read_setup_cfg_group(
                 "console_scripts",
                 "acme = acme.cli:main\nacme-gui=acme.gui:run",
             );
-            reader.read_setup_cfg_group("gui_scripts", "a = acme.a:main, b = acme.b:main");
+            reader.read_setup_cfg_group("gui_scripts", "a = acme.a:main [x], b = acme.b:main");
             reader.read_setup_cfg_group("pytest11", "acme.plugin");
             reader.skip_setup_cfg_option();
         });
@@ -447,7 +465,9 @@ mod tests {
         );
         let (entries, warnings) = read(|reader| {
             reader.read_setup_py(&value);
-            reader.read_setup_py(&string("[console_scripts]\nrun = acme.run:main\n\n[x]\n"));
+            reader.read_setup_py(&string(
+                "\n# note\n; note\n[console_scripts]\nrun = acme.run:main\n\n[x]\n",
+            ));
             reader.read_setup_py(&string("stray = acme:main\n"));
             reader.read_setup_py(&Value::Unknown);
         });
@@ -495,6 +515,8 @@ mod tests {
             // `key =` then one indented line, which reaches here without its
             // leading newline: setuptools splits that by line.
             reader.read_setup_cfg_group("y", "e = acme:e [a,b]");
+            // An unclosed `[` is not extras, so the target stays whole.
+            reader.read_setup_cfg_group("z", "f = acme:f [x");
         });
         let targets: Vec<&str> = entries.iter().map(|entry| entry.2.as_str()).collect();
         assert_eq!(
@@ -504,9 +526,24 @@ mod tests {
                 "acme.plugin",
                 "acme:main",
                 "acme:d",
-                "acme:e"
+                "acme:e",
+                "acme:f [x"
             ]
         );
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn items_missing_a_name_or_a_target_are_reported() {
+        let (entries, warnings) =
+            read(|reader| reader.read_setup_cfg_group("console_scripts", "= acme:main\nacme ="));
+        assert!(entries.is_empty(), "{entries:?}");
+        assert_eq!(
+            warnings,
+            [
+                "options.entry_points.console_scripts",
+                "options.entry_points.console_scripts"
+            ]
+        );
     }
 }
