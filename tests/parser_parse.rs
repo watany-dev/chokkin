@@ -583,6 +583,23 @@ fn parse_project_sources_reads_notebook_magics_without_a_gap() {
     assert_eq!(module.imports.len(), 1, "{module:?}");
 }
 
+/// A line inside brackets or a string continues its statement, so `IPython`
+/// reads it as Python even when it starts with `%` or `!`, and so does the
+/// rewrite (#994).
+#[test]
+fn parse_project_sources_reads_notebook_operators_inside_brackets_as_python() {
+    let module = parse_notebook(
+        r#"{"cells": [
+            {"cell_type": "code", "source": "%matplotlib inline\nimport pandas as pd\nx = (10\n     % 3)\ndoc = \"\"\"\n!important\n\"\"\"\n"}
+        ]}"#,
+    );
+
+    assert!(!module.skipped, "{module:?}");
+    assert!(!module.has_unread_cells, "{module:?}");
+    assert!(module.diagnostics.is_empty(), "{module:?}");
+    assert_eq!(module.imports.len(), 1, "{module:?}");
+}
+
 /// A notebook none of whose code cells can be read is as unknown
 /// as one without cells, so it is skipped (#898, #893).
 #[test]
