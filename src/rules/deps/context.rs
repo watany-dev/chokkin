@@ -298,6 +298,7 @@ mod verification {
                 label: String::new(),
             },
             opaque: false,
+            unportable_key: None,
             included_via: includer
                 .map(|(name, _)| vec![vec![name.to_owned(), "inner".to_owned()]])
                 .unwrap_or_default(),
