@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A cold run of a large workspace is fast again: since 0.7.8 every string
   naming a module was looked up in each workspace member over every project
   file, which made airflow's run 1.5 s -> 4.5 s. Only the files whose path
-  ends in the name are looked at now; output is unchanged (airflow 2.2 s).
+  ends in the name are looked at now; output is unchanged (airflow 1.8 s).
 - With the Airflow plugin on, every `.py` under a directory named exactly
   `dags` is a DAG-folder entry in its path's context, not only files that
   pass the DAG processor's safe-mode check (`airflow` and `dag` in the
