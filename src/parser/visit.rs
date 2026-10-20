@@ -17,7 +17,7 @@ use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
     LiteralTarget, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
-    module_prefix, module_ref_literal, pytest_plugin_names, python_run, sys_path_hint,
+    module_prefix, module_ref_literal, named_load, pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -33,7 +33,7 @@ use super::server_app::ServerNames;
 use super::type_checking::is_type_checking_test;
 use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef, ModuleRef,
-    ParsedModule, ServerApp, SymbolDef, SymbolKind, import_context_for_file,
+    NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind, import_context_for_file,
 };
 
 /// Whether the module edits `sys.path`, and its path-like literals (#719).
@@ -551,6 +551,50 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    fn record_dynamic_imports(&mut self, call: &ExprCall) {
+        if let Some((callee, name, colon)) = named_load(call) {
+            let load = DynamicImport {
+                fetched: true,
+                ..self.dynamic_import(name, call)
+            };
+            self.parsed.named_loads.push(NamedLoad {
+                call: callee.to_owned(),
+                colon,
+                load,
+            });
+        }
+        let arguments = &call.arguments;
+        if let Some(loader) = self.loader_names.loader(&call.func) {
+            if let Some(target) =
+                literal_target(call, loader, || module_package(self.path, self.layout))
+            {
+                match target {
+                    LiteralTarget::Module(module) => {
+                        let dynamic = self.dynamic_import(module, call);
+                        self.parsed.dynamic_imports.push(dynamic);
+                    },
+                    LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
+                    LiteralTarget::Nothing => {},
+                }
+            } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
+                if let Some(module) = module_prefix(call) {
+                    let prefix = self.dynamic_import(module, call);
+                    self.parsed.dynamic_import_prefixes.push(prefix);
+                }
+                self.parsed.has_opaque_dynamic_import = true;
+            }
+        }
+        // `map(importlib.import_module, names)` loads modules this walk never sees.
+        if arguments
+            .args
+            .iter()
+            .chain(arguments.keywords.iter().map(|keyword| &keyword.value))
+            .any(|arg| self.loader_names.loader(arg).is_some())
+        {
+            self.parsed.has_opaque_dynamic_import = true;
+        }
+    }
+
     fn dynamic_import(&self, module: String, call: &ExprCall) -> DynamicImport {
         DynamicImport {
             module,
@@ -559,6 +603,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             platform_guarded: self.platform_guard_depth > 0,
             deferred: self.function_depth > 0,
             computed_getattr: false,
+            fetched: false,
         }
     }
 
@@ -1042,36 +1087,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                         app_dir,
                     });
                 }
-                let arguments = &call.arguments;
-                if let Some(loader) = self.loader_names.loader(&call.func) {
-                    if let Some(target) =
-                        literal_target(call, loader, || module_package(self.path, self.layout))
-                    {
-                        match target {
-                            LiteralTarget::Module(module) => {
-                                let dynamic = self.dynamic_import(module, call);
-                                self.parsed.dynamic_imports.push(dynamic);
-                            },
-                            LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
-                            LiteralTarget::Nothing => {},
-                        }
-                    } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
-                        if let Some(module) = module_prefix(call) {
-                            let prefix = self.dynamic_import(module, call);
-                            self.parsed.dynamic_import_prefixes.push(prefix);
-                        }
-                        self.parsed.has_opaque_dynamic_import = true;
-                    }
-                }
-                // `map(importlib.import_module, names)` loads modules this walk never sees.
-                if arguments
-                    .args
-                    .iter()
-                    .chain(arguments.keywords.iter().map(|keyword| &keyword.value))
-                    .any(|arg| self.loader_names.loader(arg).is_some())
-                {
-                    self.parsed.has_opaque_dynamic_import = true;
-                }
+                self.record_dynamic_imports(call);
             },
             Expr::List(list) => self.record_python_run(expr, &list.elts),
             Expr::Tuple(tuple) => self.record_python_run(expr, &tuple.elts),

@@ -47,6 +47,7 @@ pub(super) struct PartialConfig {
     pub confidence: Option<Confidence>,
     pub exclude: Option<Vec<String>>,
     pub vendored: Option<Vec<String>>,
+    pub module_loaders: Option<Vec<String>>,
     pub dependencies: Option<PartialDependencyGroups>,
     pub package_module_map: Option<BTreeMap<String, Vec<String>>>,
     pub binary_map: Option<BTreeMap<String, String>>,
@@ -100,6 +101,7 @@ pub fn default_config() -> ChokkinConfig {
             "**/externals/**".to_owned(),
             "**/third_party/**".to_owned(),
         ],
+        module_loaders: Vec::new(),
         dependencies: DependencyGroupsConfig {
             dev_groups: vec![
                 "dev".to_owned(),
@@ -153,6 +155,9 @@ pub(super) fn merge_layers(layers: &[PartialConfig]) -> ChokkinConfig {
         }
         if let Some(vendored) = &layer.vendored {
             config.vendored.clone_from(vendored);
+        }
+        if let Some(module_loaders) = &layer.module_loaders {
+            config.module_loaders.clone_from(module_loaders);
         }
         if let Some(dependencies) = &layer.dependencies {
             dependencies.apply_to(&mut config.dependencies);

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The module a loader API names in its first string argument is a dynamic
+  import: `import_string`, `symbol_by_name`, `import_from_string`,
+  `load_object`, `resolve_name`, and cyclopts `command("pkg.mod:app")`, plus
+  the functions listed in the new `module_loaders` setting. The trailing
+  attribute counts as a use of that module's symbol (no CHK006), and an
+  unresolved name is not CHK010, since tests pass bad names on purpose.
+  Strings like `"pkg.mod:Cls"` are also read as module references (#493).
+
 ## [0.7.8] - 2026-10-20
 
 ### Added

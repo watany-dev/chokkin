@@ -7,6 +7,7 @@ use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator
 
 use super::attributes::is_receiver;
 use super::relative::resolve_relative_name;
+use super::types::ParsedModule;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Loader {
@@ -358,6 +359,61 @@ pub(super) fn str_constant(expr: &Expr) -> Option<&str> {
     }
 }
 
+/// A call that may load the name its first argument spells (#493): the
+/// callee's last name, the name with `:` written as `.`, and whether it was
+/// written `module:attr`. The name is a dotted name of two or more segments
+/// (`"pkg.mod.Cls"`) or a dotted module and attribute (`"pkg:Cls"`,
+/// `"pkg.mod:Cls.attr"`). A one-segment name, a computed string, a name
+/// passed by keyword and a callee that is not a name (`loaders[0](...)`) are
+/// not read, so a file only such a call loads is reported unused.
+#[must_use]
+pub(super) fn named_load(call: &ExprCall) -> Option<(&str, String, bool)> {
+    let callee = match &*call.func {
+        Expr::Name(name) => name.id.as_str(),
+        Expr::Attribute(attribute) => attribute.attr.as_str(),
+        _ => return None,
+    };
+    let text = str_constant(call.arguments.args.first()?)?;
+    match text.split_once(':') {
+        Some((module, attr)) => (is_dotted_identifier(module) && is_dotted_identifier(attr))
+            .then(|| (callee, format!("{module}.{attr}"), true)),
+        None => (text.contains('.') && is_dotted_identifier(text))
+            .then(|| (callee, text.to_owned(), false)),
+    }
+}
+
+/// Loader APIs that import the module a dotted name starts with and fetch
+/// the rest as attributes (#493): Django's and werkzeug's `import_string`,
+/// celery's `symbol_by_name`, DRF's `import_from_string`, scrapy's
+/// `load_object` and `pkgutil.resolve_name`. They are matched by the
+/// callee's last name, so a project's own helper of the same name (airflow's
+/// `import_string`) counts as well.
+const MODULE_LOADERS: [&str; 5] = [
+    "import_string",
+    "symbol_by_name",
+    "import_from_string",
+    "load_object",
+    "resolve_name",
+];
+
+/// Moves each named load whose callee is a loader into its module's dynamic
+/// imports: [`MODULE_LOADERS`], cyclopts' lazy `command("pkg.mod:app")` (a
+/// `module:attr` only, as a command name is a plain word) and the names
+/// `module_loaders` configures (#493). Every other named load is dropped.
+pub(crate) fn apply_module_loaders(modules: &mut [ParsedModule], configured: &[String]) {
+    for module in modules {
+        for named in std::mem::take(&mut module.named_loads) {
+            let call = named.call.as_str();
+            if MODULE_LOADERS.contains(&call)
+                || (named.colon && call == "command")
+                || configured.iter().any(|name| name == call)
+            {
+                module.dynamic_imports.push(named.load);
+            }
+        }
+    }
+}
+
 pub(super) fn is_dotted_identifier(module: &str) -> bool {
     module.split('.').all(|part| {
         part.chars()
@@ -373,7 +429,7 @@ mod tests {
 
     use super::{
         LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path,
-        literal_target, module_prefix, module_ref_literal, module_ref_name, python_run,
+        literal_target, module_prefix, module_ref_literal, module_ref_name, named_load, python_run,
         sys_path_hint,
     };
 
@@ -409,6 +465,47 @@ mod tests {
     /// A whole dotted name, with or without `python:`, is a module reference,
     /// and so is `pkg.mod:attr` (#493); one segment, a one-segment module
     /// before `:`, a path, a sentence or a computed string is not (#1026).
+    /// A loader call names a dotted name or a `module:attr` in its first
+    /// positional argument; one segment, a keyword or a computed string is
+    /// not read, nor is a callee without a name (#493).
+    #[test]
+    fn named_loads_read_the_first_literal_dotted_name() {
+        let load = |source: &str| {
+            let Expr::Call(call) = expr(source) else {
+                panic!("not a call: {source}");
+            };
+            named_load(&call).map(|(callee, name, colon)| (callee.to_owned(), name, colon))
+        };
+        let read = |callee: &str, name: &str, colon: bool| {
+            Some((callee.to_owned(), name.to_owned(), colon))
+        };
+        assert_eq!(
+            load(r#"import_string("pkg.mod.Cls")"#),
+            read("import_string", "pkg.mod.Cls", false)
+        );
+        assert_eq!(
+            load(r#"kombu.utils.symbol_by_name("pkg.mod:Cls.attr", default=None)"#),
+            read("symbol_by_name", "pkg.mod.Cls.attr", true)
+        );
+        assert_eq!(
+            load(r#"resolve_name("pkg:Cls")"#),
+            read("resolve_name", "pkg.Cls", true)
+        );
+        for source in [
+            r#"import_string("pkg")"#,
+            r#"import_string(":Cls")"#,
+            r#"import_string("pkg.mod:")"#,
+            r#"import_string("pkg:a:b")"#,
+            r#"import_string("pkg/mod.py")"#,
+            r#"import_string(f"pkg.{name}")"#,
+            r#"import_string(name, "pkg.mod")"#,
+            r#"import_string(dotted_path="pkg.mod")"#,
+            r#"loaders[0]("pkg.mod")"#,
+        ] {
+            assert_eq!(load(source), None, "{source}");
+        }
+    }
+
     #[test]
     fn module_ref_literals_are_whole_dotted_names() {
         let module_ref = |source: &str| module_ref_literal(&expr(source)).map(str::to_owned);

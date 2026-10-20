@@ -105,9 +105,11 @@ pub fn resolve_imports_for_analysis(
     let mut imports = Vec::new();
     let mut merge = WarningMerge::default();
     for site in per_module.into_iter().flatten() {
-        if site.pytest_plugin {
+        if site.quiet_unresolved {
             // A plugin name nothing resolves is a distribution missing from
-            // the environment, not a broken import in this file.
+            // the environment, not a broken import in this file; a loader
+            // API may be handed a bad name on purpose (werkzeug's tests call
+            // `import_string("os:foobar")`, #493).
             let mut site_warnings = Vec::new();
             merge.replay(site.warnings, &mut site_warnings);
             warnings.extend(
@@ -189,7 +191,9 @@ struct Site<'s> {
 struct SiteOutcome {
     import: ResolvedImport,
     warnings: Vec<SiteWarning>,
-    pytest_plugin: bool,
+    /// A name nothing resolves raises no unresolved import: a
+    /// `pytest_plugins` entry or a loader API's argument.
+    quiet_unresolved: bool,
 }
 
 /// A warning as one site raised it. Whether it reaches the report depends on
@@ -304,13 +308,13 @@ impl Resolver<'_> {
         cache: &mut RootCache,
     ) -> Vec<SiteOutcome> {
         let mut outcomes = Vec::new();
-        let mut resolve = |site: &Site<'_>, pytest_plugin: bool| {
+        let mut resolve = |site: &Site<'_>, quiet_unresolved: bool| {
             let mut warnings = Vec::new();
             let import = self.site(site, cache, &mut warnings);
             outcomes.push(SiteOutcome {
                 import,
                 warnings,
-                pytest_plugin,
+                quiet_unresolved,
             });
         };
         for import in &module.imports {
@@ -354,7 +358,7 @@ impl Resolver<'_> {
                     relative_level: 0,
                     stdlib,
                 },
-                false,
+                dynamic.fetched,
             );
         }
         if module.pytest_plugins.is_empty() {

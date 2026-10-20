@@ -7302,6 +7302,63 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
     }
 }
 
+/// A literal a loader API fetches by name (`import_string("pkg.mod.Cls")`,
+/// celery's `symbol_by_name("pkg.mod:Cls")`) imports the module, and the
+/// class it names counts as used; a name nothing resolves is no unresolved
+/// import, since the loader may be handed a bad name on purpose. A function
+/// `module_loaders` names loads its argument the same way; without it the
+/// string only lowers the file it names (#493).
+#[test]
+fn binary_loader_api_strings_import_the_module_they_name() {
+    let base = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    for (pyproject, vision) in [
+        (format!("{base}module_loaders = [\"LazyFeature\"]\n"), None),
+        (
+            base.to_owned(),
+            Some(level("CHK001", "acme/features/vision.py", "info", "likely")),
+        ),
+    ] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject.as_str()),
+            ("acme/__init__.py", ""),
+            (
+                "acme/cli.py",
+                "from acme.loading import LazyFeature, import_string, symbol_by_name\n\n\ndef main():\n    backend = import_string(\"acme.backends.redis.RedisBackend\")\n    worker = symbol_by_name(\"acme.workers:Worker\")\n    missing = import_string(\"a.aa\")\n    feature = LazyFeature(\"acme.features.vision\")\n    return backend, worker, missing, feature\n",
+            ),
+            (
+                "acme/loading.py",
+                "def import_string(path):\n    return path\n\n\ndef symbol_by_name(path):\n    return path\n\n\ndef LazyFeature(path):\n    return path\n",
+            ),
+            ("acme/backends/__init__.py", ""),
+            (
+                "acme/backends/redis.py",
+                "class RedisBackend:\n    pass\n\n\nclass Unused:\n    pass\n",
+            ),
+            ("acme/workers.py", "class Worker:\n    pass\n"),
+            ("acme/features/__init__.py", ""),
+            ("acme/features/vision.py", ""),
+            ("acme/orphan.py", ""),
+        ]);
+        let mut expected: Vec<_> = vision.into_iter().collect();
+        expected.push(level("CHK001", "acme/orphan.py", "warning", "certain"));
+        expected.push(level(
+            "CHK006",
+            "acme/backends/redis.py:Unused",
+            "warning",
+            "likely",
+        ));
+        assert_eq!(issue_levels(project.path()), expected, "{pyproject}");
+    }
+}
+
 #[test]
 fn binary_root_examples_and_notebooks_count_as_dev_usage() {
     // #1023: a flat layout read neither `examples/` nor `notebooks/`, so the
