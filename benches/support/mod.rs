@@ -256,3 +256,45 @@ pub(crate) fn synth_workspace_project(n_members: u64) -> TempDir {
     }
     temp
 }
+
+/// A workspace of `n_members` members whose modules hold `n_refs` string
+/// literals shaped like dotted module names each (#1080): half name modules
+/// outside the project, shared by every member, and half are the member's
+/// own, so most resolve nowhere and fall back segment by segment, as
+/// airflow's lazy command and provider strings do. The root has no package,
+/// so its layout is unknown and discovery reads every member, as airflow's.
+pub(crate) fn synth_string_ref_workspace(n_members: u64, n_refs: u64) -> TempDir {
+    let temp = TempDir::new().expect("tempdir");
+    let root = temp.path();
+    write(
+        root,
+        "pyproject.toml",
+        "[project]\nname = \"bench-mono\"\nversion = \"0.1.0\"\n",
+    );
+    for index in 0..n_members {
+        let dir = format!("providers/member-{index}");
+        let package = format!("bench_member_{index}");
+        write(
+            root,
+            &format!("{dir}/pyproject.toml"),
+            &format!("[project]\nname = \"bench-member-{index}\"\nversion = \"0.1.0\"\n"),
+        );
+        write(
+            root,
+            &format!("{dir}/src/{package}/__init__.py"),
+            "from . import refs\n",
+        );
+        let mut refs = String::from("REFS = [\n");
+        for item in 0..n_refs {
+            if item % 2 == 0 {
+                writeln!(refs, "    \"vendor.shared_{item}.hooks.base:Hook\",")
+            } else {
+                writeln!(refs, "    \"{package}.commands.cmd_{item}.command\",")
+            }
+            .expect("write ref");
+        }
+        refs.push_str("]\n");
+        write(root, &format!("{dir}/src/{package}/refs.py"), &refs);
+    }
+    temp
+}
