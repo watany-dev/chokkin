@@ -33,7 +33,7 @@ clear path to a CI gate when you want one.
 ## What you get
 
 ```text
-chokkin 0.7.7
+chokkin 0.7.8
 
 Project: acme-api
 Config : pyproject.toml
@@ -273,7 +273,7 @@ Without the action, pin the version with `uvx`:
 
 ```yaml
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uvx chokkin@0.7.7 --baseline chokkin-baseline.json --reporter github
+      - run: uvx chokkin@0.7.8 --baseline chokkin-baseline.json --reporter github
 ```
 
 Baseline files and `--reporter json` output carry `schema_version: "1"` and
