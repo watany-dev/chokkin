@@ -483,7 +483,8 @@ impl PytestImportPaths {
             .flatten()
     }
 
-    /// The hinted directories of the conftests above `file`, after its own.
+    /// The hinted directories of the conftests above `file`, searched after
+    /// the file's own.
     fn conftest_hinted_dirs<'s>(&'s self, file: &'s str) -> impl Iterator<Item = &'s str> {
         let dir = parent_dir(file);
         self.conftest_hinted
