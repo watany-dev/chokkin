@@ -57,15 +57,14 @@ pub(super) fn is_codegen_file(path: &str, files: &HashSet<&str>) -> bool {
         .is_some_and(|stem| files.contains(format!("{dir}modeling_{stem}").as_str()))
 }
 
-/// Files alembic loads by path from `script_location` (#667): `env.py` and
-/// the revisions are never imported, so their names are no API surface.
-pub(super) fn alembic_script_files(plugins: &PluginHints) -> HashSet<&str> {
+/// Files a framework reads the names of itself (#667, #401): nothing
+/// imports them for those names, so they are no API surface.
+pub(super) fn scanned_files(plugins: &PluginHints) -> HashSet<&str> {
     plugins
         .contributions
         .iter()
-        .filter(|contrib| contrib.plugin == PluginId::Alembic)
-        .flat_map(|contrib| &contrib.entries)
-        .map(|entry| entry.spec.path.as_str())
+        .flat_map(|contrib| &contrib.scanned_files)
+        .map(String::as_str)
         .collect()
 }
 

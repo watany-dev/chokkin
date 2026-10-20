@@ -15,19 +15,23 @@ use crate::manifest::LoadedManifest;
 use crate::parser::ParseSummary;
 use crate::sources::DiscoveredSources;
 
+use super::airflow;
 use super::alembic;
 use super::celery;
 use super::commands;
 use super::config_scan;
 use super::context::PluginContext;
+use super::dagster;
 use super::devtools;
 use super::django;
 use super::doctools;
 use super::error::PluginsError;
 use super::fastapi;
 use super::flask;
+use super::prefect;
 use super::pytest;
-use super::types::{PluginEntry, PluginHints};
+use super::scrapy;
+use super::types::{PluginContribution, PluginEntry, PluginHints};
 
 /// Inputs for [`extract_plugin_hints_with_parse`].
 #[derive(Clone, Copy)]
@@ -89,6 +93,10 @@ pub fn extract_plugin_hints_with_parse(
             },
             PluginId::Sphinx | PluginId::MkDocs => (doctools::extract(*plugin, &ctx), Vec::new()),
             PluginId::Alembic => (alembic::extract(&ctx), Vec::new()),
+            PluginId::Airflow => (airflow::extract(&ctx), Vec::new()),
+            PluginId::Dagster => (dagster::extract(&ctx), Vec::new()),
+            PluginId::Prefect => (prefect::extract(&ctx), Vec::new()),
+            PluginId::Scrapy => (scrapy::extract(&ctx), Vec::new()),
         };
         warnings.extend(plugin_warnings);
         contributions.push(contrib);
@@ -98,6 +106,11 @@ pub fn extract_plugin_hints_with_parse(
     // From the parse, which the config scan cache does not key on.
     let mut command_targets = scan.command_targets;
     command_targets.extend(commands::parsed_server_apps(parse));
+    command_targets.extend(
+        contributions
+            .iter()
+            .flat_map(|contrib: &PluginContribution| contrib.command_targets.iter().cloned()),
+    );
 
     Ok(PluginHints {
         contributions,
@@ -137,6 +150,10 @@ pub(crate) fn discover_plugin_entries(
             PluginId::Django => django::extract(&ctx).0,
             PluginId::Sphinx => doctools::extract(*plugin, &ctx),
             PluginId::Alembic => alembic::extract(&ctx),
+            PluginId::Prefect => prefect::extract(&ctx),
+            PluginId::Airflow => airflow::extract(&ctx),
+            PluginId::Dagster => dagster::extract(&ctx),
+            PluginId::Scrapy => scrapy::extract(&ctx),
             // Their entries come from the inventory or the parse, so they
             // name no file the inventory lacks.
             PluginId::Pytest

@@ -1732,3 +1732,419 @@ fn celery_task_modules_survive_syntax_error_in_parse_path() {
                 && reference.origin.line == Some(1))
     );
 }
+
+/// A project with `deps` declared and `files` written, for the plugins
+/// that read definitions from config files (#401).
+fn orchestration_hints(
+    deps: &str,
+    tables: &str,
+    files: &[(&str, &str)],
+) -> chokkin::internals::PluginHints {
+    let plugin = deps.trim_matches('"').trim_start_matches("apache-");
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    std::fs::write(
+        root.join("pyproject.toml"),
+        format!(
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [{deps}]\n[tool.chokkin.plugins]\n{plugin} = true\n{tables}"
+        ),
+    )
+    .expect("write pyproject");
+    for (file, text) in files {
+        let path = root.join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(path, text).expect("write fixture");
+    }
+    extract_at(root)
+}
+
+fn sorted_entries(contrib: &chokkin::internals::PluginContribution) -> Vec<String> {
+    let mut paths: Vec<String> = entry_paths(contrib)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// The values a plugin did not read, which cap what they could hide.
+fn gap_texts(contrib: &chokkin::internals::PluginContribution) -> Vec<String> {
+    contrib
+        .command_targets
+        .iter()
+        .map(|target| {
+            let value = serde_json::to_value(&target.target).expect("serialize target");
+            value["Opaque"]["text"]
+                .as_str()
+                .expect("an opaque target")
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn airflow_safe_mode_loads_dag_looking_files_only() {
+    let dag = "from airflow import DAG\n";
+    let files = |safe_mode: &str| {
+        let cfg =
+            format!("[core]\ndags_folder = pipelines\ndag_discovery_safe_mode = {safe_mode}\n");
+        let hints = orchestration_hints(
+            "\"apache-airflow\"",
+            "",
+            &[
+                ("airflow.cfg", cfg.as_str()),
+                ("pipelines/etl.py", dag),
+                ("pipelines/util.py", "def helper():\n    pass\n"),
+                ("dags/sub/load.py", "from airflow.sdk import dag\n"),
+                ("tests/dags_broken/x.py", "import os\n"),
+            ],
+        );
+        sorted_entries(plugin_contrib(&hints, PluginId::Airflow))
+    };
+    assert_eq!(files("True"), ["dags/sub/load.py", "pipelines/etl.py"]);
+    assert_eq!(
+        files("False"),
+        ["dags/sub/load.py", "pipelines/etl.py", "pipelines/util.py"]
+    );
+}
+
+#[test]
+fn airflow_unreadable_dags_folder_is_a_gap() {
+    let hints = orchestration_hints(
+        "\"apache-airflow\"",
+        "",
+        &[("airflow.cfg", "[core]\ndags_folder = ${DAGS}\n")],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Airflow);
+    assert!(contrib.entries.is_empty());
+    assert_eq!(gap_texts(contrib), ["${DAGS}"]);
+    assert_eq!(contrib.command_targets[0].origin.file, "airflow.cfg");
+    assert_eq!(contrib.command_targets[0].origin.line, Some(2));
+}
+
+#[test]
+fn dagster_reads_code_locations_from_pyproject_dg_and_workspace() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "",
+        &[
+            ("dg.toml", "[project]\nroot_module = \"acme_dg\"\n"),
+            ("acme_dg/__init__.py", ""),
+            (
+                "acme_dg/definitions.py",
+                "import dagster as dg\n\ndefs = dg.Definitions()\n",
+            ),
+            ("acme_dg/defs/__init__.py", ""),
+            ("acme_dg/defs/assets.py", "x = 1\n"),
+            (
+                "workspace.yaml",
+                concat!(
+                    "load_from:\n",
+                    "  # a comment\n",
+                    "  - python_file:\n",
+                    "      relative_path: jobs/repo.py\n",
+                    "      location_name: jobs\n",
+                    "  - python_file: jobs/missing.py\n",
+                    "  - python_package: acme_pkg\n",
+                    "  - python_module: external.defs\n",
+                    "  - grpc_server:\n",
+                    "      host: localhost\n",
+                    "  - python_file: \"{{ env.FILE }}.py\"\n",
+                    "  - python_entrypoint: acme.main\n",
+                ),
+            ),
+            ("jobs/repo.py", "from dagster import repository\n"),
+            ("acme_pkg/__init__.py", ""),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(
+        sorted_entries(contrib),
+        [
+            "acme_dg/definitions.py",
+            "acme_dg/defs/__init__.py",
+            "acme_dg/defs/assets.py",
+            "acme_pkg/__init__.py",
+            "jobs/repo.py",
+        ]
+    );
+    assert_eq!(
+        contrib
+            .module_refs
+            .iter()
+            .map(|reference| reference.module.as_str())
+            .collect::<Vec<_>>(),
+        ["external.defs"]
+    );
+    assert_eq!(
+        gap_texts(contrib),
+        ["{{ env.FILE }}.py", "python_entrypoint: acme.main",]
+    );
+}
+
+#[test]
+fn dagster_tool_table_reads_module_names_and_reports_others() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "\n[tool.dagster]\nmodule_name = [\"acme_a.defs\", \"not a module\"]\n",
+        &[("acme_a/__init__.py", ""), ("acme_a/defs.py", "x = 1\n")],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(sorted_entries(contrib), ["acme_a/defs.py"]);
+    assert_eq!(gap_texts(contrib), ["not a module"]);
+    assert_eq!(contrib.command_targets[0].origin.line, Some(9));
+}
+
+/// A module binding a dagster definitions name, imported or read off an
+/// imported `dagster`, is an entry; other dagster names are not.
+#[test]
+fn dagster_definitions_modules_need_a_definitions_name() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "",
+        &[
+            ("acme/__init__.py", ""),
+            (
+                "acme/a.py",
+                "import dagster as dg\n\ndefs = dg.Definitions()\n",
+            ),
+            ("acme/b.py", "from dagster import asset\n"),
+            (
+                "acme/c.py",
+                "import other as dg\n\ndefs = dg.Definitions()\n",
+            ),
+            ("acme/d.py", "import dagster as dg\n\nx = dg.asset\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(sorted_entries(contrib), ["acme/a.py"]);
+    assert_eq!(contrib.entries[0].origin.line, Some(3));
+}
+
+fn module_ref_names(contrib: &chokkin::internals::PluginContribution) -> Vec<&str> {
+    contrib
+        .module_refs
+        .iter()
+        .map(|reference| reference.module.as_str())
+        .collect()
+}
+
+/// An explicit `dg` setting is read whether or not its file exists, and a
+/// value that is no dotted name is a gap.
+#[test]
+fn dagster_explicit_dg_settings_are_read_or_reported() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "\n[tool.dg.project]\ndefs_module = \"not valid\"\ncode_location_target_module = \"bad name\"\n",
+        &[(
+            "dg.toml",
+            "[project]\ncode_location_target_module = \"external.defs\"\n",
+        )],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert!(contrib.entries.is_empty());
+    assert_eq!(module_ref_names(contrib), ["external.defs"]);
+    assert_eq!(gap_texts(contrib), ["\"not valid\"", "\"bad name\""]);
+}
+
+/// The modules a `root_module` implies are read only when they are dotted
+/// names with a file; a file building `Definitions` keeps its own context.
+#[test]
+fn dagster_implied_dg_settings_need_a_file() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "\n[tool.dg.project]\nroot_module = \"bad name\"\n",
+        &[
+            ("dg.toml", "[project]\nroot_module = \"acme_dg\"\n"),
+            ("acme_dg/__init__.py", ""),
+            ("acme_dg/definitions.py", "x = 1\n"),
+            ("tests/test_defs.py", "from dagster import Definitions\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(
+        sorted_entries(contrib),
+        ["acme_dg/definitions.py", "tests/test_defs.py"]
+    );
+    let test_entry = contrib
+        .entries
+        .iter()
+        .find(|entry| entry.spec.path == "tests/test_defs.py")
+        .expect("test entry");
+    assert_eq!(test_entry.context, FileContext::Test);
+    assert!(module_ref_names(contrib).is_empty());
+    assert!(gap_texts(contrib).is_empty());
+}
+
+/// `load_from` items at the key's own indent, blank lines inside and
+/// between them, and the key that ends the list; a line that is no list
+/// item is a gap.
+#[test]
+fn dagster_load_from_reads_the_list_to_its_end() {
+    let hints = orchestration_hints(
+        "\"dagster\"",
+        "",
+        &[
+            (
+                "workspace.yaml",
+                concat!(
+                    "load_from:\n",
+                    "  stray: x\n",
+                    "- python_module: col_zero.defs\n",
+                    "\n",
+                    "- python_file:\n",
+                    "\n",
+                    "    relative_path: jobs/spaced.py\n",
+                    "- python_file:\n",
+                    "other:\n",
+                    "- python_module: not_loaded.defs\n",
+                ),
+            ),
+            ("jobs/spaced.py", "x = 1\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Dagster);
+    assert_eq!(sorted_entries(contrib), ["jobs/spaced.py"]);
+    assert_eq!(module_ref_names(contrib), ["col_zero.defs"]);
+    assert_eq!(gap_texts(contrib), ["stray: x", "python_file:"]);
+    assert_eq!(contrib.command_targets[0].origin.line, Some(2));
+}
+
+#[test]
+fn prefect_entrypoints_root_files_and_report_templates() {
+    let hints = orchestration_hints(
+        "\"prefect\"",
+        "",
+        &[
+            (
+                "prefect.yaml",
+                concat!(
+                    "pull:\n",
+                    "  - prefect.deployments.steps.set_working_directory:\n",
+                    "      directory: /opt/flows\n",
+                    "deployments:\n",
+                    "  - name: etl\n",
+                    "    entrypoint: flows/etl.py:etl_flow\n",
+                    "  - name: dotted\n",
+                    "    entrypoint: acme.flows.nightly\n",
+                    "  - name: unset\n",
+                    "    entrypoint: null\n",
+                    "  - name: gone\n",
+                    "    entrypoint: flows/gone.py:run\n",
+                    "  - name: templated\n",
+                    "    entrypoint: \"{{ $ENTRY }}\"\n",
+                ),
+            ),
+            ("flows/etl.py", "from prefect import flow\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Prefect);
+    assert_eq!(sorted_entries(contrib), ["flows/etl.py"]);
+    assert_eq!(contrib.entries[0].spec.symbol.as_deref(), Some("etl_flow"));
+    assert_eq!(
+        contrib
+            .symbol_refs
+            .iter()
+            .map(|reference| (reference.module.as_str(), reference.symbol.as_str()))
+            .collect::<Vec<_>>(),
+        [("acme.flows", "nightly")]
+    );
+    assert_eq!(gap_texts(contrib), ["{{ $ENTRY }}"]);
+    assert_eq!(contrib.command_targets[0].origin.line, Some(14));
+}
+
+#[test]
+fn scrapy_settings_root_spiders_and_named_components() {
+    let hints = orchestration_hints(
+        "\"scrapy\"",
+        "",
+        &[
+            (
+                "scrapy.cfg",
+                "[settings]\ndefault = crawler.settings\n\n[deploy]\nurl = http://localhost:6800/\n",
+            ),
+            ("crawler/__init__.py", ""),
+            (
+                "crawler/settings.py",
+                concat!(
+                    "BOT_NAME = \"crawler\"\n",
+                    "SPIDER_MODULES = (\"crawler.spiders\",)\n",
+                    "NEWSPIDER_MODULE = \"crawler.spiders\"\n",
+                    "ITEM_PIPELINES = {\"crawler.pipelines.SavePipeline\": 300}\n",
+                    "DOWNLOADER_MIDDLEWARES = {\"scrapy.downloadermiddlewares.useragent.UserAgentMiddleware\": None}\n",
+                    "DUPEFILTER_CLASS = \"crawler.dupes\"\n",
+                    "FEED_EXPORTERS_LIST = [\"crawler.ext_a\"]\n",
+                    "SPIDER_LOADERS = (\"crawler.ext_b\",)\n",
+                ),
+            ),
+            ("crawler/ext_a.py", "x = 1\n"),
+            ("crawler/ext_b.py", "x = 1\n"),
+            ("crawler/spiders/__init__.py", ""),
+            ("crawler/spiders/quotes.py", "import scrapy\n"),
+            ("crawler/spiders/nested/__init__.py", ""),
+            ("crawler/spiders/nested/books.py", "import scrapy\n"),
+            ("crawler/pipelines.py", "class SavePipeline:\n    pass\n"),
+            ("crawler/dupes.py", "x = 1\n"),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Scrapy);
+    assert_eq!(
+        sorted_entries(contrib),
+        [
+            "crawler/dupes.py",
+            "crawler/ext_a.py",
+            "crawler/ext_b.py",
+            "crawler/pipelines.py",
+            "crawler/settings.py",
+            "crawler/spiders/__init__.py",
+            "crawler/spiders/nested/__init__.py",
+            "crawler/spiders/nested/books.py",
+            "crawler/spiders/quotes.py",
+        ]
+    );
+    assert_eq!(
+        contrib
+            .symbol_refs
+            .iter()
+            .map(|reference| (reference.module.as_str(), reference.symbol.as_str()))
+            .collect::<Vec<_>>(),
+        [("crawler.pipelines", "SavePipeline")]
+    );
+    assert!(gap_texts(contrib).is_empty());
+}
+
+#[test]
+fn scrapy_unread_spider_modules_and_settings_are_gaps() {
+    let hints = orchestration_hints(
+        "\"scrapy\"",
+        "",
+        &[
+            (
+                "scrapy.cfg",
+                "[settings]\ndefault = crawler.settings\nother = ${SETTINGS}\nexternal = vendor.settings\n",
+            ),
+            ("crawler/__init__.py", ""),
+            (
+                "crawler/settings.py",
+                "import os\nSPIDER_MODULES = [\"crawler.spiders\", os.environ[\"MORE\"]]\n",
+            ),
+            ("crawler/spiders/__init__.py", ""),
+        ],
+    );
+    let contrib = plugin_contrib(&hints, PluginId::Scrapy);
+    assert_eq!(sorted_entries(contrib), ["crawler/settings.py"]);
+    assert_eq!(
+        contrib
+            .module_refs
+            .iter()
+            .map(|reference| reference.module.as_str())
+            .collect::<Vec<_>>(),
+        ["vendor.settings"]
+    );
+    let mut gaps = gap_texts(contrib);
+    gaps.sort();
+    assert_eq!(
+        gaps,
+        ["${SETTINGS}", "[\"crawler.spiders\", os.environ[\"MORE\"]]",]
+    );
+}
