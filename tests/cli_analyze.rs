@@ -3534,6 +3534,38 @@ fn binary_django_installed_app_conventions_are_used() {
 }
 
 #[test]
+fn binary_django_receivers_outside_installed_apps_are_used() {
+    // netbox connects receivers from `netbox/search/signals.py`, a module of
+    // the project package that is no installed app.
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = []\nROOT_URLCONF = 'mysite.urls'\n",
+        ),
+        ("mysite/urls.py", "from . import hooks\n"),
+        (
+            "mysite/hooks.py",
+            "from django.db.models.signals import post_save\nfrom django.dispatch import receiver\n\n\n@receiver(post_save)\ndef on_save(sender, **kwargs):\n    pass\n\n\ndef dead():\n    pass\n",
+        ),
+    ]);
+    let flagged: Vec<String> = issue_keys(&json_issues(project.path(), &["--no-cache"]))
+        .into_iter()
+        .filter(|(code, target)| code == "CHK006" && target.starts_with("mysite/hooks.py"))
+        .map(|(_, target)| target)
+        .collect();
+    assert_eq!(flagged, ["mysite/hooks.py:dead"]);
+}
+
+#[test]
 fn binary_django_import_settings_explain_the_setting_line() {
     let project = write_project(&[
         (

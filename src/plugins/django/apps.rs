@@ -35,8 +35,8 @@ pub(super) struct Installed {
 /// - each module directly in `management/commands/` that binds `Command`
 ///   and does not start with `_`, and its `Command` (`manage.py`).
 ///
-/// In any module of the app, what `@receiver` and `@register` decorate is
-/// used too.
+/// In any module of the app, what `@register` decorates is used too, and in
+/// any module at all, what `@receiver` decorates.
 ///
 /// A templatetag or command module that does not bind the name Django reads
 /// fails to load there, so it is left to the import graph; one that does
@@ -70,6 +70,25 @@ pub(super) fn extract(
     }
 
     for module in &ctx.parse.modules {
+        let Some(name) = crate::sources::path_to_module(&module.path, &ctx.sources.layout) else {
+            continue;
+        };
+        // Connected to a signal once the module is imported, whether or not
+        // it belongs to an app; the decorator is the reference.
+        for symbol in &module.symbols {
+            if symbol
+                .decorators
+                .iter()
+                .any(|decorator| names(decorator, "receiver"))
+            {
+                let origin = ReferenceOrigin {
+                    file: module.path.clone(),
+                    line: Some(symbol.line),
+                    label: "Django signal receiver".to_owned(),
+                };
+                push_used_symbol(contrib, &name, &symbol.name, &origin);
+            }
+        }
         // The innermost app, when one is nested in another's package.
         let Some((dir, rest)) = apps
             .keys()
@@ -81,22 +100,11 @@ pub(super) fn extract(
         else {
             continue;
         };
-        let Some(name) = crate::sources::path_to_module(&module.path, &ctx.sources.layout) else {
-            continue;
-        };
         let origin = &apps[dir];
-        // Registered with the signal dispatcher, the system checks or the
-        // admin; this holds in a module no convention loads, as `ready()`
-        // imports `signals.py`.
+        // Registered with the system checks or the admin; this holds in a
+        // module no convention loads, as `ready()` imports `checks.py`.
         let registered = relabel(origin, "Django registration");
-        for symbol in decorated(module, |decorator| {
-            REGISTRATIONS.iter().any(|name| {
-                decorator == *name
-                    || decorator
-                        .strip_suffix(name)
-                        .is_some_and(|head| head.ends_with('.'))
-            })
-        }) {
+        for symbol in decorated(module, |decorator| names(decorator, "register")) {
             push_used_symbol(contrib, &name, &symbol, &registered);
         }
         let (label, used): (&str, Vec<String>) = match rest {
@@ -126,9 +134,14 @@ pub(super) fn extract(
 
 const CONFIG_LABEL: &str = "Django app config";
 
-/// Decorators that register a function or class with Django by themselves:
-/// `@receiver(post_save)`, `@checks.register()`, `@admin.register(Model)`.
-const REGISTRATIONS: &[&str] = &["receiver", "register"];
+/// Whether `decorator` is `name` or an attribute of that name
+/// (`@checks.register()`, `@admin.register(Model)`, `@dispatch.receiver`).
+fn names(decorator: &str, name: &str) -> bool {
+    decorator == name
+        || decorator
+            .strip_suffix(name)
+            .is_some_and(|head| head.ends_with('.'))
+}
 
 /// A first-party installed app: its package directory, the `AppConfig` its
 /// `INSTALLED_APPS` value names, and whether that config is the admin's.
