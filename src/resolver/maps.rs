@@ -321,6 +321,12 @@ mod tests {
             ("phonenumbers", "phonenumberslite"),
             ("ninja", "ninja"),
             ("ninja", "django-ninja"),
+            ("translate", "translate"),
+            ("translate", "translate-toolkit"),
+            ("environ", "environ-config"),
+            ("environ", "django-environ"),
+            ("lingua", "lingua"),
+            ("lingua", "lingua-language-detector"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
@@ -392,12 +398,10 @@ mod tests {
             ("flask_login", "flask-login"),
             ("permissionedforms", "django-permissionedforms"),
             ("crispy_forms", "django-crispy-forms"),
-            ("environ", "django-environ"),
             ("rest_framework_simplejwt", "djangorestframework-simplejwt"),
             ("actstream", "django-activity-stream"),
             ("compressor", "django-compressor"),
             ("pythonjsonlogger", "python-json-logger"),
-            ("translate", "translate-toolkit"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),

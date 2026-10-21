@@ -1214,6 +1214,12 @@
       ]
     },
     {
+      "distribution": "environ-config",
+      "imports": [
+        "environ"
+      ]
+    },
+    {
       "distribution": "django-formtools",
       "imports": [
         "formtools"
@@ -1274,6 +1280,12 @@
       ]
     },
     {
+      "distribution": "lingua",
+      "imports": [
+        "lingua"
+      ]
+    },
+    {
       "distribution": "maxminddb-geolite2",
       "imports": [
         "geolite2"
@@ -1293,6 +1305,12 @@
     },
     {
       "distribution": "translate-toolkit",
+      "imports": [
+        "translate"
+      ]
+    },
+    {
+      "distribution": "translate",
       "imports": [
         "translate"
       ]
