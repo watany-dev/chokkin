@@ -143,7 +143,7 @@ fn scan_uv_layout(contents: &str) -> Option<UvLock> {
             .strip_prefix('[')
             .and_then(|rest| rest.strip_suffix(']'))
         {
-            if !is_bare_key(header, true) {
+            if !is_dotted_key(header) {
                 return None;
             }
             keys.clear();
@@ -298,12 +298,11 @@ fn is_plain_value(value: &str) -> bool {
         || (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn is_bare_key(key: &str, dotted: bool) -> bool {
-    !key.is_empty()
-        && key
-            .split('.')
-            .all(|part| !part.is_empty() && part.bytes().all(is_key_byte))
-        && (dotted || !key.contains('.'))
+/// A table header's key: bare parts joined by dots. Keys of `key = value`
+/// lines are undotted, which [`split_bare_key`] checks as it splits.
+fn is_dotted_key(key: &str) -> bool {
+    key.split('.')
+        .all(|part| !part.is_empty() && part.bytes().all(is_key_byte))
 }
 
 fn is_key_byte(byte: u8) -> bool {
@@ -578,8 +577,23 @@ mod tests {
             "[[package]]\nname = \"a\"\nx.y = 1\n",
             "[[package]]\nname = \"a\"\n = 1\n",
             "[[package]]\nname = \"a\"\nx=1\n",
+            "[a b]\n[[package]]\nname = \"a\"\n",
+            "[a..b]\n[[package]]\nname = \"a\"\n",
+            "[]\n[[package]]\nname = \"a\"\n",
         ] {
             assert!(scan_uv_layout(contents).is_none(), "{contents}");
+        }
+    }
+
+    /// Only a root-level `package` key would be the package array itself.
+    #[test]
+    fn scanner_reads_a_package_key_outside_the_root() {
+        for contents in [
+            "[options]\npackage = 1\n\n[[package]]\nname = \"a\"\n",
+            "[[package]]\nname = \"a\"\npackage = 1\n",
+        ] {
+            let graph = scan_uv_layout(contents).map(lock_graph);
+            assert_eq!(graph, Some(toml_graph(contents)), "{contents}");
         }
     }
 
