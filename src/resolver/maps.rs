@@ -190,6 +190,25 @@ mod tests {
     }
 
     #[test]
+    fn maps_orchestration_clis_to_their_distributions() {
+        let map = build_binary_map(&default_config(), &super::super::venv::VenvIndex::default());
+        for (binary, distribution) in [
+            ("dagster", "dagster"),
+            ("dagster-webserver", "dagster-webserver"),
+            ("dg", "dagster-dg-cli"),
+            ("dbt", "dbt-core"),
+            ("prefect", "prefect"),
+            ("scrapy", "scrapy"),
+        ] {
+            assert_eq!(
+                map.get(binary).map(String::as_str),
+                Some(distribution),
+                "{binary}"
+            );
+        }
+    }
+
+    #[test]
     fn user_map_overrides_bundled() {
         let mut config = default_config();
         config
