@@ -1,0 +1,14 @@
+# Labels for findings the default output hides (#1065): CHK001 at `maybe` in
+# the --strict reports of scripts/oss-metrics.py --with-strict. Kept apart from
+# scripts/oss-fixtures.labels.tsv, whose labels match the default run: these
+# never appear there and would all count as stale.
+#
+# Drawn with
+#   scripts/sample-precision-labels.py --maybe --rule CHK001 >> scripts/oss-maybe.labels.tsv
+# and hand-labelled by reading the pinned clones (nothing executed). `tp` = the
+# file is dead (hiding it is a false negative), `fp` = it is used. The tp share
+# is the false-negative rate of the `maybe` floor; it is recorded in
+# docs/dev/chk001-remove-and-test.md, not gated.
+#
+# Same columns as scripts/oss-fixtures.labels.tsv:
+# slug	code	target	verdict	bucket	note
