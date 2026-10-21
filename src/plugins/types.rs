@@ -105,10 +105,23 @@ pub struct CommandTargetRef {
 /// constants module (#779).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SysPathImport {
-    /// Root-relative path of the importing file.
-    pub importer: String,
+    /// The importing file.
+    pub importer: SysPathImporter,
     /// Root-relative path of the imported module.
     pub imported: String,
+}
+
+/// The file that sees the `sys.path` edits of a [`SysPathImport`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SysPathImporter {
+    /// Root-relative path of a file that imports the module.
+    File(String),
+    /// A module the imported file names, which the tool imports by name once
+    /// that file has run: a Sphinx extension `conf.py` lists sees the
+    /// `sys.path` of `conf.py`, its imports' edits included (#1086). It is
+    /// whatever the name resolves to from the imported file on the hinted
+    /// path or beside it.
+    Named(String),
 }
 
 /// `module:symbol` reference (uvicorn, gunicorn, etc.).
