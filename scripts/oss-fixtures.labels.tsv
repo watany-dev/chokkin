@@ -2285,6 +2285,7 @@ prefect-collection-registry	CHK006	src/prefect_collection_registry/utils.py:LOCK
 prefect-collection-registry	CHK006	src/prefect_collection_registry/utils.py:get_logo_url_for_collection	info-expected	library-public-api	library mode (no app signal), so info; only caller is generate_flow_metadata.py, which nothing imports
 open-gov-crawlers	CHK002	cryptography	tp	-	never imported; scrapy pulls it in itself
 open-gov-crawlers	CHK002	lxml	tp	-	only use is BeautifulSoup(features="lxml") in parsers/int/rome_statute.py, a file nothing imports; scrapy pulls lxml in itself
+open-gov-crawlers	CHK008	pylint	fp	not-invoked	[tool.pylint.main] config only; pylint never invoked (no CI, Makefile or pre-commit hook) nor declared
 open-gov-crawlers	CHK006	public_law/glossaries/parsers/gbr/cpr_glossary.py:empty_tag	info-expected	library-public-api	library mode (no app signal), so info; module constant unused; the spider of the same name builds its own local empty_tag
 open-gov-crawlers	CHK006	public_law/legal_texts/models/crs.py:Part	info-expected	library-public-api	library mode (no app signal), so info; class referenced nowhere else (models/__init__.py does not re-export it)
 open-gov-crawlers	CHK006	public_law/shared/models/result.py:cat_oks	info-expected	library-public-api	library mode (no app signal), so info; function referenced nowhere else
