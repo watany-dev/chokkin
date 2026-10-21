@@ -1410,8 +1410,10 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 誤検知の ground truth は `scripts/oss-fixtures.labels.tsv` に `fp`/`tp`/`deferred`
 で記録し、**CHK002** の未分類 (unknown + deferred) が残ると FP gate は通らない。
 manifest の app mode CHK001 corpus の節 (CHK001 を測るために足した Django app、
-#1065) の CHK002 は FP 率を記録するだけで gate に入れない。その誤検知の大半は
-URLconf の `include()` の文字列が import edge にならないことで起き、gate が測るのがその 1 つの gap になるため。
+#1065) の CHK002 は FP 率を記録するだけで gate に入れない。その誤検知の大半は、
+settings が文字列で名指す backend (`STORAGES`、`CACHES`、`DATABASES` の `ENGINE`、
+`PASSWORD_HASHERS`) と、docker や shell からだけ起動する CLI の依存で起きる。どちらも
+chokkin がまだ読まない形なので、gate に入れると既知の gap を測ることになるため。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
 
 severity が `info` の finding (例: optional try-import の CHK003) はヒットとして

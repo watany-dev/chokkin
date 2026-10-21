@@ -817,9 +817,10 @@ def main() -> int:
         # fixed, or a clone revision bump moved its target.
         return sum(1 for (s, c, t), (v, _) in labels.items() if c == code and v != "deferred" and (s, c, t) not in seen)
 
-    # The app-mode CHK001 corpus is recorded only for CHK002 (#1065): its
-    # Django apps load modules through URLconf include() strings, which are
-    # not import edges, so the gate would measure that one gap.
+    # The app-mode CHK001 corpus is recorded only for CHK002 (#1065): most of
+    # its false positives are backends named by settings strings and CLIs run
+    # from docker or shell, forms chokkin does not read yet, so the gate would
+    # measure those known gaps.
     app_corpus = frozenset(oc.read_section(args.manifest, oc.APP_CORPUS_SECTION))
     fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in app_corpus])
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
