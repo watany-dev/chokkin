@@ -327,6 +327,7 @@ mod tests {
             ("environ", "django-environ"),
             ("lingua", "lingua"),
             ("lingua", "lingua-language-detector"),
+            ("progressbar", "progressbar2"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(

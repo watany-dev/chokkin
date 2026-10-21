@@ -1027,6 +1027,12 @@
       ]
     },
     {
+      "distribution": "progressbar2",
+      "imports": [
+        "progressbar"
+      ]
+    },
+    {
       "distribution": "google-i18n-address",
       "imports": [
         "i18naddress"
