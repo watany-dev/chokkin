@@ -37,6 +37,8 @@ pub(crate) struct PytestImportPaths {
     files: HashSet<String>,
     /// Non-test files run as scripts, with their own directory on `sys.path`.
     scripts: HashSet<String>,
+    /// The module names of the project's own packages.
+    package_modules: HashSet<String>,
     /// Every directory holding a discovered file, at any depth.
     dirs: HashSet<String>,
     /// Test-context file → the directories on `sys.path` while it runs, in
@@ -164,20 +166,12 @@ impl PytestImportPaths {
             search.insert(file.path.clone(), file_dirs);
         }
 
-        let scripts = sources
-            .files
-            .iter()
-            .filter(|file| match file.context {
-                FileContext::Test => false,
-                FileContext::Runtime => path_to_module(&file.path, &sources.layout).is_none(),
-                FileContext::Docs | FileContext::Dev => true,
-            })
-            .map(|file| file.path.clone())
-            .collect();
+        let (scripts, package_modules) = scripts_and_package_modules(sources);
 
         Self {
             files,
             scripts,
+            package_modules,
             dirs,
             search,
             root_modules: HashSet::new(),
@@ -279,12 +273,14 @@ impl PytestImportPaths {
             .filter_map(|(dir, names)| Some((dir, names?)))
             .collect();
         self.hinted_roots = self.hinted_roots();
-        self.hinted_index = self.hinted_index();
+        self.hinted_index = self.hinted_index(None);
         self.any_hinted_root = self.hinted_roots.values().flatten().cloned().collect();
-        if self.add_named_hints(imports) {
-            // The directories are those already hinted, so only the
-            // per-file index changes.
-            self.hinted_index = self.hinted_index();
+        let named = self.add_named_hints(imports);
+        if !named.is_empty() {
+            // The directories are those already hinted, so only these files'
+            // indexes change.
+            let index = self.hinted_index(Some(&named));
+            self.hinted_index.extend(index);
         }
         self
     }
@@ -293,42 +289,69 @@ impl PytestImportPaths {
     fn add_imported_hints(&mut self, imports: &[SysPathImport]) {
         for import in imports {
             if let SysPathImporter::File(importer) = &import.importer {
-                self.extend_hinted(importer, &import.imported);
+                self.extend_hinted(importer, &[import.imported.as_str()]);
             }
         }
     }
 
     /// Give each module an import names the directories of that import,
     /// those it takes from its own imports included: the module is found
-    /// from it, so this waits for the index. Whether any file got some.
-    fn add_named_hints(&mut self, imports: &[SysPathImport]) -> bool {
-        let named: Vec<(String, &str)> = imports
-            .iter()
-            .filter_map(|import| {
-                let SysPathImporter::Named(module) = &import.importer else {
-                    return None;
-                };
-                let file = self.resolve_fallback(&import.imported, module)?;
-                Some((file.to_owned(), import.imported.as_str()))
-            })
-            .collect();
-        let mut added = false;
+    /// from it, so this waits for the index. A module of the project's own
+    /// packages is imported by that name elsewhere too, so it gets none.
+    /// The files that got some.
+    fn add_named_hints(&mut self, imports: &[SysPathImport]) -> HashSet<String> {
+        // By module file: many Sphinx confs may name one extension
+        // (airflow's providers).
+        let mut named: HashMap<String, Vec<&str>> = HashMap::new();
+        for import in imports {
+            let SysPathImporter::Named(module) = &import.importer else {
+                continue;
+            };
+            if self.package_modules.contains(module) {
+                continue;
+            }
+            if let Some(file) = self.resolve_fallback(&import.imported, module) {
+                named
+                    .entry(file.to_owned())
+                    .or_default()
+                    .push(&import.imported);
+            }
+        }
+        let mut added = HashSet::new();
         for (file, imported) in named {
-            added |= self.extend_hinted(&file, imported);
+            if self.extend_hinted(&file, &imported) {
+                added.insert(file);
+            }
         }
         added
     }
 
-    /// Append the directories `imported` hints to those of `file`.
-    fn extend_hinted(&mut self, file: &str, imported: &str) -> bool {
-        let Some(dirs) = self.hinted.get(imported).cloned() else {
+    /// Append the directories the `imported` files hint to those of `file`,
+    /// each once. Whether `file` got any.
+    fn extend_hinted(&mut self, file: &str, imported: &[&str]) -> bool {
+        let mut seen: HashSet<&str> = self
+            .hinted
+            .get(file)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let new: Vec<String> = imported
+            .iter()
+            .filter_map(|imported| self.hinted.get(*imported))
+            .flatten()
+            .filter(|dir| seen.insert(dir))
+            .cloned()
+            .collect();
+        if new.is_empty() {
             return false;
-        };
-        self.hinted.entry(file.to_owned()).or_default().extend(dirs);
+        }
+        self.hinted.entry(file.to_owned()).or_default().extend(new);
         true
     }
 
-    fn hinted_index(&self) -> HashMap<String, Arc<HintIndex>> {
+    /// The index of each hinted file, or of those in `only`.
+    fn hinted_index(&self, only: Option<&HashSet<String>>) -> HashMap<String, Arc<HintIndex>> {
         // The names `has_module` finds in each hinted directory.
         let mut names: HashMap<&str, Vec<&str>> = self
             .hinted_roots
@@ -347,6 +370,7 @@ impl PytestImportPaths {
         let mut shared: HashMap<&[String], Arc<HintIndex>> = HashMap::new();
         self.hinted
             .iter()
+            .filter(|(file, _)| only.is_none_or(|only| only.contains(*file)))
             .map(|(file, dirs)| {
                 let index = shared.entry(dirs).or_insert_with(|| {
                     let mut index = HintIndex::default();
@@ -579,6 +603,30 @@ impl PytestImportPaths {
             .flatten()
             .map(String::as_str)
     }
+}
+
+/// The non-test files run as scripts, and the module names of the runtime
+/// files the layout names.
+fn scripts_and_package_modules(sources: &DiscoveredSources) -> (HashSet<String>, HashSet<String>) {
+    let mut scripts = HashSet::new();
+    let mut package_modules = HashSet::new();
+    for file in &sources.files {
+        match file.context {
+            FileContext::Test => {},
+            FileContext::Runtime => match path_to_module(&file.path, &sources.layout) {
+                Some(module) => {
+                    package_modules.insert(module);
+                },
+                None => {
+                    scripts.insert(file.path.clone());
+                },
+            },
+            FileContext::Docs | FileContext::Dev => {
+                scripts.insert(file.path.clone());
+            },
+        }
+    }
+    (scripts, package_modules)
 }
 
 /// The directory pytest's prepend mode inserts for `path`: its directory, or
@@ -1222,7 +1270,42 @@ mod tests {
         }
         // A name not found from the import gives nothing.
         let paths = paths(&[conf_imports, named("missing"), named("unlisted")]);
-        assert_eq!(paths.hinted.len(), 2);
+        let mut hinted: Vec<&str> = paths.hinted.keys().map(String::as_str).collect();
+        hinted.sort_unstable();
+        assert_eq!(hinted, ["common/constants.py", "docs/conf.py"]);
+    }
+
+    #[test]
+    fn named_modules_take_each_directory_once_and_skip_package_modules() {
+        let files = [
+            "docs/conf.py",
+            "docs/other/conf.py",
+            "exts/docroles.py",
+            "src/acme/__init__.py",
+            "src/acme/sphinxext.py",
+        ];
+        let parse = ParseSummary {
+            modules: vec![
+                hinting("docs/conf.py", &["exts", "src"]),
+                hinting("docs/other/conf.py", &["exts"]),
+            ],
+        };
+        let named = |conf: &str, module: &str| SysPathImport {
+            importer: SysPathImporter::Named(module.to_owned()),
+            imported: conf.to_owned(),
+        };
+        let imports = [
+            named("docs/conf.py", "docroles"),
+            named("docs/other/conf.py", "docroles"),
+            named("docs/conf.py", "acme.sphinxext"),
+        ];
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse, &imports);
+        assert_eq!(paths.hinted["exts/docroles.py"], ["exts", "src"]);
+        // The project's own package imports it by that name too.
+        assert!(!paths.hinted.contains_key("src/acme/sphinxext.py"));
     }
 
     #[test]
