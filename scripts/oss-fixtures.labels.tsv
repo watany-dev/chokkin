@@ -966,13 +966,11 @@ llama_index	CHK002	script:docs/scripts/prepare_for_build.py:pyaml	tp	-	PEP 723 b
 #   scripts/sample-precision-labels.py --rule CODE >> scripts/oss-fixtures.labels.tsv
 # (50 per rule, at most 6 per project). #699 topped CHK006 / CHK010 up to >=20%
 # coverage and #785 topped CHK001 / CHK004 up to >=30%; refill with
-# --total 21 --per-project 12 (CHK001), --total 565 --per-project 140 (CHK004)
+# --total 46 --per-project 8 (CHK001; --prune first, #1065), --total 565 --per-project 140 (CHK004)
 # and --total 225 --per-project 70 (CHK006 / CHK010). When report.md shows
 # stale labels after a fix or a clone bump, delete those rows and rerun the
 # script to top the sample back up.
-poetry	CHK001	src/poetry/masonry/api.py	fp	library-public	Shipped back-compat build backend poetry.masonry.api (re-exports poetry.core.masonry.api) for users' pyproject build-backend
 poetry	CHK001	src/poetry/console/events/console_events.py	tp	-	Empty (0-byte) file; no reference to poetry.console.events.console_events (code uses cleo.events.console_events)
-airflow	CHK001	devel-common/src/sphinx_exts/docroles.py	fp	dynamic-import	Sphinx extension listed by name "docroles" in devel-common/src/docs/utils/conf_constants.py extensions
 airflow	CHK004	snowflake:providers/snowflake/src/airflow/providers/snowflake/hooks/snowflake.py:sqlalchemy	tp	-	providers/snowflake/pyproject.toml deps/extras/groups lack sqlalchemy; only via snowflake-sqlalchemy/apache-airflow
 fastmcp	CHK004	fastmcp_slim:fastmcp_slim/fastmcp/utilities/inspect.py:pydantic_core	tp	-	fastmcp_slim/pyproject.toml deps+dynamic extras lack pydantic-core; only via pydantic
 llama_index	CHK004	llama-index-readers-chatgpt-plugin:llama-index-integrations/readers/llama-index-readers-chatgpt-plugin/llama_index/readers/chatgpt_plugin/base.py:requests	tp	-	member pyproject declares only llama-index-core; requests transitive
@@ -1073,20 +1071,10 @@ sqlalchemy	CHK010	lib/sqlalchemy/dialects/sqlite/pysqlcipher.py:pysqlcipher3	tp	
 streamlit	CHK010	lib/streamlit/elements/write.py:tensorflow	tp	-	undeclared third-party: tensorflow (not in streamlit manifests or uv.lock)
 structlog	CHK010	src/structlog/dev.py:better_exceptions	info-expected	-	undeclared third-party: better-exceptions (guarded optional import); info since #670 (optional import)
 virtualenv	CHK010	tests/unit/seed/wheels/test_acquire.py:pip	fp	other	not an import: list literal [sys.executable,'-m','pip',...] in a test assertion
-airflow	CHK001	devel-common/src/sphinx_exts/metrics_tables_from_registry.py	fp	framework-loaded	listed by string in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
-airflow	CHK001	airflow-core/tests/unit/dags_with_system_exit/c_system_exit.py	fp	framework-loaded	DAG file loaded from dags_with_system_exit folder by DAG processor in test_manager.py
 airflow	CHK001	airflow-core/src/airflow/stats.py	fp	library-public	deprecated backward-compat shim explicitly kept for third-party `from airflow.stats import Stats`
 airflow	CHK001	airflow-core/src/airflow/ti_deps/deps/mapped_task_expanded.py	tp	-	MappedTaskIsExpanded referenced nowhere (only a path in scripts/cov/core_coverage.py); no string/dep registry use
-airflow	CHK001	airflow-core/tests/unit/dags/no_dags.py	fp	framework-loaded	DAG file in TEST_DAGS_FOLDER, loaded by path in tests/unit/utils/test_file.py and dag_processing/test_collection.py
-llama_index	CHK001	llama-index-integrations/graph_rag/llama-index-graph-rag-cognee/example.py	fp	script-entry	standalone example at the member root with an if __name__ == "__main__" guard
-airflow	CHK001	devel-common/src/sphinx_exts/suggest_change_button.py	fp	framework-loaded	listed by string in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
-fastmcp	CHK001	tests/downstream/smoke_pydantic_ai.py	fp	script-entry	run by .github/workflows/run-downstream-smoke.yml (script: smoke_*.py); documented in tests/downstream/README.md
-airflow	CHK001	devel-common/src/sphinx_exts/redirects.py	fp	framework-loaded	listed by string ("redirects") in Sphinx extensions list in devel-common/src/docs/utils/conf_constants.py
-fastmcp	CHK001	tests/downstream/smoke_langchain_mcp.py	fp	script-entry	run by .github/workflows/run-downstream-smoke.yml (script: smoke_*.py); documented in tests/downstream/README.md
 airflow	CHK001	airflow-core/src/airflow/api_fastapi/gunicorn_config.py	fp	dynamic-import	loaded by gunicorn from the string "python:airflow.api_fastapi.gunicorn_config" in api_fastapi/gunicorn_app.py
-fastmcp	CHK001	tests/downstream/smoke_langchain_mcp_adapters.py	fp	script-entry	run by .github/workflows/run-downstream-smoke.yml (script: smoke_*.py); documented in tests/downstream/README.md
 airflow	CHK001	airflow-core/src/airflow/cli/commands/cheat_sheet_command.py	fp	dynamic-import	lazy_load_command("airflow.cli.commands.cheat_sheet_command.cheat_sheet") in cli/cli_config.py (#493)
-fastmcp	CHK001	fastmcp_slim/fastmcp/contrib/mcp_mixin/example.py	fp	script-entry	standalone sample with an if __name__ == "__main__" guard, referenced by nothing
 airflow	CHK001	airflow-core/src/airflow/config_templates/default_webserver_config.py	fp	other	config template copied to $AIRFLOW_HOME/webserver_config.py by users (providers/fab/docs/auth-manager/sso.rst), not imported
 fastmcp	CHK006	fastmcp_slim/fastmcp/cli/install/gemini_cli.py:logger	fp	name-convention	module-level `logger = get_logger(__name__)` conventional name, not meant for export
 mcp-python-sdk	CHK006	src/mcp/server/auth/handlers/register.py:RegistrationRequest	info-expected	library-public-api	alias RegistrationRequest = OAuthClientMetadata referenced nowhere else in repo; library mode since #776 keeps the package's public API at info
@@ -1969,42 +1957,15 @@ llama_index	CHK004	llama-index-vector-stores-faiss:llama-index-integrations/vect
 llama_index	CHK003	llama-index-vector-stores-faiss:llama-index-integrations/vector_stores/llama-index-vector-stores-faiss/llama_index/vector_stores/faiss/base.py:faiss	info-expected	optional-import	try: import faiss except ImportError: raise ImportError (faiss is user-installed, #780)
 llama_index	CHK003	llama-index-vector-stores-faiss:llama-index-integrations/vector_stores/llama-index-vector-stores-faiss/llama_index/vector_stores/faiss/map_store.py:faiss	info-expected	optional-import	try: import faiss except ImportError: raise ImportError (faiss is user-installed, #780)
 llama_index	CHK003	llama-index-readers-faiss:llama-index-integrations/readers/llama-index-readers-faiss/llama_index/readers/faiss/base.py:faiss	info-expected	optional-import	try: import faiss except ImportError: raise ImportError; readers-faiss declares only llama-index-core (#780)
-airflow	CHK001	providers/informatica/dev/informatica_simulator/app/main.py	fp	dynamic-import	ASGI app named by string in providers/informatica/dev/informatica_simulator/Dockerfile (uvicorn app.main:app); not scanned (#1026)
 airflow	CHK001	airflow-core/tests/unit/listeners/slow_listener.py	tp	-	Not in the listener import list of airflow-core/tests/unit/listeners/test_listeners.py; no other reference (#1026)
 airflow	CHK001	airflow-core/tests/unit/listeners/xcom_listener.py	tp	-	XComListener is referenced nowhere; not imported by test_listeners.py (#1026)
 airflow	CHK001	airflow-core/tests/unit/listeners/file_write_listener.py	tp	-	FileWriteListener is referenced nowhere; not imported by test_listeners.py (#1026)
-airflow	CHK001	airflow-core/tests/unit/listeners/very_slow_listener.py	tp	-	Not in the listener import list of test_listeners.py; no other reference (#1026)
-airflow	CHK001	dev/registry/export_registry_schemas.py	fp	script-entry	Script with a module-level __main__ guard, documented in dev/registry/README.md (#1026)
-airflow	CHK001	dev/registry/generate_types_json.py	fp	script-entry	Script with a module-level __main__ guard; run as uv run python dev/registry/generate_types_json.py from scripts/ci/prek/check_registry_types_json_sync.py (#1026)
-airflow	CHK001	airflow-core/tests/unit/dags/subdir2/subdir3/should_ignore_this.py	fp	framework-loaded	Fixture DAG file named in the .airflowignore test of airflow-core/tests/unit/utils/test_file.py (#1026)
-airflow	CHK001	devel-common/src/sphinx_exts/providers_packages_ref.py	fp	framework-loaded	Sphinx extension listed by string in providers-summary-docs/conf.py extensions (#1026)
-airflow	CHK001	go-sdk/dags/go_examples.py	fp	framework-loaded	DAG file copied into the dags folder by airflow-e2e-tests conftest.py and parsed by the DAG processor (#1026)
-airflow	CHK001	java-sdk/example/src/resources/dags/java_examples.py	fp	framework-loaded	DAG file copied into the dags folder by airflow-e2e-tests conftest.py and parsed by the DAG processor (#1026)
-airflow	CHK001	task-sdk/dev/datamodel_code_formatter.py	fp	framework-loaded	datamodel-codegen custom formatter named by string in task-sdk/pyproject.toml custom-formatters (#1026)
 airflow	CHK001	airflow-core/src/airflow/serialization/typing.py	tp	-	is_pydantic_model is only used from the airflow.sdk.serde.typing copy; this module is imported nowhere (#1026)
 airflow	CHK001	devel-common/src/sphinx_exts/docs_build/helm_chart_utils.py	tp	-	chart_yaml/chart_version are referenced nowhere (#1026)
 airflow	CHK001	devel-common/src/sphinx_exts/sphinx_script_update.py	tp	-	Sphinx extension that appears in no extensions list (#1026)
 airflow	CHK001	airflow-core/src/airflow/utils/log/timezone_aware.py	fp	dynamic-import	Loaded by dotted string "airflow.utils.log.timezone_aware.TimezoneAware" (config.yml default and airflow_local_settings.py fallback) (#1026)
-airflow	CHK001	devel-common/src/sphinx_exts/extra_provider_files_with_substitutions.py	fp	framework-loaded	Sphinx extension listed by string in devel-common/src/docs/provider_conf.py extensions (#1026)
-airflow	CHK001	devel-common/src/sphinx_exts/providers_extensions.py	fp	framework-loaded	Sphinx extension listed by string in devel-common/src/docs/provider_conf.py extensions (#1026)
-airflow	CHK001	devel-common/src/sphinx_exts/providers_commits.py	fp	framework-loaded	Sphinx extension listed by string in devel-common/src/docs/provider_conf.py extensions (#1026)
-airflow	CHK001	devel-common/src/sphinx_exts/operators_and_hooks_ref.py	fp	framework-loaded	Sphinx extension listed by string in providers-summary-docs/conf.py extensions; also has a module-level __main__ guard (#1026)
-airflow	CHK001	airflow-core/src/airflow/utils/thread_safe_dict.py	tp	-	ThreadSafeDict is imported nowhere (#1026)
-airflow	CHK001	airflow-core/tests/unit/ti_deps/deps/fake_models.py	tp	-	FakeTI/FakeTask/FakeDag are referenced nowhere (#1026)
-airflow	CHK001	airflow-core/src/airflow/utils/log/colored_log.py	tp	-	Only named in the scripts/cov/core_coverage.py file list and RELEASE_NOTES; imported nowhere (#1026)
-airflow	CHK001	devel-common/src/docs/rtd-deprecation/conf.py	fp	framework-loaded	Sphinx conf.py named as sphinx.configuration in .readthedocs.yml (#1026)
-airflow	CHK001	airflow-core/src/airflow/utils/log/task_handler_with_custom_formatter.py	fp	library-public	Documented logging handler users configure by dotted path (airflow-core/src/airflow/config_templates/config.yml) (#1026)
-airflow	CHK001	airflow-core/tests/unit/dags_with_system_exit/a_system_exit.py	fp	framework-loaded	DAG file loaded from dags_with_system_exit folder by DAG processor in test_manager.py (#1026)
-airflow	CHK001	airflow-core/tests/unit/dags_with_system_exit/b_test_scheduler_dags.py	fp	framework-loaded	DAG file loaded from dags_with_system_exit folder by DAG processor in test_manager.py (#1026)
-airflow	CHK001	airflow-core/tests/integration/otel/dags/otel_test_dag.py	fp	framework-loaded	DAG file whose dag_id is used by airflow-core/tests/integration/otel/test_otel.py (#1026)
 airflow	CHK001	airflow-core/src/airflow/utils/dag_cycle_tester.py	fp	library-public	Deprecated shim kept for users (raises DeprecationWarning); already reported at info (#1026)
-fastmcp	CHK001	fastmcp_slim/fastmcp/contrib/bulk_tool_caller/example.py	fp	other	Sample server linked from fastmcp_slim/fastmcp/contrib/bulk_tool_caller/README.md; no __main__ guard (#1026)
-fastmcp	CHK001	fastmcp_slim/fastmcp/contrib/component_manager/example.py	fp	other	Sample server beside fastmcp_slim/fastmcp/contrib/component_manager/README.md; no __main__ guard (#1026)
-fastmcp	CHK001	tests/downstream/server.py	fp	script-entry	Spawned by file path from tests/downstream/_harness.py; module-level __main__ guard (#1026)
-fastmcp	CHK001	tests/client/minimal_stdio_server.py	fp	script-entry	Spawned by file path from tests/client/test_stdio.py; module-level __main__ guard (#1026)
-fastmcp	CHK001	tests/utilities/json_schema_type/cluster_failures.py	fp	script-entry	Documented as python tests/utilities/json_schema_type/cluster_failures.py in test_real_world_schemas.py; module-level __main__ guard (#1026)
 fastmcp	CHK001	logo.py	tp	-	Root-level scratch file; LOGO_ASCII_* constants are duplicated in fastmcp_slim/fastmcp/utilities/cli.py and this file is imported nowhere (#1026)
-fastmcp	CHK001	fastmcp_slim/fastmcp/types.py	fp	library-public	Public module documented in docs/python-sdk/fastmcp-types.mdx (from fastmcp.types import Textarea) (#1026)
 
 # #1023: newly discovered PEP 723 examples, statically verified against source/block.
 # The CHK002 fp rows are runtime peers the RUNTIME_PEERS table now marks used; they
@@ -2195,3 +2156,118 @@ transformers	CHK003	script:examples/pytorch/translation/run_translation.py:numpy
 transformers	CHK003	script:examples/pytorch/translation/run_translation_no_trainer.py:huggingface-hub	tp	-	PEP 723 direct dependency absent from block; examples/pytorch/translation/run_translation_no_trainer.py:51: from huggingface_hub import HfApi
 transformers	CHK003	script:examples/pytorch/translation/run_translation_no_trainer.py:numpy	tp	-	PEP 723 direct dependency absent from block; examples/pytorch/translation/run_translation_no_trainer.py:45: import numpy as np
 transformers	CHK003	script:examples/pytorch/translation/run_translation_no_trainer.py:tqdm	tp	-	PEP 723 direct dependency absent from block; examples/pytorch/translation/run_translation_no_trainer.py:53: from tqdm.auto import tqdm
+# #1065: app-mode corpus (babybuddy, healthchecks, redash, saleor, weblate, wger),
+# hand-labelled by reading the pinned clones (nothing executed). CHK001 is the
+# per-project sample (--per-project 8); CHK002 is every hit on these projects.
+babybuddy	CHK001	api/authentication.py	fp	dynamic-import	named by REST_FRAMEWORK "api.authentication.TokenAuthentication" in babybuddy/settings/base.py:349
+healthchecks	CHK001	hc/integrations/pd/views.py	fp	dynamic-import	imported by hc/integrations/pd/urls.py:5, reached via include("hc.integrations.pd.urls") in hc/urls.py:36
+redash	CHK001	redash/query_runner/big_query_gce.py	fp	dynamic-import	opt-in runner: import_query_runners loads modules named in REDASH_ADDITIONAL_QUERY_RUNNERS (settings/__init__.py:358)
+saleor	CHK001	saleor/tests/settings.py	fp	dynamic-import	pytest settings module via --ds=saleor.tests.settings in setup.cfg:19; also DJANGO_SETTINGS_MODULE in CI workflow
+babybuddy	CHK001	api/metadata.py	fp	dynamic-import	named by REST_FRAMEWORK DEFAULT_METADATA_CLASS "api.metadata.APIMetadata" in babybuddy/settings/base.py:355
+healthchecks	CHK001	hc/integrations/rocketchat/views.py	fp	dynamic-import	imported by hc/integrations/rocketchat/urls.py:5, via include("hc.integrations.rocketchat.urls") in hc/urls.py:40
+redash	CHK001	redash/query_runner/google_spanner.py	tp	-	empty (0-byte) file; not in default_query_runners and no string or import names it
+saleor	CHK001	saleor/schedulers/schedulers.py	fp	script-entry	celery beat --scheduler saleor.schedulers.schedulers.DatabaseScheduler in pyproject.toml:148 (poe scheduler task)
+babybuddy	CHK001	api/urls.py	fp	dynamic-import	reached via include("api.urls", namespace="api") in babybuddy/urls.py:52 (ROOT_URLCONF)
+healthchecks	CHK001	hc/integrations/telegram/views.py	fp	dynamic-import	imported by hc/integrations/telegram/urls.py:5, reached via include("hc.integrations.telegram.urls") in hc/urls.py:46
+babybuddy	CHK001	api/views.py	fp	dynamic-import	imported by api/urls.py:10, reached via include("api.urls") in babybuddy/urls.py:52
+healthchecks	CHK001	hc/integrations/zulip/views.py	fp	dynamic-import	imported by hc/integrations/zulip/urls.py:5, reached via include("hc.integrations.zulip.urls") in hc/urls.py:51
+babybuddy	CHK001	api/tests.py	fp	framework-loaded	tests.py of INSTALLED_APPS app "api" (settings/base.py:37), discovered by manage.py test (gulpfile.js:89)
+healthchecks	CHK001	hc/integrations/victorops/views.py	fp	dynamic-import	imported by hc/integrations/victorops/urls.py:5, reached via include("hc.integrations.victorops.urls") in hc/urls.py:48
+babybuddy	CHK001	api/permissions.py	fp	dynamic-import	named by REST_FRAMEWORK DEFAULT_PERMISSION_CLASSES "api.permissions...." in babybuddy/settings/base.py:357
+healthchecks	CHK001	hc/integrations/po/views.py	fp	dynamic-import	imported by hc/integrations/po/urls.py:5, reached via include("hc.integrations.po.urls") in hc/urls.py:37
+babybuddy	CHK001	api/serializers.py	fp	dynamic-import	imported by api/views.py:12 (and api/tests.py:5), reached via include("api.urls") in babybuddy/urls.py:52
+healthchecks	CHK001	hc/integrations/po/forms.py	fp	dynamic-import	imported by hc/integrations/po/views.py:23 <- po/urls.py:5, via include("hc.integrations.po.urls") hc/urls.py:37
+babybuddy	CHK001	api/filters.py	fp	dynamic-import	imported by api/views.py:12, reached via include("api.urls") in babybuddy/urls.py:52
+healthchecks	CHK001	hc/integrations/call/views.py	fp	dynamic-import	imported by hc/integrations/call/urls.py:5, reached via include("hc.integrations.call.urls") in hc/urls.py:23
+weblate	CHK001	weblate/legal/forms.py	fp	dynamic-import	imported by legal/views.py:17 <- legal/urls.py:7, via include("weblate.legal.urls") in weblate/urls.py:1273
+wger	CHK001	wger/core/validators.py	tp	-	validate_username has no caller; no import or string naming wger.core.validators anywhere
+weblate	CHK001	weblate/settings_docker.py	fp	dynamic-import	DJANGO_SETTINGS_MODULE: weblate.settings_docker in dev-docker/docker-compose.yml:33; documented in docker.rst:2892
+wger	CHK001	wger/utils/resources.py	tp	-	empty 0-byte file; no importer or string naming wger.utils.resources
+weblate	CHK001	weblate/examples/mt_service.py	fp	other	never imported, but it is a docs example pulled in by literalinclude in docs/admin/machine.rst:108
+wger	CHK001	wger/nutrition/api/resources.py	tp	-	empty 0-byte file; no importer or string naming wger.nutrition.api.resources
+weblate	CHK001	weblate/vcs/forms.py	fp	dynamic-import	imported by vcs/views.py:38 <- vcs/urls.py:7, via include("weblate.vcs.urls") in weblate/urls.py:1050
+wger	CHK001	wger/manager/views/routine.py	fp	dynamic-import	"from wger.manager.views import routine" at wger/manager/urls.py:24, via include("wger.manager.urls") wger/urls.py:274
+weblate	CHK001	weblate/billing/management/commands/extend_pending.py	fp	framework-loaded	Django management command of weblate.billing (INSTALLED_APPS in settings_test.py:124); undocumented but runnable
+wger	CHK001	wger/weight/helpers.py	fp	dynamic-import	"from wger.weight import helpers" at wger/weight/views.py:35 <- weight/urls.py:27, via include("wger.weight.urls")
+weblate	CHK001	weblate/billing/management/commands/billing_demo.py	fp	framework-loaded	mgmt command run by "manage.py billing_demo" in .github/workflows/test.yml:115; call_command in billing/tests.py:1123
+wger	CHK001	wger/gym/views/contract_type.py	fp	dynamic-import	"from wger.gym.views import contract_type" at wger/gym/urls.py:22, via include("wger.gym.urls") wger/urls.py:280
+weblate	CHK001	weblate/legal/views.py	fp	dynamic-import	imported by weblate/legal/urls.py:7, reached via include("weblate.legal.urls") in weblate/urls.py:1273
+wger	CHK001	wger/nutrition/views/calculator.py	fp	dynamic-import	"from wger.nutrition.views import calculator" at nutrition/urls.py:25, via include("wger.nutrition.urls")
+weblate	CHK001	weblate/legal/admin.py	fp	framework-loaded	Django admin autodiscover loads admin.py of installed app weblate.legal (settings_test.py:124, settings_docker.py:979)
+wger	CHK001	wger/gym/views/admin_notes.py	fp	dynamic-import	"from wger.gym.views import admin_notes" at wger/gym/urls.py:22, via include("wger.gym.urls") wger/urls.py:280
+babybuddy	CHK002	dj-database-url	fp	-	import dj_database_url in babybuddy/settings/base.py:3, used at :115
+babybuddy	CHK002	django-dbsettings	fp	-	"dbsettings" in INSTALLED_APPS settings/base.py:52; import dbsettings in babybuddy/site_settings.py:6, apps.py:9
+babybuddy	CHK002	pilkit	tp	-	never imported; transitive pin of django-imagekit
+healthchecks	CHK002	django-compressor	fp	-	"compressor" in INSTALLED_APPS hc/settings.py:101, COMPRESS_STORAGE/finders at :294-304
+healthchecks	CHK002	psycopg	fp	-	ENGINE "django.db.backends.postgresql" in hc/settings.py:224 needs psycopg
+redash	CHK002	aniso8601	tp	-	never imported; transitive pin of flask-restful
+redash	CHK002	blinker	tp	-	never imported; transitive pin of flask/flask-mail (signals used only via flask_login)
+redash	CHK002	gevent	tp	-	never imported and no gevent worker class configured; CHANGELOG only says users may opt in
+redash	CHK002	greenlet	tp	-	never imported; transitive pin of gevent
+redash	CHK002	httplib2	fp	-	import httplib2 in redash/query_runner/couchbase.py:16 (try block), module listed in settings/__init__.py:292
+redash	CHK002	jinja2	tp	-	never imported directly; transitive pin of flask (templates rendered via flask)
+redash	CHK002	markupsafe	tp	-	never imported; transitive pin of jinja2/werkzeug
+redash	CHK002	maxminddb-geolite2	fp	-	import geolite2 in redash/handlers/events.py:1 (dist provides module geolite2)
+redash	CHK002	paramiko	tp	-	never imported (only mentioned in a comment); transitive pin of sshtunnel
+redash	CHK002	pyasynchat	tp	-	asynchat never imported in project; likely a py3.13 compat shim but no dependent found in uv.lock
+redash	CHK002	pyopenssl	tp	-	OpenSSL never imported; transitive pin of advocate/pysaml2
+redash	CHK002	pypd	fp	-	import pypd in redash/destinations/pagerduty.py:8 (try block), listed in settings/__init__.py:378
+redash	CHK002	python-dotenv	fp	-	FlaskGroup CLI in redash/cli/__init__.py:33 auto-loads .env via python-dotenv when installed
+redash	CHK002	supervisor	fp	-	CLI run: exec supervisord -c worker.conf in bin/docker-entrypoint:22
+redash	CHK002	tzlocal	tp	-	never imported; transitive pin of trino/atsd-client
+redash	CHK002	ua-parser	tp	-	never imported; transitive pin of user-agents
+redash	CHK002	urllib3	tp	-	never imported (only logger name "requests.packages.urllib3"); transitive pin of requests
+saleor	CHK002	azure-common	tp	-	azure.common never imported; legacy SDK pin, django-storages azure backend does not use it
+saleor	CHK002	azure-storage-blob	fp	-	needed by storages.backends.azure_storage imported in saleor/core/storages.py:2 (STORAGES settings.py:587)
+saleor	CHK002	azure-storage-common	tp	-	azure.storage.common never imported; legacy SDK for blob<12, unused by blob v12/django-storages
+saleor	CHK002	google-cloud-pubsub	fp	-	from google.cloud import pubsub_v1 in saleor/webhook/transport/utils.py:28
+saleor	CHK002	opentelemetry-distro	fp	-	ambiguous: configurator for opentelemetry-instrument that core/telemetry/metric.py:76 tells operators to use
+saleor	CHK002	psycopg	fp	-	dj_database_url default "postgres://..." in saleor/settings.py:139 selects postgresql backend needing psycopg
+saleor	CHK002	pybars3	fp	-	import pybars in saleor/plugins/email_common.py:13 (reached via BUILTIN_PLUGINS settings.py:941)
+saleor	CHK002	python-json-logger	fp	-	from pythonjsonlogger.jsonlogger import in saleor/core/logging.py:5 (LOGGING "()" settings.py:362)
+saleor	CHK002	setuptools	fp	-	razorpay needs pkg_resources at runtime, per comment at pyproject.toml:85
+weblate	CHK002	aeidon	tp	-	never imported; pin for translate-toolkit[subtitles] extra (pyproject comment), only an OPTIONAL version probe
+weblate	CHK002	argon2-cffi	fp	-	Argon2PasswordHasher in PASSWORD_HASHERS (weblate/settings_example.py:378) makes Django import argon2
+weblate	CHK002	argon2-cffi-bindings	tp	-	never imported; transitive pin of argon2-cffi
+weblate	CHK002	borgbackup	fp	-	"from borg.helpers import Location" in weblate/utils/validators.py:391; borg CLI run in utils/backup.py:192
+weblate	CHK002	celery-types	fp	-	celery stub package consumed by mypy (.github/workflows/mypy.yml:62, dependency-groups.types)
+weblate	CHK002	certifi	tp	-	never imported; transitive pin of requests/sentry-sdk kept loose for newer CA bundles
+weblate	CHK002	cffi	tp	-	never imported; transitive pin of argon2-cffi-bindings/cryptography ("For Argon2" comment)
+weblate	CHK002	charset-normalizer	fp	-	in REQUIRES (weblate/utils/requirements.py:60); metadata() raises ImproperlyConfigured if missing
+weblate	CHK002	cssselect	fp	-	lxml.cssselect imported in weblate/addons/forms.py:18 needs the cssselect package at runtime
+weblate	CHK002	django-appconf	fp	-	"from appconf import AppConf" in weblate/utils/models.py:11
+weblate	CHK002	django-crispy-forms	fp	-	"from crispy_forms.helper import FormHelper" in weblate/accounts/forms.py:13; INSTALLED_APPS settings_example.py:482
+weblate	CHK002	djangorestframework-csv	fp	-	"from rest_framework_csv.renderers import CSVRenderer" in weblate/api/renderers.py:11
+weblate	CHK002	fluent-syntax	tp	-	fluent.syntax never imported directly; pin for translate-toolkit[fluent] extra (pyproject comment)
+weblate	CHK002	hiredis	fp	-	in REQUIRES (weblate/utils/requirements.py:53, raises if missing); redis-py loads hiredis parser implicitly
+weblate	CHK002	iniparse	tp	-	never imported; pin for translate-toolkit[ini] extra, only an OPTIONAL version probe
+weblate	CHK002	opentelemetry-instrumentation-celery	fp	-	"from opentelemetry.instrumentation.celery import CeleryInstrumentor" in weblate/utils/errors.py:399
+weblate	CHK002	opentelemetry-instrumentation-django	fp	-	"from opentelemetry.instrumentation.django import DjangoInstrumentor" in weblate/utils/errors.py:402
+weblate	CHK002	opentelemetry-instrumentation-psycopg	fp	-	"from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor" in weblate/utils/errors.py:405
+weblate	CHK002	opentelemetry-instrumentation-redis	fp	-	"from opentelemetry.instrumentation.redis import RedisInstrumentor" in weblate/utils/errors.py:410
+weblate	CHK002	opentelemetry-instrumentation-requests	fp	-	"from opentelemetry.instrumentation.requests import RequestsInstrumentor" in weblate/utils/errors.py:413
+weblate	CHK002	phply	tp	-	never imported; pin for translate-toolkit[php] extra, only an OPTIONAL version probe
+weblate	CHK002	pyasn1	tp	-	never imported; transitive pin of webauthn/python-ldap/pyasn1-modules
+weblate	CHK002	tomlkit	tp	-	never imported; pin for translate-toolkit[toml] extra, only an OPTIONAL version probe
+weblate	CHK002	translate-toolkit	fp	-	"from translate.storage.tmx import tmxfile" in weblate/memory/models.py:23 (and many more)
+weblate	CHK002	ua-parser	tp	-	ua_parser never imported; transitive pin of user-agents (imported in weblate/utils/request.py:37)
+weblate	CHK002	urllib3	tp	-	never imported; transitive pin of requests to enable brotli/zstd extras
+weblate	CHK002	webauthn	tp	-	webauthn never imported directly; transitive pin of django-otp-webauthn (django_otp_webauthn used)
+wger	CHK002	boto3	fp	-	STORAGES BACKEND storages.backends.s3boto3.S3Boto3Storage in settings/main.py:401 requires boto3
+wger	CHK002	django-activity-stream	fp	-	"actstream" in INSTALLED_APPS settings/settings_global.py:126; imported in wger/exercises/apps.py:27
+wger	CHK002	django-allauth	fp	-	"allauth" in INSTALLED_APPS settings/settings_global.py:135; imported in wger/core/forms.py:40
+wger	CHK002	django-axes	fp	-	"axes" in INSTALLED_APPS settings/settings_global.py:120; AxesMiddleware at :188
+wger	CHK002	django-bootstrap-breadcrumbs2	fp	-	"django_bootstrap_breadcrumbs" in INSTALLED_APPS settings/settings_global.py:114; loaded in templates
+wger	CHK002	django-crispy-forms	fp	-	"crispy_forms" in INSTALLED_APPS settings/settings_global.py:101; imported in wger/utils/generic_views.py:34
+wger	CHK002	django-environ	fp	-	"import environ" in settings/main.py:23
+wger	CHK002	django-formtools	fp	-	"from formtools.preview import FormPreview" in wger/weight/views.py:31
+wger	CHK002	django-redis	fp	-	CACHES BACKEND django_redis.cache.RedisCache in settings/local_dev.py:75
+wger	CHK002	django-simple-history	fp	-	"simple_history" in INSTALLED_APPS settings/settings_global.py:123; imported in exercises models
+wger	CHK002	django-sortedm2m	fp	-	"import sortedm2m.fields" in wger/manager/migrations/0002_auto_20150202_2040.py:5 (needed to migrate)
+wger	CHK002	djangorestframework-simplejwt	fp	-	"rest_framework_simplejwt" in INSTALLED_APPS settings/settings_global.py:108; imported in wger/urls.py:36
+wger	CHK002	flower	fp	-	"celery ... flower" run in extras/docker/production/celery/start-flower:6
+wger	CHK002	gevent	fp	-	celery worker --pool=gevent in extras/docker/production/celery/start-worker:7
+wger	CHK002	icalendar	fp	-	"from icalendar import ..." in wger/manager/views/ical.py:29
+wger	CHK002	lingua-language-detector	fp	-	"from lingua import LanguageDetectorBuilder" in wger/core/api/serializers.py:20
+wger	CHK002	psycopg	fp	-	django.contrib.postgres in INSTALLED_APPS settings_global.py:70; postgresql ENGINE in settings/local_dev.py:101
+wger	CHK002	tzdata	fp	-	implicit zoneinfo data fallback for available_timezones() in wger/core/models/profile.py:79 (platform-guarded)

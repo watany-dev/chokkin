@@ -99,3 +99,19 @@ llama_index	library	large	f12d46acab73f5b2243ef49c2f00101617b38ce4	https://githu
 transformers	library	large	a906d3c4b65095f2308b6a6a193e934d03b8eb5d	https://github.com/huggingface/transformers
 openai-python	library	large	637f1b8b2e9fdc3220fd4edbb8602cc89dc489c8	https://github.com/openai/openai-python
 langchain	framework	large	be854a130153e51346d83d3b06f959b80f6cbca6	https://github.com/langchain-ai/langchain
+# --- app-mode CHK001 corpus (#1065) ---
+# CHK001 precision was measured on three app-mode projects (airflow, fastmcp,
+# poetry), so app-mode Django apps are added; each was checked to run in app
+# mode before it was pinned. Pinned by commit SHA; the release tag:
+#   babybuddy     v2.11.0
+#   healthchecks  v5.0
+#   redash        v26.9.0
+#   saleor        3.23.44
+#   weblate       weblate-2026.10.1
+#   wger          2.7
+babybuddy	app	small	4c14f7428f24a725710d8deb03d5f28105e4da4e	https://github.com/babybuddy/babybuddy
+healthchecks	app	medium	47415f03c8c6da20b1a7a57cdb86260ab23b47a6	https://github.com/healthchecks/healthchecks
+redash	app	medium	42fdf9d4a0fdb83841130ab78f69899a224f281b	https://github.com/getredash/redash
+saleor	app	large	b2587a12ea15edf3432aaa4c6a5065c9c9ca049f	https://github.com/saleor/saleor
+weblate	app	large	ebfe22d87e58df587f64a110fb520ed772769580	https://github.com/WeblateOrg/weblate
+wger	app	medium	65a1d40595a632984f016d9e9de0c103c004d9c4	https://github.com/wger-project/wger
