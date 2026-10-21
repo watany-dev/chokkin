@@ -352,12 +352,16 @@ serves, and `dbt-snowflake`, the adapter `profiles.yml` names. With them the
 gated CHK002 FP rate would be 5.4% (3 / 56), so this section's CHK002 is
 recorded only, like the app-mode corpus (#1065): the gate would measure forms
 chokkin does not read yet. The gated run then passes every criterion
-(CHK002 FP 2.6%, 1 / 39; recall 1007 / 1007). Three light fixes came out of the measurement: `progressbar2` was missing from the package map
-(CHK010 and a CHK002 on `open-gov-crawlers`), and the closed binary map did not
+(CHK002 FP 2.6%, 1 / 39; recall 1007 / 1007).
+
+Four light fixes came out of the measurement: `progressbar2` was missing from
+the package map (CHK010 and a CHK002 on `open-gov-crawlers`), and the closed binary map did not
 know `dagster`, `dg`, `dbt`, `prefect` or `scrapy`, so `uv run dg dev` and
 `uv run dbt deps` in a Makefile left `dagster-dg-cli` and `dbt-core` unused.
 The same map left the dev-group `sqlfluff` unused (`--strict`) although the
-Makefile runs `sqlfluff lint`.
+Makefile runs `sqlfluff lint`. Review then found that a project declaring only
+a dbt adapter or the old `dagster-dg` distribution would get CHK008 for `dbt`
+or `dg`, so those now provide the CLI as wrappers do.
 
 ## #346 corpus measurements (#338–#342)
 
