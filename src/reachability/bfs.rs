@@ -376,7 +376,7 @@ fn enqueue_import(
 }
 
 /// `module` itself, then each enclosing package from the outermost in.
-fn module_and_parents(module: &str) -> impl Iterator<Item = &str> {
+pub(crate) fn module_and_parents(module: &str) -> impl Iterator<Item = &str> {
     std::iter::once(module).chain(
         module
             .match_indices('.')
