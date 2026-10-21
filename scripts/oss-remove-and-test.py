@@ -38,7 +38,8 @@ Options:
   --max-findings N      Per project, test only the first N findings (sorted);
                         the rest are not-run (over-max-findings)
   --jobs N              Parallel working copies per project (default: 1)
-  --projects a,b        Only these slugs
+  --projects a,b        Only these slugs; they may come from any manifest
+                        section (default: the pinned 20-project core set)
   --build               cargo build --release before running
   --execute             Actually run project tests (otherwise dry run)
   -h, --help            Show help
@@ -549,7 +550,7 @@ def main() -> int:
     rows: list[dict] = []
     projects: dict = {}
     skipped: list[str] = []
-    for row in oc.read_manifest(args.manifest, core_only=True):
+    for row in oc.read_manifest(args.manifest, core_only=not only):
         slug = row["slug"]
         if only and slug not in only:
             continue
