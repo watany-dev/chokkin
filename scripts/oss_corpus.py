@@ -25,8 +25,7 @@ DEFAULT_ENV_MANIFEST = ROOT / "scripts/oss-test-env.manifest"
 DEFAULT_ENVS = ROOT / "target/oss-envs"
 DEFAULT_TEST_CMD = "{python} -m pytest -q -x"
 CORE_SECTION_END = "# --- R-01"
-# Django apps added to measure CHK001 in app mode (#1065); their CHK002 is
-# recorded but kept out of the §17 FP-rate gate.
+# Django apps added to measure CHK001 in app mode (#1065).
 APP_CORPUS_SECTION = "# --- app-mode CHK001 corpus"
 LOG_TAIL_BYTES = 20_000
 

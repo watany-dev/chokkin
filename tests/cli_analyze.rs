@@ -4224,8 +4224,8 @@ fn binary_django_settings_module_reads_a_settings_package() {
 }
 
 /// wger: the settings package sits beside the distribution's package, so
-/// discovery does not take it as a package, yet `settings/main.py`'s
-/// `from .base import *` still loads `settings/base.py` (#1065).
+/// discovery does not take it as a package, yet its `settings/main.py`'s
+/// `from .settings_global import *` still loads the file beside it (#1065).
 #[test]
 fn binary_django_settings_follow_a_relative_star_import_outside_the_packages() {
     let project = write_project(&[
