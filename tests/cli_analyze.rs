@@ -4152,6 +4152,8 @@ fn binary_django_installed_app_conventions_are_used() {
     for installed in [
         "['django.contrib.admin', 'mysite.polls']",
         "['django.contrib.admin.apps.AdminConfig', 'mysite.polls.apps.PollsConfig']",
+        // A tuple is read like a list (healthchecks).
+        "('django.contrib.admin', 'mysite.polls')",
         // A config with no `name` inherits the admin's.
         "['mysite.apps.SiteAdminConfig', 'mysite.polls']",
         // An `INSTALLED_APPS` not read in full may install the admin (ADR 0005).
@@ -4309,6 +4311,62 @@ fn binary_django_settings_module_reads_a_settings_package() {
         let project = django_settings_package(manage);
         assert_eq!(issue_levels(project.path()), [], "{manage}");
     }
+}
+
+/// wger: the settings package sits beside the distribution's package, so
+/// discovery does not take it as a package, yet its `settings/main.py`'s
+/// `from .settings_global import *` still loads the file beside it (#1065).
+#[test]
+fn binary_django_settings_follow_a_relative_star_import_outside_the_packages() {
+    let project = settings_beside_the_package("from .base import *\n");
+    assert_eq!(issue_levels(project.path()), []);
+}
+
+/// Only a relative import loads the file beside it: an absolute `base` names
+/// a top-level module, which this project does not have.
+#[test]
+fn binary_django_settings_leave_an_absolute_star_import_to_the_import_path() {
+    let project = settings_beside_the_package("from base import *\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "plugin: django: settings `settings/main.py:1` star-imports `base`, which was not read;"
+        ),
+        "{stderr}"
+    );
+}
+
+fn settings_beside_the_package(main: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"settings.main\")\n",
+        ),
+        ("settings/__init__.py", ""),
+        (
+            "settings/base.py",
+            "ROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\", \"mysite.polls\"]\n",
+        ),
+        ("settings/main.py", main),
+        ("mysite/__init__.py", ""),
+        ("mysite/urls.py", "# URLconf\n"),
+        ("mysite/polls/__init__.py", ""),
+        ("mysite/polls/management/__init__.py", ""),
+        ("mysite/polls/management/commands/__init__.py", ""),
+        (
+            "mysite/polls/management/commands/close_poll.py",
+            "class Command:\n    pass\n",
+        ),
+    ])
 }
 
 /// Django puts the directory of `manage.py` on `sys.path`, and a `wsgi.py`

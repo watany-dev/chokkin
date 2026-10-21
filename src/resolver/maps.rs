@@ -287,6 +287,25 @@ mod tests {
     }
 
     #[test]
+    fn namespace_candidates_cover_app_mode_corpus_dists() {
+        // Imported by the Django apps of the app-mode corpus (#1065).
+        let import_map = ImportMap::build(&default_config());
+        let first = |module: &str| {
+            import_map
+                .namespace_candidates(module)
+                .and_then(|(_, candidates, _)| candidates.into_iter().next())
+        };
+        assert_eq!(
+            first("opentelemetry.instrumentation.django").as_deref(),
+            Some("opentelemetry-instrumentation-django")
+        );
+        assert_eq!(
+            first("google.cloud.pubsub_v1.types").as_deref(),
+            Some("google-cloud-pubsub")
+        );
+    }
+
+    #[test]
     fn resolves_import_name_aliases_from_bundled_map() {
         let import_map = ImportMap::build(&default_config());
         for (import_root, distribution) in [
@@ -302,6 +321,12 @@ mod tests {
             ("phonenumbers", "phonenumberslite"),
             ("ninja", "ninja"),
             ("ninja", "django-ninja"),
+            ("translate", "translate"),
+            ("translate", "translate-toolkit"),
+            ("environ", "environ-config"),
+            ("environ", "django-environ"),
+            ("lingua", "lingua"),
+            ("lingua", "lingua-language-detector"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
@@ -372,6 +397,11 @@ mod tests {
             ("channels", "channels"),
             ("flask_login", "flask-login"),
             ("permissionedforms", "django-permissionedforms"),
+            ("crispy_forms", "django-crispy-forms"),
+            ("rest_framework_simplejwt", "djangorestframework-simplejwt"),
+            ("actstream", "django-activity-stream"),
+            ("compressor", "django-compressor"),
+            ("pythonjsonlogger", "python-json-logger"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),

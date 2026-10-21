@@ -109,6 +109,10 @@ class PrecisionMissesTest(unittest.TestCase):
         self.assertNotIn("CHK008", om.PRECISION_FLOORS)
         self.assertEqual(om.precision_misses([finding("CHK008", "fp")]), [])
 
+    def test_chk001_is_floored_once_app_projects_carry_labels(self) -> None:
+        findings = [finding("CHK001", "fp")] * 4 + [finding("CHK001", "tp")]  # 20%
+        self.assertEqual(om.precision_misses(findings), ["CHK001=20.0%<25%"])
+
     def test_chk002_is_floored_by_the_fp_gate(self) -> None:
         # 95% precision is a 5% FP rate, which the §17 gate already fails.
         findings = [finding("CHK002", "fp")] + [finding("CHK002", "tp")] * 19

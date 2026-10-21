@@ -34,6 +34,9 @@
 #   anyio          tests/test_sockets.py resolves "localhost" via getaddrinfo,
 #                  which the sandbox resolver refuses inside the namespace
 #
+# healthchecks pins Django 6.1, which needs Python >= 3.12: provision it with
+# `--python 3.13 --projects healthchecks`.
+#
 # urllib3's `src` cannot be imported from a clean clone: the build writes the
 # git-ignored `_version.py`, and provisioning cleans it away. urllib3 has no
 # CHK001/CHK006 findings today, so its tests never run.
@@ -59,3 +62,4 @@ black	src	.[d] pytest pytest-xdist	-
 fastapi	.	-r requirements-tests.txt	-
 djangorestframework	.	. django>=4.2,<5.1 pytest>=7.0.1,<8.0 pytest-django>=4.5.2,<5.0 importlib-metadata<5.0 coreapi==2.3.1 coreschema==0.0.4 django-filter django-guardian>=2.4.0,<2.5 inflection==0.5.1 markdown>=3.3.7 pygments~=2.17.0 pyyaml	-
 django	.	. asgiref sqlparse tblib argon2-cffi bcrypt docutils jinja2 numpy Pillow PyYAML tzdata	{python} tests/runtests.py --noinput --failfast --parallel 1
+healthchecks	.	-r requirements.txt -r requirements-dev.txt	{python} manage.py test --noinput --failfast

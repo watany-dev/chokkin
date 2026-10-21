@@ -46,18 +46,20 @@ pub(crate) fn string_value(expr: &Expr) -> Option<String> {
     }
 }
 
-/// The string elements when `expr` is a list literal.
+/// The string elements when `expr` is a list or tuple literal (Django's
+/// `INSTALLED_APPS = (...)`); any other expression is no scan.
 pub(crate) fn string_list(expr: &Expr) -> Option<LiteralScan> {
-    let Expr::List(list) = expr else {
-        return None;
+    let elts = match expr {
+        Expr::List(list) => &list.elts,
+        Expr::Tuple(tuple) => &tuple.elts,
+        _ => return None,
     };
-    let (values, starts): (Vec<String>, Vec<TextSize>) = list
-        .elts
+    let (values, starts): (Vec<String>, Vec<TextSize>) = elts
         .iter()
         .filter_map(|elt| Some((string_value(elt)?, elt.start())))
         .unzip();
     Some(LiteralScan {
-        complete: values.len() == list.elts.len(),
+        complete: values.len() == elts.len(),
         values,
         starts,
     })
@@ -84,6 +86,13 @@ mod tests {
     fn string_list_marks_non_string_elements_incomplete() {
         let scan = list_assignment("X = [\"a\", other, \"b\"]\n", "X").expect("found");
         assert!(!scan.complete);
+        assert_eq!(scan.values, vec!["a".to_owned(), "b".to_owned()]);
+    }
+
+    #[test]
+    fn string_list_reads_a_tuple() {
+        let scan = list_assignment("X = (\"a\", \"b\")\n", "X").expect("found");
+        assert!(scan.complete);
         assert_eq!(scan.values, vec!["a".to_owned(), "b".to_owned()]);
     }
 

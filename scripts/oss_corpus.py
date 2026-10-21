@@ -25,6 +25,8 @@ DEFAULT_ENV_MANIFEST = ROOT / "scripts/oss-test-env.manifest"
 DEFAULT_ENVS = ROOT / "target/oss-envs"
 DEFAULT_TEST_CMD = "{python} -m pytest -q -x"
 CORE_SECTION_END = "# --- R-01"
+# Django apps added to measure CHK001 in app mode (#1065).
+APP_CORPUS_SECTION = "# --- app-mode CHK001 corpus"
 LOG_TAIL_BYTES = 20_000
 
 
@@ -50,6 +52,29 @@ def read_manifest(path: Path, core_only: bool = False) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def report_issues(out_dir: Path, slug: str) -> list[dict] | None:
+    """Issues of one project's saved JSON report; None when it is not JSON (crash)."""
+    try:
+        return json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8")).get("issues", [])
+    except (OSError, ValueError):
+        return None
+
+
+def read_section(path: Path, header: str) -> set[str]:
+    """Slugs of the manifest section whose `# --- ` line starts with `header`,
+    up to the next section; empty when no such section exists."""
+    slugs: set[str] = set()
+    inside = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# --- "):
+            inside = line.startswith(header)
+            continue
+        line = line.split("#", 1)[0].strip()
+        if inside and line:
+            slugs.add(line.split("\t", 1)[0].strip())
+    return slugs
 
 
 def read_recall(path: Path) -> list[tuple[str, Path]]:

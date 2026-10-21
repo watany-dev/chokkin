@@ -84,12 +84,12 @@ Precision: every rule's precision tp / (tp + fp) over its labelled hits is
 recorded in report.md (#656), next to its per-project mean (macro) and the
 largest single-project share of its labelled hits, so a rule whose number one
 project drives is visible (#1065); floors use the pooled (micro) precision.
-CHK003 / CHK004 / CHK006 / CHK010 have a floor (#701), so a precision drop
-fails the gate even when the counts hold. CHK002's floor is criterion 1: with
-no unclassified finding, FP rate < 5% is precision > 95%. The other rules are
-recorded only until their labels can carry one (#862). CHK001 / CHK004 /
-CHK006 / CHK010 labels are a per-project stratified sample drawn by
-scripts/sample-precision-labels.py, so their precision is a sample estimate.
+CHK001 / CHK003 / CHK004 / CHK006 / CHK010 have a floor (#701, #1065), so a
+precision drop fails the gate even when the counts hold. CHK002's floor is
+criterion 1: with no unclassified finding, FP rate < 5% is precision > 95%.
+The other rules are recorded only until their labels can carry one (#862).
+CHK001 / CHK004 / CHK006 / CHK010 labels are a per-project stratified sample
+drawn by scripts/sample-precision-labels.py, so their precision is a sample estimate.
 Labels whose finding no longer appears are listed as stale.
 
 Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
@@ -154,8 +154,12 @@ FP_GATE_PCT = 5
 # Per-rule precision floors in percent (#701): the measured precision rounded
 # down to a multiple of 5. CHK002 has none here: the §17 FP-rate gate is its
 # floor, and a stricter one. CHK005 / CHK007 / CHK008 / CHK009 have too few
-# labelled hits yet and are recorded only (#862).
-PRECISION_FLOORS = {"CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
+# labelled hits yet and are recorded only (#862). CHK001 is reported by default
+# in app mode only, so its floor waited until 8 app-mode projects carried
+# labels, so that no single project's conventions (airflow's DAG files, #1062)
+# decide the gate; it is low because URLconf include() strings are not import
+# edges, which hides most Django app modules (#1065).
+PRECISION_FLOORS = {"CHK001": 25, "CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
 # Release-gate slowdown (#1025): two -r 1 runs of one binary on one machine
 # differed by at most 1.13x per medium or large project, the slowdowns between
 # releases that were not regressions stayed under 1.3x (sqlalchemy v0.7.0 ->
@@ -438,19 +442,11 @@ def is_strict(out_dir: Path) -> bool:
     return "- strict: yes" in (out_dir / "report.md").read_text(encoding="utf-8").splitlines()
 
 
-def report_issues(out_dir: Path, slug: str) -> list[dict] | None:
-    """Issues of one project's saved JSON report; None when it is not JSON (crash)."""
-    try:
-        return json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8")).get("issues", [])
-    except (OSError, ValueError):
-        return None
-
-
 def report_levels(out_dir: Path, slug: str) -> dict[tuple[str, str], Counter] | None:
     """(code, fingerprint) -> Counter of `severity/confidence` in one project's
     saved JSON report; None when the report is not JSON (crash). Import
     fingerprints carry no line, so one fingerprint can cover several findings."""
-    issues = report_issues(out_dir, slug)
+    issues = oc.report_issues(out_dir, slug)
     if issues is None:
         return None
     levels: dict[tuple[str, str], Counter] = {}
@@ -511,7 +507,7 @@ def downgrade_vs_vanish(
     def keys(run: Path, slug: str) -> dict[tuple[str, str], str]:
         """(code, escaped fingerprint) -> target in one strict report."""
         if (run, slug) not in cache:
-            issues = report_issues(run / "strict", slug) or []
+            issues = oc.report_issues(run / "strict", slug) or []
             cache[(run, slug)] = {(i["code"], tsv_field(i["fingerprint"])): i.get("target") or "?" for i in issues}
         return cache[(run, slug)]
 
@@ -519,7 +515,7 @@ def downgrade_vs_vanish(
         """(code, escaped fingerprint) -> confidences of its findings in one report."""
         if (run, slug) not in conf_cache:
             out: dict[tuple[str, str], Counter] = {}
-            for i in report_issues(run, slug) or []:
+            for i in oc.report_issues(run, slug) or []:
                 out.setdefault((i["code"], tsv_field(i["fingerprint"])), Counter())[i.get("confidence") or "?"] += 1
             conf_cache[(run, slug)] = out
         return conf_cache[(run, slug)]
@@ -821,8 +817,19 @@ def main() -> int:
         # fixed, or a clone revision bump moved its target.
         return sum(1 for (s, c, t), (v, _) in labels.items() if c == code and v != "deferred" and (s, c, t) not in seen)
 
-    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate(findings)
+    # The app-mode CHK001 corpus is recorded only for CHK002 (#1065): most of
+    # its false positives are backends named by settings strings and CLIs run
+    # from docker or shell, forms chokkin does not read yet, so the gate would
+    # measure those known gaps.
+    app_corpus = frozenset(oc.read_section(args.manifest, oc.APP_CORPUS_SECTION))
+    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in app_corpus])
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
+    _, app_total, app_fp, app_unclassified = fp_gate([f for f in findings if f[0] in app_corpus])
+    app_rate = (
+        f"{100 * app_fp / app_total:.1f}% ({app_fp} FP / {app_total}, {app_unclassified} unclassified)"
+        if app_total
+        else "n/a"
+    )
 
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
     missed = recall_missed(labels, reported)
@@ -870,7 +877,8 @@ def main() -> int:
             ["Criterion", "Target", "Measured", "Result"],
             [
                 ["Unused-dep FP rate (CHK002)", f"< {FP_GATE_PCT}%",
-                 f"{fp_rate}% ({y002_fp} FP / {y002_total} reported, {y002_unclassified} unclassified)",
+                 f"{fp_rate}% ({y002_fp} FP / {y002_total} reported, {y002_unclassified} unclassified;"
+                 f" app-mode corpus, recorded only: {app_rate})",
                  verdict(passes["fp"])],
                 ["Precision floor (labelled hits)",
                  ", ".join(f"{c} >= {f}%" for c, f in PRECISION_FLOORS.items()),

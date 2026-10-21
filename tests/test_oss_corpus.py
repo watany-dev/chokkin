@@ -33,6 +33,25 @@ class ReadManifestTest(unittest.TestCase):
         self.assertEqual(core[1], {"slug": "beta", "category": "app", "size": "", "ref": "", "url": ""})
 
 
+class ReadSectionTest(unittest.TestCase):
+    def test_slugs_run_from_the_header_to_the_next_section(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "clones.manifest"
+            manifest.write_text(
+                "alpha\tlib\n"
+                "# --- app-mode corpus (#1) ---\n"
+                "# comment\n"
+                "beta\tapp\n"
+                "gamma\tapp  # trailing\n"
+                "# --- later ---\n"
+                "delta\tlib\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(oc.read_section(manifest, "# --- app-mode corpus"), {"beta", "gamma"})
+            self.assertEqual(oc.read_section(manifest, "# --- missing"), set())
+
+
 class ReadRecallTest(unittest.TestCase):
     def test_relative_paths_resolve_against_the_repo_root(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -104,6 +123,11 @@ class CommittedManifestsTest(unittest.TestCase):
             self.assertTrue(path.is_dir(), f"{slug}: {path}")
         slugs = {r["slug"] for r in oc.read_manifest(oc.DEFAULT_MANIFEST)}
         self.assertLessEqual(set(oc.read_env_manifest(oc.DEFAULT_ENV_MANIFEST)), slugs)
+
+    def test_app_corpus_section_is_present(self) -> None:
+        app = oc.read_section(oc.DEFAULT_MANIFEST, oc.APP_CORPUS_SECTION)
+        self.assertIn("healthchecks", app)
+        self.assertNotIn("airflow", app)
 
 
 if __name__ == "__main__":

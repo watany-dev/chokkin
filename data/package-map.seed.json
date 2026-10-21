@@ -1182,6 +1182,182 @@
       "imports": [
         "xdrlib"
       ]
+    },
+    {
+      "distribution": "django-crispy-forms",
+      "imports": [
+        "crispy_forms"
+      ]
+    },
+    {
+      "distribution": "django-appconf",
+      "imports": [
+        "appconf"
+      ]
+    },
+    {
+      "distribution": "django-allauth",
+      "imports": [
+        "allauth"
+      ]
+    },
+    {
+      "distribution": "django-axes",
+      "imports": [
+        "axes"
+      ]
+    },
+    {
+      "distribution": "django-environ",
+      "imports": [
+        "environ"
+      ]
+    },
+    {
+      "distribution": "environ-config",
+      "imports": [
+        "environ"
+      ]
+    },
+    {
+      "distribution": "django-formtools",
+      "imports": [
+        "formtools"
+      ]
+    },
+    {
+      "distribution": "django-simple-history",
+      "imports": [
+        "simple_history"
+      ]
+    },
+    {
+      "distribution": "django-sortedm2m",
+      "imports": [
+        "sortedm2m"
+      ]
+    },
+    {
+      "distribution": "djangorestframework-simplejwt",
+      "imports": [
+        "rest_framework_simplejwt"
+      ]
+    },
+    {
+      "distribution": "djangorestframework-csv",
+      "imports": [
+        "rest_framework_csv"
+      ]
+    },
+    {
+      "distribution": "django-activity-stream",
+      "imports": [
+        "actstream"
+      ]
+    },
+    {
+      "distribution": "django-compressor",
+      "imports": [
+        "compressor"
+      ]
+    },
+    {
+      "distribution": "django-dbsettings",
+      "imports": [
+        "dbsettings"
+      ]
+    },
+    {
+      "distribution": "django-bootstrap-breadcrumbs2",
+      "imports": [
+        "django_bootstrap_breadcrumbs"
+      ]
+    },
+    {
+      "distribution": "lingua-language-detector",
+      "imports": [
+        "lingua"
+      ]
+    },
+    {
+      "distribution": "lingua",
+      "imports": [
+        "lingua"
+      ]
+    },
+    {
+      "distribution": "maxminddb-geolite2",
+      "imports": [
+        "geolite2"
+      ]
+    },
+    {
+      "distribution": "python-json-logger",
+      "imports": [
+        "pythonjsonlogger"
+      ]
+    },
+    {
+      "distribution": "pybars3",
+      "imports": [
+        "pybars"
+      ]
+    },
+    {
+      "distribution": "translate-toolkit",
+      "imports": [
+        "translate"
+      ]
+    },
+    {
+      "distribution": "translate",
+      "imports": [
+        "translate"
+      ]
+    },
+    {
+      "distribution": "borgbackup",
+      "imports": [
+        "borg"
+      ]
+    },
+    {
+      "distribution": "google-cloud-pubsub",
+      "imports": [
+        "google",
+        "google.cloud.pubsub",
+        "google.cloud.pubsub_v1"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-instrumentation-celery",
+      "imports": [
+        "opentelemetry.instrumentation.celery"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-instrumentation-django",
+      "imports": [
+        "opentelemetry.instrumentation.django"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-instrumentation-psycopg",
+      "imports": [
+        "opentelemetry.instrumentation.psycopg"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-instrumentation-redis",
+      "imports": [
+        "opentelemetry.instrumentation.redis"
+      ]
+    },
+    {
+      "distribution": "opentelemetry-instrumentation-requests",
+      "imports": [
+        "opentelemetry.instrumentation.requests"
+      ]
     }
   ],
   "auto_packages": [
