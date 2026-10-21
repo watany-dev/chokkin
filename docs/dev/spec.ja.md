@@ -1416,6 +1416,9 @@ manifest の app mode CHK001 corpus の節 (CHK001 を測るために足した D
 settings が文字列で名指す backend (`STORAGES`、`CACHES`、`DATABASES` の `ENGINE`、
 `PASSWORD_HASHERS`) と、docker や shell からだけ起動する CLI の依存で起きる。どちらも
 chokkin がまだ読まない形なので、gate に入れると既知の gap を測ることになるため。
+orchestration plugin の節 (Dagster / Prefect / Scrapy の利用側 project、#1057) も
+同じ理由で記録だけにする。誤検知は `profiles.yml` の `type:` が名指す dbt adapter と、
+`dg dev` が起動する `dagster-webserver` で、どちらも chokkin がまだ読まない。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
 
 severity が `info` の finding (例: optional try-import の CHK003) はヒットとして

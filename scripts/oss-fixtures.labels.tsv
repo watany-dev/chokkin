@@ -2247,3 +2247,47 @@ wger	CHK002	gevent	fp	-	celery worker --pool=gevent in extras/docker/production/
 wger	CHK002	icalendar	fp	-	"from icalendar import ..." in wger/manager/views/ical.py:29
 wger	CHK002	psycopg	fp	-	django.contrib.postgres in INSTALLED_APPS settings_global.py:70; postgresql ENGINE in settings/local_dev.py:101
 wger	CHK002	tzdata	fp	-	implicit zoneinfo data fallback for available_timezones() in wger/core/models/profile.py:79 (platform-guarded)
+# #1057: orchestration plugin corpus (dagster-open-platform, prefect-collection-registry,
+# open-gov-crawlers), hand-labelled by reading the pinned clones (nothing executed).
+# Every hit on these projects plus their CHK006. All three run in library mode, so the
+# CHK006 are info: really unused, labelled info-expected. No CHK001 hit in the
+# default run (the --strict `maybe` ones are in scripts/oss-maybe.labels.tsv).
+dagster-open-platform	CHK002	aiohttp	tp	-	never imported; security pin (>=3.13.3) of a transitive dependency
+dagster-open-platform	CHK002	certifi	tp	-	never imported; transitive pin (==2025.1.31) of requests
+dagster-open-platform	CHK002	dagster-cloud-cli	tp	-	never imported and no `dagster-cloud` command in the repo; dagster-cloud depends on it
+dagster-open-platform	CHK002	dagster-gcp	tp	-	never imported (no dagster_gcp anywhere)
+dagster-open-platform	CHK002	dagster-pandas	tp	-	never imported (no dagster_pandas anywhere)
+dagster-open-platform	CHK002	dagster-pipes	tp	-	never imported; dagster depends on it
+dagster-open-platform	CHK002	dagster-webserver	fp	-	`dg dev` (Makefile:30) serves the UI from dagster-webserver; no import or command names it
+dagster-open-platform	CHK002	dbt-snowflake	fp	-	dbt adapter loaded by `type: snowflake` in dagster_open_platform_dbt/profiles.yml:6
+dagster-open-platform	CHK002	deepdiff	tp	-	never imported; security pin (dependabot comment at pyproject.toml:56)
+dagster-open-platform	CHK002	filelock	tp	-	never imported; security pin of a transitive dependency
+dagster-open-platform	CHK002	protobuf	tp	-	never imported (no google.protobuf); transitive pin
+dagster-open-platform	CHK002	psutil	tp	-	never imported; transitive pin
+dagster-open-platform	CHK002	pyasn1	tp	-	never imported; security pin of google-auth's dependency
+dagster-open-platform	CHK002	pyopenssl	tp	-	never imported (no OpenSSL); pin for snowflake-connector-python per the slack link at pyproject.toml:43
+dagster-open-platform	CHK002	sling	tp	-	never imported; version pin of dagster-sling's dependency
+dagster-open-platform	CHK004	dagster_open_platform/defs/google_drive/py/resources.py:google.oauth2	tp	-	google-auth comes only through google-api-python-client
+dagster-open-platform	CHK004	dagster_open_platform/defs/google_search_console/py/resources.py:google.oauth2	tp	-	google-auth comes only through google-api-python-client
+dagster-open-platform	CHK004	dagster_open_platform/defs/science/models/opportunity_win_probability/model_opportunity_win_probability.py:cryptography.hazmat.backends	tp	-	cryptography is not declared; it comes through pyopenssl / snowflake-connector-python
+dagster-open-platform	CHK004	dagster_open_platform/defs/science/models/opportunity_win_probability/model_opportunity_win_probability.py:cryptography.hazmat.primitives	tp	-	cryptography is not declared; it comes through pyopenssl / snowflake-connector-python
+dagster-open-platform	CHK004	dagster_open_platform/defs/science/models/opportunity_win_probability/model_opportunity_win_probability.py:numpy	tp	-	numpy is not declared; it comes through scikit-learn / xgboost / shap
+dagster-open-platform	CHK004	dagster_open_platform/lib/snowflake/component.py:jinja2	tp	-	jinja2 is not declared; it comes through dbt-core / dagster
+dagster-open-platform	CHK006	dagster_open_platform/lib/dbt/translator.py:RegionPrefixedDbtTranslator	info-expected	library-public-api	library mode (no app signal), so info; class referenced nowhere else (no .py/.yaml names it)
+dagster-open-platform	CHK006	dagster_open_platform/utils/environment_helpers.py:get_database_asset_key_for_environment	info-expected	library-public-api	library mode (no app signal), so info; function referenced nowhere else
+prefect-collection-registry	CHK004	src/prefect_collection_registry/update_collection_metadata.py:httpx	tp	-	httpx is not declared; it comes through prefect
+prefect-collection-registry	CHK004	src/prefect_collection_registry/utils.py:httpx	tp	-	httpx is not declared; it comes through prefect
+prefect-collection-registry	CHK004	src/prefect_collection_registry/utils.py:pydantic_core	tp	-	pydantic-core is not declared; it comes through prefect's pydantic
+prefect-collection-registry	CHK004	src/prefect_collection_registry/view_schema_validation.py:pydantic_core	tp	-	pydantic-core is not declared; it comes through prefect's pydantic
+prefect-collection-registry	CHK006	src/prefect_collection_registry/generate_block_metadata.py:write_block_metadata	info-expected	library-public-api	library mode (no app signal), so info; function referenced nowhere else
+prefect-collection-registry	CHK006	src/prefect_collection_registry/update_collection_metadata.py:TODO_COLLECTIONS	info-expected	library-public-api	library mode (no app signal), so info; constant referenced nowhere else
+prefect-collection-registry	CHK006	src/prefect_collection_registry/utils.py:LOCK_FILE	info-expected	library-public-api	library mode (no app signal), so info; constant referenced nowhere else
+prefect-collection-registry	CHK006	src/prefect_collection_registry/utils.py:get_logo_url_for_collection	info-expected	library-public-api	library mode (no app signal), so info; only caller is generate_flow_metadata.py, which nothing imports
+open-gov-crawlers	CHK002	cryptography	tp	-	never imported; scrapy pulls it in itself
+open-gov-crawlers	CHK002	lxml	tp	-	only use is BeautifulSoup(features="lxml") in parsers/int/rome_statute.py, a file nothing imports; scrapy pulls lxml in itself
+open-gov-crawlers	CHK006	public_law/glossaries/parsers/gbr/cpr_glossary.py:empty_tag	info-expected	library-public-api	library mode (no app signal), so info; module constant unused; the spider of the same name builds its own local empty_tag
+open-gov-crawlers	CHK006	public_law/legal_texts/models/crs.py:Part	info-expected	library-public-api	library mode (no app signal), so info; class referenced nowhere else (models/__init__.py does not re-export it)
+open-gov-crawlers	CHK006	public_law/shared/models/result.py:cat_oks	info-expected	library-public-api	library mode (no app signal), so info; function referenced nowhere else
+open-gov-crawlers	CHK006	public_law/shared/utils/dates.py:SimpleTimezone	info-expected	library-public-api	library mode (no app signal), so info; Protocol referenced nowhere, not even in its module
+open-gov-crawlers	CHK006	public_law/shared/utils/html.py:T	info-expected	library-public-api	library mode (no app signal), so info; TypeVar defined and never used in its module
+open-gov-crawlers	CHK006	public_law/shared/utils/text.py:title_case	info-expected	library-public-api	library mode (no app signal), so info; function referenced nowhere else

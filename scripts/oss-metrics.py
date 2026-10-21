@@ -929,8 +929,13 @@ def main() -> int:
     # The app-mode CHK001 corpus is recorded only for CHK002 (#1065): most of
     # its false positives are backends named by settings strings and CLIs run
     # from docker or shell, forms chokkin does not read yet, so the gate would
-    # measure those known gaps.
-    app_corpus = frozenset(oc.read_section(args.manifest, oc.APP_CORPUS_SECTION))
+    # measure those known gaps. The orchestration plugin corpus (#1057) is too:
+    # its false positives are a dbt adapter named by profiles.yml and the
+    # webserver `dg dev` spawns, forms chokkin does not read either.
+    app_corpus = frozenset(
+        oc.read_section(args.manifest, oc.APP_CORPUS_SECTION)
+        | oc.read_section(args.manifest, oc.ORCHESTRATION_CORPUS_SECTION)
+    )
     fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in app_corpus])
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
     _, app_total, app_fp, app_unclassified = fp_gate([f for f in findings if f[0] in app_corpus])
@@ -987,7 +992,7 @@ def main() -> int:
             [
                 ["Unused-dep FP rate (CHK002)", f"< {FP_GATE_PCT}%",
                  f"{fp_rate}% ({y002_fp} FP / {y002_total} reported, {y002_unclassified} unclassified;"
-                 f" app-mode corpus, recorded only: {app_rate})",
+                 f" app-mode and orchestration corpora, recorded only: {app_rate})",
                  verdict(passes["fp"])],
                 ["Precision floor (labelled hits)",
                  ", ".join(f"{c} >= {f}%" for c, f in PRECISION_FLOORS.items()),
