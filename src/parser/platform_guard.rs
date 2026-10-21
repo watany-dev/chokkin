@@ -265,6 +265,13 @@ mod tests {
             "import json, os as o\n",
             "try:\n    pass\nexcept ImportError:\n    import platform as p\n",
             "if x:\n    pass\nelse:\n    with y:\n        import sys as s\n",
+            "try:\n    pass\nexcept E:\n    pass\nelse:\n    import sys as s\n",
+            "try:\n    pass\nfinally:\n    import sys as s\n",
+            "for x in y:\n    import sys as s\n",
+            "for x in y:\n    pass\nelse:\n    import sys as s\n",
+            "while x:\n    import sys as s\n",
+            "while x:\n    pass\nelse:\n    import sys as s\n",
+            "match x:\n    case 1:\n        pass\n    case _:\n        import sys as s\n",
         ] {
             assert!(aliases(source), "{source}");
         }

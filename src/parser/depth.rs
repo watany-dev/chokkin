@@ -108,19 +108,24 @@ impl DepthWalk {
             self.too_deep = Some(node.start());
             return;
         }
-        // Every nested statement, expression or pattern lies strictly inside
-        // its parent's range, except the one that fills a wrapper (an
-        // expression statement, a `case` value pattern), and a wrapper never
-        // fills another. So a node `len` bytes long holds at most
-        // `2 * len + 1` levels; a short node cannot reach the limit, and most
-        // of a module is short nodes (#1087).
-        if self.prune && self.depth + 2 * usize::from(node.range().len()) + 1 < MAX_AST_DEPTH {
+        if self.prune && !may_reach_limit(self.depth, usize::from(node.range().len())) {
             return;
         }
         self.depth += 1;
         walk(self);
         self.depth -= 1;
     }
+}
+
+/// Whether a node `len` bytes long at `depth` can hold a node at
+/// [`MAX_AST_DEPTH`]. A nested statement, expression or pattern lies strictly
+/// inside its parent's range, except the expression that fills an expression
+/// statement or a `case` value pattern; an expression holds neither, so a
+/// path takes that step at most once, and a node of an error-free tree is
+/// never empty. A node `len` bytes long thus holds at most `len + 1` levels,
+/// itself included; most of a module is nodes too short to matter (#1087).
+const fn may_reach_limit(depth: usize, len: usize) -> bool {
+    depth + len >= MAX_AST_DEPTH
 }
 
 impl<'a> Visitor<'a> for DepthWalk {
@@ -140,7 +145,8 @@ impl<'a> Visitor<'a> for DepthWalk {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_AST_DEPTH, Unwalkable, parse_walkable_expression, parse_walkable_module, suite_too_deep,
+        MAX_AST_DEPTH, Unwalkable, may_reach_limit, parse_walkable_expression,
+        parse_walkable_module, suite_too_deep,
     };
 
     fn suite(source: &str) -> Option<usize> {
@@ -181,6 +187,24 @@ mod tests {
             "]".repeat(MAX_AST_DEPTH)
         );
         assert!(suite(&format!("match y:\n    case {pattern}:\n        pass\n")).is_some());
+    }
+
+    #[test]
+    fn a_node_reaches_the_limit_once_its_length_and_depth_add_up_to_it() {
+        assert!(may_reach_limit(0, MAX_AST_DEPTH));
+        assert!(may_reach_limit(1, MAX_AST_DEPTH));
+        assert!(may_reach_limit(MAX_AST_DEPTH, 0));
+        assert!(!may_reach_limit(0, MAX_AST_DEPTH - 1));
+        assert!(!may_reach_limit(MAX_AST_DEPTH - 1, 0));
+    }
+
+    #[test]
+    fn the_tightest_tree_at_the_length_bound_is_still_too_deep() {
+        // A bare unary chain holds `len + 1` levels: the expression statement
+        // and the expression share their range, every operator adds a byte.
+        let chain = format!("{}1", "-".repeat(MAX_AST_DEPTH - 1));
+        assert_eq!(suite(&chain), Some(MAX_AST_DEPTH - 1));
+        assert_eq!(suite(&format!("{}1", "-".repeat(MAX_AST_DEPTH - 2))), None);
     }
 
     #[test]
