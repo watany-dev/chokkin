@@ -190,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_orchestration_clis_to_their_distributions() {
+    fn maps_corpus_clis_to_their_distributions() {
         let map = build_binary_map(&default_config(), &super::super::venv::VenvIndex::default());
         for (binary, distribution) in [
             ("dagster", "dagster"),
@@ -199,6 +199,7 @@ mod tests {
             ("dbt", "dbt-core"),
             ("prefect", "prefect"),
             ("scrapy", "scrapy"),
+            ("sqlfluff", "sqlfluff"),
         ] {
             assert_eq!(
                 map.get(binary).map(String::as_str),
@@ -206,14 +207,6 @@ mod tests {
                 "{binary}"
             );
         }
-    }
-
-    #[test]
-    fn maps_sqlfluff_to_its_distribution() {
-        // A Makefile `sqlfluff lint` target is the only use of a dev-group
-        // sqlfluff (dagster-open-platform).
-        let map = build_binary_map(&default_config(), &super::super::venv::VenvIndex::default());
-        assert_eq!(map.get("sqlfluff").map(String::as_str), Some("sqlfluff"));
     }
 
     #[test]
@@ -354,6 +347,7 @@ mod tests {
             ("environ", "django-environ"),
             ("lingua", "lingua"),
             ("lingua", "lingua-language-detector"),
+            ("progressbar", "progressbar"),
             ("progressbar", "progressbar2"),
         ] {
             let candidates = import_map.candidates(import_root);

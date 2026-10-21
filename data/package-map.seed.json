@@ -1469,6 +1469,7 @@
     "plotly",
     "polars",
     "pre-commit",
+    "progressbar",
     "prometheus-client",
     "prompt-toolkit",
     "ptyprocess",
