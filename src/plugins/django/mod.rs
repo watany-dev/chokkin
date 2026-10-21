@@ -689,7 +689,7 @@ fn star_imports(
                 suffix.as_deref(),
                 Some("*"),
             );
-            let beside = (module.is_none() && level > 0)
+            let beside = (level > 0)
                 .then(|| relative_path(root, rel, level, suffix.as_deref()))
                 .flatten();
             Some((module, beside, import.start()))
