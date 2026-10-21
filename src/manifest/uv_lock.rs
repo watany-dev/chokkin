@@ -1,8 +1,9 @@
 //! `uv.lock` graph extraction.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 
+use rustc_hash::FxHashSet;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
 
@@ -104,9 +105,9 @@ fn scan_uv_layout(contents: &str) -> Option<UvLock> {
     let mut packages: Vec<UvPackage> = Vec::new();
     let mut table = Table::Other;
     let mut array: Option<ArrayTarget> = None;
-    let mut keys = Seen::default();
-    let mut top_tables = Seen::default();
-    let mut package_tables = Seen::default();
+    let mut keys: FxHashSet<&str> = FxHashSet::default();
+    let mut top_tables: FxHashSet<&str> = FxHashSet::default();
+    let mut package_tables: FxHashSet<&str> = FxHashSet::default();
     let mut rest = contents;
     while !rest.is_empty() {
         let line = next_line(&mut rest);
@@ -196,7 +197,7 @@ fn single_line_strings(contents: &str) -> bool {
         && memchr::memmem::find(bytes, b"'''").is_none()
 }
 
-fn top_table<'a>(header: &'a str, seen: &mut Seen<'a>) -> Option<Table> {
+fn top_table<'a>(header: &'a str, seen: &mut FxHashSet<&'a str>) -> Option<Table> {
     if header.split('.').next() == Some("package") || !seen.insert(header) {
         return None;
     }
@@ -205,7 +206,7 @@ fn top_table<'a>(header: &'a str, seen: &mut Seen<'a>) -> Option<Table> {
 
 /// The table a `[package.<sub>]` header opens, `None` when uv would not
 /// write it: a repeat, or a graph field other than the extras table.
-fn package_table<'a>(sub: &'a str, seen: &mut Seen<'a>) -> Option<Table> {
+fn package_table<'a>(sub: &'a str, seen: &mut FxHashSet<&'a str>) -> Option<Table> {
     let first = sub.split('.').next().unwrap_or(sub);
     let graph_field = matches!(first, "name" | "dependencies" | "optional-dependencies");
     if (graph_field && sub != "optional-dependencies") || !seen.insert(sub) {
@@ -326,43 +327,6 @@ fn next_line<'a>(rest: &mut &'a str) -> &'a str {
     let line = &rest[..end];
     *rest = rest.get(end + 1..).unwrap_or("");
     line.strip_suffix('\r').unwrap_or(line)
-}
-
-/// The keys of one table, or the table headers, seen so far. uv writes a few
-/// per table, so a linear scan is cheapest, but a lock with thousands would
-/// make that quadratic: past `LINEAR_LIMIT` they move to a hash set (#1047).
-#[derive(Default)]
-struct Seen<'a> {
-    few: Vec<&'a str>,
-    many: HashSet<&'a str>,
-}
-
-impl<'a> Seen<'a> {
-    const LINEAR_LIMIT: usize = 32;
-
-    /// `false` when `name` was already seen.
-    fn insert(&mut self, name: &'a str) -> bool {
-        if self.many.is_empty() {
-            if self.few.contains(&name) {
-                return false;
-            }
-            if self.few.len() < Self::LINEAR_LIMIT {
-                self.few.push(name);
-                return true;
-            }
-            self.many.extend(self.few.drain(..));
-        }
-        self.many.insert(name)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.few.is_empty() && self.many.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.few.clear();
-        self.many.clear();
-    }
 }
 
 fn dependency_names(deps: Vec<UvDependency>) -> Vec<String> {
@@ -597,11 +561,11 @@ mod tests {
         }
     }
 
-    /// Repeats stay rejected once a table holds more keys, or a lock more
-    /// headers, than the linear scan keeps (#1047).
+    /// Repeats stay rejected in a table with many keys, or a lock with many
+    /// headers, which the scanner tracks in hash sets (#1047).
     #[test]
-    fn scanner_rejects_repeats_past_the_linear_limit() {
-        let many = Seen::LINEAR_LIMIT * 2;
+    fn scanner_rejects_repeats_among_many_keys() {
+        let many = 64;
         let extras = (0..many)
             .map(|i| format!("x{i} = []\n"))
             .collect::<Vec<_>>()
