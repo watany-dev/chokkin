@@ -445,19 +445,11 @@ def is_strict(out_dir: Path) -> bool:
     return "- strict: yes" in (out_dir / "report.md").read_text(encoding="utf-8").splitlines()
 
 
-def report_issues(out_dir: Path, slug: str) -> list[dict] | None:
-    """Issues of one project's saved JSON report; None when it is not JSON (crash)."""
-    try:
-        return json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8")).get("issues", [])
-    except (OSError, ValueError):
-        return None
-
-
 def report_levels(out_dir: Path, slug: str) -> dict[tuple[str, str], Counter] | None:
     """(code, fingerprint) -> Counter of `severity/confidence` in one project's
     saved JSON report; None when the report is not JSON (crash). Import
     fingerprints carry no line, so one fingerprint can cover several findings."""
-    issues = report_issues(out_dir, slug)
+    issues = oc.report_issues(out_dir, slug)
     if issues is None:
         return None
     levels: dict[tuple[str, str], Counter] = {}
@@ -518,7 +510,7 @@ def downgrade_vs_vanish(
     def keys(run: Path, slug: str) -> dict[tuple[str, str], str]:
         """(code, escaped fingerprint) -> target in one strict report."""
         if (run, slug) not in cache:
-            issues = report_issues(run / "strict", slug) or []
+            issues = oc.report_issues(run / "strict", slug) or []
             cache[(run, slug)] = {(i["code"], tsv_field(i["fingerprint"])): i.get("target") or "?" for i in issues}
         return cache[(run, slug)]
 
@@ -526,7 +518,7 @@ def downgrade_vs_vanish(
         """(code, escaped fingerprint) -> confidences of its findings in one report."""
         if (run, slug) not in conf_cache:
             out: dict[tuple[str, str], Counter] = {}
-            for i in report_issues(run, slug) or []:
+            for i in oc.report_issues(run, slug) or []:
                 out.setdefault((i["code"], tsv_field(i["fingerprint"])), Counter())[i.get("confidence") or "?"] += 1
             conf_cache[(run, slug)] = out
         return conf_cache[(run, slug)]
@@ -834,9 +826,12 @@ def main() -> int:
     app_corpus = frozenset(oc.read_section(args.manifest, oc.APP_CORPUS_SECTION))
     fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate(findings, app_corpus)
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
-    app_findings = [f for f in findings if f[0] in app_corpus]
-    app_total, app_fp = count_hits(app_findings, "CHK002"), count_hits(app_findings, "CHK002", "fp")
-    app_rate = f"{100 * app_fp / app_total:.1f}% ({app_fp} FP / {app_total})" if app_total else "n/a"
+    _, app_total, app_fp, app_unclassified = fp_gate([f for f in findings if f[0] in app_corpus])
+    app_rate = (
+        f"{100 * app_fp / app_total:.1f}% ({app_fp} FP / {app_total}, {app_unclassified} unclassified)"
+        if app_total
+        else "n/a"
+    )
 
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
     missed = recall_missed(labels, reported)

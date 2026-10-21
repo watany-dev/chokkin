@@ -38,6 +38,7 @@ class MaybePoolTest(unittest.TestCase):
             {"code": "CHK001", "confidence": "maybe", "severity": "warning", "target": "a.py", "message": "m"},
             {"code": "CHK001", "confidence": "likely", "severity": "warning", "target": "b.py", "message": "m"},
             {"code": "CHK006", "confidence": "maybe", "severity": "warning", "target": "c.py", "message": "m"},
+            {"code": "CHK001", "confidence": "maybe", "severity": "info", "target": "d.py", "message": "m"},
         ]
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, "lib.json").write_text(json.dumps({"issues": issues}), encoding="utf-8")

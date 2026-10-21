@@ -52,7 +52,6 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
-import json
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -75,17 +74,16 @@ def labelled_keys(path: Path, code: str) -> set[tuple[str, str]]:
 
 
 def maybe_hits(strict_dir: Path, code: str) -> dict[str, dict[str, str]]:
-    """slug -> target -> message of the `maybe` findings of `code` in each
-    `<slug>.json` --strict report in `strict_dir`."""
+    """slug -> target -> message of the `maybe` hits (info left out) of `code`
+    in each `<slug>.json` --strict report in `strict_dir`."""
     hits: dict[str, dict[str, str]] = defaultdict(dict)
     for path in sorted(strict_dir.glob("*.json")):
-        try:
-            issues = json.loads(path.read_text(encoding="utf-8"))["issues"]
-        except (ValueError, KeyError) as error:
-            print(f"skipping {path}: {error}", file=sys.stderr)
+        issues = oc.report_issues(strict_dir, path.stem)
+        if issues is None:
+            print(f"skipping {path}: not JSON", file=sys.stderr)
             continue
         for issue in issues:
-            if issue["code"] == code and issue["confidence"] == "maybe":
+            if issue["code"] == code and issue["confidence"] == "maybe" and issue["severity"] != "info":
                 hits[path.stem][issue["target"]] = issue["message"]
     return dict(hits)
 

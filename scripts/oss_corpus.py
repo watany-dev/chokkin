@@ -55,6 +55,14 @@ def read_manifest(path: Path, core_only: bool = False) -> list[dict[str, str]]:
     return rows
 
 
+def report_issues(out_dir: Path, slug: str) -> list[dict] | None:
+    """Issues of one project's saved JSON report; None when it is not JSON (crash)."""
+    try:
+        return json.loads((out_dir / f"{slug}.json").read_text(encoding="utf-8")).get("issues", [])
+    except (OSError, ValueError):
+        return None
+
+
 def read_section(path: Path, header: str) -> set[str]:
     """Slugs of the manifest section whose `# --- ` line starts with `header`,
     up to the next section; empty when no such section exists."""
