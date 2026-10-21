@@ -442,24 +442,11 @@ proptest! {
         for fingerprint in with_code(&default, "CHK001").iter().filter(runtime) {
             prop_assert!(unreachable.contains(fingerprint), "{fingerprint} reachable under --production");
         }
-        // `--production` counts an unreachable public module's calls as a
-        // library's outside callers (#588), even when the default run found
-        // that module orphaned too, so such a call may clear a CHK006 the
-        // default run reported (#950).
-        let orphans: Vec<String> = with_code(&default, "CHK001")
-            .iter()
-            .filter(runtime)
-            .map(|fingerprint| fs::read_to_string(dir.path().join(path_of(fingerprint))).expect("read"))
-            .collect();
         let unused = with_code(&production, "CHK006");
         for fingerprint in with_code(&default, "CHK006").iter().filter(runtime) {
             let file = format!("CHK001:{}", path_of(fingerprint));
-            let symbol = fingerprint.rsplit(':').next().expect("symbol");
-            let orphan_call = format!("{symbol}()");
             prop_assert!(
-                unused.contains(fingerprint)
-                    || unreachable.contains(&file)
-                    || (project.library && orphans.iter().any(|source| source.contains(&orphan_call))),
+                unused.contains(fingerprint) || unreachable.contains(&file),
                 "{fingerprint} used under --production"
             );
         }

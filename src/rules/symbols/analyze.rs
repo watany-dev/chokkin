@@ -4,11 +4,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
-use crate::graph::ProjectGraph;
+use crate::graph::{FileId, ProjectGraph};
 use crate::manifest::LoadedManifest;
 use crate::parser::{ImportContext, ParseSummary, ParsedModule};
 use crate::plugins::PluginHints;
-use crate::reachability::ReachabilityReport;
+use crate::reachability::{ModuleIndex, ReachabilityReport, module_and_parents};
 use crate::resolver::is_first_party_import;
 use crate::resolver::{ResolutionIndex, ResolveWarning};
 use crate::rules::RuleContext;
@@ -99,7 +99,7 @@ pub fn analyze_with_context(
     let public_api = PublicApi::build(
         &surface_modules,
         &module_names,
-        production_api_references(production_tests, parse, &reachable, sources),
+        production_api_references(production_tests, parse, &reachable, graph, sources),
     );
     let mut external_symbols =
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
@@ -194,12 +194,13 @@ fn test_file_paths<'a>(sources: &'a DiscoveredSources, entry: &'a EntryPlan) -> 
 
 /// `--production` drops the tests and leaves the public modules only they
 /// reached unreachable, yet both still show which public-module names an
-/// outside caller uses (#588). An orphaned private module is dead code, not a
-/// caller.
+/// outside caller uses (#588). An orphaned module, which the tests do not
+/// reach either, is dead code, not a caller (#950); nor is a private one.
 fn production_api_references(
     production_tests: Option<&[ParsedModule]>,
     parse: &ParseSummary,
     reachable: &HashSet<&str>,
+    graph: &ProjectGraph,
     sources: &DiscoveredSources,
 ) -> ReferenceIndex {
     let Some(tests) = production_tests else {
@@ -207,14 +208,93 @@ fn production_api_references(
     };
     let all: Vec<_> = tests.iter().chain(&parse.modules).collect();
     let names = build_module_names(&all, sources);
-    let unreachable_public = parse.modules.iter().filter(|module| {
-        !reachable.contains(module.path.as_str())
-            && names
+    let reached_public = reached_from_tests(tests, parse, reachable, graph, sources)
+        .into_iter()
+        .filter(|module| {
+            names
                 .get(module.path.as_str())
                 .is_some_and(|name| is_public_module(name))
-    });
-    let evidence: Vec<_> = tests.iter().chain(unreachable_public).collect();
+        });
+    let evidence: Vec<_> = tests.iter().chain(reached_public).collect();
     ReferenceIndex::build(&evidence, &names)
+}
+
+/// The modules left unreachable that the tests reach through them. Edges are
+/// first-party imports, literal dynamic imports and `pytest_plugins`, each
+/// with its parent packages, `from pkg import sub`, and every module under a
+/// prefixed dynamic import. A module the tests reach only another way (a
+/// plugin reference, a framework glob) is not followed: it is left out as an
+/// orphan is, so its calls clear no CHK006 and `--production` reports what
+/// the default run reports, or more.
+fn reached_from_tests<'a>(
+    tests: &'a [ParsedModule],
+    parse: &'a ParseSummary,
+    reachable: &HashSet<&str>,
+    graph: &ProjectGraph,
+    sources: &DiscoveredSources,
+) -> Vec<&'a ParsedModule> {
+    let index = ModuleIndex::build(graph, sources);
+    let by_path: HashMap<&str, &ParsedModule> = parse
+        .modules
+        .iter()
+        .filter(|module| !reachable.contains(module.path.as_str()))
+        .map(|module| (module.path.as_str(), module))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut reached = Vec::new();
+    let mut queue: Vec<&ParsedModule> = tests.iter().collect();
+    while let Some(module) = queue.pop() {
+        for file in imported_files(module, &index) {
+            let Some(target) = graph
+                .file(file)
+                .and_then(|node| by_path.get(node.path.as_str()))
+            else {
+                continue;
+            };
+            if seen.insert(target.path.as_str()) {
+                reached.push(*target);
+                queue.push(*target);
+            }
+        }
+    }
+    reached
+}
+
+/// Every first-party file an import in `module` loads.
+fn imported_files(module: &ParsedModule, index: &ModuleIndex) -> Vec<FileId> {
+    let from = module.path.as_str();
+    let dotted = module
+        .imports
+        .iter()
+        .map(|import| import.module.as_str())
+        .chain(
+            module
+                .dynamic_imports
+                .iter()
+                .chain(&module.pytest_plugins)
+                .map(|import| import.module.as_str()),
+        )
+        .filter(|name| !name.is_empty());
+    let mut files: Vec<_> = dotted
+        .flat_map(module_and_parents)
+        .filter_map(|name| index.resolve_from(from, name))
+        .collect();
+    files.extend(
+        module
+            .imports
+            .iter()
+            .filter_map(|import| import.import_target())
+            .filter(|(package, name)| !package.is_empty() && *name != "*")
+            .filter_map(|(package, name)| index.resolve_from(from, &format!("{package}.{name}"))),
+    );
+    files.extend(
+        module
+            .dynamic_import_prefixes
+            .iter()
+            .flat_map(|prefix| index.under(&prefix.module))
+            .map(|(_, file)| file),
+    );
+    files
 }
 
 fn build_module_names<'a>(

@@ -1563,7 +1563,7 @@ fn binary_production_keeps_published_members_only_dev_groups_reference() {
 /// starlette imports `JSONResponse` from `starlette.responses`, not the
 /// package root, so `--production` must keep the tests, and the modules only
 /// they reach, as evidence of API use. A private module's name, and one only
-/// an orphaned private module imports, stay reported (#588).
+/// an orphaned module imports, stay reported (#588, #950).
 #[test]
 fn binary_production_library_keeps_public_module_names_used_by_tests() {
     let project = write_project(&[
@@ -1586,8 +1586,7 @@ fn binary_production_library_keeps_public_module_names_used_by_tests() {
         ("acme/_utils.py", "def collapse() -> None:\n    pass\n"),
         // Orphaned private module: its import is not an outside caller.
         ("acme/_legacy.py", "from acme.responses import Unused\n"),
-        // Without `--production`, a public module nothing reaches is not a
-        // caller either.
+        // Nor is a public module nothing reaches, tests included.
         ("acme/plugins.py", "from acme.responses import Orphaned\n"),
         (
             "tests/test_responses.py",
@@ -1604,9 +1603,100 @@ fn binary_production_library_keeps_public_module_names_used_by_tests() {
         let expected: &[&str] = if extra.is_empty() {
             &["acme/responses.py:Orphaned", "acme/responses.py:Unused"]
         } else {
-            &["acme/_utils.py:collapse", "acme/responses.py:Unused"]
+            &[
+                "acme/_utils.py:collapse",
+                "acme/responses.py:Orphaned",
+                "acme/responses.py:Unused",
+            ]
         };
         assert_eq!(flagged, expected, "{extra:?}: {keys:?}");
+    }
+}
+
+/// Under `--production` the evidence is the public modules the tests reach
+/// through unreachable modules: `from pkg import sub` and a private module
+/// pass it on, while an orphan's calls stay out, so a CHK006 the default run
+/// reports stays under `--production` (#950).
+#[test]
+fn binary_production_library_counts_modules_tests_reach_transitively() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\ndependencies = []\n",
+        ),
+        ("src/acme/__init__.py", "from acme import m0 as m0\n"),
+        (
+            "src/acme/m0.py",
+            "def f0_0():\n    pass\n\n\ndef f0_1():\n    pass\n\n\ndef f0_2():\n    pass\n",
+        ),
+        // Imported by nothing, tests included (CHK001 either way).
+        (
+            "src/acme/m1.py",
+            "from acme.m0 import f0_0\n\n\ndef run_1():\n    f0_0()\n",
+        ),
+        ("src/acme/cli.py", "from acme import _glue\n"),
+        (
+            "src/acme/_glue.py",
+            "from acme.fmt import show\n\n\ndef glue():\n    show()\n",
+        ),
+        (
+            "src/acme/fmt.py",
+            "from acme.m0 import f0_1\n\n\ndef show():\n    f0_1()\n",
+        ),
+        (
+            "tests/test_cli.py",
+            "from acme import cli\n\n\ndef test_cli():\n    assert cli\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        let flagged: Vec<_> = keys
+            .iter()
+            .filter(|(code, target)| code == "CHK006" && target.starts_with("src/acme/m0.py"))
+            .map(|(_, target)| target.as_str())
+            .collect();
+        let expected = ["src/acme/m0.py:f0_0", "src/acme/m0.py:f0_2"];
+        assert_eq!(flagged, expected, "{extra:?}: {keys:?}");
+    }
+}
+
+/// `pytest_plugins` and a prefixed dynamic import in the tests carry the
+/// `--production` evidence walk as they carry reachability (#950).
+#[test]
+fn binary_production_library_follows_test_plugins_and_import_prefixes() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\ndependencies = []\n",
+        ),
+        ("src/acme/__init__.py", "from acme import m0 as m0\n"),
+        (
+            "src/acme/m0.py",
+            "def f0_0():\n    pass\n\n\ndef f0_1():\n    pass\n\n\ndef f0_2():\n    pass\n",
+        ),
+        (
+            "src/acme/testing.py",
+            "from acme.m0 import f0_0\n\n\ndef fixture_0():\n    f0_0()\n",
+        ),
+        ("src/acme/backends/__init__.py", ""),
+        (
+            "src/acme/backends/sql.py",
+            "from acme.m0 import f0_1\n\n\ndef connect():\n    f0_1()\n",
+        ),
+        ("tests/conftest.py", "pytest_plugins = [\"acme.testing\"]\n"),
+        (
+            "tests/test_backends.py",
+            "import importlib\n\n\ndef test_load(name):\n    assert importlib.import_module(\"acme.backends.\" + name)\n",
+        ),
+    ]);
+    for extra in [&[][..], &["--production"][..]] {
+        let keys = issue_keys(&json_issues(project.path(), extra));
+        let flagged: Vec<_> = keys
+            .iter()
+            .filter(|(code, target)| code == "CHK006" && target.starts_with("src/acme/m0.py"))
+            .map(|(_, target)| target.as_str())
+            .collect();
+        assert_eq!(flagged, ["src/acme/m0.py:f0_2"], "{extra:?}: {keys:?}");
     }
 }
 

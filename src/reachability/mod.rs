@@ -7,6 +7,7 @@ mod module_index;
 mod trace;
 mod types;
 
+pub(crate) use bfs::module_and_parents;
 pub use build::{analyze_reachability, apply_public_surface};
 pub(crate) use build::{apply_distributed_surfaces, apply_member_surfaces};
 pub(crate) use error::ReachabilityError;
