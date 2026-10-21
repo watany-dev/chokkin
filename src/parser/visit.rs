@@ -26,7 +26,8 @@ use super::module_guard::{
     imported_module_guard, is_main_guard_test, raises_import_error, runs_as_main,
 };
 use super::platform_guard::{
-    PlatformModules, is_platform_guard_test, mentions_platform_test, platform_modules,
+    PlatformModules, imports_platform_alias, is_platform_guard_test, mentions_platform_test,
+    platform_modules,
 };
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::server_app::ServerNames;
@@ -264,10 +265,15 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.async_library_names = self.scope_async_library_names(None, stmts);
-        let modules = platform_modules(None, None, stmts);
-        if self.mentions.platform || mentions_platform_test(source, &modules) {
-            self.platform_modules = modules;
-            self.mentions.platform = true;
+        // Without a plain `sys.platform`-style mention, only an aliased
+        // import (`import sys as s`) can make a platform test, so most
+        // modules skip the module scope's binding scan (#1087).
+        if self.mentions.platform || imports_platform_alias(stmts) {
+            let modules = platform_modules(None, None, stmts);
+            if self.mentions.platform || mentions_platform_test(source, &modules) {
+                self.platform_modules = modules;
+                self.mentions.platform = true;
+            }
         }
         self.visit_body(stmts);
         self.parsed.deprecated_shim = warns_deprecated_on_import(stmts, &self.parsed.imports);
