@@ -280,9 +280,9 @@ fn imported_files(module: &ParsedModule, index: &ModuleIndex) -> Vec<FileId> {
         module
             .imports
             .iter()
-            .filter_map(|import| import.import_target())
-            .filter(|(package, name)| !package.is_empty() && *name != "*")
-            .filter_map(|(package, name)| index.resolve_from(from, &format!("{package}.{name}"))),
+            .filter(|import| !import.module.is_empty())
+            .filter_map(|import| Some(format!("{}.{}", import.module, import.name.as_deref()?)))
+            .filter_map(|submodule| index.resolve_from(from, &submodule)),
     );
     files.extend(
         module
