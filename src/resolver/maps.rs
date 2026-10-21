@@ -218,6 +218,14 @@ mod tests {
             first("opentelemetry.sdk.trace").as_deref(),
             Some("opentelemetry-sdk")
         );
+        assert_eq!(
+            first("opentelemetry.instrumentation.django").as_deref(),
+            Some("opentelemetry-instrumentation-django")
+        );
+        assert_eq!(
+            first("google.cloud.pubsub_v1.types").as_deref(),
+            Some("google-cloud-pubsub")
+        );
         assert_eq!(first("databricks.sdk").as_deref(), Some("databricks-sdk"));
         assert_eq!(first("poetry.core.version").as_deref(), Some("poetry-core"));
         assert_eq!(
@@ -372,6 +380,13 @@ mod tests {
             ("channels", "channels"),
             ("flask_login", "flask-login"),
             ("permissionedforms", "django-permissionedforms"),
+            ("crispy_forms", "django-crispy-forms"),
+            ("environ", "django-environ"),
+            ("rest_framework_simplejwt", "djangorestframework-simplejwt"),
+            ("actstream", "django-activity-stream"),
+            ("compressor", "django-compressor"),
+            ("pythonjsonlogger", "python-json-logger"),
+            ("translate", "translate-toolkit"),
         ] {
             assert_eq!(
                 import_map.candidates(import_root),

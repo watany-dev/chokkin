@@ -2198,7 +2198,6 @@ wger	CHK001	wger/gym/views/admin_notes.py	fp	dynamic-import	"from wger.gym.views
 babybuddy	CHK002	dj-database-url	fp	-	import dj_database_url in babybuddy/settings/base.py:3, used at :115
 babybuddy	CHK002	django-dbsettings	fp	-	"dbsettings" in INSTALLED_APPS settings/base.py:52; import dbsettings in babybuddy/site_settings.py:6, apps.py:9
 babybuddy	CHK002	pilkit	tp	-	never imported; transitive pin of django-imagekit
-healthchecks	CHK002	django-compressor	fp	-	"compressor" in INSTALLED_APPS hc/settings.py:101, COMPRESS_STORAGE/finders at :294-304
 healthchecks	CHK002	psycopg	fp	-	ENGINE "django.db.backends.postgresql" in hc/settings.py:224 needs psycopg
 redash	CHK002	aniso8601	tp	-	never imported; transitive pin of flask-restful
 redash	CHK002	blinker	tp	-	never imported; transitive pin of flask/flask-mail (signals used only via flask_login)
@@ -2207,7 +2206,6 @@ redash	CHK002	greenlet	tp	-	never imported; transitive pin of gevent
 redash	CHK002	httplib2	fp	-	import httplib2 in redash/query_runner/couchbase.py:16 (try block), module listed in settings/__init__.py:292
 redash	CHK002	jinja2	tp	-	never imported directly; transitive pin of flask (templates rendered via flask)
 redash	CHK002	markupsafe	tp	-	never imported; transitive pin of jinja2/werkzeug
-redash	CHK002	maxminddb-geolite2	fp	-	import geolite2 in redash/handlers/events.py:1 (dist provides module geolite2)
 redash	CHK002	paramiko	tp	-	never imported (only mentioned in a comment); transitive pin of sshtunnel
 redash	CHK002	pyasynchat	tp	-	asynchat never imported in project; likely a py3.13 compat shim but no dependent found in uv.lock
 redash	CHK002	pyopenssl	tp	-	OpenSSL never imported; transitive pin of advocate/pysaml2
@@ -2220,54 +2218,32 @@ redash	CHK002	urllib3	tp	-	never imported (only logger name "requests.packages.u
 saleor	CHK002	azure-common	tp	-	azure.common never imported; legacy SDK pin, django-storages azure backend does not use it
 saleor	CHK002	azure-storage-blob	fp	-	needed by storages.backends.azure_storage imported in saleor/core/storages.py:2 (STORAGES settings.py:587)
 saleor	CHK002	azure-storage-common	tp	-	azure.storage.common never imported; legacy SDK for blob<12, unused by blob v12/django-storages
-saleor	CHK002	google-cloud-pubsub	fp	-	from google.cloud import pubsub_v1 in saleor/webhook/transport/utils.py:28
+saleor	CHK002	google-cloud-storage	fp	-	needed by storages.backends.gcloud imported in saleor/core/storages.py:3 (STORAGES settings.py:580)
 saleor	CHK002	opentelemetry-distro	fp	-	ambiguous: configurator for opentelemetry-instrument that core/telemetry/metric.py:76 tells operators to use
 saleor	CHK002	psycopg	fp	-	dj_database_url default "postgres://..." in saleor/settings.py:139 selects postgresql backend needing psycopg
-saleor	CHK002	pybars3	fp	-	import pybars in saleor/plugins/email_common.py:13 (reached via BUILTIN_PLUGINS settings.py:941)
-saleor	CHK002	python-json-logger	fp	-	from pythonjsonlogger.jsonlogger import in saleor/core/logging.py:5 (LOGGING "()" settings.py:362)
 saleor	CHK002	setuptools	fp	-	razorpay needs pkg_resources at runtime, per comment at pyproject.toml:85
 weblate	CHK002	aeidon	tp	-	never imported; pin for translate-toolkit[subtitles] extra (pyproject comment), only an OPTIONAL version probe
 weblate	CHK002	argon2-cffi	fp	-	Argon2PasswordHasher in PASSWORD_HASHERS (weblate/settings_example.py:378) makes Django import argon2
 weblate	CHK002	argon2-cffi-bindings	tp	-	never imported; transitive pin of argon2-cffi
-weblate	CHK002	borgbackup	fp	-	"from borg.helpers import Location" in weblate/utils/validators.py:391; borg CLI run in utils/backup.py:192
 weblate	CHK002	celery-types	fp	-	celery stub package consumed by mypy (.github/workflows/mypy.yml:62, dependency-groups.types)
 weblate	CHK002	certifi	tp	-	never imported; transitive pin of requests/sentry-sdk kept loose for newer CA bundles
 weblate	CHK002	cffi	tp	-	never imported; transitive pin of argon2-cffi-bindings/cryptography ("For Argon2" comment)
 weblate	CHK002	charset-normalizer	fp	-	in REQUIRES (weblate/utils/requirements.py:60); metadata() raises ImproperlyConfigured if missing
 weblate	CHK002	cssselect	fp	-	lxml.cssselect imported in weblate/addons/forms.py:18 needs the cssselect package at runtime
-weblate	CHK002	django-appconf	fp	-	"from appconf import AppConf" in weblate/utils/models.py:11
-weblate	CHK002	django-crispy-forms	fp	-	"from crispy_forms.helper import FormHelper" in weblate/accounts/forms.py:13; INSTALLED_APPS settings_example.py:482
-weblate	CHK002	djangorestframework-csv	fp	-	"from rest_framework_csv.renderers import CSVRenderer" in weblate/api/renderers.py:11
 weblate	CHK002	fluent-syntax	tp	-	fluent.syntax never imported directly; pin for translate-toolkit[fluent] extra (pyproject comment)
 weblate	CHK002	hiredis	fp	-	in REQUIRES (weblate/utils/requirements.py:53, raises if missing); redis-py loads hiredis parser implicitly
 weblate	CHK002	iniparse	tp	-	never imported; pin for translate-toolkit[ini] extra, only an OPTIONAL version probe
-weblate	CHK002	opentelemetry-instrumentation-celery	fp	-	"from opentelemetry.instrumentation.celery import CeleryInstrumentor" in weblate/utils/errors.py:399
-weblate	CHK002	opentelemetry-instrumentation-django	fp	-	"from opentelemetry.instrumentation.django import DjangoInstrumentor" in weblate/utils/errors.py:402
-weblate	CHK002	opentelemetry-instrumentation-psycopg	fp	-	"from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor" in weblate/utils/errors.py:405
-weblate	CHK002	opentelemetry-instrumentation-redis	fp	-	"from opentelemetry.instrumentation.redis import RedisInstrumentor" in weblate/utils/errors.py:410
-weblate	CHK002	opentelemetry-instrumentation-requests	fp	-	"from opentelemetry.instrumentation.requests import RequestsInstrumentor" in weblate/utils/errors.py:413
 weblate	CHK002	phply	tp	-	never imported; pin for translate-toolkit[php] extra, only an OPTIONAL version probe
 weblate	CHK002	pyasn1	tp	-	never imported; transitive pin of webauthn/python-ldap/pyasn1-modules
 weblate	CHK002	tomlkit	tp	-	never imported; pin for translate-toolkit[toml] extra, only an OPTIONAL version probe
-weblate	CHK002	translate-toolkit	fp	-	"from translate.storage.tmx import tmxfile" in weblate/memory/models.py:23 (and many more)
 weblate	CHK002	ua-parser	tp	-	ua_parser never imported; transitive pin of user-agents (imported in weblate/utils/request.py:37)
 weblate	CHK002	urllib3	tp	-	never imported; transitive pin of requests to enable brotli/zstd extras
 weblate	CHK002	webauthn	tp	-	webauthn never imported directly; transitive pin of django-otp-webauthn (django_otp_webauthn used)
 wger	CHK002	boto3	fp	-	STORAGES BACKEND storages.backends.s3boto3.S3Boto3Storage in settings/main.py:401 requires boto3
-wger	CHK002	django-activity-stream	fp	-	"actstream" in INSTALLED_APPS settings/settings_global.py:126; imported in wger/exercises/apps.py:27
-wger	CHK002	django-allauth	fp	-	"allauth" in INSTALLED_APPS settings/settings_global.py:135; imported in wger/core/forms.py:40
-wger	CHK002	django-axes	fp	-	"axes" in INSTALLED_APPS settings/settings_global.py:120; AxesMiddleware at :188
-wger	CHK002	django-bootstrap-breadcrumbs2	fp	-	"django_bootstrap_breadcrumbs" in INSTALLED_APPS settings/settings_global.py:114; loaded in templates
-wger	CHK002	django-crispy-forms	fp	-	"crispy_forms" in INSTALLED_APPS settings/settings_global.py:101; imported in wger/utils/generic_views.py:34
-wger	CHK002	django-environ	fp	-	"import environ" in settings/main.py:23
 wger	CHK002	django-formtools	fp	-	"from formtools.preview import FormPreview" in wger/weight/views.py:31
 wger	CHK002	django-redis	fp	-	CACHES BACKEND django_redis.cache.RedisCache in settings/local_dev.py:75
-wger	CHK002	django-simple-history	fp	-	"simple_history" in INSTALLED_APPS settings/settings_global.py:123; imported in exercises models
-wger	CHK002	django-sortedm2m	fp	-	"import sortedm2m.fields" in wger/manager/migrations/0002_auto_20150202_2040.py:5 (needed to migrate)
-wger	CHK002	djangorestframework-simplejwt	fp	-	"rest_framework_simplejwt" in INSTALLED_APPS settings/settings_global.py:108; imported in wger/urls.py:36
 wger	CHK002	flower	fp	-	"celery ... flower" run in extras/docker/production/celery/start-flower:6
 wger	CHK002	gevent	fp	-	celery worker --pool=gevent in extras/docker/production/celery/start-worker:7
 wger	CHK002	icalendar	fp	-	"from icalendar import ..." in wger/manager/views/ical.py:29
-wger	CHK002	lingua-language-detector	fp	-	"from lingua import LanguageDetectorBuilder" in wger/core/api/serializers.py:20
 wger	CHK002	psycopg	fp	-	django.contrib.postgres in INSTALLED_APPS settings_global.py:70; postgresql ENGINE in settings/local_dev.py:101
 wger	CHK002	tzdata	fp	-	implicit zoneinfo data fallback for available_timezones() in wger/core/models/profile.py:79 (platform-guarded)
