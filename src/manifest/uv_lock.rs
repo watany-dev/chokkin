@@ -1,6 +1,6 @@
 //! `uv.lock` graph extraction.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use serde::Deserialize;
@@ -62,20 +62,20 @@ pub(super) fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestErro
 fn lock_graph(lock: UvLock) -> LockfileGraph {
     let mut graph = LockfileGraph::default();
     for package in lock.package {
-        let Some(name) = package.name.as_deref().map(normalize_distribution_name) else {
+        let Some(name) = package.name.map(normalized) else {
             continue;
         };
         if !package.optional_dependencies.is_empty() {
             let extras = package
                 .optional_dependencies
-                .iter()
-                .map(|(extra, deps)| (normalize_distribution_name(extra), dependency_names(deps)))
+                .into_iter()
+                .map(|(extra, deps)| (normalized(extra), dependency_names(deps)))
                 .collect();
             graph.extras.insert(name.clone(), extras);
         }
         graph
             .edges
-            .insert(name, dependency_names(&package.dependencies));
+            .insert(name, dependency_names(package.dependencies));
     }
     graph
 }
@@ -104,14 +104,12 @@ fn scan_uv_layout(contents: &str) -> Option<UvLock> {
     let mut packages: Vec<UvPackage> = Vec::new();
     let mut table = Table::Other;
     let mut array: Option<ArrayTarget> = None;
-    let mut keys: Vec<&str> = Vec::new();
-    let mut top_tables: Vec<&str> = Vec::new();
-    let mut package_tables: Vec<&str> = Vec::new();
+    let mut keys = Seen::default();
+    let mut top_tables = Seen::default();
+    let mut package_tables = Seen::default();
     let mut rest = contents;
     while !rest.is_empty() {
-        let (line, next) = rest.split_once('\n').unwrap_or((rest, ""));
-        rest = next;
-        let line = line.strip_suffix('\r').unwrap_or(line);
+        let line = next_line(&mut rest);
         if let Some(target) = &array {
             if line == "]" {
                 array = None;
@@ -158,13 +156,12 @@ fn scan_uv_layout(contents: &str) -> Option<UvLock> {
             continue;
         }
 
-        let (key, value) = line.split_once(" = ")?;
+        let (key, value) = split_bare_key(line)?;
         // A root-level `package` key would be the package array itself.
         let in_root = packages.is_empty() && top_tables.is_empty();
-        if !is_bare_key(key, false) || keys.contains(&key) || (in_root && key == "package") {
+        if !keys.insert(key) || (in_root && key == "package") {
             return None;
         }
-        keys.push(key);
         if !is_graph_key(table, key)? {
             if value == "[" {
                 // `wheels` arrays are most of a lock's bytes.
@@ -199,23 +196,21 @@ fn single_line_strings(contents: &str) -> bool {
         && memchr::memmem::find(bytes, b"'''").is_none()
 }
 
-fn top_table<'a>(header: &'a str, seen: &mut Vec<&'a str>) -> Option<Table> {
-    if header.split('.').next() == Some("package") || seen.contains(&header) {
+fn top_table<'a>(header: &'a str, seen: &mut Seen<'a>) -> Option<Table> {
+    if header.split('.').next() == Some("package") || !seen.insert(header) {
         return None;
     }
-    seen.push(header);
     Some(Table::Other)
 }
 
 /// The table a `[package.<sub>]` header opens, `None` when uv would not
 /// write it: a repeat, or a graph field other than the extras table.
-fn package_table<'a>(sub: &'a str, seen: &mut Vec<&'a str>) -> Option<Table> {
+fn package_table<'a>(sub: &'a str, seen: &mut Seen<'a>) -> Option<Table> {
     let first = sub.split('.').next().unwrap_or(sub);
     let graph_field = matches!(first, "name" | "dependencies" | "optional-dependencies");
-    if seen.contains(&sub) || (graph_field && sub != "optional-dependencies") {
+    if (graph_field && sub != "optional-dependencies") || !seen.insert(sub) {
         return None;
     }
-    seen.push(sub);
     Some(if sub == "optional-dependencies" {
         Table::OptionalDependencies
     } else {
@@ -275,10 +270,7 @@ fn scan_array_item(item: &str) -> Option<UvDependency> {
 /// last item would otherwise run on to a later array's `]`.
 fn skip_array(mut rest: &str) -> Option<&str> {
     loop {
-        let end = memchr::memchr(b'\n', rest.as_bytes()).unwrap_or(rest.len());
-        let line = &rest[..end];
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        rest = rest.get(end + 1..).unwrap_or("");
+        let line = next_line(&mut rest);
         if line == "]" {
             return Some(rest);
         }
@@ -308,24 +300,90 @@ fn is_plain_value(value: &str) -> bool {
 
 fn is_bare_key(key: &str, dotted: bool) -> bool {
     !key.is_empty()
-        && key.split('.').all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        })
+        && key
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(is_key_byte))
         && (dotted || !key.contains('.'))
 }
 
-fn dependency_names(deps: &[UvDependency]) -> Vec<String> {
-    deps.iter()
+fn is_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+}
+
+/// A `key = value` line split at the end of its bare, undotted key; `None`
+/// for any other key, which uv does not write.
+fn split_bare_key(line: &str) -> Option<(&str, &str)> {
+    let len = line
+        .bytes()
+        .position(|byte| !is_key_byte(byte))
+        .unwrap_or(line.len());
+    let value = line[len..].strip_prefix(" = ")?;
+    (len > 0).then(|| (&line[..len], value))
+}
+
+/// Takes the next line off `rest`, without its line ending.
+fn next_line<'a>(rest: &mut &'a str) -> &'a str {
+    let end = memchr::memchr(b'\n', rest.as_bytes()).unwrap_or(rest.len());
+    let line = &rest[..end];
+    *rest = rest.get(end + 1..).unwrap_or("");
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
+/// The keys of one table, or the table headers, seen so far. uv writes a few
+/// per table, so a linear scan is cheapest, but a lock with thousands would
+/// make that quadratic: past `LINEAR_LIMIT` they move to a hash set (#1047).
+#[derive(Default)]
+struct Seen<'a> {
+    few: Vec<&'a str>,
+    many: HashSet<&'a str>,
+}
+
+impl<'a> Seen<'a> {
+    const LINEAR_LIMIT: usize = 32;
+
+    /// `false` when `name` was already seen.
+    fn insert(&mut self, name: &'a str) -> bool {
+        if self.many.is_empty() {
+            if self.few.contains(&name) {
+                return false;
+            }
+            if self.few.len() < Self::LINEAR_LIMIT {
+                self.few.push(name);
+                return true;
+            }
+            self.many.extend(self.few.drain(..));
+        }
+        self.many.insert(name)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.few.is_empty() && self.many.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.few.clear();
+        self.many.clear();
+    }
+}
+
+fn dependency_names(deps: Vec<UvDependency>) -> Vec<String> {
+    deps.into_iter()
         .filter_map(|dep| match dep {
-            UvDependency::Table { name } | UvDependency::Name(name) => {
-                Some(normalize_distribution_name(name))
-            },
+            UvDependency::Table { name } | UvDependency::Name(name) => Some(normalized(name)),
             UvDependency::Other(_) => None,
         })
         .collect()
+}
+
+/// `name` normalized, kept as is when it already is: uv writes names that
+/// way, and a monorepo's member lockfiles hold millions of them.
+fn normalized(name: String) -> String {
+    let separator_or_upper = |byte: u8| matches!(byte, b'_' | b'.') || byte.is_ascii_uppercase();
+    if name.bytes().any(separator_or_upper) || name.contains("--") {
+        normalize_distribution_name(&name)
+    } else {
+        name
+    }
 }
 
 /// Drop the `sdist` and `wheels` lines uv writes for every package: they are
@@ -516,9 +574,66 @@ mod tests {
             "[[package]]\nname = \"a\"\nwheels = [\n    { url = \"\"\"a\" },\n]\n",
             "[package.metadata]\nx = 1\n",
             "package = []\n",
+            "[[package]]\nname = \"a\"\nver sion = \"1\"\n",
+            "[[package]]\nname = \"a\"\nx.y = 1\n",
+            "[[package]]\nname = \"a\"\n = 1\n",
+            "[[package]]\nname = \"a\"\nx=1\n",
         ] {
             assert!(scan_uv_layout(contents).is_none(), "{contents}");
         }
+    }
+
+    /// Repeats stay rejected once a table holds more keys, or a lock more
+    /// headers, than the linear scan keeps (#1047).
+    #[test]
+    fn scanner_rejects_repeats_past_the_linear_limit() {
+        let many = Seen::LINEAR_LIMIT * 2;
+        let extras = (0..many)
+            .map(|i| format!("x{i} = []\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let tables = (0..many)
+            .map(|i| format!("[t{i}]\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let subtables = (0..many)
+            .map(|i| format!("[package.m{i}]\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let package = "[[package]]\nname = \"a\"\n";
+        let extras_lock = format!("{package}[package.optional-dependencies]\n{extras}");
+        let tables_lock = format!("{tables}{package}");
+        let subtables_lock = format!("{package}{subtables}");
+
+        let graph = scan_uv_layout(&extras_lock)
+            .map(lock_graph)
+            .expect("uv layout");
+        assert_eq!(graph.extras["a"].len(), many);
+        assert!(scan_uv_layout(&tables_lock).is_some());
+        assert!(scan_uv_layout(&subtables_lock).is_some());
+        for (lock, repeat) in [
+            (extras_lock, "x0 = []\n"),
+            (tables_lock, "[t0]\n"),
+            (subtables_lock, "[package.m0]\n"),
+        ] {
+            let repeated = format!("{lock}{repeat}");
+            assert!(scan_uv_layout(&repeated).is_none(), "{repeated}");
+        }
+    }
+
+    #[test]
+    fn scanner_normalizes_names_uv_did_not() {
+        let contents = "[[package]]\nname = \"Acme_Lib\"\n\
+                        dependencies = [\n    { name = \"zope.interface\" },\n    \"a--b\",\n]\n\n\
+                        [package.optional-dependencies]\nSocks = [\n    { name = \"PySocks\" },\n]\n";
+        let graph = scan_uv_layout(contents).map(lock_graph).expect("uv layout");
+
+        assert_eq!(graph, toml_graph(contents));
+        assert_eq!(
+            graph.edges["acme-lib"],
+            ["zope-interface".to_owned(), "a-b".to_owned()]
+        );
+        assert_eq!(graph.extras["acme-lib"]["socks"], ["pysocks".to_owned()]);
     }
 
     /// Pins the strip and the scanner to the layout a real `uv lock` writes,
