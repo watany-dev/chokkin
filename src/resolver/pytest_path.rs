@@ -24,7 +24,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::parser::ParseSummary;
-use crate::plugins::{PytestImportSettings, SysPathImport, pytest_import_settings};
+use crate::plugins::{
+    PytestImportSettings, SysPathImport, SysPathImporter, pytest_import_settings,
+};
 use crate::sources::{DiscoveredSources, FileContext, FileKind, path_to_module};
 
 use super::types::import_root;
@@ -192,7 +194,8 @@ impl PytestImportPaths {
     /// Record the directories each file's `sys.path` hints name: a discovered
     /// directory ending with the hint, or the hint under the file's directory
     /// or one of its ancestors, the root included, when it exists on disk.
-    /// Each importer in `imports` also gets the directories of its import.
+    /// Each importer in `imports` also gets the directories of its import,
+    /// and a module an import names gets them once it is found there.
     #[must_use]
     pub(crate) fn with_sys_path_hints(
         mut self,
@@ -276,24 +279,80 @@ impl PytestImportPaths {
             .filter_map(|(dir, names)| Some((dir, names?)))
             .collect();
         self.hinted_roots = self.hinted_roots();
-        self.hinted_index = self.hinted_index();
+        self.hinted_index = self.hinted_index(None);
         self.any_hinted_root = self.hinted_roots.values().flatten().cloned().collect();
+        let named = self.add_named_hints(imports);
+        if !named.is_empty() {
+            // The directories are those already hinted, so only these files'
+            // indexes change.
+            let index = self.hinted_index(Some(&named));
+            self.hinted_index.extend(index);
+        }
         self
     }
 
     /// Give each importer the directories its import hints, after its own.
     fn add_imported_hints(&mut self, imports: &[SysPathImport]) {
         for import in imports {
-            if let Some(dirs) = self.hinted.get(&import.imported).cloned() {
-                self.hinted
-                    .entry(import.importer.clone())
-                    .or_default()
-                    .extend(dirs);
+            if let SysPathImporter::File(importer) = &import.importer {
+                self.extend_hinted(importer, &[import.imported.as_str()]);
             }
         }
     }
 
-    fn hinted_index(&self) -> HashMap<String, Arc<HintIndex>> {
+    /// Give each module an import names the directories of that import,
+    /// those it takes from its own imports included: the module is found
+    /// from it, so this waits for the index. The files that got some.
+    fn add_named_hints(&mut self, imports: &[SysPathImport]) -> HashSet<String> {
+        // By module file: many Sphinx confs may name one extension
+        // (airflow's providers).
+        let mut named: HashMap<String, Vec<&str>> = HashMap::new();
+        for import in imports {
+            let SysPathImporter::Named(module) = &import.importer else {
+                continue;
+            };
+            if let Some(file) = self.resolve_fallback(&import.imported, module) {
+                named
+                    .entry(file.to_owned())
+                    .or_default()
+                    .push(&import.imported);
+            }
+        }
+        let mut added = HashSet::new();
+        for (file, imported) in named {
+            if self.extend_hinted(&file, &imported) {
+                added.insert(file);
+            }
+        }
+        added
+    }
+
+    /// Append the directories the `imported` files hint to those of `file`,
+    /// each once. Whether `file` got any.
+    fn extend_hinted(&mut self, file: &str, imported: &[&str]) -> bool {
+        let mut seen: HashSet<&str> = self
+            .hinted
+            .get(file)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect();
+        let new: Vec<String> = imported
+            .iter()
+            .filter_map(|imported| self.hinted.get(*imported))
+            .flatten()
+            .filter(|dir| seen.insert(dir))
+            .cloned()
+            .collect();
+        if new.is_empty() {
+            return false;
+        }
+        self.hinted.entry(file.to_owned()).or_default().extend(new);
+        true
+    }
+
+    /// The index of each hinted file, or of those in `only`.
+    fn hinted_index(&self, only: Option<&HashSet<String>>) -> HashMap<String, Arc<HintIndex>> {
         // The names `has_module` finds in each hinted directory.
         let mut names: HashMap<&str, Vec<&str>> = self
             .hinted_roots
@@ -312,6 +371,7 @@ impl PytestImportPaths {
         let mut shared: HashMap<&[String], Arc<HintIndex>> = HashMap::new();
         self.hinted
             .iter()
+            .filter(|(file, _)| only.is_none_or(|only| only.contains(*file)))
             .map(|(file, dirs)| {
                 let index = shared.entry(dirs).or_insert_with(|| {
                     let mut index = HintIndex::default();
@@ -1125,7 +1185,7 @@ mod tests {
             modules: vec![hinting("common/constants.py", &["exts"])],
         };
         let imports = [SysPathImport {
-            importer: "docs/conf.py".to_owned(),
+            importer: SysPathImporter::File("docs/conf.py".to_owned()),
             imported: "common/constants.py".to_owned(),
         }];
         let temp = tempfile::TempDir::new().expect("tempdir");
@@ -1141,6 +1201,84 @@ mod tests {
             paths(&[]).resolve_fallback("docs/conf.py", "docroles"),
             None
         );
+    }
+
+    #[test]
+    fn modules_an_import_names_see_its_directories_and_its_imports() {
+        let files = [
+            "docs/conf.py",
+            "common/constants.py",
+            "common/exts/docroles.py",
+            "common/exts/yaml_utils.py",
+            "common/unlisted.py",
+        ];
+        let parse = ParseSummary {
+            modules: vec![hinting("common/constants.py", &["exts"])],
+        };
+        let named = |module: &str| SysPathImport {
+            importer: SysPathImporter::Named(module.to_owned()),
+            imported: "docs/conf.py".to_owned(),
+        };
+        let conf_imports = SysPathImport {
+            importer: SysPathImporter::File("docs/conf.py".to_owned()),
+            imported: "common/constants.py".to_owned(),
+        };
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths = |imports: &[SysPathImport]| {
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse, imports)
+        };
+        // Named after the file import it chains through, in either order.
+        for imports in [
+            [named("docroles"), conf_imports.clone()],
+            [conf_imports.clone(), named("docroles")],
+        ] {
+            let paths = paths(&imports);
+            assert_eq!(
+                paths.resolve_fallback("common/exts/docroles.py", "yaml_utils"),
+                Some("common/exts/yaml_utils.py")
+            );
+            assert!(paths.provides_fallback("common/exts/docroles.py", "yaml_utils"));
+            // A module the import does not name keeps its own path.
+            assert_eq!(
+                paths.resolve_fallback("common/unlisted.py", "yaml_utils"),
+                None
+            );
+        }
+        // A name not found from the import gives nothing.
+        let paths = paths(&[conf_imports, named("missing"), named("unlisted")]);
+        let mut hinted: Vec<&str> = paths.hinted.keys().map(String::as_str).collect();
+        hinted.sort_unstable();
+        assert_eq!(hinted, ["common/constants.py", "docs/conf.py"]);
+    }
+
+    #[test]
+    fn named_modules_take_each_directory_once() {
+        let files = [
+            "docs/conf.py",
+            "docs/other/conf.py",
+            "exts/docroles.py",
+            "lib/helpers.py",
+        ];
+        let parse = ParseSummary {
+            modules: vec![
+                hinting("docs/conf.py", &["exts", "lib"]),
+                hinting("docs/other/conf.py", &["exts"]),
+            ],
+        };
+        let named = |conf: &str, module: &str| SysPathImport {
+            importer: SysPathImporter::Named(module.to_owned()),
+            imported: conf.to_owned(),
+        };
+        let imports = [
+            named("docs/conf.py", "docroles"),
+            named("docs/other/conf.py", "docroles"),
+        ];
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_sys_path_hints(temp.path(), &parse, &imports);
+        assert_eq!(paths.hinted["exts/docroles.py"], ["exts", "lib"]);
     }
 
     #[test]
@@ -1354,7 +1492,7 @@ mod tests {
                     .map(|(importer, imported)| (importer.get(&files), imported.get(&files)))
                     .filter(|(_, imported)| !importers.contains(imported.as_str()))
                     .map(|(importer, imported)| SysPathImport {
-                        importer: importer.clone(),
+                        importer: SysPathImporter::File(importer.clone()),
                         imported: imported.clone(),
                     })
                     .collect();
@@ -1431,9 +1569,12 @@ mod tests {
                 }
                 let mut hinted = own.clone();
                 for import in &built.imports {
+                    let SysPathImporter::File(importer) = &import.importer else {
+                        continue;
+                    };
                     if let Some(dirs) = own.get(&import.imported) {
                         hinted
-                            .entry(import.importer.clone())
+                            .entry(importer.clone())
                             .or_default()
                             .extend(dirs.iter().cloned());
                     }

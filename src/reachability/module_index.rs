@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
-use crate::plugins::SysPathImport;
+use crate::plugins::{SysPathImport, SysPathImporter};
 use crate::resolver::PytestImportPaths;
 use crate::sources::{DiscoveredSources, path_to_module};
 
@@ -36,6 +36,8 @@ impl ModuleIndex {
     }
 
     /// Also resolve imports from directories the files' `sys.path` edits add.
+    /// A module an import names that is one of the project's own is imported
+    /// by that name elsewhere too, so it takes none of them.
     #[must_use]
     pub(crate) fn with_sys_path_hints(
         mut self,
@@ -43,9 +45,17 @@ impl ModuleIndex {
         parse: &ParseSummary,
         imports: &[SysPathImport],
     ) -> Self {
+        let imports: Vec<SysPathImport> = imports
+            .iter()
+            .filter(|import| match &import.importer {
+                SysPathImporter::File(_) => true,
+                SysPathImporter::Named(module) => !self.module_to_file.contains_key(module),
+            })
+            .cloned()
+            .collect();
         self.pytest = self
             .pytest
-            .with_sys_path_hints(&sources.root.path, parse, imports);
+            .with_sys_path_hints(&sources.root.path, parse, &imports);
         self
     }
 
@@ -135,5 +145,71 @@ mod tests {
         );
         assert_eq!(updated.under("acme.foo"), []);
         assert_eq!(updated.under("acm"), []);
+    }
+
+    #[test]
+    fn modules_of_the_project_take_no_named_sys_path_hints() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let mut graph = ProjectGraph::new(ProjectRoot {
+            path: temp.path().to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+        });
+        let files = [
+            "docs/conf.py",
+            "exts/docroles.py",
+            "exts/yaml_utils.py",
+            "src/acme/__init__.py",
+            "src/acme/sphinxext.py",
+        ];
+        let mut ids = HashMap::new();
+        for path in files {
+            let id = graph
+                .intern_file(FileNode {
+                    path: path.to_owned(),
+                    context: FileContext::Runtime,
+                    kind: FileKind::Python,
+                })
+                .expect("file");
+            ids.insert(path, id);
+        }
+        let sources = DiscoveredSources {
+            root: graph.root.clone(),
+            layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
+            effective_globs: Vec::new(),
+            files: files
+                .iter()
+                .map(|path| crate::sources::DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: FileContext::Runtime,
+                })
+                .collect(),
+            warnings: Vec::new(),
+        };
+        let parse = ParseSummary {
+            modules: vec![crate::parser::ParsedModule {
+                path: "docs/conf.py".to_owned(),
+                sys_path_hints: vec!["exts".to_owned(), "src".to_owned()],
+                ..Default::default()
+            }],
+        };
+        let named = |module: &str| SysPathImport {
+            importer: SysPathImporter::Named(module.to_owned()),
+            imported: "docs/conf.py".to_owned(),
+        };
+        let index = ModuleIndex::build(&graph, &sources).with_sys_path_hints(
+            &sources,
+            &parse,
+            &[named("docroles"), named("acme.sphinxext")],
+        );
+        assert_eq!(
+            index.resolve_from("exts/docroles.py", "yaml_utils"),
+            Some(ids["exts/yaml_utils.py"])
+        );
+        // The project's own package imports it by that name too.
+        assert_eq!(
+            index.resolve_from("src/acme/sphinxext.py", "yaml_utils"),
+            None
+        );
     }
 }

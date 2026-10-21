@@ -2218,6 +2218,44 @@ fn binary_sphinx_extensions_follow_an_imported_constants_module() {
     assert_eq!(unused, ["src/common/exts/ext_unlisted.py"], "{keys:?}");
 }
 
+/// airflow: Sphinx imports an extension after `conf.py` has run, so the
+/// extension's own imports see the directory the constants module `conf.py`
+/// imports puts on `sys.path`, and reach the helpers beside it (#1086).
+#[test]
+fn binary_sphinx_extensions_import_through_the_conf_sys_path() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = []\n",
+        ),
+        (
+            "docs/conf.py",
+            "from common.constants import *\n\nextensions = [\"ext_listed\"]\n",
+        ),
+        (
+            "src/common/constants.py",
+            "import os\nimport sys\n\nsys.path.append(os.path.join(os.path.dirname(__file__), \"exts\"))\n",
+        ),
+        (
+            "src/common/exts/ext_listed.py",
+            "from yaml_utils import load\n\n\ndef setup(app):\n    load()\n",
+        ),
+        ("src/common/exts/yaml_utils.py", "def load():\n    pass\n"),
+        (
+            "src/common/exts/ext_unlisted.py",
+            "def setup(app):\n    pass\n",
+        ),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(keys.iter().all(|(code, _)| code != "CHK010"), "{keys:?}");
+    let unused: Vec<&str> = keys
+        .iter()
+        .filter(|(code, _)| code == "CHK001")
+        .map(|(_, target)| target.as_str())
+        .collect();
+    assert_eq!(unused, ["src/common/exts/ext_unlisted.py"], "{keys:?}");
+}
+
 /// airflow: `[tool.pytest]` (pytest 9) adds `example_*.py`, and the root
 /// `testpaths` does not cover the member suites passed to pytest by path (#603).
 #[test]

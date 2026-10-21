@@ -100,15 +100,28 @@ pub struct CommandTargetRef {
     pub deploy: bool,
 }
 
-/// A config file imports a first-party module whose `sys.path` edits apply to
-/// the config's own imports, as Sphinx's `conf.py` does with a shared
-/// constants module (#779).
+/// A first-party file whose `sys.path` edits apply to another file's imports:
+/// a shared constants module Sphinx's `conf.py` imports (#779), or `conf.py`
+/// itself for the extensions it lists (#1086).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SysPathImport {
-    /// Root-relative path of the importing file.
-    pub importer: String,
-    /// Root-relative path of the imported module.
+    /// The file that sees the edits.
+    pub importer: SysPathImporter,
+    /// Root-relative path of the file whose edits it sees.
     pub imported: String,
+}
+
+/// The file that sees the `sys.path` edits of a [`SysPathImport`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SysPathImporter {
+    /// Root-relative path of a file that imports the module.
+    File(String),
+    /// A module the imported file names, which the tool imports by name once
+    /// that file has run: a Sphinx extension `conf.py` lists sees the
+    /// `sys.path` of `conf.py`, its imports' edits included (#1086). It is
+    /// whatever the name resolves to from the imported file on the hinted
+    /// path or beside it.
+    Named(String),
 }
 
 /// `module:symbol` reference (uvicorn, gunicorn, etc.).

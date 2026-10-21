@@ -18,7 +18,7 @@ use crate::sources::{DiscoveredSources, FileContext, path_to_module};
 use super::context::PluginContext;
 use super::types::{
     ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin, SysPathImport,
-    UnreadSettings,
+    SysPathImporter, UnreadSettings,
 };
 use super::util::{origin_for_file, push_binary};
 use super::warnings::PluginsWarning;
@@ -174,6 +174,14 @@ fn read_conf(
             push_unread(contrib, path, module, line);
         }
     }
+    // Sphinx imports each extension once `conf.py` has run, so its imports
+    // see the same `sys.path` (#1086).
+    for (module, _, _) in &refs {
+        contrib.sys_path_imports.push(SysPathImport {
+            importer: SysPathImporter::Named(module.clone()),
+            imported: file.clone(),
+        });
+    }
     let theme = declared_theme(&stmts, ctx.manifest);
     refs.extend(theme.map(|(module, start)| (module, start, "html_theme")));
     for (module, start, label) in refs {
@@ -232,7 +240,7 @@ impl<'a> ConfModules<'a> {
 /// `conf` takes the `sys.path` hints of `module`, a file it imports (#779).
 fn push_sys_path_import(contrib: &mut PluginContribution, conf: &str, module: &str) {
     contrib.sys_path_imports.push(SysPathImport {
-        importer: conf.to_owned(),
+        importer: SysPathImporter::File(conf.to_owned()),
         imported: module.to_owned(),
     });
 }
