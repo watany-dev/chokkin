@@ -161,10 +161,11 @@ script entry and 1 other. The gate puts
 a 25% floor on CHK001 (spec §17); fixing `include()` is the lever, not the
 floor.
 
-**Maybe pool** (`scripts/oss-maybe.labels.tsv`): 50 CHK001 findings at `maybe`
-drawn from the `--strict` reports of 17 projects. 6 are dead (tp), so hiding
-`maybe` by default has a **12% false-negative rate**. The 44 used files are
-library-public 21, dynamic-import 10, framework-loaded 7, script-entry 3,
+**Maybe pool** (`scripts/oss-maybe.labels.tsv`): 50 CHK001 hits (info
+severity left out, as in the default run) at `maybe` drawn from the
+`--strict` reports of 16 projects. 6 are dead (tp), so hiding `maybe` by
+default has a **12% false-negative rate**. The 44 used files are
+library-public 20, dynamic-import 10, framework-loaded 7, script-entry 4,
 other 3, so the floor hides what it is meant to hide.
 
 ## Method

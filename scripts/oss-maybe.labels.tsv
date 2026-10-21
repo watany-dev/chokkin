@@ -12,7 +12,6 @@
 #
 # Same columns as scripts/oss-fixtures.labels.tsv:
 # slug	code	target	verdict	bucket	note
-airflow	CHK001	task-sdk/src/airflow/sdk/observability/stats.py	fp	library-public	Documented import path: metrics.rst:248/262 shows `from airflow.sdk.observability.stats import Stats`.
 anyio	CHK001	src/anyio/_backends/_asyncio.py	fp	dynamic-import	Loaded by _core/_eventloop.py:164 import_module(f"anyio._backends._{asynclib_name}").
 black	CHK001	src/blib2to3/pgen2/conv.py	tp	-	Self-described obsolete pgen converter; nothing imports it and its `from pgen2 import` would not even resolve.
 django	CHK001	django/conf/locale/sr/formats.py	fp	dynamic-import	Loaded by django/utils/formats.py:84 import_module("%s.formats" % "django.conf.locale.<lang>").
@@ -35,7 +34,6 @@ fastmcp	CHK001	fastmcp_slim/fastmcp/types.py	fp	library-public	Documented in doc
 langchain	CHK001	libs/langchain/langchain_classic/document_loaders/html.py	fp	library-public	Back-compat deprecated-import shim (legacy public path); imported by tests/unit_tests/test_imports.py:19 rglob.
 airflow	CHK001	task-sdk/src/airflow/sdk/serde/serializers/datetime.py	fp	dynamic-import	Loaded by serde/__init__.py:483-485 iter_namespace over airflow.sdk.serde.serializers + import_module.
 django	CHK001	django/conf/locale/hr/formats.py	fp	dynamic-import	Loaded by django/utils/formats.py:84 import_module("%s.formats" % "django.conf.locale.<lang>").
-djangorestframework	CHK001	rest_framework/urls.py	fp	dynamic-import	Named by string include('rest_framework.urls') in docs/index.md:126 and tests/test_response.py:131.
 fastapi	CHK001	fastapi/middleware/cors.py	fp	library-public	Documented in docs/en/docs/reference/middleware.md:7-12; used by docs_src/cors/tutorial001.py:2.
 langchain	CHK001	libs/langchain/langchain_classic/retrievers/self_query/dashvector.py	fp	library-public	Back-compat deprecated-import shim (legacy public path); imported by tests/unit_tests/test_imports.py:19 rglob.
 llama_index	CHK001	llama-index-core/llama_index/core/instrumentation/span/simple.py	fp	library-public	Deliberate compat shim keeping public path llama_index.core.instrumentation.span.simple (SimpleSpan in docs/__all__).
@@ -45,11 +43,9 @@ pydantic	CHK001	pydantic/env_settings.py	fp	library-public	V1 backport stub so l
 sqlalchemy	CHK001	lib/sqlalchemy/testing/plugin/bootstrap.py	fp	dynamic-import	Read and exec'd by path from test/conftest.py:45-56; also documented for third-party dialect test suites.
 streamlit	CHK001	lib/streamlit/.agents/skills/developing-with-streamlit/assets/templates/apps/dashboard-seattle-weather/streamlit_app.py	fp	script-entry	Template app run via `streamlit run streamlit_app.py` per templates/apps/README.md:38 and SKILL.md:181.
 transformers	CHK001	src/transformers/modeling_attn_mask_utils.py	fp	library-public	Deprecated public API (removal in v5.10) with documented import path; listed in push-important-models.yml:110.
-uvicorn	CHK001	uvicorn/workers.py	fp	library-public	Deprecated public module; docs/deployment.md:214,225 `gunicorn -k uvicorn.workers.UvicornWorker`.
 virtualenv	CHK001	src/virtualenv/discovery/cached_py_info.py	fp	library-public	Backward-compat re-export shim announced in docs/changelog.rst:644.
 llama_index	CHK001	llama-index-core/llama_index/core/ingestion/api_utils.py	fp	library-public	Public module of deprecated get_client/get_aclient helpers kept for external callers (docstrings say Deprecated).
 mitmproxy	CHK001	mitmproxy/utils/pyinstaller/hook-mitmproxy.addons.onboardingapp.py	fp	framework-loaded	PyInstaller hook; dir registered via pyproject.toml:107-108 pyinstaller40 hook-dirs entry point.
-pydantic	CHK001	pydantic/class_validators.py	fp	library-public	V1 backport stub; docs/migration.md:964 and _migration.py:27 map pydantic.class_validators.validator.
 sqlalchemy	CHK001	lib/sqlalchemy/util/tool_support.py	fp	other	Statically imported by tools/*.py scripts, e.g. tools/generate_proxy_methods.py:72.
 streamlit	CHK001	lib/streamlit/.agents/skills/developing-with-streamlit/assets/templates/apps/dashboard-metrics/streamlit_app.py	fp	script-entry	Template app run via `streamlit run streamlit_app.py` per templates/apps/README.md:33-38.
 transformers	CHK001	src/transformers/utils/dummy_music_objects.py	tp	-	Stale dummy file: no 'music' backend in __init__/check_dummies; nothing imports it (others imported in __init__.py).
@@ -62,3 +58,7 @@ streamlit	CHK001	lib/streamlit/hello/plotting_demo.py	fp	framework-loaded	Page f
 transformers	CHK001	src/transformers/data/metrics/squad_metrics.py	fp	library-public	Historically public path transformers.data.metrics.squad_metrics used by SQuAD scripts; no in-repo user (borderline).
 virtualenv	CHK001	src/virtualenv/discovery/py_spec.py	fp	library-public	Backward-compat re-export shim announced in docs/changelog.rst:644.
 llama_index	CHK001	llama-index-core/llama_index/core/workflow/utils.py	fp	library-public	Compat shim re-exporting workflows.utils; imported by deprecated public workflow/drawing.py:7.
+airflow	CHK001	dev/chart/build_changelog_annotations.py	fp	script-entry	Executable dev script run per dev/README_RELEASE_HELM_CHART.md:175 release procedure.
+django	CHK001	django/conf/locale/mk/formats.py	fp	dynamic-import	Loaded by django/utils/formats.py:84 import_module("%s.formats" % "django.conf.locale.<lang>").
+fastapi	CHK001	fastapi/middleware/gzip.py	fp	library-public	Documented in docs/en/docs/reference/middleware.md:15-20; used by docs_src/advanced_middleware/tutorial003.py:2.
+langchain	CHK001	libs/langchain/langchain_classic/document_loaders/word_document.py	fp	library-public	Back-compat deprecated-import shim (legacy public path); imported by tests/unit_tests/test_imports.py:19 rglob.
