@@ -36,6 +36,10 @@ class FpGateTest(unittest.TestCase):
     def test_info_expected_on_a_hit_is_a_false_positive(self) -> None:
         self.assertEqual(om.fp_gate([finding("CHK002", "info-expected")]), (False, 1, 1, 0))
 
+    def test_skipped_projects_are_left_out(self) -> None:
+        findings = [finding("CHK002", "fp", slug="app"), finding("CHK002", "unknown", slug="app"), finding("CHK002", "tp")]
+        self.assertEqual(om.fp_gate(findings, frozenset({"app"})), (True, 1, 0, 0))
+
 
 class CountHitsTest(unittest.TestCase):
     def test_counts_hits_by_effective_verdict(self) -> None:
@@ -108,6 +112,10 @@ class PrecisionMissesTest(unittest.TestCase):
     def test_rules_without_a_floor_are_recorded_only(self) -> None:
         self.assertNotIn("CHK008", om.PRECISION_FLOORS)
         self.assertEqual(om.precision_misses([finding("CHK008", "fp")]), [])
+
+    def test_chk001_is_floored_once_app_projects_carry_labels(self) -> None:
+        findings = [finding("CHK001", "fp")] * 4 + [finding("CHK001", "tp")]  # 20%
+        self.assertEqual(om.precision_misses(findings), ["CHK001=20.0%<25%"])
 
     def test_chk002_is_floored_by_the_fp_gate(self) -> None:
         # 95% precision is a 5% FP rate, which the §17 gate already fails.

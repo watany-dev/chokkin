@@ -1409,6 +1409,9 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 (Phase 3.x Step 0、2026-08-11 完了。棚卸しは `docs/dev/v0.3-stocktake-coverage.md`)。
 誤検知の ground truth は `scripts/oss-fixtures.labels.tsv` に `fp`/`tp`/`deferred`
 で記録し、**CHK002** の未分類 (unknown + deferred) が残ると FP gate は通らない。
+manifest の app mode CHK001 corpus の節 (CHK001 を測るために足した Django app、
+#1065) の CHK002 は FP 率を記録するだけで gate に入れない。その誤検知の大半は
+URLconf の `include()` の文字列が import edge にならないことで起き、gate が測るのがその 1 つの gap になるため。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
 
 severity が `info` の finding (例: optional try-import の CHK003) はヒットとして
@@ -1416,19 +1419,26 @@ severity が `info` の finding (例: optional try-import の CHK003) はヒッ�
 した場合は `fp` 扱いになる。CHK001 / CHK004 / CHK006 / CHK010 は件数が大きいため
 `scripts/sample-precision-labels.py` で project ごとに上限付きで層別サンプリング
 (rule あたり約 50 件、project あたり最大 6 件、順位は sha256(slug, code, target)
-で固定) し、人手で `tp`/`fp` を付ける。`report.md` は rule ごとの precision
-(tp / (tp + fp)) と、今回の findings に現れなくなった **stale** ラベル数を記録する
-(#656)。precision は info を除くヒットのうち `tp` / `fp` のラベルが付いたものだけで
-計算し、**CHK003 は 90%、CHK004 は 95%、CHK006 / CHK010 は 90% を下限**として
-gate にかける (#701)。件数の gate では、件数を変えずに誤検知が増える精度低下を検出
+で固定) し、人手で `tp`/`fp` を付ける。上限は上限より前に付けたラベルにも効かせる:
+`--prune` は project ごとに hash 順で最初の上限件数だけを残し、残りのラベル付き
+ヒットを消す (#1065)。1 project が全体の precision を決めないようにするため。
+`report.md` は rule ごとの precision (tp / (tp + fp)) と、今回の findings に
+現れなくなった **stale** ラベル数を記録する (#656)。precision は info を除くヒットのうち `tp` / `fp` のラベルが付いたものだけで
+計算し、**CHK001 は 25%、CHK003 は 90%、CHK004 は 95%、CHK006 / CHK010 は 90% を
+下限**として gate にかける (#701、#1065)。件数の gate では、件数を変えずに誤検知が増える精度低下を検出
 できないため。下限は計測時の precision を 5 の倍数に切り下げた値。CHK002 は上の
 FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の下限なので、
 重ねて置かない。ラベル付きのヒットが 0 件の rule は測れないので通す (何も出さなく
-なった rule は recall gate が捕まえる)。CHK001 は下の oracle で測り、CHK005 /
-CHK007 / CHK008 / CHK009 はラベル付きのヒットがまだ少ないので記録のみにする
-(#862)。clone の revision を上げて stale が出たら該当行を消し、同スクリプトを
-再実行してサンプルを補充する。計測はキャッシュの影響を避ける
-ため `--no-cache` で行う。
+なった rule は recall gate が捕まえる)。CHK001 は既定では app mode でしか出ないので、
+ラベル付きの app mode project が 8 本以上そろってから下限を置いた。1 project の
+慣習 (airflow の DAG file、#1062) で gate が決まらないようにするため。下限が低いのは、
+Django の URLconf の `include("pkg.urls")` が import edge にならず、app の module の
+多くが到達不能に見えるため。下の oracle でも測る (#1065)。CHK005 / CHK007 / CHK008 / CHK009 はラベル付きのヒットがまだ少ないので
+記録のみにする (#862)。既定で隠れる `maybe` の CHK001 は `--maybe` で `--strict`
+の report から別 pool として抽出し (`scripts/oss-maybe.labels.tsv`)、そのうち本当に
+dead な割合 (隠したことによる FN 率) を記録だけする。clone の revision を上げて
+stale が出たら該当行を消し、同スクリプトを再実行してサンプルを補充する。計測は
+キャッシュの影響を避けるため `--no-cache` で行う。
 
 CHK001 の実世界 precision は opt-in の remove-and-test oracle
 (`scripts/oss-remove-and-test.py` / `make oss-oracle`) で測る。flag されたファイルを
