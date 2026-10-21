@@ -219,13 +219,11 @@ fn production_api_references(
     ReferenceIndex::build(&evidence, &names)
 }
 
-/// The modules left unreachable that the tests reach through them. Edges are
-/// first-party imports, literal dynamic imports and `pytest_plugins`, each
-/// with its parent packages, `from pkg import sub`, and every module under a
-/// prefixed dynamic import. A module the tests reach only another way (a
-/// plugin reference, a framework glob) is not followed: it is left out as an
-/// orphan is, so its calls clear no CHK006 and `--production` reports what
-/// the default run reports, or more.
+/// The modules left unreachable that the tests reach through them. A module
+/// the tests reach only through an edge `imported_files` does not read (a
+/// plugin reference, a framework glob) is left out as an orphan is, so its
+/// calls clear no CHK006 and `--production` reports what the default run
+/// reports, or more.
 fn reached_from_tests<'a>(
     tests: &'a [ParsedModule],
     parse: &'a ParseSummary,
@@ -260,7 +258,6 @@ fn reached_from_tests<'a>(
     reached
 }
 
-/// Every first-party file an import in `module` loads.
 fn imported_files(module: &ParsedModule, index: &ModuleIndex) -> Vec<FileId> {
     let from = module.path.as_str();
     let dotted = module
