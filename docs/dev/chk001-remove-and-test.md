@@ -33,6 +33,10 @@ measure of how often deleting a flagged file is safe. What the oracle can show
 is where chokkin's model of "used" (static imports from entry roots) is
 narrower than the project's.
 
+On an app-mode Django project the oracle gives 0% (healthchecks, 30 / 30
+break, #1065): the URLconf `include()` gap, see
+[App-mode corpus](#app-mode-corpus-1065).
+
 ## Corpus and per-project results
 
 The pinned `scripts/oss-clones.manifest` set. SHAs are from
@@ -118,6 +122,50 @@ Django stays `not-run` in the committed numbers. The env and command exist in
 
   The plugin route for string module references (spec §9) is the fix to
   pursue, not more oracle runs.
+
+## App-mode corpus (#1065)
+
+CHK001 is reported by default in app mode only, and the 20-project core corpus
+is mostly libraries. #1065 added six Django apps to `scripts/oss-clones.manifest`
+under `# --- app-mode CHK001 corpus` (babybuddy, healthchecks, redash, saleor,
+weblate, wger) and labelled their CHK001 hits by reading the pinned clones.
+
+**Oracle on healthchecks** (chokkin 0.7.8, SHA `47415f03`, Python 3.13 env,
+baseline `ok` in 26 s, `--sample 30`): 97 findings (28 warning, 69 info), 30
+tested (10 warning, 20 info), **30 break, 0 pass: 0%** against v0.6.0's 56%
+on the library corpus. Every break is `hc/accounts/urls.py` or a
+`hc/integrations/<name>/{urls,views,forms,transport}.py`. `hc/urls.py` names
+them with `include("hc.integrations.<name>.urls")`; chokkin reads that string
+as a module reference, which lowers `urls.py` itself to info but is not an
+import edge, so the views, forms and transports it imports stay unreachable.
+
+**Labels** (default run, info excluded): pooled CHK001 precision 28.3% (13 tp /
+33 fp), macro 41.7% over 9 projects, largest project share airflow 17%.
+
+| Project | tp / labelled |
+|---|---|
+| airflow | 7 / 8 |
+| wger | 3 / 8 |
+| babybuddy | 0 / 8 |
+| healthchecks | 0 / 8 |
+| weblate | 0 / 8 |
+| redash | 1 / 2 |
+| saleor | 0 / 2 |
+| fastmcp | 1 / 1 |
+| poetry | 1 / 1 |
+
+21 of the 32 false positives in the six new projects are modules reached
+through `include()` only. The other 11 are 5 more modules named by a dotted
+string (settings, plugin lists), 4 framework-loaded (AppConfig, tests), 1
+script entry and 1 other. The gate puts
+a 25% floor on CHK001 (spec §17); fixing `include()` is the lever, not the
+floor.
+
+**Maybe pool** (`scripts/oss-maybe.labels.tsv`): 50 CHK001 findings at `maybe`
+drawn from the `--strict` reports of 17 projects. 6 are dead (tp), so hiding
+`maybe` by default has a **12% false-negative rate**. The 44 used files are
+library-public 21, dynamic-import 10, framework-loaded 7, script-entry 3,
+other 3, so the floor hides what it is meant to hide.
 
 ## Method
 
