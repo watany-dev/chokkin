@@ -40,13 +40,16 @@ BASE="$S/target-073/release/chokkin"
 HEAD="$S/target-head/release/chokkin"
 
 scripts/oss-metrics.py -b "$BASE" -o "$S/metrics/base" -r 1 --with-strict
-scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head" -r 3 --baseline "$S/metrics/base" --with-strict --gate
+scripts/oss-metrics.py -b "$HEAD" -o "$S/metrics/head" -r 3 --baseline "$S/metrics/base" \
+  --time-bin "$BASE" --with-strict --gate
 ```
 
 clone は `target/oss-clones/clones.lock.tsv` で固定され、両バージョンで同じ
 checkout を測る。baseline と HEAD は**同じマシンで続けて**測る。`--baseline` は
 medium / large project の `median_ms` を比べ、1.5 倍以上かつ 500 ms 以上遅い
-project を cold 3 回で測り直して gate にかける (spec §17、#1025)。別のマシンや
+project を cold 3 回で測り直して gate にかけ、large project の合計が 1.05 倍を超えても
+gate を失敗させる (spec §17、#1025、#1088)。`--time-bin` を付けると実行時間は
+`--baseline` の run ではなく、HEAD の run の中で project ごとに `$BASE` と交互に測った値と比べる。別のマシンや
 別の日に測った baseline を渡すと、環境差がそのまま遅化に見える。`--baseline` を
 付けた run は次を書く。
 

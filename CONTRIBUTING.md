@@ -86,6 +86,11 @@ for all platforms and publishes to PyPI via Trusted Publishing:
    Release, and publishes to PyPI. A failing test publishes nothing; the same
    jobs run on every pull request, and `make wheel-smoke` / `make sdist-smoke`
    run the wheel and sdist tests locally.
+7. Once the tag is pushed, move `RELEASE_REV` in
+   `.github/workflows/oss-metrics.yml` to `vX.Y.Z` in a `ci:` PR, so the
+   run-time criteria compare with the new release (#1088). A slowdown that a
+   PR makes on purpose is written in `CHANGELOG.md` and moves `RELEASE_REV`
+   to that PR's merge commit instead.
 
 Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
 `.github/workflows/release.yml`, not the latest stable; the CI lint job

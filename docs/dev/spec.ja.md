@@ -1475,7 +1475,21 @@ project ごとに最大 1.13 倍、release 間の regression でない遅化も 
 ため。small project と recall sentinel は対象外、どちらかの run で exit 2 / 3 の
 project は crash / config error の基準に任せる。比べる相手は直前の release で、
 `oss-metrics.yml` の baseline (v0.4.1、CHK003 件数の基準用) は解析範囲が今より
-ずっと狭い (llama_index 660 → 2,210 ms) ので、CI は `--no-slowdown` でこの基準を外す。
+ずっと狭い (llama_index 660 → 2,210 ms) ので、CI は `RELEASE_REV` (直前の release)
+のバイナリを `--time-bin` で渡し、medium / large project ごとに HEAD と交互に測る。
+続けて別々に測ると、マシンの状態の変化がそのまま差に乗る (同じ main を v0.7.7 と
+比べて large 合計 1.15 倍 / 1.09 倍)。交互なら 5 回で 1.10〜1.14 倍、同じバイナリ
+同士で 3 回 1.00〜1.02 倍だった。
+
+project ごとの基準は 1 release で +10% ずつ遅くなっても毎回通る。v0.7.8 では large
+project 15 件中 13 件が 7〜24% 遅くなったが、どれも掛からなかった (#1088)。そこで
+large project の `median_ms` を両方の run で終わったものについて合計し、HEAD の
+合計が time baseline の **1.05 倍**を超えれば large project を cold 3 回で
+(`--time-bin` では両方のバイナリを交互に) 測り直し、なお超えれば gate を失敗させる。
+1.05 倍は上の雑音 (最大 1.02 倍) と既知の退行 (最小 1.10 倍) の間に置いた。medium / large project で 1.25 倍以上かつ 100 ms
+以上遅いものは `compare.md` に warning として並べる (gate にはしない)。
+`RELEASE_REV` は tag を打った後の `ci:` PR で新しい release に移す。意図した遅化は
+`CHANGELOG.md` に書き、その PR の merge commit に `RELEASE_REV` を付け替える。
 
 **現状 (v0.1.0): §17 exit criteria達成。** Phase 1.5 完了後の OSS 20 件検証で
 CHK002 誤検知率 **0.0% (0 FP / 2 reported)**、recall sentinel **2/2 検出**、

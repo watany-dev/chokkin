@@ -17,7 +17,9 @@ Release gate (with --baseline, #325):
   8. with --with-strict on both runs: no finding labelled `tp` vanishes from
      the --strict output (see Downgrade vs vanish below)
   9. unless --no-slowdown: no medium or large project's median cold run slows
-     down past the baseline's (see Slowdown below)
+     down past the time baseline's (see Slowdown below)
+ 10. unless --no-slowdown: the large projects' median cold runs, summed, do
+     not drift past the time baseline's (see Drift below)
 
 Usage:
   scripts/oss-metrics.py [OPTIONS]
@@ -34,8 +36,11 @@ Options:
   --baseline DIR        --output of a baseline run on the same machine; writes
                         compare.md and finding-diff.tsv and adds the CHK003
                         growth and slowdown criteria
-  --no-slowdown         Leave the slowdown criterion out, for a baseline that
-                        is not the previous release (CI's v0.4.1)
+  --time-bin PATH       chokkin binary of the previous release: each medium
+                        and large project is timed with it and --bin in turn,
+                        and criteria 9 and 10 compare with those times instead
+                        of --baseline's; needs --baseline
+  --no-slowdown         Leave criteria 9 and 10 out
   --strict              Run chokkin with --strict, which also shows `maybe`
                         findings, so a downgrade stays visible; use a separate
                         --output. A --baseline must be --strict too
@@ -128,7 +133,26 @@ slowed. Small projects and sentinels run in tens of ms, where a ratio is noise.
 A project that exited 2 or 3 in either run is left to criteria 2 and 4. Both
 runs must be measured on the same machine, and the baseline should be the
 previous release: CI's baseline is v0.4.1 for criterion 7, which analyzes far
-less than HEAD (llama_index 660 -> 2210 ms), so CI passes --no-slowdown.
+less than HEAD (llama_index 660 -> 2210 ms), so CI passes the previous
+release as --time-bin.
+
+--time-bin times both binaries on each medium and large project, the order
+swapped on every repetition, and writes its medians to time-baseline/
+summary.tsv. Two runs measured one after the other drift with the machine:
+the same main binary summed 1.15x and 1.09x v0.7.7's large projects in two
+such runs (see DRIFT_RATIO for the numbers timed in turn).
+
+Drift (#1088): criterion 9 compares each project with the previous run, so
++10% per release passes every time; v0.7.8 made 13 of the large projects
+7-24% slower and none failed it. Criterion 10 sums the median_ms of the large
+projects that finished in both runs and fails when HEAD's sum is over
+DRIFT_RATIO times the time baseline's, in this run and again after the large
+projects are re-measured over CONFIRM_RUNS cold runs (both binaries in turn
+with --time-bin, HEAD alone otherwise). A medium or large
+project at DRIFT_WARN_RATIO times its time baseline and DRIFT_WARN_MIN_MS
+over it is listed in compare.md as a warning; it does not fail the gate.
+The time baseline is the last release, or the commit whose slowdown the
+CHANGELOG accepted; CI's RELEASE_REV moves once a release tag is pushed.
 
 chokkin only reads the analyzed projects; nothing from them is executed.
 """
@@ -168,6 +192,12 @@ SLOWDOWN_RATIO = 1.5
 SLOWDOWN_MIN_MS = 500
 SLOWDOWN_SIZES = frozenset({"medium", "large"})
 CONFIRM_RUNS = 3
+# Cumulative drift (#1088): main after v0.7.8, with airflow and llama_index
+# fixed, summed 1.10x-1.14x v0.7.7 over the large projects in five runs timed
+# in turn, and a binary against a copy of itself 1.00x-1.02x in three.
+DRIFT_RATIO = 1.05
+DRIFT_WARN_RATIO = 1.25
+DRIFT_WARN_MIN_MS = 100
 
 
 def parse_args() -> argparse.Namespace:
@@ -183,6 +213,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--baseline", type=Path)
     p.add_argument("--strict", action="store_true")
     p.add_argument("--with-strict", action="store_true")
+    p.add_argument("--time-bin", type=Path)
     p.add_argument("--no-slowdown", action="store_true")
     p.add_argument("--build", action="store_true")
     p.add_argument("--clone", action="store_true")
@@ -194,6 +225,10 @@ def parse_args() -> argparse.Namespace:
         sys.exit(0)
     if args.strict and args.with_strict:
         p.error("--with-strict is redundant with --strict")
+    if args.time_bin and not args.baseline:
+        p.error("--time-bin needs --baseline")
+    if args.time_bin and args.no_slowdown:
+        p.error("--time-bin has nothing to compare with --no-slowdown")
     return args
 
 
@@ -371,15 +406,54 @@ def confirm_slowdowns(rows: list[list], rerun: Callable[[str], int]) -> list[lis
     return [r for r in rows if slowed(r[2], r[4])]
 
 
-def slowdown_md(base: Path, head: Path, rows: list[list]) -> list[str]:
-    """compare.md section of criterion 9; `rows` as confirm_slowdowns left them."""
+def large_totals(base: Path, head: Path) -> tuple[int, int, list[str]]:
+    """(base sum, head sum, slugs) of median_ms over the large projects in both
+    runs' medians."""
+    base_ms, head_ms = medians(base), medians(head)
+    slugs = sorted(s for s, (size, _) in head_ms.items() if size == "large" and s in base_ms)
+    return sum(base_ms[s][1] for s in slugs), sum(head_ms[s][1] for s in slugs), slugs
+
+
+def drifted(base_sum: int, head_sum: int) -> bool:
+    return head_sum > base_sum * DRIFT_RATIO
+
+
+def drift_warnings(base: Path, head: Path) -> list[list]:
+    """[slug, size, base_ms, head_ms] of the projects in both runs' medians
+    at DRIFT_WARN_RATIO times base's and DRIFT_WARN_MIN_MS over it."""
+    base_ms = medians(base)
+    return [
+        [slug, size, base_ms[slug][1], ms]
+        for slug, (size, ms) in medians(head).items()
+        if slug in base_ms
+        and ms >= base_ms[slug][1] * DRIFT_WARN_RATIO
+        and ms - base_ms[slug][1] >= DRIFT_WARN_MIN_MS
+    ]
+
+
+def ratio(base_ms: int, head_ms: int) -> str:
+    return f"{head_ms / base_ms:.2f}x" if base_ms else "-"
+
+
+def slowdown_md(
+    base: Path, head: Path, rows: list[list], again: tuple[int, int] | None = None
+) -> list[str]:
+    """compare.md section of criteria 9 and 10; `rows` as confirm_slowdowns
+    left them, `again` the (base, head) large-project sums of a re-measure."""
     base_ms, head_ms = medians(base), medians(head)
     both = base_ms.keys() & head_ms.keys()
+    base_sum, head_sum, _ = large_totals(base, head)
+    remeasured = "" if again is None else f", re-measured {again[0]} ms -> {again[1]} ms ({ratio(*again)})"
+    verdict = "❌ FAIL" if drifted(*(again or (base_sum, head_sum))) else "✅ PASS"
+    warnings = drift_warnings(base, head)
     return [
         "## Run time, medium and large projects",
         "",
         f"Median cold run summed over the {len(both)} projects in both runs: "
         f"{sum(base_ms[s][1] for s in both)} ms -> {sum(head_ms[s][1] for s in both)} ms.",
+        f"Large projects summed: {base_sum} ms -> {head_sum} ms ({ratio(base_sum, head_sum)}){remeasured}; "
+        f"fails over {DRIFT_RATIO:.2f}x (#1088): {verdict}",
+        "",
         f"A project fails at >= {SLOWDOWN_RATIO:g}x the baseline and >= {SLOWDOWN_MIN_MS} ms over it, "
         f"in this run and in a re-measure over {CONFIRM_RUNS} runs (#1025).",
         "",
@@ -391,6 +465,19 @@ def slowdown_md(base: Path, head: Path, rows: list[list]) -> list[str]:
             )
             if rows
             else ["_No project slowed down past the criterion._"]
+        ),
+        "",
+        f"Warning (does not gate): a project at >= {DRIFT_WARN_RATIO:g}x the baseline "
+        f"and >= {DRIFT_WARN_MIN_MS} ms over it.",
+        "",
+        *(
+            oc.md_table(
+                ["Project", "Size", "Base ms", "Head ms", "Ratio"],
+                [[*r, ratio(r[2], r[3])] for r in warnings],
+                "llrrr",
+            )
+            if warnings
+            else ["_No project reached the warning._"]
         ),
     ]
 
@@ -414,16 +501,28 @@ def timed_run(
     bin_path: Path, proj: Path, runs: int, extra: tuple[str, ...]
 ) -> tuple[subprocess.CompletedProcess, int]:
     """Cold runs: every .chokkin/ cache is removed before each and after the last."""
-    times = []
+    return timed_runs([bin_path], proj, runs, extra)[0]
+
+
+def timed_runs(
+    bins: list[Path], proj: Path, runs: int, extra: tuple[str, ...]
+) -> list[tuple[subprocess.CompletedProcess, int]]:
+    """timed_run of each binary, taking turns: every repetition runs each once,
+    in reverse order on odd ones, so a machine that speeds up or slows down
+    over the runs weighs on every binary alike."""
+    times: list[list[int]] = [[] for _ in bins]
+    last: dict[int, subprocess.CompletedProcess] = {}
     try:
-        for _ in range(runs):
-            remove_caches(proj)
-            start = time.monotonic()
-            run = oc.chokkin_raw(bin_path, proj, "--no-cache", *extra)
-            times.append(int((time.monotonic() - start) * 1000))
+        for rep in range(runs):
+            order = range(len(bins)) if rep % 2 == 0 else reversed(range(len(bins)))
+            for i in order:
+                remove_caches(proj)
+                start = time.monotonic()
+                last[i] = oc.chokkin_raw(bins[i], proj, "--no-cache", *extra)
+                times[i].append(int((time.monotonic() - start) * 1000))
     finally:
         remove_caches(proj)
-    return run, int(statistics.median(times))
+    return [(last[i], int(statistics.median(t))) for i, t in enumerate(times)]
 
 
 def chk003_gate_count(out_dir: Path, expect_slugs: set[str]) -> int:
@@ -692,6 +791,8 @@ def main() -> int:
         if args.with_strict and not (args.baseline / "strict").is_dir():
             print(f"--with-strict needs a baseline run with --with-strict: {args.baseline}", file=sys.stderr)
             return 2
+    if args.time_bin:
+        oc.require_bin(args.time_bin)
 
     extra = ("--strict",) if args.strict else ()
     targets: list[tuple[str, str, str, Path]] = []
@@ -723,10 +824,15 @@ def main() -> int:
     crashes = config_errors = 0
     expect_misses: list[str] = []
     medium_slow: list[str] = []
+    time_rows: list[list] = []
 
     for slug, category, size, proj in targets:
         print(f"==> {slug} ({category}/{size})", flush=True)
-        run, median_ms = timed_run(args.bin, proj, args.runs, extra)
+        if args.time_bin and size in SLOWDOWN_SIZES:
+            (run, median_ms), (base_run, base_ms) = timed_runs([args.bin, args.time_bin], proj, args.runs, extra)
+            time_rows.append([slug, category, size, base_run.returncode, base_ms])
+        else:
+            run, median_ms = timed_run(args.bin, proj, args.runs, extra)
         (out / f"{slug}.json").write_bytes(run.stdout)
         (out / f"{slug}.stderr").write_bytes(run.stderr)
         report = parse_report(run.stdout)
@@ -785,6 +891,9 @@ def main() -> int:
         findings,
     )
     write_tsv("expectations.tsv", ["# slug", "runtime_min", "counts"], expect_rows)
+    if args.time_bin:
+        (out / "time-baseline").mkdir(exist_ok=True)
+        write_tsv("time-baseline/summary.tsv", ["slug", "category", "size", "exit", "median_ms"], time_rows)
 
     def count(code: str, verdict: str | None = None) -> int:
         return count_hits(findings, code, verdict)
@@ -1003,18 +1112,35 @@ def main() -> int:
                 print("findings vanished from the --strict output; see compare.md", file=sys.stderr)
         timing = []
         if not args.no_slowdown:
+            time_base = out / "time-baseline" if args.time_bin else args.baseline
             projects = {slug: proj for slug, _, _, proj in targets}
-            slow = slowdowns(args.baseline, out)
+
+            def rerun(slug: str) -> int:
+                return timed_run(args.bin, projects[slug], CONFIRM_RUNS, extra)[1]
+
+            slow = slowdowns(time_base, out)
             for slug, *_ in slow:
                 print(f"==> {slug}: re-measuring a slowdown over {CONFIRM_RUNS} runs", flush=True)
-            still_slow = confirm_slowdowns(
-                slow, lambda slug: timed_run(args.bin, projects[slug], CONFIRM_RUNS, extra)[1]
-            )
-            timing = slowdown_md(args.baseline, out, slow)
+            still_slow = confirm_slowdowns(slow, rerun)
+            base_sum, head_sum, large = large_totals(time_base, out)
+            again = None
+            if drifted(base_sum, head_sum):
+                print(f"==> re-measuring {len(large)} large projects over {CONFIRM_RUNS} runs", flush=True)
+                if args.time_bin:
+                    pairs = [
+                        timed_runs([args.time_bin, args.bin], projects[slug], CONFIRM_RUNS, extra) for slug in large
+                    ]
+                    again = (sum(b[1] for b, _ in pairs), sum(h[1] for _, h in pairs))
+                else:
+                    again = (base_sum, sum(rerun(slug) for slug in large))
+            timing = slowdown_md(time_base, out, slow, again)
             print("\n".join(timing))
             passes["slowdown"] = not still_slow
             if still_slow:
-                print(f"slower than {args.baseline}: {' '.join(r[0] for r in still_slow)}", file=sys.stderr)
+                print(f"slower than {time_base}: {' '.join(r[0] for r in still_slow)}", file=sys.stderr)
+            passes["drift"] = not drifted(*(again or (base_sum, head_sum)))
+            if not passes["drift"]:
+                print(f"large projects drifted past {DRIFT_RATIO:.2f}x {time_base}", file=sys.stderr)
         compare = compare_md(args.baseline, out, lines, diff, vanish, timing)
         (out / "compare.md").write_text("\n".join(compare) + "\n", encoding="utf-8")
         base_n = chk003_gate_count(args.baseline, set(expect))
