@@ -50,6 +50,7 @@
     { "binary": "dg", "distribution": "dagster-dg-cli" },
     { "binary": "dbt", "distribution": "dbt-core" },
     { "binary": "prefect", "distribution": "prefect" },
-    { "binary": "scrapy", "distribution": "scrapy" }
+    { "binary": "scrapy", "distribution": "scrapy" },
+    { "binary": "sqlfluff", "distribution": "sqlfluff" }
   ]
 }

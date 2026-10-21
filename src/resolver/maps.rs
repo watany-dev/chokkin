@@ -209,6 +209,14 @@ mod tests {
     }
 
     #[test]
+    fn maps_sqlfluff_to_its_distribution() {
+        // A Makefile `sqlfluff lint` target is the only use of a dev-group
+        // sqlfluff (dagster-open-platform).
+        let map = build_binary_map(&default_config(), &super::super::venv::VenvIndex::default());
+        assert_eq!(map.get("sqlfluff").map(String::as_str), Some("sqlfluff"));
+    }
+
+    #[test]
     fn user_map_overrides_bundled() {
         let mut config = default_config();
         config

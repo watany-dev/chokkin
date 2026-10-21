@@ -43,6 +43,7 @@ pub(crate) static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
     ("scrapy", "scrapy"),
     ("sphinx", "sphinx"),
     ("sphinx-build", "sphinx"),
+    ("sqlfluff", "sqlfluff"),
     ("sqlformat", "sqlparse"),
     ("towncrier", "towncrier"),
     ("tox", "tox"),
