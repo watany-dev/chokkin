@@ -61,6 +61,45 @@ pub(super) fn platform_modules(
     modules
 }
 
+/// Whether the scope `body` imports a platform module under another name
+/// (`import sys as s`), in a nested block too; a module bound under its own
+/// name is found by its `sys.platform`-style mention instead.
+pub(super) fn imports_platform_alias(body: &[Stmt]) -> bool {
+    body.iter().any(|stmt| match stmt {
+        Stmt::Import(import) => import.names.iter().any(|alias| {
+            alias.asname.is_some() && PlatformModule::from_import(alias.name.as_str()).is_some()
+        }),
+        Stmt::If(stmt) => {
+            imports_platform_alias(&stmt.body)
+                || stmt
+                    .elif_else_clauses
+                    .iter()
+                    .any(|clause| imports_platform_alias(&clause.body))
+        },
+        Stmt::Try(stmt) => {
+            imports_platform_alias(&stmt.body)
+                || stmt.handlers.iter().any(|handler| {
+                    let ExceptHandler::ExceptHandler(handler) = handler;
+                    imports_platform_alias(&handler.body)
+                })
+                || imports_platform_alias(&stmt.orelse)
+                || imports_platform_alias(&stmt.finalbody)
+        },
+        Stmt::With(stmt) => imports_platform_alias(&stmt.body),
+        Stmt::For(stmt) => {
+            imports_platform_alias(&stmt.body) || imports_platform_alias(&stmt.orelse)
+        },
+        Stmt::While(stmt) => {
+            imports_platform_alias(&stmt.body) || imports_platform_alias(&stmt.orelse)
+        },
+        Stmt::Match(stmt) => stmt
+            .cases
+            .iter()
+            .any(|case| imports_platform_alias(&case.body)),
+        _ => false,
+    })
+}
+
 /// Whether `source`, an ASCII one, can hold a platform test of `modules`;
 /// most modules have none, and the per-scope binding scan can then be skipped.
 pub(super) fn mentions_platform_test(source: &str, modules: &PlatformModules) -> bool {
@@ -213,6 +252,37 @@ mod tests {
         let modules = platform_modules(None, None, module.suite());
         let parsed = ruff_python_parser::parse_expression(source).expect("parse");
         is_platform_guard_test(parsed.expr(), &modules)
+    }
+
+    #[test]
+    fn finds_aliased_platform_imports_in_nested_blocks() {
+        let aliases = |source: &str| {
+            let module = ruff_python_parser::parse_module(source).expect("parse");
+            imports_platform_alias(module.suite())
+        };
+        for source in [
+            "import sys as s\n",
+            "import json, os as o\n",
+            "try:\n    pass\nexcept ImportError:\n    import platform as p\n",
+            "if x:\n    pass\nelse:\n    with y:\n        import sys as s\n",
+            "try:\n    pass\nexcept E:\n    pass\nelse:\n    import sys as s\n",
+            "try:\n    pass\nfinally:\n    import sys as s\n",
+            "for x in y:\n    import sys as s\n",
+            "for x in y:\n    pass\nelse:\n    import sys as s\n",
+            "while x:\n    import sys as s\n",
+            "while x:\n    pass\nelse:\n    import sys as s\n",
+            "match x:\n    case 1:\n        pass\n    case _:\n        import sys as s\n",
+        ] {
+            assert!(aliases(source), "{source}");
+        }
+        for source in [
+            "import sys\nimport os.path as osp\n",
+            "from sys import platform as plat\n",
+            "def f():\n    import sys as s\n",
+            "class C:\n    import os as o\n",
+        ] {
+            assert!(!aliases(source), "{source}");
+        }
     }
 
     #[test]

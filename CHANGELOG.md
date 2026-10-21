@@ -41,6 +41,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   naming a module was looked up in each workspace member over every project
   file, which made airflow's run 1.5 s -> 4.5 s. Only the files whose path
   ends in the name are looked at now; output is unchanged (airflow 1.8 s).
+- A cold run does less work per file again: the nesting check added for
+  over-deep trees skips nodes too short to reach the limit, the module-level
+  platform-guard scan runs only when a platform module is imported under
+  another name, and loader-name lookups and module-reference strings are
+  rejected sooner. Output is unchanged; sqlalchemy runs about 3% fewer
+  instructions (#1087).
 - `--fix` no longer moves a Poetry group dependency whose table says where
   it comes from (`git`, `path`, `url`, `source`, or any key besides
   `version`, `extras`, `markers`, `platform`, `python` and `optional`;

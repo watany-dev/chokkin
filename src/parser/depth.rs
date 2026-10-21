@@ -31,7 +31,7 @@ pub(crate) enum Unwalkable {
 /// [`ruff_python_parser::parse_module`] for a tree chokkin walks.
 pub(crate) fn parse_walkable_module(source: &str) -> Result<Parsed<ModModule>, Unwalkable> {
     let parsed = ruff_python_parser::parse_unchecked_source(source, PySourceType::Python);
-    let too_deep = suite_too_deep(&parsed.syntax().body);
+    let too_deep = suite_too_deep(&parsed.syntax().body, parsed.errors().is_empty());
     checked(parsed, too_deep)
 }
 
@@ -39,7 +39,10 @@ pub(crate) fn parse_walkable_module(source: &str) -> Result<Parsed<ModModule>, U
 /// than [`MAX_AST_DEPTH`].
 pub(crate) fn parse_walkable_expression(source: &str) -> Option<Expr> {
     let parsed = ruff_python_parser::parse_unchecked(source, ParseOptions::from(Mode::Expression));
-    let too_deep = expr_too_deep(&parsed.syntax().as_expression()?.body);
+    let too_deep = expr_too_deep(
+        &parsed.syntax().as_expression()?.body,
+        parsed.errors().is_empty(),
+    );
     let Mod::Expression(expression) = checked(parsed, too_deep).ok()?.into_syntax() else {
         return None;
     };
@@ -62,28 +65,41 @@ fn checked<T>(parsed: Parsed<T>, too_deep: Option<TextSize>) -> Result<Parsed<T>
     }
 }
 
-/// Start of the first node nested deeper than [`MAX_AST_DEPTH`] in `stmts`.
-fn suite_too_deep(stmts: &[Stmt]) -> Option<TextSize> {
-    let mut walk = DepthWalk::default();
+/// Start of the first node nested deeper than [`MAX_AST_DEPTH`] in `stmts`;
+/// `prune` as [`DepthWalk::prune`].
+fn suite_too_deep(stmts: &[Stmt], prune: bool) -> Option<TextSize> {
+    let mut walk = DepthWalk::new(prune);
     walk.visit_body(stmts);
     walk.too_deep
 }
 
-/// Start of the first node nested deeper than [`MAX_AST_DEPTH`] in `expr`.
-fn expr_too_deep(expr: &Expr) -> Option<TextSize> {
-    let mut walk = DepthWalk::default();
+/// Start of the first node nested deeper than [`MAX_AST_DEPTH`] in `expr`;
+/// `prune` as [`DepthWalk::prune`].
+fn expr_too_deep(expr: &Expr, prune: bool) -> Option<TextSize> {
+    let mut walk = DepthWalk::new(prune);
     walk.visit_expr(expr);
     walk.too_deep
 }
 
 /// Stops descending at the limit, so the walk itself stays within it.
-#[derive(Default)]
 struct DepthWalk {
     depth: usize,
     too_deep: Option<TextSize>,
+    /// Skip a node too short to hold a subtree that reaches the limit. Only
+    /// for a tree without syntax errors: error recovery makes empty nodes,
+    /// which break the length bound.
+    prune: bool,
 }
 
 impl DepthWalk {
+    const fn new(prune: bool) -> Self {
+        Self {
+            depth: 0,
+            too_deep: None,
+            prune,
+        }
+    }
+
     fn enter(&mut self, node: &impl Ranged, walk: impl FnOnce(&mut Self)) {
         if self.too_deep.is_some() {
             return;
@@ -92,10 +108,24 @@ impl DepthWalk {
             self.too_deep = Some(node.start());
             return;
         }
+        if self.prune && !may_reach_limit(self.depth, usize::from(node.range().len())) {
+            return;
+        }
         self.depth += 1;
         walk(self);
         self.depth -= 1;
     }
+}
+
+/// Whether a node `len` bytes long at `depth` can hold a node at
+/// [`MAX_AST_DEPTH`]. A nested statement, expression or pattern lies strictly
+/// inside its parent's range, except the expression that fills an expression
+/// statement or a `case` value pattern; an expression holds neither, so a
+/// path takes that step at most once, and a node of an error-free tree is
+/// never empty. A node `len` bytes long thus holds at most `len + 1` levels,
+/// itself included; most of a module is nodes too short to matter (#1087).
+const fn may_reach_limit(depth: usize, len: usize) -> bool {
+    depth + len >= MAX_AST_DEPTH
 }
 
 impl<'a> Visitor<'a> for DepthWalk {
@@ -114,7 +144,10 @@ impl<'a> Visitor<'a> for DepthWalk {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_AST_DEPTH, Unwalkable, parse_walkable_expression, parse_walkable_module};
+    use super::{
+        MAX_AST_DEPTH, Unwalkable, may_reach_limit, parse_walkable_expression,
+        parse_walkable_module, suite_too_deep,
+    };
 
     fn suite(source: &str) -> Option<usize> {
         match parse_walkable_module(source) {
@@ -154,6 +187,42 @@ mod tests {
             "]".repeat(MAX_AST_DEPTH)
         );
         assert!(suite(&format!("match y:\n    case {pattern}:\n        pass\n")).is_some());
+    }
+
+    #[test]
+    fn a_node_reaches_the_limit_once_its_length_and_depth_add_up_to_it() {
+        assert!(may_reach_limit(0, MAX_AST_DEPTH));
+        assert!(may_reach_limit(1, MAX_AST_DEPTH));
+        assert!(may_reach_limit(MAX_AST_DEPTH, 0));
+        assert!(!may_reach_limit(0, MAX_AST_DEPTH - 1));
+        assert!(!may_reach_limit(MAX_AST_DEPTH - 1, 0));
+    }
+
+    #[test]
+    fn the_tightest_tree_at_the_length_bound_is_still_too_deep() {
+        // A bare unary chain holds `len + 1` levels: the expression statement
+        // and the expression share their range, every operator adds a byte.
+        let chain = format!("{}1", "-".repeat(MAX_AST_DEPTH - 1));
+        assert_eq!(suite(&chain), Some(MAX_AST_DEPTH - 1));
+        assert_eq!(suite(&format!("{}1", "-".repeat(MAX_AST_DEPTH - 2))), None);
+    }
+
+    #[test]
+    fn pruning_short_nodes_finds_the_same_deep_node() {
+        let lists = MAX_AST_DEPTH;
+        let source = format!(
+            "import os\n\ndef f(x):\n    y = x + 1\n    if y:\n        z = {}{}\n    return y\n",
+            "[".repeat(lists),
+            "]".repeat(lists)
+        );
+        let parsed = ruff_python_parser::parse_unchecked_source(
+            &source,
+            ruff_python_ast::PySourceType::Python,
+        );
+        let body = &parsed.syntax().body;
+        let pruned = suite_too_deep(body, true);
+        assert!(pruned.is_some());
+        assert_eq!(pruned, suite_too_deep(body, false));
     }
 
     #[test]

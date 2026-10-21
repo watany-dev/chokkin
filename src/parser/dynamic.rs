@@ -1,7 +1,6 @@
 //! `importlib.import_module` and `__import__` literal recognition.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
 
 use ruff_python_ast::{Alias, Expr, ExprCall, ExprNumberLiteral, Number, Operator};
 
@@ -17,19 +16,21 @@ pub(super) enum Loader {
     DunderImport,
 }
 
-/// Names one module binds to the dynamic import loaders.
+/// Names one module binds to the dynamic import loaders. A module binds one
+/// or two, and every call and argument is looked up, so a scan beats hashing
+/// each name (#1087).
 pub(super) struct LoaderNames {
     /// Names bound to the `importlib` module.
-    modules: HashSet<String>,
-    /// Names bound directly to a loader function.
-    functions: HashMap<String, Loader>,
+    modules: Vec<String>,
+    /// Names bound directly to a loader function; a later binding wins.
+    functions: Vec<(String, Loader)>,
 }
 
 impl Default for LoaderNames {
     fn default() -> Self {
         Self {
-            modules: HashSet::from(["importlib".to_owned()]),
-            functions: HashMap::from([("__import__".to_owned(), Loader::DunderImport)]),
+            modules: vec!["importlib".to_owned()],
+            functions: vec![("__import__".to_owned(), Loader::DunderImport)],
         }
     }
 }
@@ -39,8 +40,9 @@ impl LoaderNames {
     pub(super) fn record_import(&mut self, alias: &Alias) {
         if alias.name.as_str() == "importlib"
             && let Some(asname) = &alias.asname
+            && !self.modules.iter().any(|name| name == asname.as_str())
         {
-            self.modules.insert(asname.to_string());
+            self.modules.push(asname.to_string());
         }
     }
 
@@ -48,8 +50,16 @@ impl LoaderNames {
     pub(super) fn record_import_from(&mut self, module: Option<&str>, alias: &Alias) {
         if module == Some("importlib") && alias.name.as_str() == "import_module" {
             let bound = alias.asname.as_ref().unwrap_or(&alias.name);
-            self.functions
-                .insert(bound.to_string(), Loader::ImportModule);
+            match self
+                .functions
+                .iter_mut()
+                .find(|(name, _)| name == bound.as_str())
+            {
+                Some((_, loader)) => *loader = Loader::ImportModule,
+                None => self
+                    .functions
+                    .push((bound.to_string(), Loader::ImportModule)),
+            }
         }
     }
 
@@ -61,10 +71,14 @@ impl LoaderNames {
             Expr::Attribute(attribute) => (attribute.attr.as_str() == "import_module"
                 && matches!(
                     &*attribute.value,
-                    Expr::Name(name) if self.modules.contains(name.id.as_str())
+                    Expr::Name(name) if self.modules.iter().any(|module| module == name.id.as_str())
                 ))
             .then_some(Loader::ImportModule),
-            Expr::Name(name) => self.functions.get(name.id.as_str()).copied(),
+            Expr::Name(name) => self
+                .functions
+                .iter()
+                .find(|(bound, _)| bound == name.id.as_str())
+                .map(|(_, loader)| *loader),
             _ => None,
         }
     }
@@ -288,6 +302,15 @@ pub(super) fn command_word(expr: &Expr) -> Option<&str> {
 #[must_use]
 pub(super) fn module_ref_literal(expr: &Expr) -> Option<&str> {
     let text = str_constant(expr)?;
+    // The visitor checks every literal, docstrings included: reject one at
+    // its first ASCII character no reference holds (a space, mostly) before
+    // scanning it whole (#1087). A non-ASCII letter may be an identifier's.
+    if text
+        .bytes()
+        .any(|b| b.is_ascii() && !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':')))
+    {
+        return None;
+    }
     let (module, attr) = split_attr(text.strip_prefix("python:").unwrap_or(text));
     (module.contains('.') && is_dotted_identifier(module) && attr.is_none_or(is_dotted_identifier))
         .then_some(text)
