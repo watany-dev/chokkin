@@ -4062,6 +4062,8 @@ fn binary_django_installed_app_conventions_are_used() {
     for installed in [
         "['django.contrib.admin', 'mysite.polls']",
         "['django.contrib.admin.apps.AdminConfig', 'mysite.polls.apps.PollsConfig']",
+        // A tuple is read like a list (healthchecks).
+        "('django.contrib.admin', 'mysite.polls')",
         // A config with no `name` inherits the admin's.
         "['mysite.apps.SiteAdminConfig', 'mysite.polls']",
         // An `INSTALLED_APPS` not read in full may install the admin (ADR 0005).

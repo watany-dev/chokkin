@@ -383,7 +383,7 @@ impl ConfImports {
     }
 }
 
-/// The strings of a string or of a list of strings only.
+/// The strings of a string or of a list or tuple of strings only.
 fn constant_strings(value: &Expr) -> Option<Vec<String>> {
     string_value(value).map(|value| vec![value]).or_else(|| {
         string_list(value)
@@ -424,8 +424,8 @@ fn declared_theme(stmts: &[Stmt], manifest: &LoadedManifest) -> Option<(String, 
 struct Extensions {
     /// Each name with the offset of the string or bare name that names it.
     names: Vec<(String, TextSize)>,
-    /// Offsets of the values not read: neither a string, a list of strings,
-    /// nor a bare name bound to one. A partial list keeps the strings it has.
+    /// Offsets of the values not read: neither a string, a list or tuple of
+    /// strings, nor a bare name bound to one. A partial list keeps the strings it has.
     unread: Vec<TextSize>,
     /// Whether the module assigns `extensions`.
     assigned: bool,
@@ -480,8 +480,8 @@ fn sphinx_extensions(stmts: &[Stmt], constant: &dyn Fn(&str) -> Option<Vec<Strin
     read
 }
 
-/// The strings of a string or list literal, or of the constant a name binds,
-/// with their offsets; a value of another form is unread.
+/// The strings of a string, list or tuple literal, or of the constant a name
+/// binds, with their offsets; a value of another form is unread.
 fn literal_strings(
     expr: &Expr,
     constant: &dyn Fn(&str) -> Option<Vec<String>>,
