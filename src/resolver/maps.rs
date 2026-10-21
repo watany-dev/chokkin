@@ -218,14 +218,6 @@ mod tests {
             first("opentelemetry.sdk.trace").as_deref(),
             Some("opentelemetry-sdk")
         );
-        assert_eq!(
-            first("opentelemetry.instrumentation.django").as_deref(),
-            Some("opentelemetry-instrumentation-django")
-        );
-        assert_eq!(
-            first("google.cloud.pubsub_v1.types").as_deref(),
-            Some("google-cloud-pubsub")
-        );
         assert_eq!(first("databricks.sdk").as_deref(), Some("databricks-sdk"));
         assert_eq!(first("poetry.core.version").as_deref(), Some("poetry-core"));
         assert_eq!(
@@ -292,6 +284,25 @@ mod tests {
         assert_eq!(first("azure.cognitiveservices.speech"), None);
         assert_eq!(first("google"), None);
         assert_eq!(first("yaml.loader"), None);
+    }
+
+    #[test]
+    fn namespace_candidates_cover_app_mode_corpus_dists() {
+        // Imported by the Django apps of the app-mode corpus (#1065).
+        let import_map = ImportMap::build(&default_config());
+        let first = |module: &str| {
+            import_map
+                .namespace_candidates(module)
+                .and_then(|(_, candidates, _)| candidates.into_iter().next())
+        };
+        assert_eq!(
+            first("opentelemetry.instrumentation.django").as_deref(),
+            Some("opentelemetry-instrumentation-django")
+        );
+        assert_eq!(
+            first("google.cloud.pubsub_v1.types").as_deref(),
+            Some("google-cloud-pubsub")
+        );
     }
 
     #[test]
