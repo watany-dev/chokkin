@@ -88,9 +88,8 @@ CHK001 / CHK003 / CHK004 / CHK006 / CHK010 have a floor (#701, #1065), so a
 precision drop fails the gate even when the counts hold. CHK002's floor is
 criterion 1: with no unclassified finding, FP rate < 5% is precision > 95%.
 The other rules are recorded only until their labels can carry one (#862).
-CHK001 / CHK004 / CHK006 / CHK010
-labels are a per-project stratified sample drawn by
-scripts/sample-precision-labels.py, so their precision is a sample estimate.
+CHK001 / CHK004 / CHK006 / CHK010 labels are a per-project stratified sample
+drawn by scripts/sample-precision-labels.py, so their precision is a sample estimate.
 Labels whose finding no longer appears are listed as stale.
 
 Recall accounting: the FP rate alone is satisfied by reporting nothing, so a
@@ -270,11 +269,9 @@ def count_hits(findings: list[list[str]], code: str, verdict: str | None = None)
     )
 
 
-def fp_gate(findings: list[list[str]], skip: frozenset[str] = frozenset()) -> tuple[bool, int, int, int]:
-    """The §17 CHK002 FP-rate gate: (pass, reported, fp, unclassified) over the
-    projects outside `skip`. It cannot pass while an unknown or deferred CHK002
-    finding remains."""
-    findings = [f for f in findings if f[0] not in skip]
+def fp_gate(findings: list[list[str]]) -> tuple[bool, int, int, int]:
+    """The §17 CHK002 FP-rate gate: (pass, reported, fp, unclassified). It
+    cannot pass while an unknown or deferred CHK002 finding remains."""
     total, fp = count_hits(findings, "CHK002"), count_hits(findings, "CHK002", "fp")
     unclassified = count_hits(findings, "CHK002", "unknown") + count_hits(findings, "CHK002", "deferred")
     ok = unclassified == 0 and (total == 0 or 100 * fp / total < FP_GATE_PCT)
@@ -824,7 +821,7 @@ def main() -> int:
     # Django apps load modules through URLconf include() strings, which are
     # not import edges, so the gate would measure that one gap.
     app_corpus = frozenset(oc.read_section(args.manifest, oc.APP_CORPUS_SECTION))
-    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate(findings, app_corpus)
+    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in app_corpus])
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
     _, app_total, app_fp, app_unclassified = fp_gate([f for f in findings if f[0] in app_corpus])
     app_rate = (

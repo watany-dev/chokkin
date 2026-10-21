@@ -36,10 +36,6 @@ class FpGateTest(unittest.TestCase):
     def test_info_expected_on_a_hit_is_a_false_positive(self) -> None:
         self.assertEqual(om.fp_gate([finding("CHK002", "info-expected")]), (False, 1, 1, 0))
 
-    def test_skipped_projects_are_left_out(self) -> None:
-        findings = [finding("CHK002", "fp", slug="app"), finding("CHK002", "unknown", slug="app"), finding("CHK002", "tp")]
-        self.assertEqual(om.fp_gate(findings, frozenset({"app"})), (True, 1, 0, 0))
-
 
 class CountHitsTest(unittest.TestCase):
     def test_counts_hits_by_effective_verdict(self) -> None:
