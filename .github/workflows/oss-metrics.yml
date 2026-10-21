@@ -42,6 +42,9 @@ env:
   CARGO_TERM_COLOR: always
   # v0.4.1 has no tag; this is "chore: prepare v0.4.1 release (#284)".
   BASELINE_REV: 573ff37
+  # The run-time baseline (#1088): the last release, moved once its tag is
+  # pushed, or the commit whose slowdown the CHANGELOG accepted.
+  RELEASE_REV: v0.7.8
 
 jobs:
   oss-metrics:
@@ -73,6 +76,12 @@ jobs:
           cargo build --release --locked --bin chokkin \
             --manifest-path "$RUNNER_TEMP/chokkin-baseline/Cargo.toml" \
             --target-dir target/baseline
+      - name: Build release baseline
+        run: |
+          git worktree add "$RUNNER_TEMP/chokkin-release" "$RELEASE_REV"
+          cargo build --release --locked --bin chokkin \
+            --manifest-path "$RUNNER_TEMP/chokkin-release/Cargo.toml" \
+            --target-dir target/release-baseline
       - name: Clone corpus
         run: scripts/clone-oss-fixtures.sh
       - name: Measure baseline
@@ -81,11 +90,13 @@ jobs:
         # The gate verdict is recorded and enforced in the last step so the
         # report and artifacts are produced even when it fails. --baseline
         # adds the spec §17 Phase 4 CHK003 growth criterion to the gate. The
-        # slowdown criterion (#1025) compares with the previous release, and
-        # v0.4.1 analyzes too little for its run time to compare.
+        # slowdown and drift criteria (#1025, #1088) compare run time with
+        # RELEASE_REV, timed in turn with HEAD, since v0.4.1 analyzes too
+        # little for its run time to compare.
         run: |
           status=0
-          scripts/oss-metrics.py -o target/oss-metrics --baseline target/oss-metrics-baseline --no-slowdown --gate || status=$?
+          scripts/oss-metrics.py -o target/oss-metrics --baseline target/oss-metrics-baseline \
+            --time-bin target/release-baseline/release/chokkin --gate || status=$?
           echo "$status" >target/oss-metrics/gate.status
       - name: Determinism / schema / crash gate
         # The 20 clones plus the recall sentinels; enforced in the last step.
@@ -97,7 +108,7 @@ jobs:
         # The full scorecard lists every finding and outgrows the job summary
         # limit, so it only goes to the artifact.
         run: |
-          { echo "# Before/after (${BASELINE_REV} vs HEAD)"; echo ""; cat target/oss-metrics/compare.md; } |
+          { echo "# Before/after (${BASELINE_REV} vs HEAD, run time vs ${RELEASE_REV})"; echo ""; cat target/oss-metrics/compare.md; } |
             tee -a "$GITHUB_STEP_SUMMARY"
           if [ -f target/oss-gate/report.md ]; then
             { echo ""; cat target/oss-gate/report.md; } >>"$GITHUB_STEP_SUMMARY"
@@ -112,6 +123,7 @@ jobs:
             target/oss-metrics/compare.md
             target/oss-metrics-baseline/*.tsv
             target/oss-metrics-baseline/report.md
+            target/oss-metrics/time-baseline/summary.tsv
             target/oss-clones/clones.lock.tsv
             target/oss-gate/summary.json
             target/oss-gate/report.md

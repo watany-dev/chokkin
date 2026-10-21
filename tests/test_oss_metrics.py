@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from scripts_import import load
 
@@ -234,6 +235,100 @@ class SlowdownTest(unittest.TestCase):
             self.assertIn("| a | large | 1000 | 8000 | 7900 | ❌ FAIL |", lines)
             self.assertIn("| b | medium | 500 | 1000 | 600 | ✅ noise |", lines)
             self.assertIn("_No project slowed down past the criterion._", om.slowdown_md(base, head, []))
+
+
+# Large rows of one --time-bin run of main after airflow and llama_index were
+# fixed (2839767) against v0.7.7, -r 3: (slug, v0.7.7 median_ms, main
+# median_ms). The closest of five runs to the criterion; no project fails
+# criterion 9 (#1088).
+V077_MAIN = [
+    ("airflow", 1200, 1422),
+    ("black", 31, 39),
+    ("django", 307, 317),
+    ("djangorestframework", 42, 43),
+    ("fastapi", 69, 67),
+    ("fastmcp", 135, 136),
+    ("langchain", 224, 245),
+    ("llama_index", 1059, 1041),
+    ("mcp-python-sdk", 84, 93),
+    ("mitmproxy", 58, 69),
+    ("mlflow", 394, 443),
+    ("openai-python", 178, 205),
+    ("sqlalchemy", 204, 220),
+    ("streamlit", 154, 154),
+    ("transformers", 776, 895),
+]
+
+
+class DriftTest(unittest.TestCase):
+    def test_main_after_v0_7_8_drifted_past_v0_7_7(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [(slug, "large", 0, before) for slug, before, _ in V077_MAIN])
+            write_summary(head, [(slug, "large", 0, after) for slug, _, after in V077_MAIN])
+            self.assertEqual(om.slowdowns(base, head), [])
+            base_sum, head_sum, _ = om.large_totals(base, head)
+            self.assertEqual((base_sum, head_sum), (4915, 5389))
+            self.assertTrue(om.drifted(base_sum, head_sum))
+
+    def test_the_sum_fails_only_over_the_ratio(self) -> None:
+        self.assertFalse(om.drifted(10_000, 10_500))
+        self.assertTrue(om.drifted(10_000, 10_501))
+
+    def test_the_sum_counts_large_projects_that_finished_in_both(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [
+                ("a", "large", 0, 1000), ("b", "large", 1, 2000), ("m", "medium", 1, 500),
+                ("crashed", "large", 3, 100), ("gone", "large", 1, 700),
+            ])
+            write_summary(head, [
+                ("a", "large", 0, 1100), ("b", "large", 1, 2100), ("m", "medium", 1, 900),
+                ("crashed", "large", 1, 5000), ("new", "large", 1, 9000),
+            ])
+            self.assertEqual(om.large_totals(base, head), (3000, 3200, ["a", "b"]))
+
+    def test_a_project_warns_at_both_the_ratio_and_the_difference(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [
+                ("warn", "large", 1, 400), ("close", "large", 1, 400), ("tiny", "medium", 1, 100),
+                ("small", "small", 1, 100),
+            ])
+            write_summary(head, [
+                ("warn", "large", 1, 500), ("close", "large", 1, 499), ("tiny", "medium", 1, 199),
+                ("small", "small", 1, 900),
+            ])
+            self.assertEqual(om.drift_warnings(base, head), [["warn", "large", 400, 500]])
+
+    def test_the_section_reports_the_sum_and_the_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base, head = Path(directory) / "base", Path(directory) / "head"
+            write_summary(base, [("a", "large", 1, 1000), ("b", "large", 1, 1000)])
+            write_summary(head, [("a", "large", 1, 1300), ("b", "large", 1, 1000)])
+            lines = om.slowdown_md(base, head, [], (2000, 2050))
+            self.assertIn(
+                "Large projects summed: 2000 ms -> 2300 ms (1.15x), re-measured 2000 ms -> 2050 ms (1.02x); "
+                "fails over 1.05x (#1088): ✅ PASS",
+                lines,
+            )
+            self.assertIn("| a | large | 1000 | 1300 | 1.30x |", lines)
+            lines = om.slowdown_md(base, head, [])
+            self.assertIn("Large projects summed: 2000 ms -> 2300 ms (1.15x); fails over 1.05x (#1088): ❌ FAIL", lines)
+
+
+class TimedRunsTest(unittest.TestCase):
+    def test_binaries_take_turns_in_swapped_order(self) -> None:
+        calls: list[str] = []
+
+        def fake(bin_path, proj, *args):
+            calls.append(bin_path.name)
+            return f"run of {bin_path.name}"
+
+        with mock.patch.object(om.oc, "chokkin_raw", fake), tempfile.TemporaryDirectory() as directory:
+            (head, _), (base, _) = om.timed_runs([Path("head"), Path("base")], Path(directory), 3, ())
+        self.assertEqual(calls, ["head", "base", "base", "head", "head", "base"])
+        self.assertEqual((head, base), ("run of head", "run of base"))
 
 
 class ParseReportTest(unittest.TestCase):
