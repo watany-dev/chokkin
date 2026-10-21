@@ -290,6 +290,79 @@ Gate result:
 | Cold run, medium project | <= 2000 ms | all within budget | PASS |
 | CHK003 excluding `tp` | <= `573ff37` | 283 <= 288 | PASS |
 
+## Orchestration plugin corpus (#1057)
+
+The Dagster, Prefect and Scrapy plugins had only been measured on fixtures and
+on the framework repositories themselves, not on code written for them. One
+user-side project per plugin was added under `# --- orchestration plugin
+corpus`; each holds the plugin's config at its root. None tags releases, so
+each is pinned by its default branch's commit.
+
+| Slug | Commit (date) | Plugin config | Mode |
+|---|---|---|---|
+| `dagster-open-platform` | `c29d915` (2026-10-02) | `[tool.dg]` project, `registry_modules`, `defs/` with `component.yaml` | library |
+| `prefect-collection-registry` | `6be8519` (2026-06-16) | `prefect.yaml` with one deployment entrypoint | library |
+| `open-gov-crawlers` | `87bdeaa` (2025-08-08) | `scrapy.cfg`, `public_law/settings.py`, 30 spiders | library |
+
+Rejected candidates:
+
+- `alltheplaces`: the layout guess picks `ci` as the source package, and the
+  thousands of spiders the Scrapy plugin then adds under `locations/` resolve
+  to nothing (5809 CHK010). A layout bug, not the plugin's, so it would
+  measure the wrong thing.
+- `city-scrapers`: dependencies are only in a `Pipfile`, which chokkin does
+  not read, so every import is a certain CHK003.
+- `splash_flows_globus`: its `prefect.yaml` is in a subdirectory; the Prefect
+  plugin reads only the root one.
+
+### Plugin on vs off
+
+Each project was run with the PR build and with the same build with plugin
+dispatch emptied (`src/plugins/extract.rs`), default and `--strict`. GONE =
+reported only with plugins off; NEW = reported only with plugins on.
+
+| Project | Reachable runtime files (on / off) | GONE | NEW | `--strict` CHK001 (on / off) |
+|---|---|---|---|---|
+| `dagster-open-platform` | 125 / 38 of 126 | 10 CHK006 | 2 CHK004 | 1 / 88 |
+| `prefect-collection-registry` | 9 / 9 of 10 | — | — | 1 / 1 |
+| `open-gov-crawlers` | 84 / 80 of 88 | 22 CHK006 | — | 4 / 8 |
+
+- All 32 GONE are false positives the plugin removes: Dagster `defs` objects
+  and the helpers only `defs/` modules use (the plugin roots `defs/` and the
+  `definitions.py` module), and Scrapy settings constants the framework reads
+  by name plus two helpers only spiders use.
+- The 2 NEW are true positives: `google.oauth2` in two `defs/` resources, which
+  only become reachable with the plugin; google-auth comes only through
+  google-api-python-client (labelled `tp`).
+- `prefect-collection-registry` does not change: it is library mode, so the
+  `src/` package is already public and the deployment entrypoint adds nothing
+  reachable.
+- Gaps: none of the three plugins left a value unread (0 opaque command
+  targets, 0 unread settings). `dagster_cloud.yaml`'s `module_name` is not
+  read, but `[tool.dg]` already roots the same module.
+
+Every CHK002 and CHK004 hit on the three projects is labelled in
+`scripts/oss-fixtures.labels.tsv`. Their CHK006 are labelled too: all three
+projects have no app signal and run in library mode, so the symbols are really
+unused but reported at info, labelled `info-expected`. There is no CHK001 hit in the default run, and the six `--strict` `maybe`
+CHK001 are in `scripts/oss-maybe.labels.tsv` (all `tp`). The CHK002 hits are
+mostly security or transitive pins that are never imported (`tp`); the two
+`fp` are implicit uses chokkin cannot see: `dagster-webserver`, which `dg dev`
+serves, and `dbt-snowflake`, the adapter `profiles.yml` names. With them the
+gated CHK002 FP rate would be 5.4% (3 / 56), so this section's CHK002 is
+recorded only, like the app-mode corpus (#1065): the gate would measure forms
+chokkin does not read yet. The gated run then passes every criterion
+(CHK002 FP 2.6%, 1 / 39; recall 1007 / 1007).
+
+Four light fixes came out of the measurement: `progressbar2` was missing from
+the package map (CHK010 and a CHK002 on `open-gov-crawlers`), and the closed binary map did not
+know `dagster`, `dg`, `dbt`, `prefect` or `scrapy`, so `uv run dg dev` and
+`uv run dbt deps` in a Makefile left `dagster-dg-cli` and `dbt-core` unused.
+The same map left the dev-group `sqlfluff` unused (`--strict`) although the
+Makefile runs `sqlfluff lint`. Review then found that a project declaring only
+a dbt adapter or the old `dagster-dg` distribution would get CHK008 for `dbt`
+or `dg`, so those now provide the CLI as wrappers do.
+
 ## #346 corpus measurements (#338–#342)
 
 Measured on 2026-10-04 with chokkin `0.6.0` over the same 20 pinned clones.

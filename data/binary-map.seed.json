@@ -44,6 +44,13 @@
     { "binary": "cogapp", "distribution": "cogapp" },
     { "binary": "towncrier", "distribution": "towncrier" },
     { "binary": "build", "distribution": "build" },
-    { "binary": "httpbin", "distribution": "httpbin" }
+    { "binary": "httpbin", "distribution": "httpbin" },
+    { "binary": "dagster", "distribution": "dagster" },
+    { "binary": "dagster-webserver", "distribution": "dagster-webserver" },
+    { "binary": "dg", "distribution": "dagster-dg-cli" },
+    { "binary": "dbt", "distribution": "dbt-core" },
+    { "binary": "prefect", "distribution": "prefect" },
+    { "binary": "scrapy", "distribution": "scrapy" },
+    { "binary": "sqlfluff", "distribution": "sqlfluff" }
   ]
 }

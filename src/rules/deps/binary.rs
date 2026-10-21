@@ -16,6 +16,23 @@ use super::used::DeclaredIndex;
 /// Wrappers that install a binary's distribution as their own dependency, so
 /// declaring the wrapper provides the binary even without a lockfile (#680).
 const WRAPPER_PROVIDERS: &[(&str, &str)] = &[
+    // The pre-1.0 distribution ships the same `dg` script.
+    ("dagster-dg", "dagster-dg-cli"),
+    // dbt adapters depend on dbt-core, which ships `dbt`; an adapter missing
+    // here still reports CHK008 for `dbt` (#1057).
+    ("dbt-athena", "dbt-core"),
+    ("dbt-athena-community", "dbt-core"),
+    ("dbt-bigquery", "dbt-core"),
+    ("dbt-clickhouse", "dbt-core"),
+    ("dbt-databricks", "dbt-core"),
+    ("dbt-duckdb", "dbt-core"),
+    ("dbt-fabric", "dbt-core"),
+    ("dbt-postgres", "dbt-core"),
+    ("dbt-redshift", "dbt-core"),
+    ("dbt-snowflake", "dbt-core"),
+    ("dbt-spark", "dbt-core"),
+    ("dbt-sqlserver", "dbt-core"),
+    ("dbt-trino", "dbt-core"),
     ("mkdocs-material", "mkdocs"),
     ("pre-commit-uv", "pre-commit"),
     // prek is a drop-in pre-commit that reads `.pre-commit-config.yaml` (#723).
@@ -337,6 +354,21 @@ mod tests {
                 ("nox", "nox"),
             ]),
             &command_hints(&["pre-commit", "coverage", "tox", "nox"]),
+        );
+        assert_eq!(found, ["nox"]);
+    }
+
+    #[test]
+    fn dbt_adapters_and_the_old_dg_distribution_provide_their_clis() {
+        let found = detect(
+            &manifest(&["dbt-snowflake", "dagster-dg"]),
+            &[],
+            &resolution(&[
+                ("dbt", "dbt-core"),
+                ("dg", "dagster-dg-cli"),
+                ("nox", "nox"),
+            ]),
+            &command_hints(&["dbt", "dg", "nox"]),
         );
         assert_eq!(found, ["nox"]);
     }

@@ -929,16 +929,22 @@ def main() -> int:
     # The app-mode CHK001 corpus is recorded only for CHK002 (#1065): most of
     # its false positives are backends named by settings strings and CLIs run
     # from docker or shell, forms chokkin does not read yet, so the gate would
-    # measure those known gaps.
-    app_corpus = frozenset(oc.read_section(args.manifest, oc.APP_CORPUS_SECTION))
-    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in app_corpus])
+    # measure those known gaps. The orchestration plugin corpus (#1057) is too:
+    # its false positives are a dbt adapter named by profiles.yml and the
+    # webserver `dg dev` spawns, forms chokkin does not read either.
+    recorded_only = {
+        "app-mode": oc.read_section(args.manifest, oc.APP_CORPUS_SECTION),
+        "orchestration": oc.read_section(args.manifest, oc.ORCHESTRATION_CORPUS_SECTION),
+    }
+    skipped = frozenset().union(*recorded_only.values())
+    fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in skipped])
     fp_rate = f"{100 * y002_fp / y002_total:.1f}" if y002_total else "n/a"
-    _, app_total, app_fp, app_unclassified = fp_gate([f for f in findings if f[0] in app_corpus])
-    app_rate = (
-        f"{100 * app_fp / app_total:.1f}% ({app_fp} FP / {app_total}, {app_unclassified} unclassified)"
-        if app_total
-        else "n/a"
-    )
+
+    def recorded_rate(slugs: set[str]) -> str:
+        _, total, fp, unclassified = fp_gate([f for f in findings if f[0] in slugs])
+        return f"{100 * fp / total:.1f}% ({fp} FP / {total}, {unclassified} unclassified)" if total else "n/a"
+
+    recorded_rates = "; ".join(f"{name} corpus, recorded only: {recorded_rate(slugs)}" for name, slugs in recorded_only.items())
 
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
     missed = recall_missed(labels, reported)
@@ -987,7 +993,7 @@ def main() -> int:
             [
                 ["Unused-dep FP rate (CHK002)", f"< {FP_GATE_PCT}%",
                  f"{fp_rate}% ({y002_fp} FP / {y002_total} reported, {y002_unclassified} unclassified;"
-                 f" app-mode corpus, recorded only: {app_rate})",
+                 f" {recorded_rates})",
                  verdict(passes["fp"])],
                 ["Precision floor (labelled hits)",
                  ", ".join(f"{c} >= {f}%" for c, f in PRECISION_FLOORS.items()),

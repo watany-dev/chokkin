@@ -115,3 +115,14 @@ redash	app	medium	42fdf9d4a0fdb83841130ab78f69899a224f281b	https://github.com/ge
 saleor	app	large	b2587a12ea15edf3432aaa4c6a5065c9c9ca049f	https://github.com/saleor/saleor
 weblate	app	large	ebfe22d87e58df587f64a110fb520ed772769580	https://github.com/WeblateOrg/weblate
 wger	app	medium	65a1d40595a632984f016d9e9de0c103c004d9c4	https://github.com/wger-project/wger
+# --- orchestration plugin corpus (#1057) ---
+# One user-side project per orchestration plugin (Dagster, Prefect, Scrapy), so
+# the plugins' effect is measured on code they were written for. Each one holds
+# the plugin's config (dg project / prefect.yaml / scrapy.cfg) at its root.
+# None of them tags releases; pinned by the default branch's commit SHA on:
+#   dagster-open-platform        2026-10-02
+#   prefect-collection-registry  2026-06-16
+#   open-gov-crawlers            2025-08-08
+dagster-open-platform	app	medium	c29d915add170fdbc2a59a248e90ce6cbff1623f	https://github.com/dagster-io/dagster-open-platform
+prefect-collection-registry	app	small	6be8519e91835916a26eab58c54c766dd3de59f1	https://github.com/PrefectHQ/prefect-collection-registry
+open-gov-crawlers	app	medium	87bdeaac38aae3f21c96e87331fb1636dc5ad424	https://github.com/public-law/open-gov-crawlers

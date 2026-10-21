@@ -365,6 +365,8 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("polars", &["polars"]),
     ("pre-commit", &["pre_commit"]),
     ("presto-python-client", &["prestodb"]),
+    ("progressbar", &["progressbar"]),
+    ("progressbar2", &["progressbar"]),
     ("prometheus-client", &["prometheus_client"]),
     ("prompt-toolkit", &["prompt_toolkit"]),
     ("proto-plus", &["proto"]),

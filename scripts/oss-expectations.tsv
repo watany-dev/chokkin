@@ -21,3 +21,8 @@ transformers	2433	CHK002=12,CHK003=103,CHK006=620,CHK008=1,CHK010=194
 openai-python	1714	CHK004=2,CHK005=1,CHK006=20,CHK010=1
 langchain	651	CHK003=33,CHK004=255,CHK006=56,CHK008=1,CHK010=24
 fastmcp	246	CHK001=13,CHK002=1,CHK003=9,CHK004=46,CHK006=55,CHK010=2
+# Orchestration plugin corpus (#1057): dagster-open-platform reaches 38 runtime
+# files with plugins off, so its floor catches a Dagster plugin regression.
+dagster-open-platform	112	CHK002=15,CHK004=6,CHK006=2
+prefect-collection-registry	8	CHK004=4,CHK006=4
+open-gov-crawlers	75	CHK002=2,CHK006=6,CHK008=1

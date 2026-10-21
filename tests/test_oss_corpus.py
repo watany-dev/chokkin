@@ -128,6 +128,13 @@ class CommittedManifestsTest(unittest.TestCase):
         app = oc.read_section(oc.DEFAULT_MANIFEST, oc.APP_CORPUS_SECTION)
         self.assertIn("healthchecks", app)
         self.assertNotIn("airflow", app)
+        # The section ends at the next header; the orchestration corpus after
+        # it is its own section.
+        self.assertNotIn("dagster-open-platform", app)
+        orchestration = oc.read_section(oc.DEFAULT_MANIFEST, oc.ORCHESTRATION_CORPUS_SECTION)
+        self.assertEqual(
+            orchestration, {"dagster-open-platform", "prefect-collection-registry", "open-gov-crawlers"}
+        )
 
 
 if __name__ == "__main__":

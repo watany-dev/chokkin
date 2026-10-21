@@ -426,7 +426,7 @@ Core Metadata 2.5(PEP 794、2025年9月承認)には `Import-Name` と `Import-N
 
 binary名からdistribution名への逆引き(CHK008、binary usage判定)も同じ多層戦略にする。`.venv` があれば `entry_points.txt` / `RECORD` のscriptsを読み、なければbundled binary map、最後にuser定義の `[tool.chokkin.binary_map]` を使う。import名問題と同型の課題であり、専用のfallback dataが必要になる。
 
-CHK008 は binary usage の distribution が次のいずれかで提供されていれば出さない (#680)。root の宣言済み依存、root 直下以外の requirements file (`extra_requirements`。`requirements/` と `docs/` / `doc/` 直下の `*requirements*.txt` / `requirements*.in` を含む、#723)、tox `deps` と nox `session.install` のリテラル、CI workflow (`.github/workflows/*.yml`) の `run:` にある `pip install` / `uv pip install` / `pipx install` / `uv tool install` の distribution 名と既知 action (`pre-commit/action` → `pre-commit`、`j178/prek-action` → `prek`) (#725)、各 workspace member の依存と requirements file、これらの lockfile 上の直接依存、宣言済み wrapper が提供する tool (`mkdocs-material` → `mkdocs`、`pre-commit-uv` / `prek` → `pre-commit`、`pytest-cov` → `coverage`、`tox-uv` → `tox`)。workflow は provider としてだけ読み usage には加えないので、github-actions plugin が無効でも抑制方向にしか効かない。さらに remote pre-commit hook の id は pre-commit が環境を用意するので、tool の config section (`[tool.mypy]` など) や hook 自体の usage は提供済みとするが、Makefile や CI の command 実行由来の usage は対象外のままにする。usage 自体は CHK002 の used 判定に残す。同じ distribution の binary は 1 件にまとめる。
+CHK008 は binary usage の distribution が次のいずれかで提供されていれば出さない (#680)。root の宣言済み依存、root 直下以外の requirements file (`extra_requirements`。`requirements/` と `docs/` / `doc/` 直下の `*requirements*.txt` / `requirements*.in` を含む、#723)、tox `deps` と nox `session.install` のリテラル、CI workflow (`.github/workflows/*.yml`) の `run:` にある `pip install` / `uv pip install` / `pipx install` / `uv tool install` の distribution 名と既知 action (`pre-commit/action` → `pre-commit`、`j178/prek-action` → `prek`) (#725)、各 workspace member の依存と requirements file、これらの lockfile 上の直接依存、宣言済み wrapper が提供する tool (`dagster-dg` → `dg`、主な dbt adapter (`dbt-snowflake` など) → `dbt`、`mkdocs-material` → `mkdocs`、`pre-commit-uv` / `prek` → `pre-commit`、`pytest-cov` → `coverage`、`tox-uv` → `tox`)。workflow は provider としてだけ読み usage には加えないので、github-actions plugin が無効でも抑制方向にしか効かない。さらに remote pre-commit hook の id は pre-commit が環境を用意するので、tool の config section (`[tool.mypy]` など) や hook 自体の usage は提供済みとするが、Makefile や CI の command 実行由来の usage は対象外のままにする。usage 自体は CHK002 の used 判定に残す。同じ distribution の binary は 1 件にまとめる。
 
 重要なのは、`uvx chokkin` はprojectの仮想環境ではなく、`chokkin` 自身の一時環境で動く点。project venv必須にしてはいけない。`.venv` があれば読む、なければmanifest/lockfile/bundled map/user mapだけで解析する設計にする。
 
@@ -1416,6 +1416,9 @@ manifest の app mode CHK001 corpus の節 (CHK001 を測るために足した D
 settings が文字列で名指す backend (`STORAGES`、`CACHES`、`DATABASES` の `ENGINE`、
 `PASSWORD_HASHERS`) と、docker や shell からだけ起動する CLI の依存で起きる。どちらも
 chokkin がまだ読まない形なので、gate に入れると既知の gap を測ることになるため。
+orchestration plugin の節 (Dagster / Prefect / Scrapy の利用側 project、#1057) も
+同じ理由で記録だけにする。誤検知は `profiles.yml` の `type:` が名指す dbt adapter と、
+`dg dev` が起動する `dagster-webserver` で、どちらも chokkin がまだ読まない。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
 
 severity が `info` の finding (例: optional try-import の CHK003) はヒットとして

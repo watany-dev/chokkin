@@ -62,3 +62,9 @@ airflow	CHK001	dev/chart/build_changelog_annotations.py	fp	script-entry	Executab
 django	CHK001	django/conf/locale/mk/formats.py	fp	dynamic-import	Loaded by django/utils/formats.py:84 import_module("%s.formats" % "django.conf.locale.<lang>").
 fastapi	CHK001	fastapi/middleware/gzip.py	fp	library-public	Documented in docs/en/docs/reference/middleware.md:15-20; used by docs_src/advanced_middleware/tutorial003.py:2.
 langchain	CHK001	libs/langchain/langchain_classic/document_loaders/word_document.py	fp	library-public	Back-compat deprecated-import shim (legacy public path); imported by tests/unit_tests/test_imports.py:19 rglob.
+dagster-open-platform	CHK001	dagster_open_platform/lib/omni/component.py	tp	-	No component.yaml uses DOPOmniComponent; registry_modules "lib.*" imports the namespace package lib.omni, not lib.omni.component.
+prefect-collection-registry	CHK001	src/prefect_collection_registry/generate_flow_metadata.py	tp	-	Nothing imports it; prefect.yaml's only entrypoint is update_collection_metadata.py:update_all_collections.
+open-gov-crawlers	CHK001	public_law/legal_texts/parsers/int/rome_statute.py	tp	-	Its only import, in tests/legal_texts/parsers/int/rome_statute_test.py:5, is commented out.
+open-gov-crawlers	CHK001	public_law/middlewares.py	tp	-	Named only by commented-out entries of SPIDER_MIDDLEWARES / DOWNLOADER_MIDDLEWARES in public_law/settings.py:73,79.
+open-gov-crawlers	CHK001	public_law/monitors.py	tp	-	Whole file is commented out; SPIDERMON_SPIDER_CLOSE_MONITORS in settings.py:23 is commented too.
+open-gov-crawlers	CHK001	public_law/pipelines.py	tp	-	Named only by the commented-out ITEM_PIPELINES in public_law/settings.py:96.

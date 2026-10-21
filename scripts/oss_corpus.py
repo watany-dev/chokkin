@@ -27,6 +27,7 @@ DEFAULT_TEST_CMD = "{python} -m pytest -q -x"
 CORE_SECTION_END = "# --- R-01"
 # Django apps added to measure CHK001 in app mode (#1065).
 APP_CORPUS_SECTION = "# --- app-mode CHK001 corpus"
+ORCHESTRATION_CORPUS_SECTION = "# --- orchestration plugin corpus"
 LOG_TAIL_BYTES = 20_000
 
 
