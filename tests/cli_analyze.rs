@@ -4223,6 +4223,39 @@ fn binary_django_settings_module_reads_a_settings_package() {
     }
 }
 
+/// wger: the settings package sits beside the distribution's package, so
+/// discovery does not take it as a package, yet `settings/main.py`'s
+/// `from .base import *` still loads `settings/base.py` (#1065).
+#[test]
+fn binary_django_settings_follow_a_relative_star_import_outside_the_packages() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"settings.main\")\n",
+        ),
+        ("settings/__init__.py", ""),
+        (
+            "settings/base.py",
+            "ROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\", \"mysite.polls\"]\n",
+        ),
+        ("settings/main.py", "from .base import *\n"),
+        ("mysite/__init__.py", ""),
+        ("mysite/urls.py", "# URLconf\n"),
+        ("mysite/polls/__init__.py", ""),
+        ("mysite/polls/management/__init__.py", ""),
+        ("mysite/polls/management/commands/__init__.py", ""),
+        (
+            "mysite/polls/management/commands/close_poll.py",
+            "class Command:\n    pass\n",
+        ),
+    ]);
+    assert_eq!(issue_levels(project.path()), []);
+}
+
 /// Django puts the directory of `manage.py` on `sys.path`, and a `wsgi.py`
 /// sits in the package beside it, so a nested setter's settings module and
 /// URL configuration are looked up from there before any other `settings.py`

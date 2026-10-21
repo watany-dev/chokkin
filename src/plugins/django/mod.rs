@@ -527,10 +527,11 @@ fn read_settings(
             called.get_or_insert_with(|| (call, rel.clone(), lines.line(start)));
         }
 
-        for (module, start) in star_imports(&stmts, &rel, ctx) {
+        for (module, beside, start) in star_imports(&stmts, &rel, root, ctx) {
             let followed = module
                 .as_deref()
-                .and_then(|module| module_path(root, module, ctx, lookup));
+                .and_then(|module| module_path(root, module, ctx, lookup))
+                .or(beside);
             match followed {
                 Some(path) if visited.contains(&path) => {},
                 Some(path) if visited.len() < MAX_SETTINGS_FILES => {
@@ -661,12 +662,15 @@ fn namespace_update(call: &ExprCall) -> Option<&str> {
 }
 
 /// Top-level `from m import *` statements: the absolute module, `None` when a
-/// relative one does not resolve, and where the statement starts.
+/// relative one does not resolve, the file a relative one names beside `rel`
+/// on disk, and where the statement starts. The file covers a settings
+/// directory discovery did not take as a package (wger's `settings/`, #1065).
 fn star_imports(
     stmts: &[Stmt],
     rel: &str,
+    root: &Path,
     ctx: &PluginContext<'_>,
-) -> Vec<(Option<String>, TextSize)> {
+) -> Vec<(Option<String>, Option<String>, TextSize)> {
     stmts
         .iter()
         .filter_map(|stmt| {
@@ -685,9 +689,34 @@ fn star_imports(
                 suffix.as_deref(),
                 Some("*"),
             );
-            Some((module, import.start()))
+            let beside = (module.is_none() && level > 0)
+                .then(|| relative_path(root, rel, level, suffix.as_deref()))
+                .flatten();
+            Some((module, beside, import.start()))
         })
         .collect()
+}
+
+/// The project file a relative import in `rel` names, found from `rel`'s own
+/// directory: `level` 1 is that directory, each further level its parent.
+/// `None` when it climbs past the root or names no file.
+fn relative_path(root: &Path, rel: &str, level: u8, suffix: Option<&str>) -> Option<String> {
+    let mut parts: Vec<&str> = rel.split('/').collect();
+    parts.pop();
+    for _ in 1..level {
+        parts.pop()?;
+    }
+    let suffix = suffix.filter(|suffix| !suffix.is_empty());
+    parts.extend(suffix.into_iter().flat_map(|suffix| suffix.split('.')));
+    if parts.is_empty() {
+        return None;
+    }
+    let target = parts.join("/");
+    let module = suffix.map(|_| format!("{target}.py"));
+    module
+        .into_iter()
+        .chain([format!("{target}/__init__.py")])
+        .find(|path| abs_path(root, path).is_file())
 }
 
 /// The project file a module name loads: a discovered source, else a file on
