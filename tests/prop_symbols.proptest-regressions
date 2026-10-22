@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8c6d66005cba897cbac37641bcc78fc8c0c60bb8f1de62e1bb9d3dd9b26c16a1 # shrinks to spec = Spec { modules: [Module { kind: Plain, defined: {}, all: None, read: {} }, Module { kind: Plain, defined: {}, all: None, read: {} }, Module { kind: Plain, defined: {1}, all: Some({1}), read: {1} }], uses: [], reexports: [] }

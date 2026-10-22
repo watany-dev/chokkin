@@ -494,4 +494,362 @@ mod tests {
             None
         );
     }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Generated release segments stay at or below this, so the grid's
+        /// last value per segment lies above every bound they write.
+        const SEGMENT: u64 = 3;
+
+        /// The final releases the reference models are evaluated on.
+        fn grid() -> impl Iterator<Item = Version> {
+            let values = || 0..=SEGMENT + 1;
+            values().flat_map(move |major| {
+                values().flat_map(move |minor| values().map(move |patch| [major, minor, patch]))
+            })
+        }
+
+        fn contains(range: &PythonRange, version: Version) -> bool {
+            range
+                .0
+                .iter()
+                .any(|&(low, high)| low <= version && version < high)
+        }
+
+        /// Sorted, non-empty, and neither overlapping nor touching, so two
+        /// ranges are the same set exactly when they are equal.
+        fn is_canonical(range: &PythonRange) -> bool {
+            range.0.iter().all(|(low, high)| low < high)
+                && range.0.windows(2).all(|pair| pair[0].1 < pair[1].0)
+        }
+
+        fn endpoint() -> impl Strategy<Value = Version> {
+            let segment = || 0..=SEGMENT + 1;
+            prop_oneof![
+                4 => [segment(), segment(), segment()],
+                1 => Just(TOP),
+            ]
+        }
+
+        fn range() -> impl Strategy<Value = PythonRange> {
+            prop::collection::vec((endpoint(), endpoint()), 0..4)
+                .prop_map(PythonRange::from_intervals)
+        }
+
+        fn release() -> impl Strategy<Value = Vec<u64>> {
+            prop::collection::vec(0..=SEGMENT, 1..=3)
+        }
+
+        /// One specifier the model reads: the operator, its release, and
+        /// whether it is a `.*` prefix match.
+        #[derive(Debug, Clone)]
+        struct Spec {
+            op: &'static str,
+            release: Vec<u64>,
+            star: bool,
+        }
+
+        impl Spec {
+            fn render(&self) -> String {
+                let version = self
+                    .release
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(".");
+                let star = if self.star { ".*" } else { "" };
+                format!("{}{version}{star}", self.op)
+            }
+
+            /// PEP 440 on a final release, written from the spec rather than
+            /// from the intervals: zero padding, prefix matching, and `~=V`
+            /// as `>=V` with all but the last segment fixed.
+            fn holds(&self, version: Version) -> bool {
+                let value = pad(&self.release);
+                let prefix = |len: usize| version[..len] == value[..len];
+                match (self.op, self.star) {
+                    ("==", true) => prefix(self.release.len()),
+                    ("!=", true) => !prefix(self.release.len()),
+                    ("==", false) => version == value,
+                    ("!=", false) => version != value,
+                    ("<", _) => version < value,
+                    ("<=", _) => version <= value,
+                    (">", _) => version > value,
+                    (">=", _) => version >= value,
+                    // `~=`, the one operator left.
+                    _ => version >= value && prefix(self.release.len() - 1),
+                }
+            }
+        }
+
+        fn spec() -> impl Strategy<Value = Spec> {
+            (
+                prop::sample::select(["==", "!=", "<", "<=", ">", ">=", "~="].as_slice()),
+                release(),
+                any::<bool>(),
+            )
+                .prop_map(|(op, mut release, star)| {
+                    if op == "~=" && release.len() < 2 {
+                        release.push(0);
+                    }
+                    Spec {
+                        op,
+                        release,
+                        star: star && matches!(op, "==" | "!="),
+                    }
+                })
+        }
+
+        /// A comparison marker for an interpreter `X.Y.Z`.
+        #[derive(Debug, Clone)]
+        enum Marker {
+            Compare {
+                full: bool,
+                spec: Spec,
+                /// Written `'value' op variable`, with the operator mirrored.
+                flipped: bool,
+            },
+            /// A comparison outside the model.
+            Unread(&'static str),
+            And(Box<Self>, Box<Self>),
+            Or(Box<Self>, Box<Self>),
+            Group(Box<Self>),
+        }
+
+        impl Marker {
+            fn render(&self) -> String {
+                match self {
+                    Self::Compare {
+                        full,
+                        spec,
+                        flipped,
+                    } => {
+                        let variable = if *full {
+                            "python_full_version"
+                        } else {
+                            "python_version"
+                        };
+                        let text = spec.render();
+                        let value = &text[spec.op.len()..];
+                        if *flipped {
+                            let mirrored = match spec.op {
+                                "<" => ">",
+                                "<=" => ">=",
+                                ">" => "<",
+                                // `>=`: only the ordering operators are flipped.
+                                _ => "<=",
+                            };
+                            format!("'{value}' {mirrored} {variable}")
+                        } else {
+                            format!("{variable} {} \"{value}\"", spec.op)
+                        }
+                    },
+                    Self::Unread(text) => (*text).to_owned(),
+                    // `and` binds tighter, so an `or` beneath it needs parentheses.
+                    Self::And(left, right) => {
+                        let operand = |side: &Self| match side {
+                            Self::Or(..) => format!("({})", side.render()),
+                            _ => side.render(),
+                        };
+                        format!("{} and {}", operand(left), operand(right))
+                    },
+                    Self::Or(left, right) => format!("{} or {}", left.render(), right.render()),
+                    Self::Group(inner) => format!("({})", inner.render()),
+                }
+            }
+
+            /// Whether the marker holds on `version`; `None` when it reads
+            /// a comparison outside the model.
+            fn holds(&self, version: Version) -> Option<bool> {
+                match self {
+                    Self::Compare { full, spec, .. } => {
+                        let [major, minor, _] = version;
+                        let value = if *full { version } else { [major, minor, 0] };
+                        Some(spec.holds(value))
+                    },
+                    Self::Unread(_) => None,
+                    Self::And(left, right) => Some(left.holds(version)? & right.holds(version)?),
+                    Self::Or(left, right) => Some(left.holds(version)? | right.holds(version)?),
+                    Self::Group(inner) => inner.holds(version),
+                }
+            }
+
+            fn is_read(&self) -> bool {
+                self.holds([0; 3]).is_some()
+            }
+        }
+
+        /// Comparisons outside the model (module docs): each one alone,
+        /// and any marker holding one, reads as `None`.
+        const UNREAD: [&str; 14] = [
+            "python_version === '3.8'",
+            "python_version >= '3.8rc1'",
+            "python_full_version >= '3.8.0.post1'",
+            "python_version < '3.8.dev0'",
+            "python_full_version == '3.8.0+local'",
+            "python_version >= '1!3.8'",
+            "python_full_version >= '3.8.0.1'",
+            "python_version == '3.8.0.1.*'",
+            "python_version ~= '3.8.0.1'",
+            "sys_platform == 'linux'",
+            "implementation_name == 'cpython'",
+            "platform_python_implementation != 'PyPy'",
+            "python_version in '3.8 3.9'",
+            "python_version not in '3.8'",
+        ];
+
+        fn compare() -> impl Strategy<Value = Marker> {
+            (any::<bool>(), spec(), any::<bool>()).prop_map(|(full, spec, flipped)| {
+                let flipped = flipped && matches!(spec.op, "<" | "<=" | ">" | ">=");
+                Marker::Compare {
+                    full,
+                    spec,
+                    flipped,
+                }
+            })
+        }
+
+        fn marker(unread: bool) -> impl Strategy<Value = Marker> {
+            let leaf = if unread {
+                prop_oneof![
+                    3 => compare(),
+                    1 => prop::sample::select(UNREAD.as_slice()).prop_map(Marker::Unread),
+                ]
+                .boxed()
+            } else {
+                compare().boxed()
+            };
+            leaf.prop_recursive(3, 8, 2, |inner| {
+                prop_oneof![
+                    (inner.clone(), inner.clone())
+                        .prop_map(|(left, right)| Marker::And(Box::new(left), Box::new(right))),
+                    (inner.clone(), inner.clone())
+                        .prop_map(|(left, right)| Marker::Or(Box::new(left), Box::new(right))),
+                    inner.prop_map(|inner| Marker::Group(Box::new(inner))),
+                ]
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn set_operations_satisfy_the_boolean_algebra_laws(
+                a in range(),
+                b in range(),
+                c in range(),
+            ) {
+                for result in [a.union(&b), a.intersect(&b), a.complement()] {
+                    prop_assert!(is_canonical(&result), "{result:?}");
+                }
+                prop_assert_eq!(a.union(&b), b.union(&a));
+                prop_assert_eq!(a.intersect(&b), b.intersect(&a));
+                prop_assert_eq!(a.union(&b).union(&c), a.union(&b.union(&c)));
+                prop_assert_eq!(a.intersect(&b).intersect(&c), a.intersect(&b.intersect(&c)));
+                prop_assert_eq!(&a.union(&a.intersect(&b)), &a);
+                prop_assert_eq!(&a.intersect(&a.union(&b)), &a);
+                prop_assert_eq!(a.union(&b).complement(), a.complement().intersect(&b.complement()));
+                prop_assert_eq!(a.intersect(&b).complement(), a.complement().union(&b.complement()));
+                prop_assert_eq!(&a.complement().complement(), &a);
+                prop_assert_eq!(a.is_subset_of(&b), a.intersect(&b) == a);
+                prop_assert!(a.intersect(&b).is_subset_of(&a));
+                prop_assert!(a.is_subset_of(&a.union(&b)));
+            }
+
+            #[test]
+            fn set_operations_match_membership(a in range(), b in range()) {
+                let (union, intersection, complement) =
+                    (a.union(&b), a.intersect(&b), a.complement());
+                for version in grid() {
+                    let (in_a, in_b) = (contains(&a, version), contains(&b, version));
+                    prop_assert_eq!(contains(&union, version), in_a || in_b);
+                    prop_assert_eq!(contains(&intersection, version), in_a && in_b);
+                    prop_assert_eq!(contains(&complement, version), !in_a);
+                }
+            }
+
+            #[test]
+            fn marker_range_matches_evaluating_the_marker(marker in marker(false)) {
+                let text = marker.render();
+                let range = marker_range(&text);
+                prop_assert!(range.is_some(), "{text}");
+                let range = range.unwrap_or_else(PythonRange::all);
+                for version in grid() {
+                    prop_assert_eq!(
+                        Some(contains(&range, version)),
+                        marker.holds(version),
+                        "{} on {:?}", text, version
+                    );
+                }
+            }
+
+            #[test]
+            fn requires_python_range_matches_evaluating_the_specifiers(
+                specs in prop::collection::vec(spec(), 1..4),
+            ) {
+                let text = specs.iter().map(Spec::render).collect::<Vec<_>>().join(", ");
+                let range = requires_python_range(&text);
+                prop_assert!(range.is_some(), "{text}");
+                let range = range.unwrap_or_else(PythonRange::all);
+                for version in grid() {
+                    prop_assert_eq!(
+                        contains(&range, version),
+                        specs.iter().all(|spec| spec.holds(version)),
+                        "{} on {:?}", text, version
+                    );
+                }
+            }
+
+            /// A marker holding any comparison outside the model is not read,
+            /// so it is never taken as always true, whatever the project
+            /// supports.
+            #[test]
+            fn markers_outside_the_model_are_never_read(
+                marker in marker(true).prop_filter("reads a comparison outside the model", |marker| {
+                    !marker.is_read()
+                }),
+                supported in prop_oneof![
+                    range(),
+                    prop::collection::vec(spec(), 1..4).prop_filter_map("read", |specs| {
+                        let text = specs.iter().map(Spec::render).collect::<Vec<_>>().join(",");
+                        requires_python_range(&text)
+                    }),
+                ],
+            ) {
+                let text = marker.render();
+                prop_assert_eq!(marker_range(&text), None, "{}", text);
+                prop_assert!(!marker_always_holds(&text, &supported), "{}", text);
+                prop_assert!(!marker_always_holds(&text, &PythonRange(Vec::new())), "{}", text);
+            }
+
+            #[test]
+            fn specifiers_outside_the_model_are_never_read(
+                specs in prop::collection::vec(spec(), 0..3),
+                unread in prop::sample::select(
+                    ["===3.9", ">=3.9rc1", ">=3.9.post1", "<3.9.dev0", "==3.9+local",
+                     ">=1!3.9", ">=3.9.0.1", "==3.9.0.1.*", "~=3.9.0.1", "~=3"].as_slice(),
+                ),
+                at in any::<prop::sample::Index>(),
+            ) {
+                let mut items: Vec<String> = specs.iter().map(Spec::render).collect();
+                items.insert(at.index(items.len() + 1), unread.to_owned());
+                let text = items.join(", ");
+                prop_assert_eq!(requires_python_range(&text), None, "{}", text);
+            }
+
+            /// Any input, nested past the depth limit or not, reads as a range
+            /// or `None` without panicking.
+            #[test]
+            fn arbitrary_input_never_panics(
+                open in 0usize..2 * MAX_DEPTH,
+                close in 0usize..2 * MAX_DEPTH,
+                body in r#"[()'" <>=!~,.*a-z_0-9]{0,40}"#,
+            ) {
+                let text = format!("{}{body}{}", "(".repeat(open), ")".repeat(close));
+                let _ = marker_range(&text);
+                let _ = requires_python_range(&body);
+                let _ = marker_always_holds(&text, &PythonRange::all());
+            }
+        }
+    }
 }
