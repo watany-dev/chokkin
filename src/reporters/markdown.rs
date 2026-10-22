@@ -117,7 +117,7 @@ mod tests {
         assert_eq!(code_span(""), "` `");
     }
 
-    /// Code spans (#1105): what a GFM table and CommonMark read back from a
+    /// Code spans (#1105): what a GFM table and `CommonMark` read back from a
     /// span is the text it was made from, on one line.
     mod props {
         use super::*;

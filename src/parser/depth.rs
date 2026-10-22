@@ -282,7 +282,9 @@ mod tests {
                 source.push_str("if c:\n");
             }
             source.push_str(&"    ".repeat(ifs));
-            source.push_str(&format!("x = {expression}\n"));
+            source.push_str("x = ");
+            source.push_str(&expression);
+            source.push('\n');
             (source, ifs + 1 + levels)
         }
 

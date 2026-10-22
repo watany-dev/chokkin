@@ -150,9 +150,9 @@ mod tests {
         let (_dir, root) = canonical_tempdir();
         let (_outside, outside) = canonical_tempdir();
         std::os::unix::fs::symlink(outside.join("gone"), root.join("link")).expect("symlink");
-        assert!(resolve_under_root(&root, &root.join("link")).is_err());
-        assert!(resolve_under_root(&root, &root.join("link").join("x")).is_err());
-        assert!(resolve_under_root(&root, &root.join("link/.")).is_err());
+        resolve_under_root(&root, &root.join("link")).expect_err("dangling link");
+        resolve_under_root(&root, &root.join("link").join("x")).expect_err("dangling link");
+        resolve_under_root(&root, &root.join("link/.")).expect_err("dangling link");
     }
 
     #[test]

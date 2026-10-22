@@ -1,5 +1,6 @@
 //! `chokkin --init` starter configuration generation.
 
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -184,7 +185,9 @@ fn escape_toml_string(value: &str) -> String {
             '\\' => escaped.push_str("\\\\"),
             '"' => escaped.push_str("\\\""),
             // Every control character is at most U+009F.
-            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04X}", u32::from(ch))),
+            ch if ch.is_control() => {
+                let _ = write!(escaped, "\\u{:04X}", u32::from(ch));
+            },
             ch => escaped.push(ch),
         }
     }
@@ -271,7 +274,10 @@ mod tests {
             "py311",
         );
         assert!(block.contains("src/**/weird\\\"name.py"));
-        assert_eq!(escape_toml_string("a\tb\n\u{7f}"), "a\\u0009b\\u000A\\u007F");
+        assert_eq!(
+            escape_toml_string("a\tb\n\u{7f}"),
+            "a\\u0009b\\u000A\\u007F"
+        );
     }
 
     #[test]

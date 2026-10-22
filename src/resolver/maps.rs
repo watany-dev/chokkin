@@ -500,20 +500,16 @@ mod tests {
                         .iter()
                         .zip(&separators)
                         .enumerate()
-                        .flat_map(|(index, (word, sep))| {
-                            [if index == 0 { "" } else { sep }, word]
-                        })
+                        .flat_map(|(index, (word, sep))| [if index == 0 { "" } else { sep }, word])
                         .collect();
                     joined
                         .chars()
                         .zip(upper.iter().cycle())
-                        .map(|(ch, upper)| {
-                            if *upper {
-                                ch.to_ascii_uppercase()
-                            } else {
-                                ch
-                            }
-                        })
+                        .map(
+                            |(ch, upper)| {
+                                if *upper { ch.to_ascii_uppercase() } else { ch }
+                            },
+                        )
                         .collect()
                 })
         }

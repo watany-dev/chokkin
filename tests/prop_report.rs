@@ -144,7 +144,7 @@ fn table_cells(row: &str) -> Vec<&str> {
     cells
 }
 
-/// Whether `cell` is exactly one CommonMark code span: a backtick run, then
+/// Whether `cell` is exactly one `CommonMark` code span: a backtick run, then
 /// text holding no run of that length, then the same run.
 fn is_code_span(cell: &str) -> bool {
     let fence = cell.len() - cell.trim_start_matches('`').len();
@@ -155,9 +155,7 @@ fn is_code_span(cell: &str) -> bool {
     if !cell.ends_with(&"`".repeat(fence)) || inner.starts_with('`') || inner.ends_with('`') {
         return false;
     }
-    !inner
-        .split(|ch| ch != '`')
-        .any(|run| run.len() == fence)
+    !inner.split(|ch| ch != '`').any(|run| run.len() == fence)
 }
 
 /// The issue fields a JSON consumer reads back.
@@ -198,13 +196,20 @@ fn expected_json_issue(issue: &Issue) -> JsonIssue {
         IssueSubject::File { path } => (Some(path.clone()), None, None, None),
         IssueSubject::Distribution { name } => (None, Some(name.clone()), None, None),
         IssueSubject::Binary { name } => (None, None, None, Some(name.clone())),
-        IssueSubject::Symbol { module, name } => (None, None, Some(format!("{module}:{name}")), None),
+        IssueSubject::Symbol { module, name } => {
+            (None, None, Some(format!("{module}:{name}")), None)
+        },
         IssueSubject::Import {
             module,
             file,
             distribution,
             ..
-        } => (Some(file.clone()), distribution.clone(), Some(module.clone()), None),
+        } => (
+            Some(file.clone()),
+            distribution.clone(),
+            Some(module.clone()),
+            None,
+        ),
         IssueSubject::ScriptDistribution { script, name } => {
             (Some(script.clone()), Some(name.clone()), None, None)
         },
