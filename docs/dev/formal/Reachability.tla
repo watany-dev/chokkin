@@ -7,11 +7,19 @@
 (*                                                                         *)
 (* Files import *modules*, statically (`parsed.imports`) or dynamically    *)
 (* (`parsed.dynamic_imports`).  A module resolves to at most one           *)
-(* first-party file (`ModuleIndex::resolve`; None for stdlib/third-party). *)
+(* first-party file, depending on the importer                             *)
+(* (`ModuleIndex::resolve_from`): pytest's `sys.path` entries for a test   *)
+(* file first (`Pytest`), then the project's module index (`Index`; None   *)
+(* for stdlib/third-party), then a module beside a script or in a          *)
+(* directory a `sys.path` edit adds (`Fallback`).                          *)
 (* A site that imports `pkg.sub.mod` also reaches the files of `pkg` and   *)
 (* `pkg.sub` (`module_and_parents`: the module itself, then each parent    *)
 (* package outermost first), because Python initialises the parent         *)
-(* packages first.  A dynamic site that shares its line with a static      *)
+(* packages first.  A prefixed dynamic site (`import_module("pkg.sub." +   *)
+(* name)`, `dynamic_import_prefixes`) reaches `pkg.sub` and its parents    *)
+(* the same way, then every module the index has strictly under `pkg.sub`  *)
+(* (`ModuleIndex::under`, which ignores the importer).                     *)
+(* A dynamic site that shares its line with a static      *)
 (* import of the same module is static (`build_dynamic_sites`); at module *)
 (* granularity that is `Dynamic[f] \ Static[f]`, and static sites come     *)
 (* first in the adjacency.  A file has one site per module, so the lazy    *)
@@ -28,9 +36,10 @@
 (* last followed at.                                                       *)
 (*                                                                         *)
 (* Seeds: entry roots (`Root` step; 2 for a root only a library           *)
-(* subpackage's public surface makes, else 3), then every resolvable       *)
-(* module/parent of a plugin `module_ref` (`PluginRef` step; 2 for a       *)
-(* library module's own decorator, else 3).  After that queue drains,      *)
+(* subpackage's public surface makes, else 3), then every module/parent of *)
+(* a plugin `module_ref` that resolves from the ref's origin (`PluginRef`  *)
+(* step; 2 when the module resolves to the library-mode file the ref sits  *)
+(* in, its own decorator, else 3).  After that queue drains,               *)
 (* framework-glob files are enqueued at 3 and the queue drains again, so   *)
 (* their imports are followed and files that the entry walk already        *)
 (* reached keep their trace.  `enqueue_file` records the predecessor only  *)
@@ -66,32 +75,43 @@
 EXTENDS Naturals, Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Files,         \* set of first-party files
+          Importers,     \* paths a module is resolved from: Files and the
+                         \* non-source files a plugin ref sits in
           Modules,       \* set of module names
-          Resolve,       \* Resolve[m] : file of module m, or None
+          Index,         \* Index[m]   : file of module m in the index, or None
+          Pytest,        \* Pytest[i][m]: file pytest's sys.path gives i, or None
+          Fallback,      \* Fallback[i][m]: file beside i / on a sys.path hint, or None
           Parent,        \* Parent[m]  : enclosing package of m, or None
           Roots,         \* entry roots (subset of Files)
           PublicRoots,   \* roots only a library subpackage's surface makes
           Static,        \* Static[f]  : modules imported statically by f
           Dynamic,       \* Dynamic[f] : modules imported via importlib by f
+          Prefix,        \* Prefix[f]  : packages f imports a submodule of by a
+                         \*              computed name (`"pkg." + name`)
           Lazy,          \* Lazy[f]    : of those, function-local / TYPE_CHECKING
           Optional,      \* Optional[f]: of those, try / suppress / platform guard
           NonRuntime,    \* files in a test, docs or dev context
           Library,       \* files in library mode (`EntryPlan::mode_for`)
           Submodule,     \* files under a runtime `__init__.py` (`is_submodule`)
           PluginRefs,    \* modules named by plugin module_refs
-          SelfRegistered, \* of those, a library module's own decorators
+          RefOrigin,     \* RefOrigin[m]: the importer the ref of m sits in
           Framework,     \* files matched by framework globs
           None           \* model value for "no file / no predecessor"
 
 ASSUME Roots \subseteq Files
 ASSUME PublicRoots \subseteq Roots
 ASSUME Framework \subseteq Files
+ASSUME Files \subseteq Importers
 ASSUME PluginRefs \subseteq Modules
-ASSUME SelfRegistered \subseteq PluginRefs
+ASSUME \A m \in PluginRefs : RefOrigin[m] \in Importers
 ASSUME NonRuntime \cup Library \cup Submodule \subseteq Files
-ASSUME \A m \in Modules : Resolve[m] \in Files \cup {None}
+ASSUME \A m \in Modules : Index[m] \in Files \cup {None}
+ASSUME \A i \in Importers : \A m \in Modules :
+           Pytest[i][m] \in Files \cup {None} /\ Fallback[i][m] \in Files \cup {None}
 ASSUME \A m \in Modules : Parent[m] \in Modules \cup {None}
-ASSUME \A f \in Files : Lazy[f] \cup Optional[f] \subseteq Static[f] \cup Dynamic[f]
+ASSUME \A f \in Files : Prefix[f] \subseteq Modules
+ASSUME \A f \in Files :
+           Lazy[f] \cup Optional[f] \subseteq Static[f] \cup Dynamic[f] \cup Prefix[f]
 
 Reachable == 0
 Eager == 1
@@ -114,24 +134,49 @@ Chain(m) == <<m>> \o Up(m)
 
 Ancestors(m) == {Up(m)[i] : i \in 1..Len(Up(m))}
 
-(* Files reached by one site importing m, in visiting order. *)
-RECURSIVE ResolvedSeq(_)
-ResolvedSeq(s) ==
-    IF s = <<>> THEN <<>>
-    ELSE (IF Resolve[Head(s)] = None THEN <<>> ELSE <<Resolve[Head(s)]>>)
-         \o ResolvedSeq(Tail(s))
+(* `ModuleIndex::resolve_from` *)
+ResolveFrom(i, m) ==
+    IF Pytest[i][m] # None THEN Pytest[i][m]
+    ELSE IF Index[m] # None THEN Index[m]
+    ELSE Fallback[i][m]
 
-Targets(m) == ResolvedSeq(Chain(m))
-TargetSet(m) == {Targets(m)[i] : i \in 1..Len(Targets(m))}
+(* Files reached by one site of i importing m, in visiting order. *)
+RECURSIVE ResolvedSeq(_, _)
+ResolvedSeq(i, s) ==
+    IF s = <<>> THEN <<>>
+    ELSE (IF ResolveFrom(i, Head(s)) = None THEN <<>> ELSE <<ResolveFrom(i, Head(s))>>)
+         \o ResolvedSeq(i, Tail(s))
+
+Targets(i, m) == ResolvedSeq(i, Chain(m))
+SeqSet(s) == {s[k] : k \in 1..Len(s)}
+TargetSet(i, m) == SeqSet(Targets(i, m))
+
+(* `ModuleIndex::under`: the index's modules strictly inside package p. *)
+UnderSeq(p) == LET ms == SetToSeq({m \in Modules : p \in Ancestors(m) /\ Index[m] # None})
+               IN [k \in 1..Len(ms) |-> Index[ms[k]]]
+
+(* `build_prefix_imports`: p and its parents, then everything under p. *)
+PrefixTargets(f, p) == Targets(f, p) \o UnderSeq(p)
 
 DynamicOnly(f) == Dynamic[f] \ Static[f]
 
 ImportedBy(f) == Static[f] \cup Dynamic[f]
 
-(* Every file one file reaches through its import sites. *)
-Adj(f) == UNION {TargetSet(m) : m \in ImportedBy(f)}
+(* Every <<module, file>> pair one file's sites reach; the module is the  *)
+(* site's (for a prefixed site, the package), which carries its flags.     *)
+SiteTargets(f) ==
+    UNION {{<<m, t>> : t \in TargetSet(f, m)} : m \in ImportedBy(f)}
+    \cup UNION {{<<p, t>> : t \in SeqSet(PrefixTargets(f, p))} : p \in Prefix[f]}
 
-PluginTargets == UNION {TargetSet(m) : m \in PluginRefs}
+RefTargets(m) == Targets(RefOrigin[m], m)
+
+PluginTargets == UNION {SeqSet(RefTargets(m)) : m \in PluginRefs}
+
+(* A library module's own decorators register it only once some caller   *)
+(* imports it (#802).                                                      *)
+SelfRegistered ==
+    {m \in PluginRefs : /\ RefOrigin[m] \in Library
+                        /\ ResolveFrom(RefOrigin[m], m) = RefOrigin[m]}
 
 (* `edge_class`: what the site of f importing m passes on to t when f is   *)
 (* followed at class c.                                                    *)
@@ -188,18 +233,20 @@ Walk(f, c, m, ts, i, via, q, r, p) ==
     ELSE Bind(Enqueue(q, r, p, ts[i], f, via, EdgeClass(f, c, m, ts[i])),
               LAMBDA e : Walk(f, c, m, ts, i + 1, via, e[1], e[2], e[3]))
 
+SiteSeq(f, m, prefixed) == IF prefixed THEN PrefixTargets(f, m) ELSE Targets(f, m)
+
 (* record_file_imports over every site of one kind *)
-RECURSIVE Sites(_, _, _, _, _, _, _, _)
-Sites(f, c, ms, i, via, q, r, p) ==
+RECURSIVE Sites(_, _, _, _, _, _, _, _, _)
+Sites(f, c, ms, i, via, prefixed, q, r, p) ==
     IF i > Len(ms) THEN <<q, r, p>>
-    ELSE Bind(Walk(f, c, ms[i], Targets(ms[i]), 1, via, q, r, p),
-              LAMBDA s : Sites(f, c, ms, i + 1, via, s[1], s[2], s[3]))
+    ELSE Bind(Walk(f, c, ms[i], SiteSeq(f, ms[i], prefixed), 1, via, q, r, p),
+              LAMBDA s : Sites(f, c, ms, i + 1, via, prefixed, s[1], s[2], s[3]))
 
 RECURSIVE RefSeeds(_)
 RefSeeds(ms) ==
     IF ms = <<>> THEN <<>>
-    ELSE [i \in 1..Len(Targets(Head(ms))) |->
-             [file |-> Targets(Head(ms))[i], class |-> RefClass(Head(ms))]]
+    ELSE [i \in 1..Len(RefTargets(Head(ms))) |->
+             [file |-> RefTargets(Head(ms))[i], class |-> RefClass(Head(ms))]]
          \o RefSeeds(Tail(ms))
 
 RootSeeds == LET rs == SetToSeq(Roots)
@@ -235,11 +282,14 @@ Step ==
     /\ LET f == Head(queue)
            c == reach[f]
        IN /\ ~(f \in DOMAIN followed /\ followed[f] >= c)
-          /\ LET s1 == Sites(f, c, SetToSeq(Static[f]), 1, "Import", Tail(queue), reach, pred)
-                 s2 == Sites(f, c, SetToSeq(DynamicOnly(f)), 1, "DynamicImport", s1[1], s1[2], s1[3])
-             IN /\ queue' = s2[1]
-                /\ reach' = s2[2]
-                /\ pred' = s2[3]
+          /\ LET s1 == Sites(f, c, SetToSeq(Static[f]), 1, "Import", FALSE, Tail(queue), reach, pred)
+                 s2 == Bind(s1, LAMBDA e : Sites(f, c, SetToSeq(DynamicOnly(f)), 1, "DynamicImport",
+                                                FALSE, e[1], e[2], e[3]))
+                 s3 == Bind(s2, LAMBDA e : Sites(f, c, SetToSeq(Prefix[f]), 1, "DynamicImport",
+                                                TRUE, e[1], e[2], e[3]))
+             IN /\ queue' = s3[1]
+                /\ reach' = s3[2]
+                /\ pred' = s3[3]
           /\ followed' = [x \in DOMAIN followed \cup {f} |->
                              IF x = f THEN c ELSE followed[x]]
           /\ follows' = [follows EXCEPT ![f] = @ + 1]
@@ -282,8 +332,8 @@ Follows(level, f, m, t) ==
 
 RECURSIVE ClosureAt(_, _)
 ClosureAt(level, S) ==
-    LET nxt == S \cup {t \in Files : \E f \in S : \E m \in ImportedBy(f) :
-                          t \in TargetSet(m) /\ Follows(level, f, m, t)}
+    LET nxt == S \cup {t \in Files : \E f \in S : \E st \in SiteTargets(f) :
+                          st[2] = t /\ Follows(level, f, st[1], t)}
     IN IF nxt = S THEN S ELSE ClosureAt(level, nxt)
 
 Seeds == Roots \cup PluginTargets \cup Framework
@@ -291,7 +341,7 @@ Seeds == Roots \cup PluginTargets \cup Framework
 (* Seeds that show the package or its host loads the file (#802). *)
 CertainSeeds ==
     (Roots \ PublicRoots)
-    \cup UNION {TargetSet(m) : m \in PluginRefs \ SelfRegistered}
+    \cup UNION {SeqSet(RefTargets(m)) : m \in PluginRefs \ SelfRegistered}
     \cup Framework
 
 ExpectedReachable == ClosureAt(Reachable, Seeds)
@@ -325,21 +375,28 @@ SetsNested ==
     /\ ExpectedExposed \subseteq ExpectedEager
     /\ ExpectedEager \subseteq ExpectedReachable
 
+(* Python imports every enclosing package of a module first, and, for a  *)
+(* prefixed site, the package itself, whatever the computed suffix is.     *)
 ParentReached == pc = "done" =>
-    \A m \in PluginRefs \cup UNION {ImportedBy(f) : f \in DOMAIN reach} :
-        \A a \in Ancestors(m) : Resolve[a] # None => Resolve[a] \in DOMAIN reach
+    /\ \A m \in PluginRefs : \A a \in Ancestors(m) :
+           ResolveFrom(RefOrigin[m], a) # None => ResolveFrom(RefOrigin[m], a) \in DOMAIN reach
+    /\ \A f \in DOMAIN reach :
+           /\ \A m \in ImportedBy(f) : \A a \in Ancestors(m) :
+                  ResolveFrom(f, a) # None => ResolveFrom(f, a) \in DOMAIN reach
+           /\ \A p \in Prefix[f] : \A a \in {p} \cup Ancestors(p) :
+                  ResolveFrom(f, a) # None => ResolveFrom(f, a) \in DOMAIN reach
 
 ClassPassedOn == pc = "done" =>
-    /\ \A f \in DOMAIN reach : \A m \in ImportedBy(f) : \A t \in TargetSet(m) :
-           t \in DOMAIN reach /\ reach[t] >= EdgeClass(f, reach[f], m, t)
-    /\ \A m \in PluginRefs : \A t \in TargetSet(m) :
+    /\ \A f \in DOMAIN reach : \A st \in SiteTargets(f) :
+           st[2] \in DOMAIN reach /\ reach[st[2]] >= EdgeClass(f, reach[f], st[1], st[2])
+    /\ \A m \in PluginRefs : \A t \in SeqSet(RefTargets(m)) :
            t \in DOMAIN reach /\ reach[t] >= RefClass(m)
 
 FrameworkFollowed == pc = "done" =>
     \A f \in Framework :
         /\ f \in DOMAIN reach /\ reach[f] = Certain
-        /\ \A m \in ImportedBy(f) : \A t \in TargetSet(m) :
-               t \in DOMAIN reach /\ reach[t] >= EdgeClass(f, Certain, m, t)
+        /\ \A st \in SiteTargets(f) :
+               st[2] \in DOMAIN reach /\ reach[st[2]] >= EdgeClass(f, Certain, st[1], st[2])
 
 FollowedAtMostFour == \A f \in Files : follows[f] <= 4
 
@@ -348,8 +405,7 @@ EntryTraceKept == pc = "done" =>
 
 OnlyDynamicPath(t) ==
     /\ t \notin Seeds
-    /\ ~\E f \in DOMAIN reach : \E m \in Static[f] : t \in TargetSet(m)
-    /\ \E f \in DOMAIN reach : \E m \in Dynamic[f] : t \in TargetSet(m)
+    /\ ~\E f \in DOMAIN reach : \E m \in Static[f] : t \in TargetSet(f, m)
 
 ViaFaithful == pc = "done" =>
     \A t \in DOMAIN reach : OnlyDynamicPath(t) => pred[t].step = "DynamicImport"
