@@ -179,7 +179,10 @@ and it exports `CARGO_INCREMENTAL=0`), and the Makefile sets
 baseline. `.cargo/mutants.toml` runs the tests under nextest (one process per
 test, so the run is as long as the slowest test) with a 60-second floor on the
 per-mutant test timeout, since the auto timeout is 5x the baseline time and a
-short baseline would make it tight. A single long test is the floor of every
+short baseline would make it tight. The timeout bounds time only, so the
+Mutate step also caps each process's data segment at 4 GiB (`ulimit -d`): a
+mutant that allocates forever aborts its test (caught) instead of running the
+runner out of memory and losing the shard (#1120). A single long test is the floor of every
 mutant's test time under nextest, so split an exhaustive test by case family
 (as `star_imports_match_cpython_*` is) rather than adding one that runs for
 tens of seconds.

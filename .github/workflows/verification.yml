@@ -100,7 +100,14 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
         # counts as caught, and exit 3 hides missed mutants in the same run.
+        # The timeout bounds time only: a mutant that allocates forever ran the
+        # runner out of memory and lost the shard's results (#994, #1120).
+        # Capping each process's data segment makes its test abort instead,
+        # which counts as caught. 4 GiB clears a build and the whole suite
+        # (1 GiB already fails a build), and two jobs of rustc plus a runaway
+        # test or two stay inside the runner's 16 GB.
         run: |
+          ulimit -d 4194304
           status=0
           make "$MUTANTS_TARGET" ARGS="--shard $SHARD" || status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
