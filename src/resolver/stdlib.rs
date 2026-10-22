@@ -337,6 +337,152 @@ mod tests {
         }
     }
 
+    /// One `requires-python` clause on a final `3.minor.patch` release,
+    /// written from PEP 440 rather than from `requires_python_max_minor`.
+    fn clause_allows(clause: &str, minor: u32, patch: u32) -> bool {
+        let (op, version) = clause
+            .find(|ch: char| ch.is_ascii_digit())
+            .map(|at| clause.split_at(at))
+            .expect("clause has a version");
+        let star = version.ends_with(".*");
+        let parts: Vec<u32> = version
+            .trim_end_matches(".*")
+            .split('.')
+            .map(|part| part.parse().expect("numeric segment"))
+            .collect();
+        let mut padded = [0; 3];
+        padded[..parts.len()].copy_from_slice(&parts);
+        let here = [3, minor, patch];
+        let prefix = here[..parts.len()] == parts[..];
+        match op {
+            ">=" => here >= padded,
+            ">" => here > padded,
+            "<" => here < padded,
+            "<=" => here <= padded,
+            "==" if star => prefix,
+            "!=" if star => !prefix,
+            "==" => here == padded,
+            "!=" => here != padded,
+            // `~=X.Y` is `>=X.Y, ==X.*`; `~=X.Y.Z` is `>=X.Y.Z, ==X.Y.*`.
+            "~=" => here >= padded && here[..parts.len() - 1] == parts[..parts.len() - 1],
+            _ => panic!("operator {op}"),
+        }
+    }
+
+    /// Python 3 minors with a patch release every clause allows.
+    fn allowed_minors(clauses: &[&str], minors: std::ops::RangeInclusive<u32>) -> Vec<u32> {
+        minors
+            .filter(|&minor| {
+                (0..=4).any(|patch| {
+                    clauses
+                        .iter()
+                        .all(|clause| clause_allows(clause, minor, patch))
+                })
+            })
+            .collect()
+    }
+
+    /// The bundled set that stands for `minor`: 3.8's for older minors and
+    /// the newest for newer ones.
+    fn bundled(minor: u32) -> u32 {
+        minor.clamp(OLDEST_BUNDLED_MINOR, NEWEST_BUNDLED_MINOR)
+    }
+
+    fn ships(root: &str, minor: u32) -> bool {
+        stdlib_modules()
+            .get(root)
+            .is_some_and(|shipped| (shipped.first..=shipped.last).contains(&bundled(minor)))
+    }
+
+    /// §7 step 1 by enumeration (#1109): a root is stdlib when any minor from
+    /// `target_version` up to the highest minor `requires-python` allows
+    /// ships it. An unbounded specifier reaches every bundled minor, and an
+    /// upper bound below the target keeps the target's own set. Exclusions
+    /// (`!=3.12.*`) neither split nor narrow the window. `always_contains`
+    /// may hold only when every minor `requires-python` allows, from its
+    /// lowest, ships the root.
+    #[test]
+    fn range_follows_the_minors_requires_python_allows() {
+        const FAR: u32 = 20;
+        let mut clauses: Vec<String> = vec!["<4".to_owned(), ">=2.7".to_owned()];
+        for minor in 6..=16 {
+            for op in [">=", ">", "<", "<=", "==", "!=", "~="] {
+                clauses.push(format!("{op}3.{minor}"));
+            }
+            for op in ["==", "!="] {
+                clauses.push(format!("{op}3.{minor}.*"));
+            }
+            for op in ["<", "<=", ">", "~="] {
+                clauses.push(format!("{op}3.{minor}.1"));
+            }
+        }
+        // Roots that ship in the same minors behave alike: one stands for each
+        // run, plus a root built everywhere, one some builds lack, and none.
+        let mut runs = std::collections::BTreeMap::new();
+        for (name, shipped) in stdlib_modules() {
+            let slot = runs.entry((shipped.first, shipped.last)).or_insert(*name);
+            *slot = (*slot).min(*name);
+        }
+        let mut versioned: Vec<&str> = runs.into_values().collect();
+        versioned.extend(["fcntl", "yaml"]);
+        let specifiers = std::iter::once(Vec::new())
+            .chain(clauses.iter().map(|clause| vec![clause.as_str()]))
+            .chain(clauses.iter().enumerate().flat_map(|(at, first)| {
+                clauses[at + 1..]
+                    .iter()
+                    .map(move |second| vec![first.as_str(), second.as_str()])
+            }));
+        let mut checked = 0;
+        for specifier in specifiers {
+            let allowed = allowed_minors(&specifier, 0..=FAR);
+            if !specifier.is_empty() && allowed.is_empty() {
+                // No Python 3 can run the project; nothing to compare.
+                continue;
+            }
+            let joined = specifier.join(",");
+            let requires = (!specifier.is_empty()).then_some(joined.as_str());
+            let bounds: Vec<&str> = specifier
+                .iter()
+                .copied()
+                .filter(|clause| !clause.starts_with("!="))
+                .collect();
+            let upper = allowed_minors(&bounds, 0..=FAR)
+                .last()
+                .copied()
+                .filter(|&minor| minor < FAR);
+            for target in 7..=15 {
+                let target_version =
+                    TargetVersion::parse(&format!("py3{target:02}")).expect("target");
+                let range = StdlibRange::new(&target_version, requires);
+                let top = upper.map_or(NEWEST_BUNDLED_MINOR, |upper| upper.max(target));
+                let window: Vec<u32> = (target..=top.max(target)).collect();
+                for root in &versioned {
+                    let stdlib = window.iter().any(|&minor| ships(root, minor));
+                    let case = format!("{root} for py3{target:02} with {joined:?}");
+                    assert_eq!(range.contains(root), stdlib, "contains: {case}");
+                    let elsewhere = (OLDEST_BUNDLED_MINOR..=NEWEST_BUNDLED_MINOR)
+                        .any(|minor| ships(root, minor));
+                    assert_eq!(
+                        range.ships_only_outside(root),
+                        !stdlib && elsewhere,
+                        "ships_only_outside: {case}"
+                    );
+                    let always = requires.is_some()
+                        && allowed
+                            .first()
+                            .is_some_and(|&low| low >= OLDEST_BUNDLED_MINOR)
+                        && !NOT_ALWAYS_BUILT.contains(root)
+                        && allowed.iter().all(|&minor| ships(root, minor));
+                    if range.always_contains(root) {
+                        assert!(always, "always_contains: {case}");
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 100_000, "{checked}");
+    }
+
     #[test]
     fn upper_bound_below_target_keeps_target_set() {
         let py313 = TargetVersion::parse("py313").expect("py313");
