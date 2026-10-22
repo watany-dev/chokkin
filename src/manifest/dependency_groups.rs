@@ -152,7 +152,6 @@ pub(crate) fn include_chains(included_via: &[GroupInclude]) -> Vec<Vec<&str>> {
         .collect()
 }
 
-/// A BFS over includes from one group.
 struct Search {
     /// Predecessor of each group reachable from the start. The start itself
     /// only gets one when it sits on a cycle.
@@ -389,7 +388,6 @@ mod tests {
                 let includes = |from: usize| -> Vec<usize> {
                     edges[from].iter().copied().filter(|&to| to < edges.len()).collect()
                 };
-                // Include distance from every group to `target`.
                 let distances_to = |target: usize| -> Vec<Option<usize>> {
                     let mut distance = vec![None; edges.len()];
                     distance[target] = Some(0);
