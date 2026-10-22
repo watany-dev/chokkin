@@ -240,4 +240,92 @@ mod tests {
             Err(Unwalkable::Syntax(_))
         ));
     }
+
+    /// The depth limit (#1105): sources nested just short of, at and just
+    /// past [`MAX_AST_DEPTH`] through a mix of statements, expressions and
+    /// parentheses are walked exactly when they fit, and are unreadable
+    /// otherwise.
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// An expression around the first `{}` and the levels it adds: each is
+        /// an atom or a unary factor, so any of them nests inside any other.
+        const WRAPPERS: [(&str, usize); 12] = [
+            ("-{}", 1),
+            ("~{}", 1),
+            ("[{}]", 1),
+            ("({},)", 1),
+            ("{ {} }", 1),
+            ("f({})", 1),
+            ("a[{}]", 1),
+            ("(not {})", 1),
+            ("(lambda: {})", 1),
+            ("({} if c else d)", 1),
+            // Grouping parentheses make no node.
+            ("({})", 0),
+            ("( {} )", 0),
+        ];
+
+        /// `ifs` nested `if` statements around `x = <wrapped 1>`, and its levels.
+        fn nested_source(ifs: usize, wrappers: &[usize]) -> (String, usize) {
+            let mut expression = "1".to_owned();
+            let mut levels = 1;
+            for &index in wrappers {
+                let (template, adds) = WRAPPERS[index];
+                expression = template.replacen("{}", &expression, 1);
+                levels += adds;
+            }
+            let mut source = String::new();
+            for level in 0..ifs {
+                source.push_str(&"    ".repeat(level));
+                source.push_str("if c:\n");
+            }
+            source.push_str(&"    ".repeat(ifs));
+            source.push_str(&format!("x = {expression}\n"));
+            (source, ifs + 1 + levels)
+        }
+
+        fn wrappers() -> impl Strategy<Value = Vec<usize>> {
+            // Wrappers past the limit, with a few grouping ones mixed in.
+            prop::collection::vec(
+                prop_oneof![9 => 0usize..10, 1 => 10usize..12],
+                MAX_AST_DEPTH - 8..MAX_AST_DEPTH + 8,
+            )
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(48)))]
+
+            #[test]
+            fn a_module_is_walked_exactly_when_it_fits(
+                ifs in 0usize..4,
+                wrappers in wrappers(),
+            ) {
+                let (source, levels) = nested_source(ifs, &wrappers);
+                match parse_walkable_module(&source) {
+                    Ok(_) => prop_assert!(levels <= MAX_AST_DEPTH, "{levels} levels walked"),
+                    Err(Unwalkable::TooDeep(start)) => {
+                        prop_assert!(levels > MAX_AST_DEPTH, "{levels} levels refused");
+                        prop_assert!(usize::from(start) < source.len());
+                    },
+                    Err(Unwalkable::Syntax(error)) => {
+                        prop_assert!(false, "{error} in {source}");
+                    },
+                }
+            }
+
+            #[test]
+            fn an_expression_is_walked_exactly_when_it_fits(wrappers in wrappers()) {
+                let (source, levels) = nested_source(0, &wrappers);
+                let expression = source
+                    .strip_prefix("x = ")
+                    .and_then(|rest| rest.strip_suffix('\n'))
+                    .expect("an assignment");
+                // On its own the expression lacks the statement's level.
+                let fits = levels - 1 <= MAX_AST_DEPTH;
+                prop_assert_eq!(parse_walkable_expression(expression).is_some(), fits);
+            }
+        }
+    }
 }
