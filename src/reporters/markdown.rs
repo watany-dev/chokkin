@@ -84,9 +84,9 @@ fn code_span(text: &str) -> String {
         .max()
         .unwrap_or_default();
     let fence = "`".repeat(longest + 1);
-    let pad = text.starts_with('`')
-        || text.ends_with('`')
-        || (text.starts_with(' ') && text.ends_with(' '));
+    // CommonMark strips one space from each end only when both have one, so
+    // padding a text with a space on one end keeps it as is too.
+    let pad = text.starts_with(['`', ' ']) || text.ends_with(['`', ' ']);
     let pad = if pad { " " } else { "" };
     format!("{fence}{pad}{text}{pad}{fence}")
 }
@@ -115,6 +115,7 @@ mod tests {
         assert_eq!(code_span("a`b"), "``a`b``");
         assert_eq!(code_span("`a"), "`` `a ``");
         assert_eq!(code_span(""), "` `");
+        assert_eq!(code_span(" a "), "`  a  `");
     }
 
     /// Code spans (#1105): what a GFM table and `CommonMark` read back from a
