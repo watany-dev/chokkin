@@ -666,6 +666,24 @@ mod tests {
         }
     }
 
+    /// A graph holding every importing file, so none reads as a config file.
+    fn graph_of(manifest: &LoadedManifest, resolution: &ResolutionIndex) -> ProjectGraph {
+        let mut graph = ProjectGraph::new(manifest.root.clone());
+        for import in &resolution.imports {
+            if graph.file_id(&import.file).is_some() {
+                continue;
+            }
+            graph
+                .intern_file(FileNode {
+                    path: import.file.clone(),
+                    context: crate::sources::FileContext::Runtime,
+                    kind: crate::sources::FileKind::Python,
+                })
+                .expect("file id");
+        }
+        graph
+    }
+
     fn resolved(file: &str, module: &str, origin: ModuleOrigin) -> ResolvedImport {
         ResolvedImport {
             import_root: import_root(module).to_owned(),
@@ -846,7 +864,7 @@ mod tests {
                 .collect(),
             warnings: Vec::new(),
         };
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let graph = graph_of(&manifest, &resolution);
         let used = mark(
             &manifest,
             &RuleContext {
@@ -905,7 +923,7 @@ mod tests {
                 .collect(),
             warnings: Vec::new(),
         };
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let graph = graph_of(&manifest, &resolution);
         let used = mark(
             &manifest,
             &RuleContext {
@@ -963,7 +981,7 @@ mod tests {
             files: Vec::new(),
             warnings: Vec::new(),
         };
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let graph = graph_of(&manifest, &resolution);
         let used = mark(
             &manifest,
             &RuleContext {
