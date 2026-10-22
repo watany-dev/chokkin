@@ -154,7 +154,13 @@ fn removable_among(declarations: &[&DeclaredDependency], repeated: &[bool]) -> V
     declarations
         .iter()
         .zip(repeated)
-        .map(|(dep, repeated)| *repeated && every_read_repeated[&dep.origin])
+        .map(|(dep, repeated)| {
+            *repeated
+                && every_read_repeated
+                    .get(&dep.origin)
+                    .copied()
+                    .unwrap_or(false)
+        })
         .collect()
 }
 
@@ -193,7 +199,11 @@ fn repeated_in_context(prepared: &[Prepared<'_>]) -> Vec<bool> {
     }
     prepared
         .iter()
-        .map(|item| buckets[&context_key(item)].other_than(&item.dep.origin))
+        .map(|item| {
+            buckets
+                .get(&context_key(item))
+                .is_some_and(|origins| origins.other_than(&item.dep.origin))
+        })
         .collect()
 }
 
