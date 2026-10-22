@@ -23,9 +23,11 @@ This runs the full pre-commit gate in order:
 
 1. `cargo fmt --check` — formatting
 2. `cargo clippy --all-targets --locked -- -D warnings` + `cargo doc` — linting
-3. `cargo test --locked` — unit and integration tests
-4. `cargo deny check` — license / advisory / supply-chain policy
-5. `cargo machete` — unused dependency detection
+3. `ruff check .` and `shellcheck scripts/*.sh` — Python helper and shell
+   script linting (`make lint-scripts`; pinned versions run through `uvx`)
+4. `cargo test --locked` — unit and integration tests
+5. `cargo deny check` — license / advisory / supply-chain policy
+6. `cargo machete` — unused dependency detection
 
 ### Individual targets
 
@@ -33,6 +35,7 @@ This runs the full pre-commit gate in order:
 make build     # release build
 make test      # tests only
 make lint      # clippy + doc
+make lint-scripts  # ruff + shellcheck
 make fmt       # auto-format
 make coverage  # HTML coverage report (no threshold yet — see below)
 make wheel     # build a local maturin wheel
@@ -53,6 +56,9 @@ at the Phase 1 (v0.1 MVP) milestone. See `docs/dev/ci-porting-notes.md`.
 - All new logic goes in `src/lib.rs` (and submodules). `src/main.rs` is
   argument dispatch and process exit code only.
 - No `unsafe` code. No `unwrap`/`expect`/`panic` outside `#[cfg(test)]`.
+- Lint exemptions are `#[expect(lint, reason = "...")]`; `#[allow]` and a
+  missing reason are denied. An expectation that stops firing fails clippy,
+  so delete it rather than keep it around.
 - Use `std::path` APIs — chokkin ships cross-platform wheels.
 - Never execute the analyzed project's Python code (static analysis only).
 
