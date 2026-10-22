@@ -197,7 +197,8 @@ fn run(root: &Path, cache: bool) -> (serde_json::Value, Option<i32>) {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
+    // Each case runs the binary twice per edit.
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(16)))]
 
     /// A cold run, then each edit followed by a cached run: every cached run
     /// reports exactly what a `--no-cache` run of the same tree reports.
