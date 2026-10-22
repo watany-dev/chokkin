@@ -11,8 +11,8 @@
 //! fails the cell, which the caller reports as unread (ADR 0005).
 
 use ruff_python_ast::token::TokenKind;
-use ruff_python_parser::{Mode, ParseOptions, parse_unchecked};
-use ruff_text_size::Ranged;
+use ruff_python_parser::Mode;
+use ruff_python_parser::lexer::lex;
 
 use super::dynamic::is_dotted_identifier;
 
@@ -258,16 +258,19 @@ fn statement_starts(lines: &[&str]) -> Vec<bool> {
         *first = true;
     }
     let source = lines.concat();
-    let parsed = parse_unchecked(&source, ParseOptions::from(Mode::Ipython));
+    // The lexer alone: the parser panics on some escapes it does not expect,
+    // such as help inside unbalanced brackets, and only the tokens matter.
+    let mut lexer = lex(&source, Mode::Ipython);
     let mut depth = 0_usize;
-    for token in parsed.tokens() {
-        match token.kind() {
+    loop {
+        match lexer.next_token() {
+            TokenKind::EndOfFile => break,
             TokenKind::Lpar | TokenKind::Lsqb | TokenKind::Lbrace => depth += 1,
             TokenKind::Rpar | TokenKind::Rsqb | TokenKind::Rbrace => {
                 depth = depth.saturating_sub(1);
             },
             TokenKind::Newline | TokenKind::NonLogicalNewline if depth == 0 => {
-                let end = token.end().to_usize();
+                let end = lexer.current_range().end().to_usize();
                 if let Ok(line) = ends.binary_search(&end)
                     && let Some(next) = starts.get_mut(line + 1)
                 {
@@ -569,8 +572,182 @@ mod tests {
     }
 
     #[test]
+    fn help_after_unbalanced_brackets_does_not_panic() {
+        assert_eq!(
+            cell_to_python("y = (1,\nb]\n?obj.attr\n").as_deref(),
+            Ok("y = (1,\nb]\npass\n")
+        );
+    }
+
+    #[test]
     fn plain_python_is_left_alone() {
         let cell = "x = 5 % 3\nif x == !y: pass\nprint('why?')\nd = {'a': 1}\n";
         assert_eq!(cell_to_python(cell).as_deref(), Ok(cell));
+    }
+
+    mod props {
+        use super::cell_to_python;
+        use super::super::{FOREIGN_CELL_MAGICS, INERT_LINE_MAGICS, PYTHON_CELL_MAGICS};
+        use proptest::prelude::*;
+
+        /// Lines with no `%`, `!` or `?`, so nothing in them is an escape.
+        /// Some open a bracket, a string or a `\` continuation that the next
+        /// line closes or not.
+        const PLAIN: &[&str] = &[
+            "",
+            "   ",
+            "import os",
+            "x = 1",
+            "def f(a):",
+            "    return a",
+            "if x:",
+            "    pass",
+            "y = (1,",
+            "     2)",
+            "s = \"\"\"",
+            "text",
+            "\"\"\"",
+            "# comment",
+            "z = [a,",
+            "b]",
+            "w = 1 + \\",
+            "  2",
+            "print('hi')",
+            "d = {'a': 1}",
+            "x = 5 * 3",
+        ];
+
+        /// Complete statements: each line starts one, so an escape on the
+        /// line after any of them is read.
+        const STATEMENTS: &[&str] = &["", "import os", "x = 1", "# comment", "pass", "print(1)"];
+
+        /// `IPython` forms the rewrite recognizes, mixed with plain lines.
+        const IPYTHON: &[&str] = &[
+            "%time import numpy",
+            "%timeit -n 10 -r3 f(x)",
+            "%prun -l 5 run()",
+            "% pip install requests",
+            "%matplotlib inline",
+            "%load_ext foo.bar",
+            "%aimport a.b, c",
+            "!ls -la",
+            "!echo ( \"\"\"",
+            "files = !ls",
+            "t = %time import foo",
+            "obj?",
+            "?obj.attr",
+            "    !echo $x",
+            "%load_ext \\",
+            "!ls \\",
+            "%%time",
+            "%%bash",
+            "%%script python3",
+        ];
+
+        fn cell(pool: &'static [&'static str], ending: bool) -> impl Strategy<Value = String> {
+            prop::collection::vec(prop::sample::select(pool), 0..10).prop_map(move |lines| {
+                let mut cell = lines.join("\n");
+                if ending && !lines.is_empty() {
+                    cell.push('\n');
+                }
+                cell
+            })
+        }
+
+        fn mixed_cell() -> impl Strategy<Value = String> {
+            let pool: Vec<&'static str> = PLAIN.iter().chain(IPYTHON).copied().collect();
+            (prop::collection::vec(prop::sample::select(pool), 0..12), any::<bool>()).prop_map(
+                |(lines, ending)| {
+                    let mut cell = lines.join("\n");
+                    if ending {
+                        cell.push('\n');
+                    }
+                    cell
+                },
+            )
+        }
+
+        /// A magic name none of the tables or rules knows.
+        fn unknown_magic() -> impl Strategy<Value = String> {
+            "zz[a-z_]{0,8}".prop_filter("a known magic", |name| {
+                !INERT_LINE_MAGICS.contains(&name.as_str())
+                    && !FOREIGN_CELL_MAGICS.contains(&name.as_str())
+                    && !PYTHON_CELL_MAGICS.contains(&name.as_str())
+            })
+        }
+
+        proptest! {
+            /// The rewrite keeps every line break where it was, so the
+            /// notebook's line numbers hold for whatever it reads.
+            #[test]
+            fn rewrite_keeps_the_line_count(cell in mixed_cell()) {
+                if let Ok(python) = cell_to_python(&cell) {
+                    prop_assert_eq!(
+                        python.matches('\n').count(),
+                        cell.matches('\n').count(),
+                        "{:?} -> {:?}", cell, python
+                    );
+                }
+            }
+
+            /// A cell without magics, shell escapes or help is left as is.
+            #[test]
+            fn plain_cells_are_unchanged(cell in cell(PLAIN, true)) {
+                prop_assert_eq!(cell_to_python(&cell), Ok(cell));
+            }
+
+            /// A line magic nothing recognizes fails the cell at its line,
+            /// whatever plain statements surround it (ADR 0005).
+            #[test]
+            fn unknown_line_magics_fail_at_their_line(
+                before in prop::collection::vec(prop::sample::select(STATEMENTS), 0..5),
+                after in prop::collection::vec(prop::sample::select(STATEMENTS), 0..5),
+                name in unknown_magic(),
+                assigned in any::<bool>(),
+            ) {
+                let magic = if assigned { format!("x = %{name} arg") } else { format!("%{name} arg") };
+                let lines: Vec<&str> = before
+                    .iter()
+                    .copied()
+                    .chain([magic.as_str()])
+                    .chain(after.iter().copied())
+                    .collect();
+                let cell = format!("{}\n", lines.join("\n"));
+                prop_assert_eq!(
+                    cell_to_python(&cell),
+                    Err((before.len(), format!("line magic `%{name}` is not recognized")))
+                );
+            }
+
+            /// So does a cell magic nothing recognizes, on the cell's first
+            /// line after any blank ones.
+            #[test]
+            fn unknown_cell_magics_fail_the_cell(
+                blank in 0usize..3,
+                body in cell(PLAIN, true),
+                name in unknown_magic(),
+            ) {
+                let cell = format!("{}%%{name} arg\n{body}", "\n".repeat(blank));
+                prop_assert_eq!(
+                    cell_to_python(&cell),
+                    Err((blank, format!("cell magic `%%{name}` is not recognized")))
+                );
+            }
+
+            /// No input panics the rewrite.
+            #[test]
+            fn rewrite_never_panics(cell in "\\PC{0,200}") {
+                let _ = cell_to_python(&cell);
+            }
+
+            #[test]
+            fn rewrite_never_panics_on_ipython_lines(
+                cell in mixed_cell(),
+                cr in any::<bool>(),
+            ) {
+                let cell = if cr { cell.replace('\n', "\r\n") } else { cell };
+                let _ = cell_to_python(&cell);
+            }
+        }
     }
 }
