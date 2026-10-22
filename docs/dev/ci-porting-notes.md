@@ -154,14 +154,14 @@ local experiment) leaves no seed behind.
 
 ## cargo-mutants scope
 
-`make mutants` covers the analysis engine (analogous to ptuf's decision core)
-plus the only code path that rewrites user files:
-
-- `src/rules/**`, `src/resolver/**`, `src/graph/**`
-- `src/fix/**` (`--fix`: path containment and the manifest edits)
-
-`.github/workflows/verification.yml` runs it weekly and on demand
-(`full-mutants`), and on a PR only the mutants on the lines the PR changes
+`make mutants` covers all of `src/`. It used to stop at `src/rules/`,
+`src/resolver/`, `src/graph/` and `src/fix/`, 22% of the mutants, so the
+parser, manifest, plugin and reachability code nobody touched was never
+mutated (#1123). All of it is about 6,900 mutants, hours of runner time, so
+`.github/workflows/verification.yml` splits it into weekly slices of 12 shards
+of at most 100 mutants and runs the slice the ISO week number picks: each
+mutant runs once per round (six weeks at that count). `full-mutants` runs this
+week's slice on demand, or the one `mutants-slice` names. On a PR only the mutants on the lines the PR changes
 (`make mutants-diff`, any file under `src/`). Mutating changed lines alone
 runs nothing on a PR that only deletes or weakens tests, so
 `scripts/mutants-diff.py` adds every mutant of a file whose tests lost a line:
@@ -173,8 +173,8 @@ mutants, or comments on the one still open (`mutants-issue`, #1119): GitHub's
 scheduled-workflow e-mail alone left a missed mutant on main for days (#1117).
 Each shard's summary also lists its timed-out mutants, which count as caught
 but may be a missed mutant that only slows a test down. The plan job counts the mutants with
-`--list` and splits the run into shards of about 50 (at most 12), so a large
-diff still finishes within the 60-minute job timeout. `Mutants` is the one
+`--list` and splits a PR's run into shards of about 50 (at most 12), so a
+large diff still finishes within the 60-minute job timeout. `Mutants` is the one
 stable check name to require in branch protection.
 
 Most of a mutant's cost is its rebuild, so the `mutants` job skips

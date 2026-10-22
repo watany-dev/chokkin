@@ -2,9 +2,9 @@ name: Verification
 
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes and in files whose tests it cut
-# (#1118), weekly all of `make mutants`.
-# Both split into shards of about 50 mutants so a large diff still finishes
-# within a job timeout. kani runs on demand, weekly, and on PRs that change a
+# (#1118), weekly one slice of `make mutants` (all of src/) in turn (#1123).
+# Both split into shards (about 50 mutants on a PR, at most 100 weekly) so
+# each finishes within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
 # regression gate (#836) also runs, but only reports: it never fails the PR.
 
@@ -17,9 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       full-mutants:
-        description: "Run cargo-mutants over everything `make mutants` covers"
+        description: "Run this week's slice of `make mutants`"
         type: boolean
         default: false
+      mutants-slice:
+        description: "With full-mutants: run this slice (0-based) instead of this week's"
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
@@ -43,6 +47,7 @@ jobs:
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.plan.outputs.shards }}
+      total: ${{ steps.plan.outputs.total }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,22 +57,42 @@ jobs:
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: cargo-mutants@27.1.0
-      - name: Count mutants and pick the shard count
+      - name: Count mutants and pick the shards
         id: plan
-        # About 50 mutants per shard, at most 12 shards. A mutant takes about
-        # 40 s at -j 2 (incremental rebuild plus the nextest run), so 50 fit
-        # comfortably inside the 60-minute job timeout with the baseline
-        # build on top.
+        # A mutant takes about 40 s at -j 2 (incremental rebuild plus the
+        # nextest run). A PR runs about 50 per shard, at most 12 shards, which
+        # fit comfortably inside the 60-minute job timeout with the baseline
+        # build on top. All of src/ is too much for 12 shards (#1123), so the
+        # weekly run splits it into slices of 12 shards of at most 100 and runs
+        # the slice the ISO week picks: every mutant runs once per round.
+        env:
+          SLICE: ${{ inputs.mutants-slice }}
         run: |
           mkdir -p target
           make -s "$MUTANTS_TARGET" ARGS=--list > target/mutants-list.txt
           count=$(grep -c . target/mutants-list.txt || true)
-          shards=$(( (count + 49) / 50 ))
-          if [ "$shards" -lt 1 ]; then shards=1; fi
-          if [ "$shards" -gt 12 ]; then shards=12; fi
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            total=$(( (count + 49) / 50 ))
+            if [ "$total" -lt 1 ]; then total=1; fi
+            if [ "$total" -gt 12 ]; then total=12; fi
+            slices=1
+          else
+            total=$(( (count + 99) / 100 ))
+            if [ "$total" -lt 1 ]; then total=1; fi
+            slices=$(( (total + 11) / 12 ))
+            if [ "$slices" -gt 1 ]; then total=$(( slices * 12 )); fi
+          fi
+          slice=$(( ${SLICE:-$(( 10#$(date -u +%V) ))} % slices ))
+          first=$(( slice * 12 ))
+          run=$(( total < 12 ? total : 12 ))
           echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "shards=$(jq -cn --argjson n "$shards" '[range($n)]')" >> "$GITHUB_OUTPUT"
-          echo "$count mutants, $shards shard(s)" >> "$GITHUB_STEP_SUMMARY"
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "shards=$(jq -cn --argjson a "$first" --argjson n "$run" '[range($a; $a + $n)]')" >> "$GITHUB_OUTPUT"
+          if [ "$slices" -gt 1 ]; then
+            echo "$count mutants in $slices weekly slices; slice $slice runs shards $first-$(( first + run - 1 )) of $total" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$count mutants, $total shard(s)" >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -s target/mutants-widened.txt ]; then
             sed 's/^/- /' target/mutants-widened.txt >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -101,7 +126,7 @@ jobs:
       - name: Mutate
         id: mutate
         env:
-          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+          SHARD: ${{ matrix.shard }}/${{ needs.mutants-plan.outputs.total }}
         # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
         # counts as caught, and exit 3 hides missed mutants in the same run.
         # The timeout bounds time only: a mutant that allocates forever ran the
