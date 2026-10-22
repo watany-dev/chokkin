@@ -50,12 +50,14 @@ pub(crate) use script::{InlineScript, inline_script_target};
 pub(crate) use setup_cfg::{IniLine, ini_lines};
 pub(crate) use setup_py::builds_distribution;
 pub(crate) use setuptools_reqs::setuptools_requirement_items;
+#[cfg(any(test, kani))]
+pub(crate) use types::GroupInclude;
 pub(crate) use types::{
     DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,
     UvToolSettings, WheelTargets,
 };
 pub use types::{DependencyContext, DependencyOrigin, ExtrasState, LoadedManifest, LockfileKind};
 #[cfg(test)]
-pub(crate) use types::{EntryPointDecl, GroupInclude, LockfileSource, UvSource};
+pub(crate) use types::{EntryPointDecl, LockfileSource, UvSource};
 pub(crate) use uv_tool::source_entries as uv_source_entries;
 pub use warnings::ManifestWarning;
