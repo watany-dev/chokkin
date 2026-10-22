@@ -74,10 +74,7 @@ fn lock_graph(lock: UvLock) -> LockfileGraph {
                 merge_names(extras.entry(normalized(extra)).or_default(), deps);
             }
         }
-        merge_names(
-            graph.edges.entry(name).or_default(),
-            package.dependencies,
-        );
+        merge_names(graph.edges.entry(name).or_default(), package.dependencies);
     }
     graph
 }
@@ -705,7 +702,9 @@ mod tests {
             name: &str,
             deps: &[String],
         ) {
-            let entry = expected.entry(normalize_distribution_name(name)).or_default();
+            let entry = expected
+                .entry(normalize_distribution_name(name))
+                .or_default();
             for dep in deps.iter().map(|dep| normalize_distribution_name(dep)) {
                 if !entry.contains(&dep) {
                     entry.push(dep);

@@ -821,7 +821,11 @@ fn binary_project(spec: &BinarySpec) -> TempDir {
         let (binary, spellings) = BINARIES[index];
         if declared {
             let name = spellings[spelling % spellings.len()].to_owned();
-            if in_dev { dev.push(name) } else { runtime.push(name) }
+            if in_dev {
+                dev.push(name);
+            } else {
+                runtime.push(name);
+            }
         }
         if used {
             write!(makefile, "{index}:\n\t{binary} --version\n\n").expect("fmt");

@@ -586,8 +586,8 @@ mod tests {
     }
 
     mod props {
-        use super::cell_to_python;
         use super::super::{FOREIGN_CELL_MAGICS, INERT_LINE_MAGICS, PYTHON_CELL_MAGICS};
+        use super::cell_to_python;
         use proptest::prelude::*;
 
         /// Lines with no `%`, `!` or `?`, so nothing in them is an escape.
@@ -656,15 +656,17 @@ mod tests {
 
         fn mixed_cell() -> impl Strategy<Value = String> {
             let pool: Vec<&'static str> = PLAIN.iter().chain(IPYTHON).copied().collect();
-            (prop::collection::vec(prop::sample::select(pool), 0..12), any::<bool>()).prop_map(
-                |(lines, ending)| {
+            (
+                prop::collection::vec(prop::sample::select(pool), 0..12),
+                any::<bool>(),
+            )
+                .prop_map(|(lines, ending)| {
                     let mut cell = lines.join("\n");
                     if ending {
                         cell.push('\n');
                     }
                     cell
-                },
-            )
+                })
         }
 
         /// A magic name none of the tables or rules knows.

@@ -409,17 +409,30 @@ mod tests {
             prop::collection::vec((spelled(), prop::collection::vec(spelled(), 0..4)), 1..7)
         }
 
-        fn lock(kind: LockfileKind, packages: &[(Spelled, Vec<Spelled>)]) -> (&'static str, String) {
+        fn lock(
+            kind: LockfileKind,
+            packages: &[(Spelled, Vec<Spelled>)],
+        ) -> (&'static str, String) {
             let mut text = String::new();
             match kind {
                 LockfileKind::Uv => text.push_str("version = 1\nrequires-python = \">=3.10\"\n"),
-                LockfileKind::Pylock => text.push_str("lock-version = \"1.0\"\ncreated-by = \"x\"\n"),
+                LockfileKind::Pylock => {
+                    text.push_str("lock-version = \"1.0\"\ncreated-by = \"x\"\n");
+                },
                 LockfileKind::Poetry | LockfileKind::Pdm => {},
             }
             for (version, (name, deps)) in packages.iter().enumerate() {
-                let table = if kind == LockfileKind::Pylock { "packages" } else { "package" };
-                write!(text, "\n[[{table}]]\nname = \"{}\"\nversion = \"{version}.0\"\n", spell(*name))
-                    .expect("write");
+                let table = if kind == LockfileKind::Pylock {
+                    "packages"
+                } else {
+                    "package"
+                };
+                write!(
+                    text,
+                    "\n[[{table}]]\nname = \"{}\"\nversion = \"{version}.0\"\n",
+                    spell(*name)
+                )
+                .expect("write");
                 match kind {
                     LockfileKind::Uv | LockfileKind::Pylock => {
                         text.push_str("dependencies = [\n");

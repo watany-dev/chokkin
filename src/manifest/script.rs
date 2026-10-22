@@ -524,12 +524,19 @@ mod tests {
         }
 
         fn requirement() -> impl Strategy<Value = (String, String)> {
-            let tail = prop::sample::select(vec!["", ">=1", "[cli]", "==2.0; python_version < '3.12'"]);
+            let tail =
+                prop::sample::select(vec!["", ">=1", "[cli]", "==2.0; python_version < '3.12'"]);
             (name(), tail).prop_map(|(name, tail)| (name.clone(), format!("{name}{tail}")))
         }
 
         /// Bodies that do not parse as Python, or are no Python at all.
-        const BODIES: &[&str] = &["", "import os\n", "def broken(:\n", "\"\"\"\n", "if x\n  y)\n"];
+        const BODIES: &[&str] = &[
+            "",
+            "import os\n",
+            "def broken(:\n",
+            "\"\"\"\n",
+            "if x\n  y)\n",
+        ];
 
         proptest! {
             /// The block lines found are those the PEP's regex finds.
@@ -537,7 +544,7 @@ mod tests {
             fn blocks_match_the_reference_regex(
                 lines in prop::collection::vec(prop::sample::select(LINES), 0..16),
             ) {
-                let text = lines.iter().map(|line| format!("{line}\n")).collect::<String>();
+                let text: String = lines.iter().flat_map(|line| [*line, "\n"]).collect();
                 prop_assert_eq!(blocks(&text), reference_blocks(&text), "{:?}", text);
             }
 
