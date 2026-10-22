@@ -541,3 +541,134 @@ mod source_bytes_props {
         }
     }
 }
+
+/// Notebooks with `IPython` cells keep each import on its notebook line, and a
+/// cell with a magic nothing recognizes is unread, not dropped silently
+/// (#962, ADR 0005).
+mod notebooks {
+    use chokkin::internals::{
+        DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ParsedModule,
+        ProjectRoot, RootMarker, TargetVersion, parse_project_sources_with_cache,
+    };
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone, Copy)]
+    enum Line {
+        /// `import zzc{cell}l{line}`.
+        Import,
+        Plain,
+        /// A magic or shell escape the rewrite drops.
+        Escape,
+        /// A line magic nothing recognizes.
+        Unknown,
+    }
+
+    fn render(cell: usize, index: usize, line: Line) -> String {
+        match line {
+            Line::Import => format!("import zzc{cell}l{index}"),
+            Line::Plain => "x = 1".to_owned(),
+            Line::Escape => ["%matplotlib inline", "!ls -la", "files = !ls", "obj?"]
+                [(cell + index) % 4]
+                .to_owned(),
+            Line::Unknown => "%zzunknown arg".to_owned(),
+        }
+    }
+
+    fn parse_notebook(cells: &[Vec<String>]) -> ParsedModule {
+        let cells: Vec<serde_json::Value> = cells
+            .iter()
+            .map(|lines| {
+                let source: Vec<String> = lines.iter().map(|line| format!("{line}\n")).collect();
+                serde_json::json!({"cell_type": "code", "source": source})
+            })
+            .collect();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("nb.ipynb"),
+            serde_json::json!({ "cells": cells }).to_string(),
+        )
+        .expect("write notebook");
+        let root = ProjectRoot {
+            path: temp.path().to_path_buf(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let sources = DiscoveredSources {
+            root: root.clone(),
+            layout: LayoutInfo::default(),
+            effective_globs: Vec::new(),
+            files: vec![DiscoveredFile {
+                path: "nb.ipynb".to_owned(),
+                kind: FileKind::Notebook,
+                context: FileContext::Runtime,
+            }],
+            warnings: Vec::new(),
+        };
+        parse_project_sources_with_cache(&root, &sources, &TargetVersion::default_py311(), None)
+            .expect("parse")
+            .modules
+            .into_iter()
+            .next()
+            .expect("module")
+    }
+
+    fn line() -> impl Strategy<Value = Line> {
+        prop_oneof![
+            3 => Just(Line::Import),
+            2 => Just(Line::Plain),
+            2 => Just(Line::Escape),
+            1 => Just(Line::Unknown),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn notebook_imports_keep_their_lines_and_unknown_magics_leave_gaps(
+            cells in prop::collection::vec(prop::collection::vec(line(), 1..5), 1..5),
+        ) {
+            let rendered: Vec<Vec<String>> = cells
+                .iter()
+                .enumerate()
+                .map(|(cell, lines)| {
+                    lines.iter().enumerate().map(|(index, line)| render(cell, index, *line)).collect()
+                })
+                .collect();
+            let module = parse_notebook(&rendered);
+
+            let mut first_line = 1_u32;
+            let mut imports = Vec::new();
+            let mut unread = Vec::new();
+            for (cell, lines) in cells.iter().enumerate() {
+                let line_of = |index: usize| first_line + u32::try_from(index).expect("small");
+                if let Some(index) = lines.iter().position(|line| matches!(line, Line::Unknown)) {
+                    unread.push(line_of(index));
+                } else {
+                    for (index, line) in lines.iter().enumerate() {
+                        if matches!(line, Line::Import) {
+                            imports.push((format!("zzc{cell}l{index}"), line_of(index)));
+                        }
+                    }
+                }
+                first_line += u32::try_from(lines.len() + 1).expect("small");
+            }
+            let read_any = unread.len() < cells.len();
+            prop_assert_eq!(module.skipped, !read_any, "{:?}", module);
+            if !read_any {
+                return Ok(());
+            }
+            prop_assert_eq!(module.has_unread_cells, !unread.is_empty());
+            let got: Vec<(String, u32)> = module
+                .imports
+                .iter()
+                .map(|import| (import.module.clone(), import.line))
+                .collect();
+            prop_assert_eq!(got, imports);
+            let warned: Vec<u32> = module
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.message.contains("`%zzunknown` is not recognized"))
+                .map(|diagnostic| diagnostic.line)
+                .collect();
+            prop_assert_eq!(warned, unread);
+        }
+    }
+}
