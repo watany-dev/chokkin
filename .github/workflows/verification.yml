@@ -89,9 +89,11 @@ jobs:
           slice=$(( ${SLICE:-$(( $(date -u +%s) / 604800 ))} % slices ))
           first=$(( slice * 12 ))
           run=$(( total < 12 ? total : 12 ))
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "total=$total" >> "$GITHUB_OUTPUT"
-          echo "shards=$(jq -cn --argjson a "$first" --argjson n "$run" '[range($a; $a + $n)]')" >> "$GITHUB_OUTPUT"
+          {
+            echo "count=$count"
+            echo "total=$total"
+            echo "shards=$(jq -cn --argjson a "$first" --argjson n "$run" '[range($a; $a + $n)]')"
+          } >> "$GITHUB_OUTPUT"
           if [ "$slices" -gt 1 ]; then
             echo "$count mutants in $slices weekly slices; slice $slice runs shards $first-$(( first + run - 1 )) of $total" >> "$GITHUB_STEP_SUMMARY"
           else
