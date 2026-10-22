@@ -33,6 +33,9 @@ regex = "1"
 ruff_python_ast = "=0.0.15"
 ruff_python_parser = "=0.0.15"
 ruff_text_size = "=0.0.15"
+# Already in the tree through ruff; hashes the per-module name sets the
+# parse walk fills, where SipHash cost ~7% of a cold run (#1087).
+rustc-hash = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

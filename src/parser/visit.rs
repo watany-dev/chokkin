@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use rustc_hash::FxHashSet;
+
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
@@ -129,7 +131,7 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     sys_path: SysPathHints,
     /// Each distinct dotted-name literal at its first line (#1026).
     module_refs: BTreeMap<String, u32>,
-    loaded_names: HashSet<String>,
+    loaded_names: FxHashSet<String>,
     /// Every `x.attr` the walk meets; [`Self::into_parsed`] keeps
     /// the ones read through an import binding, which only the whole
     /// module's imports tell.
@@ -178,7 +180,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
             module_refs: BTreeMap::new(),
-            loaded_names: HashSet::new(),
+            loaded_names: FxHashSet::default(),
             attribute_sites: Vec::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
@@ -228,7 +230,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// an `import a.b [as c]`'s `a.b` and binding, or a `from` import's
     /// binding. The rest are most accesses (`self.x`) and never read.
     fn import_attribute_accesses(&self) -> Vec<AttributeAccess> {
-        let receivers: HashSet<&str> = self
+        let receivers: FxHashSet<&str> = self
             .parsed
             .imports
             .iter()
@@ -1130,7 +1132,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
 
 /// Adds `name`, allocating only the first time: a module reads most names
 /// many times over.
-fn insert_name(names: &mut HashSet<String>, name: &str) {
+fn insert_name(names: &mut FxHashSet<String>, name: &str) {
     if !names.contains(name) {
         names.insert(name.to_owned());
     }
@@ -1138,7 +1140,7 @@ fn insert_name(names: &mut HashSet<String>, name: &str) {
 
 /// Every name is collected, the ones outside strings included, because
 /// a parsed string annotation is a fresh tree the module walk never reaches.
-struct AnnotationNames<'n>(&'n mut HashSet<String>);
+struct AnnotationNames<'n>(&'n mut FxHashSet<String>);
 
 impl<'a> Visitor<'a> for AnnotationNames<'_> {
     fn visit_expr(&mut self, expr: &'a Expr) {
