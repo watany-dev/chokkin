@@ -11,7 +11,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | `Reachability.tla` + `MCReachability.{tla,cfg}` | `reachability/bfs.rs`, `reachability/build.rs`, `graph/edges.rs`, `reachability/trace.rs` (module→file 解決、親 package、dynamic import、plugin `module_refs`、framework glob seed、§6 の eager / exposed / certain: lazy・optional・test context の import、`library subpackage` だけが名指す root、自 module を登録する plugin 参照を含む) | TLA+ / TLC | ReachSound, ClassSound (各 class 以上の集合が 1 本ずつの BFS と一致), SetsNested, ParentReached, ClassPassedOn, FrameworkFollowed, FollowedAtMostFour, EntryTraceKept, ViaFaithful, TraceNonEmpty, Terminates |
 | `deps_rules_z3.py` | `rules/deps/{missing,misplaced,context}.rs` (§10、workspace member と `--strict` を含む) | Z3 (SMT) | S1 CHK004 は governing な宣言に無いときのみ、S2 dev/type-only の runtime 使用は CHK005 のみ、W1 CHK003/004/005 は排他、W2 strict で member 未宣言なら root に fallback して CHK005、W3 strict で member が runtime 宣言なら何も出ない |
 | `exit_status_z3.py` | `rules/emit.rs`, `baseline/store.rs`, `rules/filter.rs` | Z3 (SMT) | E1 baseline 適用後の exit status が emit と同じ意味論 / E2 baseline が exit 0 を exit 1 に変えない |
-| `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob（CHK008 は binary 名も可）、I1b distribution 未解決なら ignore しない |
+| `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob（CHK008 は binary 名も可）で、pattern の綴り揺れに依らない、I1b distribution 未解決なら ignore しない、I2 集約 finding (CHK010 の行、CHK005 の import site) は全 site が抑制されるときだけ抑制し、CHK005 は抑制されない site のうち最強のものに立つ |
 
 ## 実装に対する検証 (kani / proptest)
 

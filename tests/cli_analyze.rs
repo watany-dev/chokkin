@@ -654,9 +654,76 @@ fn binary_inline_ignore_covers_a_plugin_reference_line() {
     assert_eq!(unresolved, ["sphinx_design"]);
 }
 
-/// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 at the
-/// string's line, and its message and explain name the setting, not an
-/// `import` (#830).
+/// A config ignore spelled as the manifest spells the distribution
+/// (`typing_extensions`, `Boto3`) matches its normalized name (#1106).
+#[test]
+fn config_ignore_matches_the_manifest_spelling_of_a_distribution() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1\"\n\
+             dependencies = [\"typing_extensions\", \"Boto3\"]\n\n\
+             [tool.chokkin.ignore]\nCHK002 = [\"typing_extensions\", \"Boto3\"]\n",
+        ),
+        ("src/acme/__init__.py", "print(1)\n"),
+        ("src/acme/__main__.py", "print(1)\n"),
+    ]);
+
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert!(
+        issues.iter().all(|issue| issue["code"] != "CHK002"),
+        "{issues:?}"
+    );
+}
+
+/// An ignored CHK005 import drops out before the sites are weighed: the
+/// finding stands on the others, at their strength, and goes only when
+/// every site is ignored (#1107).
+#[test]
+fn misplaced_inline_ignore_covers_only_its_own_import() {
+    let misplaced = |first: &str, last: &str| {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0.1\"\ndependencies = []\n\n\
+                 [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+                 [dependency-groups]\ndev = [\"httpx\"]\n",
+            ),
+            ("src/acme/__init__.py", ""),
+            (
+                "src/acme/cli.py",
+                "from acme import a, z\ndef main():\n    pass\n",
+            ),
+            ("src/acme/a.py", first),
+            ("src/acme/z.py", last),
+        ]);
+        json_issues(project.path(), &["--no-cache", "--strict"])
+            .into_iter()
+            .filter(|issue| issue["code"] == "CHK005")
+            .map(|issue| {
+                format!(
+                    "{}:{} {}",
+                    issue["file"].as_str().unwrap_or_default(),
+                    issue["line"],
+                    issue["confidence"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let ignored = "import httpx  # chokkin: ignore[CHK005]\n";
+    let deferred = "def load():\n    import httpx\n";
+
+    assert_eq!(
+        misplaced(ignored, "import httpx\n"),
+        ["src/acme/z.py:1 certain"]
+    );
+    // The ignored top-level import no longer makes the deferred one certain,
+    // whichever of the two is weighed first.
+    assert_eq!(misplaced(ignored, deferred), ["src/acme/z.py:2 likely"]);
+    assert_eq!(misplaced(deferred, ignored), ["src/acme/a.py:2 likely"]);
+    assert!(misplaced(ignored, ignored).is_empty());
+}
+
 #[test]
 fn binary_plugin_missing_dependency_names_its_setting() {
     let temp = tempfile::TempDir::new().expect("tempdir");
