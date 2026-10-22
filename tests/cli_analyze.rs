@@ -676,6 +676,50 @@ fn config_ignore_matches_the_manifest_spelling_of_a_distribution() {
     );
 }
 
+/// An ignored CHK005 import drops out before the sites are weighed: the
+/// finding stands on the others, at their strength, and goes only when
+/// every site is ignored (#1107).
+#[test]
+fn misplaced_inline_ignore_covers_only_its_own_import() {
+    let misplaced = |other: &str| {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                "[project]\nname = \"acme\"\nversion = \"0.1\"\ndependencies = []\n\n\
+                 [project.scripts]\nacme = \"acme.cli:main\"\n\n\
+                 [dependency-groups]\ndev = [\"httpx\"]\n",
+            ),
+            ("src/acme/__init__.py", ""),
+            (
+                "src/acme/cli.py",
+                "import httpx  # chokkin: ignore[CHK005]\nfrom acme import other\n\
+                 def main():\n    pass\n",
+            ),
+            ("src/acme/other.py", other),
+        ]);
+        json_issues(project.path(), &["--no-cache", "--strict"])
+            .into_iter()
+            .filter(|issue| issue["code"] == "CHK005")
+            .map(|issue| {
+                format!(
+                    "{}:{} {}",
+                    issue["file"].as_str().unwrap_or_default(),
+                    issue["line"],
+                    issue["confidence"].as_str().unwrap_or_default()
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(misplaced("import httpx\n"), ["src/acme/other.py:1 certain"]);
+    // The ignored top-level import no longer makes the deferred one certain.
+    assert_eq!(
+        misplaced("def load():\n    import httpx\n"),
+        ["src/acme/other.py:2 likely"]
+    );
+    assert!(misplaced("import httpx  # chokkin: ignore[CHK005]\n").is_empty());
+}
+
 /// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 at the
 /// string's line, and its message and explain name the setting, not an
 /// `import` (#830).

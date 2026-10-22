@@ -21,6 +21,18 @@ whether it is ignored does not depend on how the pattern spells the name
 (``typing_extensions`` / ``Typing.Extensions``, #1106); the binary name is
 matched as written.
 
+Reference semantics I2: a finding merged over several sites is suppressed by
+inline / file-level directives or vendored paths iff every one of its sites
+is, and otherwise stands on the sites that are not (#585, #1107):
+
+- CHK010 merges the import lines of one module in one file; ``matches_candidate``
+  needs the directive on every line.  Port of ``matches_directives``.
+- CHK005 merges the runtime imports of a distribution across files; the rule
+  drops ignored sites before weighing them, so the anchor and strength come
+  from the strongest site that is not ignored (the first such one on a tie),
+  and the finding anchors on an ignored site, to be suppressed, only when all
+  are.  Port of the fold in ``detect_misplaced_dependencies``.
+
 Run:  python3 docs/dev/formal/ignore_model.py
 Exit status 1 when any (rule, pattern, candidate) disagrees with I1.
 """
@@ -137,6 +149,97 @@ def respellings(pattern: str) -> set[str]:
     return out
 
 
+# I2: a site is (file, line); a file may be vendored, carry a file-level
+# directive, or inline directives on some lines.
+@dataclass(frozen=True)
+class FileState:
+    vendored: bool
+    file_level: bool
+    inline_lines: frozenset[int]
+
+
+def site_suppressed(site: tuple[str, int], files: dict[str, FileState]) -> bool:
+    state = files[site[0]]
+    return state.vendored or state.file_level or site[1] in state.inline_lines
+
+
+def chk010_suppressed(file: str, lines: list[int], files: dict[str, FileState]) -> bool:
+    """Port of ``matches_candidate`` for one merged CHK010."""
+    state = files[file]
+    if state.vendored or state.file_level:
+        return True
+    return bool(lines) and all(line in state.inline_lines for line in lines)
+
+
+Site = tuple[str, int, int]  # file, line, strength
+
+
+def chk005_fold(sites: list[Site], files: dict[str, FileState]) -> tuple[Site, bool]:
+    """Port of the CHK005 fold: the anchor, and whether every site so far is
+    ignored (``ignores_site``)."""
+    anchor = sites[0]
+    all_ignored = site_suppressed(anchor[:2], files)
+    for site in sites[1:]:
+        ignored = site_suppressed(site[:2], files)
+        if ignored and not all_ignored:
+            continue
+        if not ignored and all_ignored:
+            anchor, all_ignored = site, False
+        elif site[2] > anchor[2]:
+            anchor = site
+    return anchor, all_ignored
+
+
+def check_i2(failures: list[str]) -> None:
+    lines = (1, 2)
+    states = [
+        FileState(vendored, file_level, frozenset(inline))
+        for vendored, file_level in itertools.product((False, True), repeat=2)
+        for inline in ((), (1,), (2,), (1, 2))
+    ]
+    for state in states:
+        files = {"a.py": state}
+        for count in range(1, len(lines) + 1):
+            for merged in itertools.combinations(lines, count):
+                got = chk010_suppressed("a.py", list(merged), files)
+                expected = all(
+                    site_suppressed(("a.py", line), files) for line in merged
+                )
+                if got != expected:
+                    failures.append(
+                        f"I2 CHK010 lines={merged} state={state}: suppressed={got} expected={expected}"
+                    )
+    all_sites = [(file, line) for file in ("a.py", "b.py") for line in lines]
+    for state_a, state_b in itertools.product(states, repeat=2):
+        files = {"a.py": state_a, "b.py": state_b}
+        for count in range(1, len(all_sites) + 1):
+            for places in itertools.permutations(all_sites, count):
+                for strengths in itertools.product((0, 1), repeat=count):
+                    sites = [
+                        (*place, strength)
+                        for place, strength in zip(places, strengths, strict=True)
+                    ]
+                    anchor, _ = chk005_fold(sites, files)
+                    # The emitted finding carries only the anchor as its origin.
+                    got = site_suppressed(anchor[:2], files)
+                    live = [
+                        site for site in sites if not site_suppressed(site[:2], files)
+                    ]
+                    expected = not live
+                    if live:
+                        strongest = max(site[2] for site in live)
+                        first = next(site for site in live if site[2] == strongest)
+                        if anchor != first:
+                            failures.append(
+                                f"I2 CHK005 sites={sites}: anchor={anchor} expected={first}"
+                            )
+                    if got != expected:
+                        failures.append(
+                            f"I2 CHK005 sites={sites} files={files}: "
+                            f"suppressed={got} expected={expected}"
+                        )
+
+
 def main() -> int:
     failures = []
     for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
@@ -183,8 +286,9 @@ def main() -> int:
             failures.append(
                 f"I1b rule={cand.rule} pattern={pattern!r} ignored an unresolved import"
             )
+    check_i2(failures)
     if not failures:
-        print("OK: I1 holds")
+        print("OK: I1 and I2 hold")
         return 0
     print(f"{len(failures)} counterexample(s):")
     for line in failures:

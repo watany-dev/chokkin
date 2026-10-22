@@ -74,6 +74,13 @@ impl IgnoreMatcher {
         }
         self.matches_directives(candidate.rule, file.as_deref(), &candidate_lines(candidate))
     }
+
+    /// Whether a directive or the vendored globs silence `rule` at one
+    /// import site, before rules merge sites into one finding (#1107).
+    pub(super) fn ignores_site(&self, rule: RuleId, file: &str, line: Option<u32>) -> bool {
+        let lines: Vec<u32> = line.into_iter().collect();
+        self.vendored.is_match(file) || self.matches_directives(rule, Some(file), &lines).is_some()
+    }
 }
 
 impl IgnoreMatcher {
