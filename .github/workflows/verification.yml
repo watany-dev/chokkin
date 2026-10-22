@@ -1,7 +1,8 @@
 name: Verification
 
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
-# PR only the mutants on lines the PR changes, weekly all of `make mutants`.
+# PR only the mutants on lines the PR changes and in files whose tests it cut
+# (#1118), weekly all of `make mutants`.
 # Both split into shards of about 50 mutants so a large diff still finishes
 # within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
@@ -67,6 +68,9 @@ jobs:
           echo "count=$count" >> "$GITHUB_OUTPUT"
           echo "shards=$(jq -cn --argjson n "$shards" '[range($n)]')" >> "$GITHUB_OUTPUT"
           echo "$count mutants, $shards shard(s)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s target/mutants-widened.txt ]; then
+            sed 's/^/- /' target/mutants-widened.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   mutants:
     name: Mutants (shard ${{ matrix.shard }})

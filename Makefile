@@ -152,8 +152,9 @@ tlc:
 #               env, e.g. `$(MUTANTS_ENV) cargo mutants -f src/rules/emit.rs`
 #               (a -f in ARGS widens the set: file globs are OR'ed).
 #               Results: mutants.out/. CI fails on any missed mutant (#837).
-# mutants-diff: only the mutants on lines changed since BASE (default origin/main);
-#               what the PR check runs.
+# mutants-diff: only the mutants on lines changed since BASE (default origin/main),
+#               plus every mutant of a file whose tests lost a line
+#               (scripts/mutants-diff.py, #1118); what the PR check runs.
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
 #               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
@@ -171,7 +172,9 @@ mutants:
 
 mutants-diff:
 	mkdir -p target
-	git diff $(BASE)... > target/mutants.diff
+	git diff $(BASE)... > target/mutants-pr.diff
+	python3 scripts/mutants-diff.py target/mutants-pr.diff > target/mutants.diff 2> target/mutants-widened.txt; \
+		status=$$?; cat target/mutants-widened.txt >&2; exit $$status
 	$(MUTANTS_ENV) cargo mutants -j 2 --in-diff target/mutants.diff $(ARGS)
 
 kani:

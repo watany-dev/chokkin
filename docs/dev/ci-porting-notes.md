@@ -162,7 +162,12 @@ plus the only code path that rewrites user files:
 
 `.github/workflows/verification.yml` runs it weekly and on demand
 (`full-mutants`), and on a PR only the mutants on the lines the PR changes
-(`make mutants-diff`, any file under `src/`). Both fail on a missed mutant
+(`make mutants-diff`, any file under `src/`). Mutating changed lines alone
+runs nothing on a PR that only deletes or weakens tests, so
+`scripts/mutants-diff.py` adds every mutant of a file whose tests lost a line:
+a `#[cfg(test)]` block's own file, or the source an integration test pins
+(`TEST_TARGETS`). End-to-end suites and fixtures pin no narrower code and are
+left to the weekly run (#1118). Both fail on a missed mutant
 (#837). A failed weekly or full run opens an issue listing its missed
 mutants, or comments on the one still open (`mutants-issue`, #1119): GitHub's
 scheduled-workflow e-mail alone left a missed mutant on main for days (#1117).
