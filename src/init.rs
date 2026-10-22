@@ -1,5 +1,6 @@
 //! `chokkin --init` starter configuration generation.
 
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -175,8 +176,22 @@ fn render_string_array(values: &[String]) -> String {
     format!("[{items}]")
 }
 
+/// `value` as the body of a TOML basic string, which holds no raw `"`, `\`
+/// or control character; a glob takes a directory's name, which may.
 fn escape_toml_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            // Every control character is at most U+009F.
+            ch if ch.is_control() => {
+                let _ = write!(escaped, "\\u{:04X}", u32::from(ch));
+            },
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn append_config(path: &Path, block: &str) -> Result<(), InitError> {
@@ -259,6 +274,10 @@ mod tests {
             "py311",
         );
         assert!(block.contains("src/**/weird\\\"name.py"));
+        assert_eq!(
+            escape_toml_string("a\tb\n\u{7f}"),
+            "a\\u0009b\\u000A\\u007F"
+        );
     }
 
     #[test]
@@ -280,5 +299,71 @@ mod tests {
              [tool.chokkin.dependencies]\ndev_groups = [\"dev\", \"test\"]\nruntime_groups = []\n\
              type_groups = []\n"
         );
+    }
+
+    /// The starter table (#1105): whatever globs, entries and group names it
+    /// is rendered from, `load_config` reads back the same values.
+    mod props {
+        use super::*;
+        use crate::config::{EntrySpec, TargetVersion};
+        use proptest::prelude::*;
+
+        /// Text that stresses TOML string escaping.
+        fn text() -> impl Strategy<Value = String> {
+            "[a-z0-9_*{},./\\\\\"' #=\\[\\]\\t\\n\\r\u{7f}\u{1b}é日-]{1,16}"
+        }
+
+        /// A relative glob, as `load_config` requires, of segments that start
+        /// with a letter (so none is `..`).
+        fn glob() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9_*{},.\"' #=\\[\\]\\t\\n\\r\u{7f}\u{1b}é日-]{0,8}\
+             (/[a-z][a-z0-9_*{},.\"' \\t\\n\u{7f}é日-]{0,8}){0,2}"
+        }
+
+        fn names() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec(text(), 0..4)
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(64)))]
+
+            #[test]
+            fn the_starter_config_loads_back_as_rendered(
+                globs in prop::collection::vec(glob(), 1..4),
+                entry in prop::sample::subsequence(vec!["manage.py", "app.py", "main.py"], 0..=3),
+                dependencies in (names(), names(), names()),
+                minor in 10u8..15,
+            ) {
+                let entry: Vec<String> = entry.into_iter().map(str::to_owned).collect();
+                let (dev_groups, runtime_groups, type_groups) = dependencies;
+                let dependencies = DependencyGroupsConfig {
+                    dev_groups,
+                    runtime_groups,
+                    type_groups,
+                };
+                let target = format!("py3{minor}");
+                let block = render_starter_config(&globs, &entry, &dependencies, &target);
+
+                let temp = tempfile::tempdir().expect("tempdir");
+                let pyproject = temp.path().join("pyproject.toml");
+                write(&pyproject, "[project]\nname = \"demo\"\n");
+                append_config(&pyproject, &block).expect("append");
+                let root = discover_project_root(temp.path()).expect("root");
+                let loaded = load_config(&root).map_err(|error| {
+                    TestCaseError::fail(format!("{error}\n{block}"))
+                })?;
+
+                prop_assert!(loaded.sources.pyproject_tool_chokkin);
+                let config = loaded.effective;
+                prop_assert_eq!(config.project, globs);
+                let entries: Vec<EntrySpec> = entry
+                    .iter()
+                    .map(|path| EntrySpec::parse(path).expect("entry"))
+                    .collect();
+                prop_assert_eq!(config.entry, entries);
+                prop_assert_eq!(config.dependencies, dependencies);
+                prop_assert_eq!(config.target_version, TargetVersion::parse(&target));
+            }
+        }
     }
 }

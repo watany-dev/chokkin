@@ -1,5 +1,10 @@
 //! Property-based tests for reporters and baseline round-trips.
 
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
+
 use chokkin::internals::ProjectMode;
 use chokkin::internals::{
     Confidence, Issue, IssueLocation, IssueReport, IssueSubject, ReporterId, RuleId, Severity,
@@ -107,6 +112,128 @@ fn report(issues: Vec<Issue>) -> IssueReport {
     report
 }
 
+static REPORT_SCHEMA: std::sync::LazyLock<jsonschema::Validator> = std::sync::LazyLock::new(|| {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs/schema/chokkin-report.schema.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).expect("read schema"))
+            .expect("parse schema");
+    jsonschema::Validator::new(&schema).expect("compile schema")
+});
+
+/// The cells of a GFM table row: split on each `|` not escaped as `\|`,
+/// without the outer pipes, each trimmed.
+fn table_cells(row: &str) -> Vec<&str> {
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let bytes = row.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'|' && (index == 0 || bytes[index - 1] != b'\\') {
+            cells.push(row[start..index].trim());
+            start = index + 1;
+        }
+    }
+    cells.push(row[start..].trim());
+    // Text before the first pipe and after the last one is no cell.
+    if cells.first() == Some(&"") {
+        cells.remove(0);
+    }
+    if cells.last() == Some(&"") {
+        cells.pop();
+    }
+    cells
+}
+
+/// Whether `cell` is exactly one `CommonMark` code span: a backtick run, then
+/// text holding no run of that length, then the same run.
+fn is_code_span(cell: &str) -> bool {
+    let fence = cell.len() - cell.trim_start_matches('`').len();
+    if fence == 0 || cell.len() < 2 * fence + 1 {
+        return false;
+    }
+    let inner = &cell[fence..cell.len() - fence];
+    if !cell.ends_with(&"`".repeat(fence)) || inner.starts_with('`') || inner.ends_with('`') {
+        return false;
+    }
+    !inner.split(|ch| ch != '`').any(|run| run.len() == fence)
+}
+
+/// The issue fields a JSON consumer reads back.
+#[derive(Debug, PartialEq, Eq)]
+struct JsonIssue {
+    code: String,
+    severity: String,
+    confidence: String,
+    message: String,
+    fingerprint: String,
+    file: Option<String>,
+    line: Option<u64>,
+    path: Option<String>,
+    distribution: Option<String>,
+    symbol: Option<String>,
+    binary: Option<String>,
+}
+
+fn json_issue(value: &serde_json::Value) -> JsonIssue {
+    let text = |key: &str| value[key].as_str().map(str::to_owned);
+    JsonIssue {
+        code: text("code").unwrap_or_default(),
+        severity: text("severity").unwrap_or_default(),
+        confidence: text("confidence").unwrap_or_default(),
+        message: text("message").unwrap_or_default(),
+        fingerprint: text("fingerprint").unwrap_or_default(),
+        file: text("file"),
+        line: value["line"].as_u64(),
+        path: text("path"),
+        distribution: text("distribution"),
+        symbol: text("symbol"),
+        binary: text("binary"),
+    }
+}
+
+fn expected_json_issue(issue: &Issue) -> JsonIssue {
+    let (path, distribution, symbol, binary) = match &issue.subject {
+        IssueSubject::File { path } => (Some(path.clone()), None, None, None),
+        IssueSubject::Distribution { name } => (None, Some(name.clone()), None, None),
+        IssueSubject::Binary { name } => (None, None, None, Some(name.clone())),
+        IssueSubject::Symbol { module, name } => {
+            (None, None, Some(format!("{module}:{name}")), None)
+        },
+        IssueSubject::Import {
+            module,
+            file,
+            distribution,
+            ..
+        } => (
+            Some(file.clone()),
+            distribution.clone(),
+            Some(module.clone()),
+            None,
+        ),
+        IssueSubject::ScriptDistribution { script, name } => {
+            (Some(script.clone()), Some(name.clone()), None, None)
+        },
+    };
+    JsonIssue {
+        code: issue.rule.as_code().to_owned(),
+        severity: match issue.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        }
+        .to_owned(),
+        confidence: issue.confidence.as_str().to_owned(),
+        message: issue.message.clone(),
+        fingerprint: issue_fingerprint(issue),
+        file: issue.location.file.clone(),
+        line: issue.location.line.map(u64::from),
+        path,
+        distribution,
+        symbol,
+        binary,
+    }
+}
+
 const ALL_REPORTERS: [ReporterId; 6] = [
     ReporterId::Default,
     ReporterId::Compact,
@@ -155,6 +282,71 @@ proptest! {
         let report = report(issues);
         let out = render_issues(ReporterId::Github, &report, &context());
         prop_assert_eq!(out.lines().filter(|l| !l.is_empty()).count(), report.issues.len(), "{:?}", out);
+    }
+
+    /// Markdown table rows stay rows (#1105): whatever `|`, newline or
+    /// backtick a name or message holds, each issue is one line of four
+    /// cells, and the subject and location are each one whole code span.
+    #[test]
+    fn markdown_rows_keep_four_cells(issues in prop::collection::vec(issue(), 0..6)) {
+        let report = report(issues);
+        let out = render_issues(ReporterId::Markdown, &report, &context());
+        let rows: Vec<&str> = out.lines().filter(|line| line.starts_with("| CHK")).collect();
+        prop_assert_eq!(rows.len(), report.issues.len(), "{}", out);
+        for row in rows {
+            let cells = table_cells(row);
+            prop_assert_eq!(cells.len(), 4, "{:?}", row);
+            prop_assert!(is_code_span(cells[1]), "subject {:?} in {:?}", cells[1], row);
+            prop_assert!(is_code_span(cells[2]), "location {:?} in {:?}", cells[2], row);
+        }
+    }
+
+    /// The compact reporter prints one line per issue, in report order.
+    #[test]
+    fn compact_reporter_is_one_line_per_issue(issues in prop::collection::vec(issue(), 1..6)) {
+        let report = report(issues);
+        let out = render_issues(ReporterId::Compact, &report, &context());
+        let codes: Vec<&str> = out.lines().map(|line| line.split(' ').next().unwrap_or("")).collect();
+        let want: Vec<&str> = report.issues.iter().map(|issue| issue.rule.as_code()).collect();
+        prop_assert_eq!(codes, want, "{}", out);
+    }
+
+    /// The default reporter prints each issue on one indented line under
+    /// its group title.
+    #[test]
+    fn default_reporter_is_one_line_per_issue(issues in prop::collection::vec(issue(), 0..6)) {
+        let report = report(issues);
+        let out = render_issues(ReporterId::Default, &report, &context());
+        let issue_lines = out.lines().filter(|line| line.starts_with("  ")).count();
+        prop_assert_eq!(issue_lines, report.issues.len(), "{}", out);
+        let groups = report.summary.by_rule.len();
+        // Version, blank, project, mode, blank; per group a title, its
+        // issues and a blank; the summary.
+        prop_assert_eq!(out.lines().count(), 5 + 2 * groups + report.issues.len() + 1, "{}", out);
+    }
+
+    /// JSON output matches the published schema and reads back as the
+    /// issues it was rendered from.
+    #[test]
+    fn json_reporter_reads_back_against_the_schema(
+        issues in prop::collection::vec(issue(), 0..6),
+    ) {
+        let report = report(issues);
+        let out = render_issues(ReporterId::Json, &report, &context());
+        let value: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+        let errors: Vec<String> = REPORT_SCHEMA
+            .iter_errors(&value)
+            .map(|error| error.to_string())
+            .collect();
+        prop_assert!(errors.is_empty(), "{:?}", errors);
+        let read: Vec<JsonIssue> = value["issues"]
+            .as_array()
+            .expect("issues array")
+            .iter()
+            .map(json_issue)
+            .collect();
+        let want: Vec<JsonIssue> = report.issues.iter().map(expected_json_issue).collect();
+        prop_assert_eq!(read, want);
     }
 
     /// `write_baseline` then `apply_baseline` on the same report suppresses

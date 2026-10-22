@@ -153,7 +153,7 @@ fn unread_path_sources(
                 continue;
             },
             Ok(Some(dir)) if dir.exists() => dir,
-            // An `Err` is a `..` below a missing directory.
+            // An `Err` is a `..` below a missing directory or a dangling link.
             Ok(Some(_)) | Err(_) => {
                 warnings.push(ManifestWarning::PathSourceMissing { file, field, path });
                 continue;
