@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d5948a46647f9aad8adfb472142eda07622e136e08ec1c50ae893c572dc2b5a2 # shrinks to candidates = [IssueCandidate { rule: Chk001, subject: File { path: "acme/main.py" }, severity: Error, confidence: Maybe, message: "finding", workspace_member: None, origins: [], explain: ExplainData { summary: "", details: [] } }], gaps = [Gap { file: "acme/main.py", kind: UnreadNotebookCells, member: None, site: None, target: None }]
+cc b35e459aa77b8a1bf02d3010e057ecf400994623471cadf71921600296e751f0 # shrinks to candidates = [IssueCandidate { rule: Chk001, subject: File { path: "acme/main.py" }, severity: Error, confidence: Maybe, message: "finding", workspace_member: None, origins: [], explain: ExplainData { summary: "", details: [] } }], gaps = [], extra = [Gap { file: "acme/main.py", kind: UnreadModule, member: None, site: None, target: None }], strict = false
+cc 9a71bdd2f767414797e0990bca73f121b1bfb35668754f1b499bfcfc9571c68a # shrinks to candidate = IssueCandidate { rule: Chk008, subject: File { path: "acme/main.py" }, severity: Error, confidence: Maybe, message: "finding", workspace_member: None, origins: [], explain: ExplainData { summary: "", details: [] } }
+cc 2c7c5481e105bec3171db61e32ca3324239541d4d919d827055bbc0338a0a077 # shrinks to candidate = IssueCandidate { rule: Chk001, subject: File { path: "acme/main.py" }, severity: Error, confidence: Maybe, message: "finding", workspace_member: None, origins: [], explain: ExplainData { summary: "", details: [] } }, gaps = [], extra = [Gap { file: "acme/main.py", kind: UnreadCommandTarget, member: Some("a"), site: None, target: None }]

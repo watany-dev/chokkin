@@ -2177,4 +2177,372 @@ mod tests {
         known.sources.extras = ExtrasState::Known;
         assert_eq!(found(known), None);
     }
+
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+        use crate::config::{RuntimeOverrides, default_config};
+        use crate::parser::ParseSummary;
+        use crate::reachability::ReachabilityReport;
+        use crate::resolver::ResolutionIndex;
+        use crate::rules::emit::emit_issues;
+        use crate::rules::types::{DependencyReport, ExplainData};
+
+        const FILES: [&str; 6] = [
+            "acme/main.py",
+            "acme/sub/mod.py",
+            "tool.py",
+            "img/Dockerfile",
+            "img/app.py",
+            "other/x.py",
+        ];
+        /// Gap files: the files, and the directories a path source names.
+        const GAP_FILES: [&str; 9] = [
+            "acme/main.py",
+            "acme/sub/mod.py",
+            "tool.py",
+            "img/Dockerfile",
+            "img/app.py",
+            "other/x.py",
+            "acme",
+            "img",
+            "other",
+        ];
+        const MODULES: [&str; 4] = ["requests", "rich.console", "yaml", "acme.sub"];
+        const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
+        const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
+
+        const KINDS: [GapKind; 24] = [
+            GapKind::UnreadModule,
+            GapKind::SkippedEntry,
+            GapKind::UnreadPublicModule,
+            GapKind::UnreadNotebookCells,
+            GapKind::OpaqueDynamicImport,
+            GapKind::RuntimeDependenciesUnknown,
+            GapKind::UnknownExtras,
+            GapKind::InvalidRequirement,
+            GapKind::InvalidRuntimeRequirement,
+            GapKind::ArchiveRequirement,
+            GapKind::ArchiveRuntimeRequirement,
+            GapKind::UnresolvedImport,
+            GapKind::UnresolvedPublicImport,
+            GapKind::UnresolvedScriptImport,
+            GapKind::UnreadCommandTarget,
+            GapKind::UnreadPathSource,
+            GapKind::UnreadPathSourceImport,
+            GapKind::UnreadImageTree,
+            GapKind::UnreadDjangoSettings,
+            GapKind::UnreadSphinxExtensions,
+            GapKind::AssumedTargetVersion,
+            GapKind::InvalidScriptRequirement,
+            GapKind::AssumedScriptTargetVersion,
+            GapKind::StringModuleRef,
+        ];
+
+        /// The rules each kind's documentation says it may lower, written
+        /// from the `GapKind` docs rather than from `lowering`. The match is
+        /// exhaustive, so a new kind has to state its rules here.
+        const fn declared_rules(kind: GapKind) -> &'static [RuleId] {
+            match kind {
+                GapKind::UnreadModule
+                | GapKind::SkippedEntry
+                | GapKind::UnreadNotebookCells
+                | GapKind::UnreadDjangoSettings
+                | GapKind::UnreadSphinxExtensions => &[RuleId::Chk001, RuleId::Chk002],
+                GapKind::OpaqueDynamicImport
+                | GapKind::UnreadCommandTarget
+                | GapKind::StringModuleRef => &[RuleId::Chk001],
+                GapKind::UnreadPublicModule
+                | GapKind::UnresolvedImport
+                | GapKind::UnresolvedPublicImport
+                | GapKind::UnresolvedScriptImport
+                | GapKind::UnreadPathSourceImport => &[RuleId::Chk002],
+                GapKind::UnknownExtras
+                | GapKind::RuntimeDependenciesUnknown
+                | GapKind::InvalidRuntimeRequirement => {
+                    &[RuleId::Chk003, RuleId::Chk004, RuleId::Chk005]
+                },
+                GapKind::InvalidRequirement => &[RuleId::Chk003, RuleId::Chk004],
+                GapKind::InvalidScriptRequirement => &[RuleId::Chk003],
+                GapKind::ArchiveRequirement
+                | GapKind::AssumedTargetVersion
+                | GapKind::AssumedScriptTargetVersion => {
+                    &[RuleId::Chk003, RuleId::Chk004, RuleId::Chk010]
+                },
+                GapKind::ArchiveRuntimeRequirement | GapKind::UnreadImageTree => &[
+                    RuleId::Chk003,
+                    RuleId::Chk004,
+                    RuleId::Chk005,
+                    RuleId::Chk010,
+                ],
+                GapKind::UnreadPathSource => &[
+                    RuleId::Chk001,
+                    RuleId::Chk003,
+                    RuleId::Chk004,
+                    RuleId::Chk005,
+                ],
+            }
+        }
+
+        fn owned(names: &'static [&'static str]) -> impl Strategy<Value = String> {
+            prop::sample::select(names).prop_map(str::to_owned)
+        }
+
+        fn line() -> impl Strategy<Value = Option<u32>> {
+            prop::option::of(1u32..4)
+        }
+
+        fn subject() -> impl Strategy<Value = IssueSubject> {
+            prop_oneof![
+                owned(&FILES).prop_map(|path| IssueSubject::File { path }),
+                owned(&NAMES).prop_map(|name| IssueSubject::Distribution { name }),
+                (owned(&MODULES), owned(&NAMES))
+                    .prop_map(|(module, name)| IssueSubject::Symbol { module, name }),
+                owned(&NAMES).prop_map(|name| IssueSubject::Binary { name }),
+                (
+                    owned(&MODULES),
+                    owned(&FILES),
+                    line(),
+                    prop::option::of(owned(&NAMES))
+                )
+                    .prop_map(|(module, file, line, distribution)| {
+                        IssueSubject::Import {
+                            module,
+                            file,
+                            line,
+                            distribution,
+                        }
+                    }),
+                (owned(&FILES), owned(&NAMES))
+                    .prop_map(|(script, name)| IssueSubject::ScriptDistribution { script, name }),
+            ]
+        }
+
+        fn member() -> impl Strategy<Value = Option<String>> {
+            prop::sample::select(MEMBERS.as_slice()).prop_map(|member| member.map(str::to_owned))
+        }
+
+        fn candidate() -> impl Strategy<Value = IssueCandidate> {
+            (
+                prop::sample::select(RuleId::ALL.as_slice()),
+                subject(),
+                prop::sample::select(
+                    [Severity::Error, Severity::Warning, Severity::Info].as_slice(),
+                ),
+                prop::sample::select(
+                    [Confidence::Maybe, Confidence::Likely, Confidence::Certain].as_slice(),
+                ),
+                member(),
+                prop::collection::vec(
+                    (owned(&FILES), line(), owned(&MODULES))
+                        .prop_map(|(file, line, module)| Origin::Import { file, line, module }),
+                    0..3,
+                ),
+            )
+                .prop_map(
+                    |(rule, subject, severity, confidence, workspace_member, origins)| {
+                        IssueCandidate {
+                            rule,
+                            subject,
+                            severity,
+                            confidence,
+                            message: "finding".to_owned(),
+                            workspace_member,
+                            origins,
+                            explain: ExplainData::default(),
+                        }
+                    },
+                )
+        }
+
+        fn gap() -> impl Strategy<Value = Gap> {
+            (
+                prop::sample::select(KINDS.as_slice()),
+                owned(&GAP_FILES),
+                member(),
+                prop::option::of((owned(&NAMES), line())),
+                prop::option::of(owned(&FILES)),
+            )
+                .prop_map(|(kind, file, member, site, target)| Gap {
+                    file,
+                    kind,
+                    member,
+                    site,
+                    target,
+                })
+        }
+
+        fn gaps() -> impl Strategy<Value = Vec<Gap>> {
+            prop::collection::vec(gap(), 0..5)
+        }
+
+        fn applied(candidates: &[IssueCandidate], gaps: &[Gap]) -> Vec<IssueCandidate> {
+            let mut candidates = candidates.to_vec();
+            apply_gaps(&mut candidates, gaps);
+            candidates
+        }
+
+        /// Everything a gap must leave alone: the finding itself and where
+        /// it was seen.
+        fn identity(candidate: &IssueCandidate) -> impl PartialEq + std::fmt::Debug + '_ {
+            (
+                candidate.rule,
+                &candidate.subject,
+                &candidate.message,
+                &candidate.workspace_member,
+                &candidate.origins,
+            )
+        }
+
+        /// Every gap the vocabulary can write in `member`, of `kinds`.
+        fn every_gap(kinds: &[GapKind], member: Option<&String>) -> Vec<Gap> {
+            let sites = NAMES.iter().map(|&name| Some((name.to_owned(), Some(1))));
+            let sites: Vec<_> = sites.chain([None]).collect();
+            let targets = FILES.iter().map(|&path| Some(path.to_owned()));
+            let targets: Vec<_> = targets.chain([None]).collect();
+            let mut placed = Vec::new();
+            for file in GAP_FILES {
+                for site in &sites {
+                    for target in &targets {
+                        placed.push((file, site, target));
+                    }
+                }
+            }
+            kinds
+                .iter()
+                .flat_map(|&kind| {
+                    placed.iter().map(move |(file, site, target)| Gap {
+                        file: (*file).to_owned(),
+                        kind,
+                        member: member.cloned(),
+                        site: (*site).clone(),
+                        target: (*target).clone(),
+                    })
+                })
+                .collect()
+        }
+
+        /// What the run reports: each emitted finding, and the exit status.
+        fn emitted(
+            candidates: &[IssueCandidate],
+            gaps: &[Gap],
+            strict: bool,
+        ) -> (usize, crate::ExitStatus) {
+            let deps = DependencyReport {
+                candidates: candidates.to_vec(),
+                ..DependencyReport::default()
+            };
+            let report = emit_issues(
+                &ReachabilityReport::default(),
+                &deps,
+                &[],
+                &ParseSummary::default(),
+                gaps,
+                &default_config(),
+                &RuntimeOverrides {
+                    strict: Some(strict),
+                    ..RuntimeOverrides::default()
+                },
+                &ResolutionIndex::default(),
+            );
+            (report.issues.len(), report.exit_status)
+        }
+
+        proptest! {
+            /// No gap, no change (ADR 0005).
+            #[test]
+            fn without_gaps_findings_are_unchanged(
+                candidates in prop::collection::vec(candidate(), 0..6),
+            ) {
+                prop_assert_eq!(applied(&candidates, &[]), candidates);
+            }
+
+            /// A gap only weakens: confidence and severity never rise, and
+            /// the finding, its count and its origins stay.
+            #[test]
+            fn gaps_never_strengthen_a_finding(
+                candidates in prop::collection::vec(candidate(), 0..6),
+                gaps in gaps(),
+            ) {
+                let lowered = applied(&candidates, &gaps);
+                prop_assert_eq!(lowered.len(), candidates.len());
+                for (after, before) in lowered.iter().zip(&candidates) {
+                    prop_assert_eq!(identity(after), identity(before));
+                    prop_assert!(after.confidence <= before.confidence, "{after:?}");
+                    prop_assert!(after.severity.rank() <= before.severity.rank(), "{after:?}");
+                }
+            }
+
+            /// Adding gaps lowers every finding at least as far, so the run
+            /// reports no more issues and its exit status never worsens.
+            #[test]
+            fn more_gaps_lower_at_least_as_far(
+                candidates in prop::collection::vec(candidate(), 0..6),
+                gaps in gaps(),
+                extra in gaps(),
+                strict in any::<bool>(),
+            ) {
+                let more: Vec<Gap> = gaps.iter().chain(&extra).cloned().collect();
+                let (fewer, wider) = (applied(&candidates, &gaps), applied(&candidates, &more));
+                for (wider, fewer) in wider.iter().zip(&fewer) {
+                    prop_assert!(wider.confidence <= fewer.confidence, "{wider:?}");
+                    prop_assert!(wider.severity.rank() <= fewer.severity.rank(), "{wider:?}");
+                }
+                let (fewer_issues, fewer_status) = emitted(&candidates, &gaps, strict);
+                let (wider_issues, wider_status) = emitted(&candidates, &more, strict);
+                prop_assert!(wider_issues <= fewer_issues);
+                if fewer_status == crate::ExitStatus::Success {
+                    prop_assert_eq!(wider_status, crate::ExitStatus::Success);
+                }
+            }
+
+            /// A gap never touches a rule its kind does not declare, nor a
+            /// finding outside its workspace member.
+            #[test]
+            fn gaps_leave_findings_outside_their_scope_alone(
+                candidate in candidate(),
+                gaps in gaps(),
+                extra in gaps(),
+            ) {
+                let outside: Vec<Gap> = extra
+                    .into_iter()
+                    .filter(|gap| {
+                        !declared_rules(gap.kind).contains(&candidate.rule)
+                            || gap.member.as_ref().is_some_and(|member| {
+                                candidate.workspace_member.as_ref() != Some(member)
+                            })
+                    })
+                    .collect();
+                let with_outside: Vec<Gap> = gaps.iter().chain(&outside).cloned().collect();
+                let candidates = [candidate];
+                prop_assert_eq!(applied(&candidates, &with_outside), applied(&candidates, &gaps));
+                prop_assert_eq!(applied(&candidates, &outside), candidates.to_vec());
+            }
+        }
+
+        proptest! {
+            // Each case applies every gap the vocabulary can write.
+            #![proptest_config(ProptestConfig::with_cases(crate::internals::proptest_cases(64)))]
+
+            /// The same for every gap aimed at the finding: whatever file,
+            /// site or target it names, a kind that does not declare the
+            /// finding's rule, or a gap in another member, changes nothing.
+            #[test]
+            fn no_gap_of_an_undeclared_kind_reaches_a_finding(candidate in candidate()) {
+                let undeclared: Vec<GapKind> = KINDS
+                    .into_iter()
+                    .filter(|kind| !declared_rules(*kind).contains(&candidate.rule))
+                    .collect();
+                let mut gaps = every_gap(&undeclared, candidate.workspace_member.as_ref());
+                for member in MEMBERS.iter().flatten() {
+                    if candidate.workspace_member.as_deref() != Some(member) {
+                        gaps.extend(every_gap(&KINDS, Some(&(*member).to_owned())));
+                    }
+                }
+                let candidates = [candidate];
+                prop_assert_eq!(applied(&candidates, &gaps), candidates.to_vec());
+            }
+        }
+    }
 }
