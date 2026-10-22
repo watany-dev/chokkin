@@ -681,7 +681,7 @@ fn config_ignore_matches_the_manifest_spelling_of_a_distribution() {
 /// every site is ignored (#1107).
 #[test]
 fn misplaced_inline_ignore_covers_only_its_own_import() {
-    let misplaced = |other: &str| {
+    let misplaced = |first: &str, last: &str| {
         let project = write_project(&[
             (
                 "pyproject.toml",
@@ -692,10 +692,10 @@ fn misplaced_inline_ignore_covers_only_its_own_import() {
             ("src/acme/__init__.py", ""),
             (
                 "src/acme/cli.py",
-                "import httpx  # chokkin: ignore[CHK005]\nfrom acme import other\n\
-                 def main():\n    pass\n",
+                "from acme import a, z\ndef main():\n    pass\n",
             ),
-            ("src/acme/other.py", other),
+            ("src/acme/a.py", first),
+            ("src/acme/z.py", last),
         ]);
         json_issues(project.path(), &["--no-cache", "--strict"])
             .into_iter()
@@ -710,19 +710,20 @@ fn misplaced_inline_ignore_covers_only_its_own_import() {
             })
             .collect::<Vec<_>>()
     };
+    let ignored = "import httpx  # chokkin: ignore[CHK005]\n";
+    let deferred = "def load():\n    import httpx\n";
 
-    assert_eq!(misplaced("import httpx\n"), ["src/acme/other.py:1 certain"]);
-    // The ignored top-level import no longer makes the deferred one certain.
     assert_eq!(
-        misplaced("def load():\n    import httpx\n"),
-        ["src/acme/other.py:2 likely"]
+        misplaced(ignored, "import httpx\n"),
+        ["src/acme/z.py:1 certain"]
     );
-    assert!(misplaced("import httpx  # chokkin: ignore[CHK005]\n").is_empty());
+    // The ignored top-level import no longer makes the deferred one certain,
+    // whichever of the two is weighed first.
+    assert_eq!(misplaced(ignored, deferred), ["src/acme/z.py:2 likely"]);
+    assert_eq!(misplaced(deferred, ignored), ["src/acme/a.py:2 likely"]);
+    assert!(misplaced(ignored, ignored).is_empty());
 }
 
-/// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 at the
-/// string's line, and its message and explain name the setting, not an
-/// `import` (#830).
 #[test]
 fn binary_plugin_missing_dependency_names_its_setting() {
     let temp = tempfile::TempDir::new().expect("tempdir");

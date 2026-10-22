@@ -294,15 +294,13 @@ fn normalize_distribution_pattern(pattern: &str) -> String {
     normalized
 }
 
-/// `script:<path>:<name>` with its name part normalized as a distribution
-/// pattern; the path is matched as written.
+/// A `script:<path>:<name>` pattern with its name part normalized as a
+/// distribution pattern; the path is matched as written.
 fn normalize_script_pattern(pattern: &str) -> String {
-    match pattern.rsplit_once(':') {
-        Some((target, name)) if pattern.starts_with("script:") => {
-            format!("{target}:{}", normalize_distribution_pattern(name))
-        },
-        _ => pattern.to_owned(),
-    }
+    pattern.rsplit_once(':').map_or_else(
+        || pattern.to_owned(),
+        |(target, name)| format!("{target}:{}", normalize_distribution_pattern(name)),
+    )
 }
 
 fn glob_match(pattern: &str, value: &str) -> bool {
