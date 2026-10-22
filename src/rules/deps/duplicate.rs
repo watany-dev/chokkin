@@ -17,10 +17,12 @@
 //! installed on its own (`uv sync --only-group lint`) and generated extras
 //! mirror another package's, which static analysis cannot tell apart (#696).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::config::Confidence;
-use crate::manifest::{DeclaredDependency, DependencyContext, normalize_distribution_name};
+use crate::manifest::{
+    DeclaredDependency, DependencyContext, DependencyOrigin, normalize_distribution_name,
+};
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 
 /// Detect the same distribution declared more than once where one declaration
@@ -42,16 +44,23 @@ pub(super) fn detect_duplicate_dependencies(
     by_name
         .into_iter()
         .filter_map(|(name, declarations)| {
+            let prepared = prepare(&declarations);
+            let repeated = repeated_in_context(&prepared);
             // A repeat in one context is reported on its own, located on the
             // line `--fix` removes.
-            let (involved, removable) = match duplicate_to_remove(&declarations) {
-                Some(to_remove) => {
-                    let mut repeated = repeated_in_context(&declarations);
-                    repeated.sort_by_key(|dep| std::ptr::eq(*dep, to_remove));
-                    (repeated, true)
-                },
-                None => (duplicate_declarations(&declarations, |_, _| true), false),
-            };
+            let (involved, removable) =
+                if let Some(to_remove) = pick_removal(&declarations, &repeated) {
+                    let mut involved = select(&declarations, &repeated);
+                    involved.sort_by_key(|dep| std::ptr::eq(*dep, to_remove));
+                    (involved, true)
+                } else {
+                    let either: Vec<bool> = repeated
+                        .iter()
+                        .zip(covered_by_runtime(&prepared))
+                        .map(|(repeated, covered)| *repeated || covered)
+                        .collect();
+                    (select(&declarations, &either), false)
+                };
             (!involved.is_empty()).then(|| candidate(name, &involved, removable))
         })
         .collect()
@@ -60,7 +69,14 @@ pub(super) fn detect_duplicate_dependencies(
 pub(crate) fn duplicate_to_remove<'a>(
     declarations: &[&'a DeclaredDependency],
 ) -> Option<&'a DeclaredDependency> {
-    removable_duplicates(declarations)
+    pick_removal(declarations, &repeated_in_context(&prepare(declarations)))
+}
+
+fn pick_removal<'a>(
+    declarations: &[&'a DeclaredDependency],
+    repeated: &[bool],
+) -> Option<&'a DeclaredDependency> {
+    select(declarations, &removable_among(declarations, repeated))
         .into_iter()
         .max_by_key(|dep| removal_priority(&dep.context))
 }
@@ -75,86 +91,185 @@ fn removal_priority(context: &DependencyContext) -> u8 {
     }
 }
 
-/// The declarations of one distribution that `--fix` may remove: ones that
+/// The declarations `mask` marks, in declaration order.
+fn select<'a>(
+    declarations: &[&'a DeclaredDependency],
+    mask: &[bool],
+) -> Vec<&'a DeclaredDependency> {
+    declarations
+        .iter()
+        .zip(mask)
+        .filter_map(|(dep, marked)| marked.then_some(*dep))
+        .collect()
+}
+
+/// One declaration with the sets the duplicate checks compare, built once per
+/// declaration instead of once per pair (#1048).
+struct Prepared<'a> {
+    dep: &'a DeclaredDependency,
+    specifiers: BTreeSet<&'a str>,
+    extras: BTreeSet<String>,
+}
+
+fn prepare<'a>(declarations: &[&'a DeclaredDependency]) -> Vec<Prepared<'a>> {
+    declarations
+        .iter()
+        .map(|dep| Prepared {
+            dep,
+            specifiers: specifier_set(dep),
+            extras: extra_set(dep),
+        })
+        .collect()
+}
+
+/// Up to two distinct origins: enough to tell whether a bucket holds a
+/// declaration on a line other than a given one.
+#[derive(Default)]
+struct Origins<'a>([Option<&'a DependencyOrigin>; 2]);
+
+impl<'a> Origins<'a> {
+    fn add(&mut self, origin: &'a DependencyOrigin) {
+        match self.0 {
+            [None, _] => self.0[0] = Some(origin),
+            [Some(first), None] if first != origin => self.0[1] = Some(origin),
+            _ => {},
+        }
+    }
+
+    fn other_than(&self, origin: &DependencyOrigin) -> bool {
+        self.0.iter().flatten().any(|known| *known != origin)
+    }
+}
+
+/// Which declarations of one distribution `--fix` may remove: ones that
 /// repeat another one in the same context (#696). `--fix` removes the line,
 /// so a line also read under another context (`requirements.txt` pulled into
 /// `requirements-dev.txt` by `-r`) qualifies only when it is repeated in
 /// every context that reads it (#860).
-fn removable_duplicates<'a>(
-    declarations: &[&'a DeclaredDependency],
-) -> Vec<&'a DeclaredDependency> {
-    removable_among(declarations, &repeated_in_context(declarations))
-}
-
-fn repeated_in_context<'a>(declarations: &[&'a DeclaredDependency]) -> Vec<&'a DeclaredDependency> {
-    duplicate_declarations(declarations, |a, b| a.context == b.context)
-}
-
-fn removable_among<'a>(
-    declarations: &[&DeclaredDependency],
-    repeated: &[&'a DeclaredDependency],
-) -> Vec<&'a DeclaredDependency> {
-    repeated
-        .iter()
-        .copied()
-        .filter(|dep| {
-            declarations
-                .iter()
-                .filter(|other| other.origin == dep.origin)
-                .all(|other| repeated.iter().any(|known| std::ptr::eq(*known, *other)))
-        })
-        .collect()
-}
-
-fn duplicate_declarations<'a>(
-    declarations: &[&'a DeclaredDependency],
-    pair: impl Fn(&DeclaredDependency, &DeclaredDependency) -> bool,
-) -> Vec<&'a DeclaredDependency> {
+fn removable_among(declarations: &[&DeclaredDependency], repeated: &[bool]) -> Vec<bool> {
+    let mut every_read_repeated: HashMap<&DependencyOrigin, bool> = HashMap::new();
+    for (dep, repeated) in declarations.iter().zip(repeated) {
+        *every_read_repeated.entry(&dep.origin).or_insert(true) &= *repeated;
+    }
     declarations
         .iter()
-        .copied()
-        .filter(|dep| {
-            declarations
-                .iter()
-                .any(|other| pair(dep, other) && duplicates(dep, other, declarations))
-        })
+        .zip(repeated)
+        .map(|(dep, repeated)| *repeated && every_read_repeated[&dep.origin])
         .collect()
 }
 
-fn duplicates(
-    a: &DeclaredDependency,
-    b: &DeclaredDependency,
-    declarations: &[&DeclaredDependency],
-) -> bool {
-    // The same line reached twice (`requirements-dev.txt` including
-    // `requirements.txt`, which is also read on its own) is one declaration,
-    // even when the include gives it another context. This also keeps a
-    // declaration from duplicating itself.
-    if a.origin == b.origin || a.marker != b.marker {
-        return false;
+type ContextKey<'k> = (
+    &'k DependencyContext,
+    Option<&'k str>,
+    &'k BTreeSet<&'k str>,
+    &'k BTreeSet<String>,
+);
+
+fn context_key<'k>(item: &'k Prepared<'_>) -> ContextKey<'k> {
+    (
+        &item.dep.context,
+        item.dep.marker.as_deref(),
+        &item.specifiers,
+        &item.extras,
+    )
+}
+
+fn marker<'k>(item: &'k Prepared<'_>) -> Option<&'k str> {
+    item.dep.marker.as_deref()
+}
+
+/// Which declarations repeat another one in the same context: the same
+/// marker, specifiers and extras on another line. The same line reached
+/// twice (`requirements-dev.txt` including `requirements.txt`, which is also
+/// read on its own) is one declaration, even when the include gives it
+/// another context; this also keeps a declaration from repeating itself.
+fn repeated_in_context(prepared: &[Prepared<'_>]) -> Vec<bool> {
+    let mut buckets: HashMap<ContextKey<'_>, Origins<'_>> = HashMap::new();
+    for item in prepared {
+        buckets
+            .entry(context_key(item))
+            .or_default()
+            .add(&item.dep.origin);
     }
-    if a.context == b.context {
-        return specifier_set(a) == specifier_set(b) && extra_set(a) == extra_set(b);
-    }
-    let (runtime, refinement) = match (&a.context, &b.context) {
-        (DependencyContext::Runtime, _) => (a, b),
-        (_, DependencyContext::Runtime) => (b, a),
-        _ => return false,
-    };
-    // No PEP 440 containment check: only a bare or identical specifier is
-    // known to add nothing to the runtime one.
-    let specifier = specifier_set(refinement);
-    if !specifier.is_empty() && specifier != specifier_set(runtime) {
-        return false;
-    }
-    // Extras may be spread over several runtime declarations, but only ones
-    // installed under the same marker cover the refinement.
-    let runtime_extras: BTreeSet<String> = declarations
+    prepared
         .iter()
-        .filter(|dep| dep.context == DependencyContext::Runtime && dep.marker == refinement.marker)
-        .flat_map(|dep| extra_set(dep))
-        .collect();
-    extra_set(refinement).is_subset(&runtime_extras)
+        .map(|item| buckets[&context_key(item)].other_than(&item.dep.origin))
+        .collect()
+}
+
+/// Which declarations take part in a group or extra declaration that a
+/// runtime one covers, on another line under the same marker. No PEP 440
+/// containment check: only a bare or identical specifier is known to add
+/// nothing to the runtime one. Extras may be spread over several runtime
+/// declarations, but only ones installed under the same marker cover the
+/// refinement.
+fn covered_by_runtime(prepared: &[Prepared<'_>]) -> Vec<bool> {
+    type SpecKey<'k> = (Option<&'k str>, &'k BTreeSet<&'k str>);
+    let is_runtime = |item: &Prepared<'_>| item.dep.context == DependencyContext::Runtime;
+
+    let mut runtime_extras: HashMap<Option<&str>, BTreeSet<&str>> = HashMap::new();
+    let mut runtime_any: HashMap<Option<&str>, Origins<'_>> = HashMap::new();
+    let mut runtime_by_spec: HashMap<SpecKey<'_>, Origins<'_>> = HashMap::new();
+    for item in prepared.iter().filter(|item| is_runtime(item)) {
+        runtime_extras
+            .entry(marker(item))
+            .or_default()
+            .extend(item.extras.iter().map(String::as_str));
+        runtime_any
+            .entry(marker(item))
+            .or_default()
+            .add(&item.dep.origin);
+        runtime_by_spec
+            .entry((marker(item), &item.specifiers))
+            .or_default()
+            .add(&item.dep.origin);
+    }
+
+    let covered_extras = |item: &Prepared<'_>| {
+        runtime_extras
+            .get(&marker(item))
+            .map_or(item.extras.is_empty(), |runtime| {
+                item.extras
+                    .iter()
+                    .all(|extra| runtime.contains(extra.as_str()))
+            })
+    };
+    // Refinements whose extras the runtime declarations cover; a bare one
+    // matches every runtime specifier.
+    let mut bare_refinements: HashMap<Option<&str>, Origins<'_>> = HashMap::new();
+    let mut refinements_by_spec: HashMap<SpecKey<'_>, Origins<'_>> = HashMap::new();
+    let mut covered = vec![false; prepared.len()];
+    for (item, covered) in prepared.iter().zip(covered.iter_mut()) {
+        if is_runtime(item) || !covered_extras(item) {
+            continue;
+        }
+        let runtime = if item.specifiers.is_empty() {
+            bare_refinements
+                .entry(marker(item))
+                .or_default()
+                .add(&item.dep.origin);
+            runtime_any.get(&marker(item))
+        } else {
+            refinements_by_spec
+                .entry((marker(item), &item.specifiers))
+                .or_default()
+                .add(&item.dep.origin);
+            runtime_by_spec.get(&(marker(item), &item.specifiers))
+        };
+        *covered = runtime.is_some_and(|runtime| runtime.other_than(&item.dep.origin));
+    }
+    for (item, covered) in prepared.iter().zip(covered.iter_mut()) {
+        if is_runtime(item) {
+            let origin = &item.dep.origin;
+            *covered = bare_refinements
+                .get(&marker(item))
+                .is_some_and(|refinements| refinements.other_than(origin))
+                || refinements_by_spec
+                    .get(&(marker(item), &item.specifiers))
+                    .is_some_and(|refinements| refinements.other_than(origin));
+        }
+    }
+    covered
 }
 
 fn extra_set(dep: &DeclaredDependency) -> BTreeSet<String> {
@@ -227,7 +342,6 @@ fn context_label(context: &DependencyContext) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::DependencyOrigin;
 
     /// A declaration on its own line: one manifest per context.
     fn dep(name: &str, context: DependencyContext) -> DeclaredDependency {
@@ -276,6 +390,70 @@ mod tests {
         DependencyContext::OptionalExtra(name.to_owned())
     }
 
+    /// The pairwise definition the bucketed detection implements: a
+    /// declaration is involved when some other one duplicates it. Quadratic
+    /// to cubic in the declarations of one distribution (#1048), so only the
+    /// tests run it, to check the detection against it.
+    fn duplicates(
+        a: &DeclaredDependency,
+        b: &DeclaredDependency,
+        declarations: &[&DeclaredDependency],
+    ) -> bool {
+        if a.origin == b.origin || a.marker != b.marker {
+            return false;
+        }
+        if a.context == b.context {
+            return specifier_set(a) == specifier_set(b) && extra_set(a) == extra_set(b);
+        }
+        let (runtime, refinement) = match (&a.context, &b.context) {
+            (DependencyContext::Runtime, _) => (a, b),
+            (_, DependencyContext::Runtime) => (b, a),
+            _ => return false,
+        };
+        let specifier = specifier_set(refinement);
+        if !specifier.is_empty() && specifier != specifier_set(runtime) {
+            return false;
+        }
+        let runtime_extras: BTreeSet<String> = declarations
+            .iter()
+            .filter(|dep| {
+                dep.context == DependencyContext::Runtime && dep.marker == refinement.marker
+            })
+            .flat_map(|dep| extra_set(dep))
+            .collect();
+        extra_set(refinement).is_subset(&runtime_extras)
+    }
+
+    fn pairwise_involved(
+        declarations: &[&DeclaredDependency],
+        pair: impl Fn(&DeclaredDependency, &DeclaredDependency) -> bool,
+    ) -> Vec<bool> {
+        declarations
+            .iter()
+            .map(|dep| {
+                declarations
+                    .iter()
+                    .any(|other| pair(dep, other) && duplicates(dep, other, declarations))
+            })
+            .collect()
+    }
+
+    /// `(repeated in one context, involved in any duplicate)` by the
+    /// pairwise definition.
+    fn pairwise(declarations: &[&DeclaredDependency]) -> (Vec<bool>, Vec<bool>) {
+        (
+            pairwise_involved(declarations, |a, b| a.context == b.context),
+            pairwise_involved(declarations, |_, _| true),
+        )
+    }
+
+    fn removable_duplicates<'a>(
+        declarations: &[&'a DeclaredDependency],
+    ) -> Vec<&'a DeclaredDependency> {
+        let repeated = repeated_in_context(&prepare(declarations));
+        select(declarations, &removable_among(declarations, &repeated))
+    }
+
     fn detect(dependencies: &[DeclaredDependency]) -> Vec<IssueCandidate> {
         detect_duplicate_dependencies(dependencies, Some("Acme"))
     }
@@ -316,6 +494,31 @@ mod tests {
         // #696: a group may be installed on its own, so this is only a hint.
         assert_eq!(issue.severity, Severity::Info);
         assert_eq!(issue.confidence, Confidence::Likely);
+    }
+
+    #[test]
+    fn many_declarations_of_one_distribution_stay_cheap() {
+        // #1048: pairing every declaration with every other one, and
+        // rebuilding the runtime extras for each pair, took seconds for a few
+        // thousand; bucketing keeps this test fast.
+        let mut dependencies: Vec<DeclaredDependency> = (0..20_000)
+            .map(|line| {
+                let runtime = at("foo", DependencyContext::Runtime, "pyproject.toml", line);
+                with_specifier(runtime, &format!("=={line}"))
+            })
+            .collect();
+        dependencies.extend((0..20_000).map(|line| {
+            with_extras(
+                at("foo", group("dev"), "pyproject.toml", 30_000 + line),
+                &[&format!("x{line}")],
+            )
+        }));
+        dependencies.push(at("foo", group("dev"), "pyproject.toml", 60_000));
+        let found = detect(&dependencies);
+        assert_eq!(found.len(), 1);
+        // Only the bare group declaration repeats the runtime ones.
+        assert_eq!(found[0].origins.len(), 20_001);
+        assert_eq!(found[0].severity, Severity::Info);
     }
 
     #[test]
@@ -998,6 +1201,25 @@ mod tests {
                     summary(&detect(&rendered(&decls, &first))),
                     summary(&detect(&rendered(&decls, &second)))
                 );
+            }
+
+            /// The bucketed checks mark exactly the declarations the
+            /// pairwise definition does (#1048).
+            #[test]
+            fn buckets_match_the_pairwise_definition(
+                decls in decls(),
+                spellings in prop::collection::vec(any::<u8>(), 1..6),
+            ) {
+                let deps = rendered(&decls, &spellings);
+                let refs: Vec<&DeclaredDependency> = deps.iter().collect();
+                let prepared = prepare(&refs);
+                let repeated = repeated_in_context(&prepared);
+                let either: Vec<bool> = repeated
+                    .iter()
+                    .zip(covered_by_runtime(&prepared))
+                    .map(|(repeated, covered)| *repeated || covered)
+                    .collect();
+                prop_assert_eq!((repeated, either), pairwise(&refs));
             }
 
             /// Reordering the declarations never changes the report.

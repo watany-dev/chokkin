@@ -25,7 +25,7 @@ pub enum DependencyContext {
 }
 
 /// Declaration location for reports, `--explain`, and fix.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DependencyOrigin {
     /// Root-relative path, e.g. `pyproject.toml`.
     pub file: String,
