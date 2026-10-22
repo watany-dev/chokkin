@@ -1,9 +1,10 @@
 name: Verification
 
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
-# PR only the mutants on lines the PR changes, weekly all of `make mutants`.
-# Both split into shards of about 50 mutants so a large diff still finishes
-# within a job timeout. kani runs on demand, weekly, and on PRs that change a
+# PR only the mutants on lines the PR changes and in files whose tests it cut
+# (#1118), weekly one slice of `make mutants` (all of src/) in turn (#1123).
+# Both split into shards (about 50 mutants on a PR, at most 100 weekly) so
+# each finishes within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
 # regression gate (#836) also runs, but only reports: it never fails the PR.
 
@@ -16,9 +17,13 @@ on:
   workflow_dispatch:
     inputs:
       full-mutants:
-        description: "Run cargo-mutants over everything `make mutants` covers"
+        description: "Run this week's slice of `make mutants`"
         type: boolean
         default: false
+      mutants-slice:
+        description: "With full-mutants: run this slice (0-based) instead of this week's"
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
@@ -42,6 +47,7 @@ jobs:
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.plan.outputs.shards }}
+      total: ${{ steps.plan.outputs.total }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,22 +57,51 @@ jobs:
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
         with:
           tool: cargo-mutants@27.1.0
-      - name: Count mutants and pick the shard count
+      - name: Count mutants and pick the shards
         id: plan
-        # About 50 mutants per shard, at most 12 shards. A mutant takes about
-        # 40 s at -j 2 (incremental rebuild plus the nextest run), so 50 fit
-        # comfortably inside the 60-minute job timeout with the baseline
-        # build on top.
+        # A mutant takes about 40 s at -j 2 (incremental rebuild plus the
+        # nextest run), half that when two run at once. A PR runs about 50 per
+        # shard, at most 12 shards, which fit comfortably inside the 60-minute
+        # job timeout with the baseline build on top. All of src/ is too much
+        # for 12 shards (#1123), so the weekly run splits it into slices of 12
+        # shards of at most 100 and runs one slice a week in turn, counting
+        # weeks since the epoch so no slice is skipped at a year boundary.
+        # 100 is inside the measured weekly rate: shards of 125 took 19-47
+        # minutes on 2026-10-19.
+        env:
+          SLICE: ${{ inputs.mutants-slice }}
         run: |
+          case "$SLICE" in "" | [0-9] | [1-9][0-9]) ;; *) echo "mutants-slice must be a number: $SLICE" >&2; exit 1 ;; esac
           mkdir -p target
           make -s "$MUTANTS_TARGET" ARGS=--list > target/mutants-list.txt
           count=$(grep -c . target/mutants-list.txt || true)
-          shards=$(( (count + 49) / 50 ))
-          if [ "$shards" -lt 1 ]; then shards=1; fi
-          if [ "$shards" -gt 12 ]; then shards=12; fi
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "shards=$(jq -cn --argjson n "$shards" '[range($n)]')" >> "$GITHUB_OUTPUT"
-          echo "$count mutants, $shards shard(s)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            total=$(( (count + 49) / 50 ))
+            if [ "$total" -lt 1 ]; then total=1; fi
+            if [ "$total" -gt 12 ]; then total=12; fi
+            slices=1
+          else
+            total=$(( (count + 99) / 100 ))
+            if [ "$total" -lt 1 ]; then total=1; fi
+            slices=$(( (total + 11) / 12 ))
+            if [ "$slices" -gt 1 ]; then total=$(( slices * 12 )); fi
+          fi
+          slice=$(( ${SLICE:-$(( $(date -u +%s) / 604800 ))} % slices ))
+          first=$(( slice * 12 ))
+          run=$(( total < 12 ? total : 12 ))
+          {
+            echo "count=$count"
+            echo "total=$total"
+            echo "shards=$(jq -cn --argjson a "$first" --argjson n "$run" '[range($a; $a + $n)]')"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$slices" -gt 1 ]; then
+            echo "$count mutants in $slices weekly slices; slice $slice runs shards $first-$(( first + run - 1 )) of $total" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$count mutants, $total shard(s)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -s target/mutants-widened.txt ]; then
+            sed 's/^/- /' target/mutants-widened.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   mutants:
     name: Mutants (shard ${{ matrix.shard }})
@@ -97,10 +132,17 @@ jobs:
       - name: Mutate
         id: mutate
         env:
-          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+          SHARD: ${{ matrix.shard }}/${{ needs.mutants-plan.outputs.total }}
         # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
         # counts as caught, and exit 3 hides missed mutants in the same run.
+        # The timeout bounds time only: a mutant that allocates forever ran the
+        # runner out of memory and lost the shard's results (#994, #1120).
+        # Capping each process's data segment makes its test abort instead,
+        # which counts as caught. 4 GiB clears a build and the whole suite
+        # (1 GiB already fails a build), and two jobs of rustc plus a runaway
+        # test or two stay inside the runner's 16 GB.
         run: |
+          ulimit -d 4194304
           status=0
           make "$MUTANTS_TARGET" ARGS="--shard $SHARD" || status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
@@ -123,6 +165,14 @@ jobs:
               echo "No missed mutants."
             else
               echo "cargo-mutants did not finish (exit ${STATUS:-none}); see the Mutate step."
+            fi
+            # A timeout counts as caught, but a mutant that only slows a test
+            # down is a missed one in disguise: list them to be read.
+            if [ -s mutants.out/timeout.txt ]; then
+              echo "Timed out (counted as caught; check none is a slow missed one):"
+              echo '```'
+              cat mutants.out/timeout.txt
+              echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           test ! -s mutants.out/missed.txt
@@ -210,6 +260,57 @@ jobs:
         run: |
           echo "plan: $PLAN, shards: $SHARDS"
           [ "$PLAN" = success ] && { [ "$SHARDS" = success ] || [ "$SHARDS" = skipped ]; }
+
+  # A failed weekly or full run on main files its missed mutants as an issue
+  # (#1119): the scheduled-workflow e-mail alone left #1117 on main for days.
+  # One open issue collects every failed run, each as a comment. A cancelled
+  # run (superseded, or stopped by hand) files nothing.
+  mutants-issue:
+    name: Mutants (file missed on main)
+    needs: [mutants-plan, mutants]
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      (needs.mutants-plan.result == 'failure' || needs.mutants.result == 'failure')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write # gh issue create / comment
+    steps:
+      # A shard whose runner was lost uploads nothing; file the issue anyway.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: mutants-*
+          path: shards
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "test: cargo-mutants found missed mutants on main"
+        run: |
+          missed=$(cat shards/*/missed.txt 2>/dev/null | sort -u || true)
+          {
+            echo "The [${GITHUB_EVENT_NAME} cargo-mutants run]($RUN_URL) failed on \`${GITHUB_SHA::7}\`."
+            echo
+            if [ -n "$missed" ]; then
+              echo "Missed mutants: add the test, or exclude an equivalent mutant in \`.cargo/mutants.toml\`."
+              echo
+              echo '```'
+              echo "$missed"
+              echo '```'
+            else
+              echo "No shard reported a missed mutant: the plan or a shard did not finish (job timeout, runner lost, build failure). See the run."
+            fi
+          } > body.md
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+          fi
 
   kani:
     name: Kani proofs

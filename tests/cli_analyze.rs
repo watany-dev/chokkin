@@ -3629,6 +3629,33 @@ fn binary_unresolved_script_import_lowers_only_its_block() {
     );
 }
 
+/// A script elsewhere in the project does not make a package file's
+/// unresolved import a script's: it still lowers the project's entries.
+#[test]
+fn binary_unresolved_package_import_beside_a_script_lowers_the_project() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[project.scripts]\nacme = \"acme.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/main.py",
+            "import zz_widgets_core\n\ndef main():\n    pass\n",
+        ),
+        (
+            "scripts/report.py",
+            "# /// script\n# dependencies = [\"rich\"]\n# ///\nimport rich\n",
+        ),
+    ]);
+    let found: Vec<_> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK002")
+        .map(|(_, target, _, confidence)| (target, confidence))
+        .collect();
+    assert_eq!(found, [("requests".to_owned(), "likely".to_owned())]);
+}
+
 const COMMAND_PYPROJECT: &str = "[project]\nname = \"mypkg\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmypkg = \"mypkg.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
 
 /// Scripts and `-m` modules task files and tool configs run are entries,

@@ -145,15 +145,16 @@ tlc:
 		-metadir target/tlc docs/dev/formal/MCReachability
 
 ## ─── Test effectiveness (#418) ────────────────────────────────────────────────
-# mutants:      cargo-mutants over src/rules/, src/resolver/, src/fix/ and
-#               src/graph/ (most of the time is builds). Tests run under
-#               nextest (.cargo/mutants.toml), so `make tools` is needed.
+# mutants:      cargo-mutants over all of src/ (most of the time is builds;
+#               hours, so CI runs one weekly slice of it, #1123). Tests run
+#               under nextest (.cargo/mutants.toml), so `make tools` is needed.
 #               To narrow to one file run cargo mutants directly with the same
 #               env, e.g. `$(MUTANTS_ENV) cargo mutants -f src/rules/emit.rs`
 #               (a -f in ARGS widens the set: file globs are OR'ed).
 #               Results: mutants.out/. CI fails on any missed mutant (#837).
-# mutants-diff: only the mutants on lines changed since BASE (default origin/main);
-#               what the PR check runs.
+# mutants-diff: only the mutants on lines changed since BASE (default origin/main),
+#               plus every mutant of a file whose tests lost a line
+#               (scripts/mutants-diff.py, #1118); what the PR check runs.
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
 #               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
@@ -167,11 +168,13 @@ MUTANTS_ENV = CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=1
 BASE       ?= origin/main
 
 mutants:
-	$(MUTANTS_ENV) cargo mutants -j 2 -f 'src/rules/**' -f 'src/resolver/**' -f 'src/fix/**' -f 'src/graph/**' $(ARGS)
+	$(MUTANTS_ENV) cargo mutants -j 2 $(ARGS)
 
 mutants-diff:
 	mkdir -p target
-	git diff $(BASE)... > target/mutants.diff
+	git diff $(BASE)... > target/mutants-pr.diff
+	python3 scripts/mutants-diff.py target/mutants-pr.diff > target/mutants.diff 2> target/mutants-widened.txt; \
+		status=$$?; cat target/mutants-widened.txt >&2; exit $$status
 	$(MUTANTS_ENV) cargo mutants -j 2 --in-diff target/mutants.diff $(ARGS)
 
 kani:
