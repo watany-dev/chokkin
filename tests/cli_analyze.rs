@@ -654,6 +654,28 @@ fn binary_inline_ignore_covers_a_plugin_reference_line() {
     assert_eq!(unresolved, ["sphinx_design"]);
 }
 
+/// A config ignore spelled as the manifest spells the distribution
+/// (`typing_extensions`, `Boto3`) matches its normalized name (#1106).
+#[test]
+fn config_ignore_matches_the_manifest_spelling_of_a_distribution() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1\"\n\
+             dependencies = [\"typing_extensions\", \"Boto3\"]\n\n\
+             [tool.chokkin.ignore]\nCHK002 = [\"typing_extensions\", \"Boto3\"]\n",
+        ),
+        ("src/acme/__init__.py", "print(1)\n"),
+        ("src/acme/__main__.py", "print(1)\n"),
+    ]);
+
+    let issues = json_issues(project.path(), &["--no-cache"]);
+    assert!(
+        issues.iter().all(|issue| issue["code"] != "CHK002"),
+        "{issues:?}"
+    );
+}
+
 /// An undeclared distribution named only in `INSTALLED_APPS` is CHK003 at the
 /// string's line, and its message and explain name the setting, not an
 /// `import` (#830).

@@ -1730,7 +1730,7 @@ file-level ignore。ファイル先頭のcomment block(最初のimport文・実�
 # chokkin: file-ignore[CHK006]
 ```
 
-config ignore。keyはrule codeに統一する。値のpattern構文はruleの対象に依存し、dependency系ruleではdistribution名のglob、file系ruleではpath glob、symbol系ruleでは `path:symbol_glob` 形式とする。
+config ignore。keyはrule codeに統一する。値のpattern構文はruleの対象に依存し、dependency系ruleではdistribution名のglob、file系ruleではpath glob、symbol系ruleでは `path:symbol_glob` 形式とする。distribution名のglobは、glob記号を残したまま PEP 503 で正規化してから正規化済みの distribution 名と照合するので、manifest と同じ綴り (`typing_extensions`、`Boto3`) でも効く (#1106)。`[...]` の文字クラスは書いたとおりに残す (`[!A-Z]` を小文字にすると意味が反転する)。PEP 723 script の `script:<path>:<name>` は name の部分だけを正規化する。CHK008 の binary 名は書いたとおりに照合する。
 
 ```toml
 [tool.chokkin.ignore]

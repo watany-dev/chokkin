@@ -181,8 +181,11 @@ fn config_pattern_matches(
     // Checked before the `path:symbol` split: script targets contain `:`.
     if let IssueSubject::ScriptDistribution { script, name } = subject {
         return is_distribution_rule(rule)
-            && (glob_match(pattern, name)
-                || glob_match(pattern, &format!("script:{script}:{name}")));
+            && (distribution_glob_match(pattern, name)
+                || glob_match(
+                    &normalize_script_pattern(pattern),
+                    &format!("script:{script}:{name}"),
+                ));
     }
     if let Some((path_pattern, symbol_pattern)) = pattern.split_once(':') {
         return symbol_pattern_matches(path_pattern, symbol_pattern, subject, file);
@@ -193,15 +196,16 @@ fn config_pattern_matches(
         // Distribution: dependency rules, Binary: CHK008, Symbol: CHK006/007),
         // so the subject alone decides; only `Import` is shared across rules.
         IssueSubject::File { path } => glob_match(pattern, path),
-        IssueSubject::Distribution { name } => glob_match(pattern, name),
+        IssueSubject::Distribution { name } => distribution_glob_match(pattern, name),
         // The binary name itself stays accepted for backward compatibility.
         IssueSubject::Binary { name } => {
-            glob_match(pattern, name) || distribution.is_some_and(|dist| glob_match(pattern, dist))
+            glob_match(pattern, name)
+                || distribution.is_some_and(|dist| distribution_glob_match(pattern, dist))
         },
         // §18 matches dependency rules on the distribution name even when the
         // candidate points at an import site, so a path glob must not match.
         IssueSubject::Import { .. } if is_distribution_rule(rule) => {
-            distribution.is_some_and(|name| glob_match(pattern, name))
+            distribution.is_some_and(|name| distribution_glob_match(pattern, name))
         },
         IssueSubject::Import { module, file, .. } => {
             glob_match(pattern, file) || glob_match(pattern, module)
@@ -236,6 +240,62 @@ fn is_distribution_rule(rule: RuleId) -> bool {
             | RuleId::Chk008
             | RuleId::Chk009
     )
+}
+
+/// Match a pattern against a (PEP 503 normalized) distribution name, so
+/// that `typing_extensions` or `Boto3` ignores what the manifest declared
+/// under that spelling (#1106).
+fn distribution_glob_match(pattern: &str, name: &str) -> bool {
+    glob_match(&normalize_distribution_pattern(pattern), name)
+}
+
+/// PEP 503 normalization of the literal parts of a glob: runs of `-`, `_`
+/// and `.` collapse into one `-`, and letters are lowercased. A `[...]`
+/// class is copied as written: lowercasing it would turn `[!A-Z]` into its
+/// opposite.
+fn normalize_distribution_pattern(pattern: &str) -> String {
+    let mut normalized = String::with_capacity(pattern.len());
+    let mut pending_separator = false;
+    let mut chars = pattern.chars();
+    while let Some(ch) = chars.next() {
+        if matches!(ch, '-' | '_' | '.') {
+            pending_separator = true;
+            continue;
+        }
+        if pending_separator {
+            normalized.push('-');
+            pending_separator = false;
+        }
+        if ch != '[' {
+            normalized.push(ch.to_ascii_lowercase());
+            continue;
+        }
+        normalized.push('[');
+        // `]` right after `[` or `[!` is a member, not the end.
+        let mut leading = true;
+        for member in chars.by_ref() {
+            normalized.push(member);
+            if member == ']' && !leading {
+                break;
+            }
+            leading = leading && member == '!';
+        }
+    }
+    if pending_separator {
+        normalized.push('-');
+    }
+    normalized
+}
+
+/// `script:<path>:<name>` with its name part normalized as a distribution
+/// pattern; the path is matched as written.
+fn normalize_script_pattern(pattern: &str) -> String {
+    match pattern.rsplit_once(':') {
+        Some((target, name)) if pattern.starts_with("script:") => {
+            format!("{target}:{}", normalize_distribution_pattern(name))
+        },
+        _ => pattern.to_owned(),
+    }
 }
 
 fn glob_match(pattern: &str, value: &str) -> bool {
@@ -752,6 +812,74 @@ mod tests {
         }
     }
 
+    /// A dependency-rule pattern is PEP 503 normalized before it meets the
+    /// (normalized) distribution name, so the manifest's own spelling works
+    /// (#1106); CHK008's binary name is matched as written.
+    #[test]
+    fn config_ignore_normalizes_distribution_patterns() {
+        let unused = |name: &str| {
+            candidate(
+                RuleId::Chk002,
+                IssueSubject::Distribution {
+                    name: name.to_owned(),
+                },
+                Vec::new(),
+            )
+        };
+        for (pattern, name) in [
+            ("typing_extensions", "typing-extensions"),
+            ("Boto3", "boto3"),
+            ("Typing.Extensions", "typing-extensions"),
+            ("zope__-interface", "zope-interface"),
+            ("Google_Cloud_*", "google-cloud-storage"),
+            ("{Boto3,typing_extensions}", "typing-extensions"),
+            ("py[!A-Z]aml", "pyyaml"),
+        ] {
+            let matcher = config_matcher(RuleId::Chk002, &[pattern]);
+            assert!(suppressed_by_config(&matcher, &unused(name)), "{pattern}");
+        }
+        let matcher = config_matcher(RuleId::Chk002, &["typing_extensions_x"]);
+        assert!(!suppressed_by_config(
+            &matcher,
+            &unused("typing-extensions")
+        ));
+
+        let script = candidate(
+            RuleId::Chk002,
+            script_dependency("typing-extensions"),
+            manifest_origin(3),
+        );
+        for pattern in ["Typing_Extensions", "script:scripts/*:Typing_Extensions"] {
+            let matcher = config_matcher(RuleId::Chk002, &[pattern]);
+            assert!(suppressed_by_config(&matcher, &script), "{pattern}");
+        }
+
+        let missing = import_candidate(RuleId::Chk003, "yaml", Some("pyyaml"));
+        let matcher = config_matcher(RuleId::Chk003, &["PyYAML"]);
+        assert!(suppressed_by_config(&matcher, &missing));
+    }
+
+    #[test]
+    fn distribution_pattern_normalization_keeps_glob_syntax() {
+        for (pattern, normalized) in [
+            ("typing_extensions", "typing-extensions"),
+            ("A._-B", "a-b"),
+            ("foo_*", "foo-*"),
+            ("*_", "*-"),
+            ("[_.]x", "[_.]x"),
+            ("[]_]x", "[]_]x"),
+            ("[!]A]x_y", "[!]A]x-y"),
+            ("py[!A-Z]aml", "py[!A-Z]aml"),
+            ("{A_b,C.d}", "{a-b,c-d}"),
+        ] {
+            assert_eq!(
+                normalize_distribution_pattern(pattern),
+                normalized,
+                "{pattern}"
+            );
+        }
+    }
+
     /// A symbol-rule pattern without `:` is a path glob covering every symbol.
     #[test]
     fn config_ignore_matches_symbol_path_without_symbol_glob() {
@@ -1026,8 +1154,25 @@ mod tests {
             (matcher, candidate(rule, subject, Vec::new()))
         }
 
+        /// The pattern as someone might have spelled it in the manifest:
+        /// letters in either case, any separator for another (#1106).
+        fn respell(pattern: &str, choices: &[u8]) -> String {
+            pattern
+                .chars()
+                .zip(choices.iter().copied().chain(std::iter::repeat(0)))
+                .map(|(ch, choice)| match ch {
+                    '-' | '_' | '.' if !pattern.contains('/') => {
+                        ['-', '_', '.'][usize::from(choice % 3)]
+                    },
+                    'a' | 'b' if choice % 2 == 1 => ch.to_ascii_uppercase(),
+                    _ => ch,
+                })
+                .collect()
+        }
+
         fn expected(case: &Case, pattern: &str) -> Option<SuppressReason> {
-            let glob = |value: &str| reference_glob(pattern, value);
+            let normalized = crate::manifest::normalize_distribution_name(pattern);
+            let glob = |value: &str| reference_glob(&normalized, value);
             let vendored = case.file.contains("/_vendor/") || case.file.contains("/vendored/");
             match &case.kind {
                 Kind::Import(..) if vendored => Some(SuppressReason::Vendored),
@@ -1036,22 +1181,26 @@ mod tests {
                     .as_deref()
                     .is_some_and(glob)
                     .then_some(SuppressReason::Config),
-                Kind::Binary(dist) => (glob(&case.name) || dist.as_deref().is_some_and(glob))
-                    .then_some(SuppressReason::Config),
+                Kind::Binary(dist) => (reference_glob(pattern, &case.name)
+                    || dist.as_deref().is_some_and(glob))
+                .then_some(SuppressReason::Config),
             }
         }
 
         proptest! {
             /// Dependency rules match only the distribution (and, for
             /// CHK008, the binary name), never a module or path, whatever the
-            /// pattern; vendored files are suppressed before any of that.
+            /// pattern, however it spells the name; vendored files are
+            /// suppressed before any of that.
             #[test]
             fn dependency_ignores_match_only_distribution_names(
                 (case, pattern) in case_strategy().prop_flat_map(|case| {
                     let pattern = pattern_strategy(&case);
                     (Just(case), pattern)
-                })
+                }),
+                choices in prop::collection::vec(any::<u8>(), 0..16),
             ) {
+                let pattern = respell(&pattern, &choices);
                 let (matcher, candidate) = build(&case, &pattern);
                 prop_assert_eq!(matcher.matches_candidate(&candidate), expected(&case, &pattern));
             }

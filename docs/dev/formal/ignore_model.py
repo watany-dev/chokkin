@@ -15,7 +15,11 @@ Spec (docs/dev/spec.ja.md line 1044):
 Reference semantics I1: for every dependency rule (CHK002-005, 008, 009) a
 config pattern ignores a candidate iff it glob-matches the *distribution name*
 of that candidate.  For CHK008 (``Binary`` subject) the binary name itself is
-also accepted, for backward compatibility.
+also accepted, for backward compatibility.  The pattern is PEP 503
+normalized before it meets the (already normalized) distribution name, so
+whether it is ignored does not depend on how the pattern spells the name
+(``typing_extensions`` / ``Typing.Extensions``, #1106); the binary name is
+matched as written.
 
 Run:  python3 docs/dev/formal/ignore_model.py
 Exit status 1 when any (rule, pattern, candidate) disagrees with I1.
@@ -24,6 +28,7 @@ Exit status 1 when any (rule, pattern, candidate) disagrees with I1.
 from __future__ import annotations
 
 import itertools
+import re
 import sys
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
@@ -51,19 +56,29 @@ def glob_match(pattern: str, value: str) -> bool:
     return fnmatchcase(value, pattern)
 
 
+def normalize(name: str) -> str:
+    """PEP 503; on the ``*``-and-literal patterns used here it is also
+    ``normalize_distribution_pattern``."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def dist_glob_match(pattern: str, name: str) -> bool:
+    return glob_match(normalize(pattern), name)
+
+
 def config_pattern_matches(
     rule: str, pattern: str, subject: Subject, distribution: str | None
 ) -> bool:
     if subject.kind == "Distribution" and rule in DIST_RULES:
-        return glob_match(pattern, subject.name)
+        return dist_glob_match(pattern, subject.name)
     if subject.kind == "Binary" and rule == "CHK008":
         return glob_match(pattern, subject.name) or (
-            distribution is not None and glob_match(pattern, distribution)
+            distribution is not None and dist_glob_match(pattern, distribution)
         )
     # An Import subject on a dependency rule is matched on the distribution the
     # resolver attached to that import site, never on the module name or path.
     if subject.kind == "Import" and rule in DIST_RULES:
-        return distribution is not None and glob_match(pattern, distribution)
+        return distribution is not None and dist_glob_match(pattern, distribution)
     if subject.kind == "Import":
         return glob_match(pattern, subject.file) or glob_match(pattern, subject.module)
     return False
@@ -76,8 +91,12 @@ def config_pattern_matches(
 CANDIDATES = [
     Candidate("CHK002", Subject("Distribution", name="pyyaml"), "pyyaml"),
     Candidate("CHK005", Subject("Distribution", name="pyyaml"), "pyyaml"),
-    Candidate("CHK003", Subject("Import", module="yaml", file="src/acme/app.py"), "pyyaml"),
-    Candidate("CHK004", Subject("Import", module="yaml", file="src/acme/app.py"), "pyyaml"),
+    Candidate(
+        "CHK003", Subject("Import", module="yaml", file="src/acme/app.py"), "pyyaml"
+    ),
+    Candidate(
+        "CHK004", Subject("Import", module="yaml", file="src/acme/app.py"), "pyyaml"
+    ),
     Candidate(
         "CHK003",
         Subject("Import", module="google.cloud.storage", file="src/acme/app.py"),
@@ -88,7 +107,11 @@ CANDIDATES = [
         Subject("Import", module="google.cloud.storage", file="src/acme/app.py"),
         "google-cloud-storage",
     ),
-    Candidate("CHK003", Subject("Import", module="pkg_resources", file="src/acme/app.py"), "setuptools"),
+    Candidate(
+        "CHK003",
+        Subject("Import", module="pkg_resources", file="src/acme/app.py"),
+        "setuptools",
+    ),
     Candidate("CHK008", Subject("Binary", name="sphinx-build"), "sphinx"),
     Candidate("CHK008", Subject("Binary", name="pytest"), "pytest"),
 ]
@@ -106,10 +129,20 @@ PATTERNS = [
 ]
 
 
+def respellings(pattern: str) -> set[str]:
+    """The pattern with its separators swapped and its case changed."""
+    out = {pattern, pattern.upper(), pattern.title()}
+    for sep in "-_.":
+        out |= {variant.replace("-", sep) for variant in list(out)}
+    return out
+
+
 def main() -> int:
     failures = []
     for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
-        got = config_pattern_matches(cand.rule, pattern, cand.subject, cand.distribution)
+        got = config_pattern_matches(
+            cand.rule, pattern, cand.subject, cand.distribution
+        )
         expected = glob_match(pattern, cand.distribution) or (
             cand.subject.kind == "Binary" and glob_match(pattern, cand.subject.name)
         )
@@ -119,6 +152,28 @@ def main() -> int:
                 f"(module={cand.subject.module!r}, file={cand.subject.file!r}) "
                 f"distribution={cand.distribution!r}: ignored={got} expected={expected}"
             )
+    # I1 holds for every spelling of the pattern (#1106): a respelled
+    # pattern ignores what the normalized one does.
+    for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
+        if "/" in pattern:
+            continue
+        want = config_pattern_matches(
+            cand.rule, pattern, cand.subject, cand.distribution
+        )
+        for variant in respellings(pattern):
+            got = config_pattern_matches(
+                cand.rule, variant, cand.subject, cand.distribution
+            )
+            # Only CHK008's raw binary name may tell spellings apart.
+            raw = cand.subject.kind == "Binary" and (
+                glob_match(pattern, cand.subject.name)
+                != glob_match(variant, cand.subject.name)
+            )
+            if got != want and not raw:
+                failures.append(
+                    f"I1 rule={cand.rule} pattern={variant!r} (spelled as {pattern!r}): "
+                    f"ignored={got} expected={want}"
+                )
     # I1b: with no resolved distribution there is nothing to match, so a
     # dependency-rule candidate is never ignored by a config pattern.
     for cand, pattern in itertools.product(CANDIDATES, PATTERNS):
