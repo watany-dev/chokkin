@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- A workspace member only a pytest `-p` option or the `pytest-*` naming
+  convention uses is no longer a certain CHK002, and the members its tree
+  imports are used through it: the member fixed point now reads the plugin
+  references of config files, as third-party use does, and runs after the
+  config and pytest evidence (#1109).
 - A notebook line that starts with `%`, `!` or `?` inside brackets or a
   multi-line string (`x = (10` then `% 3)`) is read as Python, as `IPython`
   reads it, not as a magic or shell command. The notebook was skipped as a

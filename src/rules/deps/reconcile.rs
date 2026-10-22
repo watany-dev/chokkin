@@ -95,6 +95,12 @@ fn reconcile_project(
     let mut used = collect_used_distributions(context, plugins, &usage);
 
     mark_self_referential_distribution(manifest, &declared, &mut used);
+    for distribution in plugins.config_used_distributions() {
+        used.insert(distribution.clone());
+    }
+    mark_pytest_plugin_distributions(resolution, &declared, &mut used);
+    // Last of the evidence a member can have, so a member only config or
+    // pytest uses still passes its tree's imports on.
     mark_workspace_source_distributions(
         manifest,
         dependency,
@@ -102,11 +108,6 @@ fn reconcile_project(
         workspace_boundaries,
         &mut used,
     );
-
-    for distribution in plugins.config_used_distributions() {
-        used.insert(distribution.clone());
-    }
-    mark_pytest_plugin_distributions(resolution, &declared, &mut used);
 
     mark_companion_distributions(&declared, &mut used);
 

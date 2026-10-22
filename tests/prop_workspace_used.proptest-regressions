@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc accd23d17528018d2e9c2f43248c9104b706a49900c3e78e6a383da24915abc6 # shrinks to spec = Spec { members: [Member { evidence: None, core: [], tests: [] }, Member { evidence: None, core: [], tests: [0] }], order: [0, 1] }
+cc 9f2173eb5a3e70f7947ce53381cf07b9c6e6097244c16ed8c26a73354386709d # shrinks to spec = Spec { members: [Member { evidence: None, core: [], tests: [] }, Member { evidence: PytestPlugin, core: [], tests: [] }], order: [0, 1] }

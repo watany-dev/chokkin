@@ -734,3 +734,425 @@ fn retain_existing_root(
     });
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::config::default_config;
+    use crate::discovery::{ProjectRoot, RootMarker};
+    use crate::manifest::{
+        DependencyOrigin, EntryPointDecl, LockfileGraph, ManifestSources, ProjectMetadata,
+    };
+    use crate::parser::{ParseSummary, ParsedModule};
+    use crate::sources::{DiscoveredFile, FileKind, LayoutInfo, MemberLayout};
+
+    use super::super::main_block::add_main_block_roots;
+
+    const SHALLOW: &[&str] = &[
+        "main.py",
+        "app.py",
+        "manage.py",
+        "asgi.py",
+        "wsgi.py",
+        "noxfile.py",
+    ];
+    const NAMES: &[&str] = &[
+        "main.py",
+        "app.py",
+        "manage.py",
+        "asgi.py",
+        "wsgi.py",
+        "noxfile.py",
+        "__main__.py",
+        "conftest.py",
+        "setup.py",
+        "conf.py",
+        "env.py",
+        "tool.py",
+        NOTEBOOK,
+    ];
+    const NOTEBOOK: &str = "nb.ipynb";
+    /// `PKG` is the root package's directory; `svc` is a workspace member
+    /// with a src layout and package `svc_pkg`.
+    const PLACES: &[&str] = &[
+        "",
+        "PKG/",
+        "PKG/sub/",
+        "scripts/",
+        "scripts/deep/",
+        ".github/scripts/",
+        "examples/",
+        "examples/deep/",
+        "docs/",
+        "alembic/",
+        "tests/",
+        "other/",
+        "svc/",
+        "svc/examples/",
+        "svc/docs/",
+        "svc/scripts/",
+        "svc/src/svc_pkg/",
+    ];
+
+    fn empty_manifest() -> LoadedManifest {
+        LoadedManifest {
+            root: ProjectRoot {
+                path: std::env::temp_dir().join("chokkin-entry-model"),
+                marker: RootMarker::PyProjectToml,
+            },
+            metadata: ProjectMetadata::default(),
+            dependencies: Vec::new(),
+            constraints: Vec::new(),
+            uv: crate::manifest::UvToolSettings::default(),
+            uv_workspace: None,
+            entry_points: Vec::new(),
+            lockfile: LockfileGraph::default(),
+            sources: ManifestSources::default(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn layout(src: bool) -> LayoutInfo {
+        LayoutInfo {
+            members: vec![MemberLayout {
+                path: "svc".to_owned(),
+                layout: LayoutInfo::new("src", vec!["svc_pkg".to_owned()]),
+            }],
+            ..LayoutInfo::new(if src { "src" } else { "" }, vec!["acme".to_owned()])
+        }
+    }
+
+    fn sources(layout: LayoutInfo, paths: &[String]) -> DiscoveredSources {
+        DiscoveredSources {
+            root: ProjectRoot {
+                path: std::env::temp_dir().join("chokkin-entry-model"),
+                marker: RootMarker::PyProjectToml,
+            },
+            layout,
+            effective_globs: Vec::new(),
+            files: paths
+                .iter()
+                .map(|path| DiscoveredFile {
+                    path: path.clone(),
+                    kind: if path.ends_with(NOTEBOOK) {
+                        FileKind::Notebook
+                    } else {
+                        FileKind::Python
+                    },
+                    context: assign_file_context(path),
+                })
+                .collect(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn roots(plan: &EntryPlan) -> Roots {
+        plan.roots
+            .iter()
+            .map(|root| (root.path.clone(), (root.context, root.symbols.clone())))
+            .collect()
+    }
+
+    /// The §8 path rules for one file, written from the spec's list: the
+    /// contexts of the rules that make it a root, in the order they apply.
+    fn path_rule_contexts(path: &str, package: &str, main_block: bool) -> Vec<FileContext> {
+        let context = assign_file_context(path);
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let python = name != NOTEBOOK;
+        // Path below the member, or below the root outside any member.
+        let (rest, member_package) = path
+            .strip_prefix("svc/")
+            .map_or((path, package), |rest| (rest, "src/svc_pkg"));
+        let in_member = rest.len() != path.len();
+        let top = rest.split_once('/').map(|(top, _)| top);
+        let in_package = rest.starts_with(&format!("{member_package}/"));
+        let mut contexts = Vec::new();
+        let auto = if name == "setup.py" && rest == "setup.py" {
+            Some(FileContext::Dev)
+        } else if ["__main__.py", "conftest.py"].contains(&name)
+            || (SHALLOW.contains(&name)
+                && (!path.contains('/') || path == format!("{package}/{name}")))
+            || ["docs/conf.py", "alembic/env.py"].contains(&path)
+            || (matches!(top, Some("examples" | "docs")) && !in_package)
+            || (!in_member && matches!(top, Some("scripts" | ".github")) && python)
+            || name == NOTEBOOK
+        {
+            Some(context)
+        } else {
+            None
+        };
+        contexts.extend(auto);
+        if main_block && python {
+            contexts.push(context);
+        }
+        contexts
+    }
+
+    /// §8 entry roots from file paths alone (#1109): the name and place
+    /// rules, notebooks, `__main__` blocks and a library's packages, for
+    /// every place × name × layout × mode, with and without `--production`.
+    /// A root merged from several rules is runtime when any rule is.
+    #[test]
+    fn path_roots_follow_the_spec_table() {
+        let mut checked = 0;
+        let flags = [ProjectMode::App, ProjectMode::Library]
+            .into_iter()
+            .flat_map(|mode| {
+                [(false, false), (false, true), (true, false), (true, true)]
+                    .map(|(main_block, production)| (mode, main_block, production))
+            });
+        let flags: Vec<_> = flags.collect();
+        for src in [false, true] {
+            for place in PLACES {
+                for name in NAMES {
+                    for &(mode, main_block, production) in &flags {
+                        check_path_case(src, place, name, (mode, main_block, production));
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 2 * PLACES.len() * NAMES.len() * 8);
+    }
+
+    fn check_path_case(
+        src: bool,
+        place: &str,
+        name: &str,
+        (mode, main_block, production): (ProjectMode, bool, bool),
+    ) {
+        let package = if src { "src/acme" } else { "acme" };
+        let init = format!("{package}/__init__.py");
+        let path = format!("{}{name}", place.replace("PKG", package));
+        let sources = sources(layout(src), &[init.clone(), path.clone()]);
+        let mut config = default_config();
+        config.mode = mode;
+        let mut plan = build_entry_roots(
+            &config,
+            &empty_manifest(),
+            &sources,
+            &[],
+            &PluginHints::default(),
+            production,
+        );
+        let parse = ParseSummary {
+            modules: vec![ParsedModule {
+                path: path.clone(),
+                has_main_block: main_block && !path.ends_with(NOTEBOOK),
+                ..ParsedModule::default()
+            }],
+        };
+        add_main_block_roots(&mut plan, &parse, &sources.files, production);
+
+        let mut expected = Roots::new();
+        let contexts = path_rule_contexts(&path, package, main_block);
+        for context in contexts
+            .into_iter()
+            .filter(|context| !production || context.is_included_in_production())
+        {
+            merge(&mut expected, &path, context, BTreeSet::new());
+        }
+        if mode == ProjectMode::Library {
+            merge(&mut expected, &init, FileContext::Runtime, BTreeSet::new());
+        }
+        assert_eq!(
+            roots(&plan),
+            expected,
+            "{path} ({mode:?}, main block {main_block}, production {production})"
+        );
+    }
+
+    /// Files a target module may name, under the root package dir, `src/`,
+    /// the root, and the member's `src/`.
+    const MODULE_FILES: &[&str] = &[
+        "acme/cli.py",
+        "acme/cli/__init__.py",
+        "acme/cli/__main__.py",
+        "src/acme/cli.py",
+        "src/acme/cli/__init__.py",
+        "src/acme/cli/__main__.py",
+        "svc/src/acme/cli.py",
+    ];
+
+    /// The file `CPython` would import `module` from when the bases are on
+    /// `sys.path` in order, written as a path → module name map: the lowest
+    /// base wins, and in one base the module file before the package.
+    fn module_file<'a>(module: &str, src: bool, files: &[&'a str]) -> Option<&'a str> {
+        let bases: &[&str] = if src {
+            &["src", "", "svc/src", "svc"]
+        } else {
+            &["", "svc/src", "svc"]
+        };
+        files
+            .iter()
+            .flat_map(|file| {
+                bases.iter().enumerate().filter_map(move |(rank, base)| {
+                    let rest = if base.is_empty() {
+                        *file
+                    } else {
+                        file.strip_prefix(*base)?.strip_prefix('/')?
+                    };
+                    let (name, kind) = rest
+                        .strip_suffix("/__init__.py")
+                        .map(|name| (name, 1))
+                        .or_else(|| rest.strip_suffix(".py").map(|name| (name, 0)))?;
+                    (name.replace('/', ".") == module).then_some(((rank, kind), *file))
+                })
+            })
+            .min()
+            .map(|(_, file)| file)
+    }
+
+    type Roots = BTreeMap<String, (FileContext, BTreeSet<String>)>;
+
+    /// The `__main__.py` files, which are roots at any depth.
+    fn main_files(files: &[&str], production: bool) -> Roots {
+        files
+            .iter()
+            .filter(|file| file.ends_with("/__main__.py"))
+            .map(|file| {
+                (
+                    (*file).to_owned(),
+                    (assign_file_context(file), BTreeSet::new()),
+                )
+            })
+            .filter(|(_, (context, _))| !production || context.is_included_in_production())
+            .collect()
+    }
+
+    /// One more rule rooting `file`: the symbols join, and the root is
+    /// runtime when either is.
+    fn merge(roots: &mut Roots, file: &str, context: FileContext, symbols: BTreeSet<String>) {
+        let slot = roots
+            .entry(file.to_owned())
+            .or_insert((context, BTreeSet::new()));
+        if context == FileContext::Runtime {
+            slot.0 = context;
+        }
+        slot.1.extend(symbols);
+    }
+
+    /// §8 manifest entry points and `python -m` targets (#872, #912): the
+    /// root is the file the target names, as [`module_file`] maps it, with
+    /// the object after `:` as its symbol; a target naming no file roots
+    /// nothing and warns. `-m` runs a package's `__main__`; a dev command's
+    /// target is dev, a deploy command's keeps the file's context.
+    #[test]
+    fn module_targets_follow_the_module_names() {
+        let mut checked = 0;
+        for subset in 0..(1_u32 << MODULE_FILES.len()) {
+            let files: Vec<&str> = MODULE_FILES
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| subset & (1 << bit) != 0)
+                .map(|(_, file)| *file)
+                .collect();
+            for (src, production) in [(false, false), (false, true), (true, false), (true, true)] {
+                for target in ["acme.cli:main", "acme.cli:Obj.attr", "acme.cli"] {
+                    for group in ["console", "gui"] {
+                        check_entry_point(&files, src, production, target, group);
+                        checked += 1;
+                    }
+                }
+                for deploy in [false, true] {
+                    check_run_module(&files, src, production, deploy);
+                    checked += 1;
+                }
+            }
+        }
+        assert_eq!(checked, (1 << MODULE_FILES.len()) * 4 * (3 * 2 + 2));
+    }
+
+    fn app_plan(
+        manifest: &LoadedManifest,
+        sources: &DiscoveredSources,
+        plugins: &PluginHints,
+        production: bool,
+    ) -> EntryPlan {
+        let mut config = default_config();
+        config.mode = ProjectMode::App;
+        build_entry_roots(&config, manifest, sources, &[], plugins, production)
+    }
+
+    fn check_entry_point(files: &[&str], src: bool, production: bool, target: &str, group: &str) {
+        let paths: Vec<String> = files.iter().map(|file| (*file).to_owned()).collect();
+        let mut manifest = empty_manifest();
+        manifest.entry_points.push(EntryPointDecl {
+            name: "acme".to_owned(),
+            target: target.to_owned(),
+            group: group.to_owned(),
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: format!("project.scripts.acme ({group})"),
+            },
+        });
+        let plan = app_plan(
+            &manifest,
+            &sources(layout(src), &paths),
+            &PluginHints::default(),
+            production,
+        );
+        let symbol: BTreeSet<String> = target
+            .split_once(':')
+            .map(|(_, symbol)| symbol.to_owned())
+            .into_iter()
+            .collect();
+        let file = module_file("acme.cli", src, files);
+        let mut expected = main_files(files, production);
+        if let Some(file) = file {
+            merge(&mut expected, file, FileContext::Runtime, symbol);
+        }
+        let case = format!("{target} ({group}) over {files:?}, src {src}");
+        assert_eq!(roots(&plan), expected, "{case}");
+        let unmapped = plan
+            .warnings
+            .iter()
+            .any(|warning| matches!(warning, EntryWarning::UnresolvedModuleTarget { .. }));
+        assert_eq!(unmapped, file.is_none(), "{case}");
+    }
+
+    fn check_run_module(files: &[&str], src: bool, production: bool, deploy: bool) {
+        let paths: Vec<String> = files.iter().map(|file| (*file).to_owned()).collect();
+        let plugins = PluginHints {
+            config_command_targets: vec![CommandTargetRef {
+                target: CommandTarget::Run {
+                    module: "acme.cli".to_owned(),
+                },
+                origin: ReferenceOrigin {
+                    file: "Makefile".to_owned(),
+                    line: Some(1),
+                    label: "python -m acme.cli".to_owned(),
+                },
+                deploy,
+            }],
+            ..PluginHints::default()
+        };
+        let plan = app_plan(
+            &empty_manifest(),
+            &sources(layout(src), &paths),
+            &plugins,
+            production,
+        );
+        let file = module_file("acme.cli.__main__", src, files)
+            .or_else(|| module_file("acme.cli", src, files));
+        let mut expected = main_files(files, production);
+        if let Some(file) = file {
+            let context = if deploy {
+                assign_file_context(file)
+            } else {
+                FileContext::Dev
+            };
+            if !production || context.is_included_in_production() {
+                merge(&mut expected, file, context, BTreeSet::new());
+            }
+        }
+        assert_eq!(
+            roots(&plan),
+            expected,
+            "-m acme.cli (deploy {deploy}) over {files:?}, src {src}"
+        );
+    }
+}

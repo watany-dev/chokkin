@@ -136,7 +136,7 @@ test-scripts:
 TLA2TOOLS ?= tla2tools.jar
 
 formal:
-	@status=0; for m in relative_import_model deps_rules_z3 exit_status_z3 ignore_model; do \
+	@status=0; for m in relative_import_model import_precedence_model deps_rules_z3 exit_status_z3 ignore_model; do \
 		python3 docs/dev/formal/$$m.py || status=1; \
 	done; exit $$status
 
