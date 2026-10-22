@@ -157,7 +157,8 @@ Distribution は distribution 系ルールだけ、Symbol は CHK006/007 だけ�
    固定点反復との差分テスト）と、CHK010 の集約 × inline ignore の参照モデル
    （`tests/prop_unresolved.rs`）を足した。ignore の glob には
    `src/rules/ignore.rs` に参照モデルがあるので、残りは star import 以外の
-   CHK006/007 判定の参照モデル。
+   CHK006/007 判定の参照モデル。#1103 で、名前集合で書いた参照モデルとの
+   end-to-end の差分テスト（`tests/prop_symbols.rs`）を足した。
 2. **`build_summary` と CHK008 の出力を見ているテストがない**。
    どちらも P1 で、小さな unit test で kill できるため、Phase B より先に単発で埋めてよい。
 3. 等価ミュータント 7 件のうち 6 件は「subject の種類 ↔ ルール」の不変条件から来ている。
