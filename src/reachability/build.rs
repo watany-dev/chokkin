@@ -782,23 +782,25 @@ mod tests {
                 OrphanPlace::MemberOfApp,
                 OrphanPlace::MemberOfLibrary,
             ];
+            let ships = surfaces
+                .into_iter()
+                .flat_map(|root| surfaces.map(|member| (root, member)));
+            let switches = flags.into_iter().flat_map(|opaque| {
+                flags
+                    .into_iter()
+                    .flat_map(move |shim| flags.map(|strict| (opaque, shim, strict)))
+            });
             for place in places {
-                for root_ships in surfaces {
-                    for member_ships in surfaces {
-                        for opaque in flags {
-                            for shim in flags {
-                                for strict in flags {
-                                    cases.push(Self {
-                                        place,
-                                        root_ships,
-                                        member_ships,
-                                        opaque,
-                                        shim,
-                                        strict,
-                                    });
-                                }
-                            }
-                        }
+                for (root_ships, member_ships) in ships.clone() {
+                    for (opaque, shim, strict) in switches.clone() {
+                        cases.push(Self {
+                            place,
+                            root_ships,
+                            member_ships,
+                            opaque,
+                            shim,
+                            strict,
+                        });
                     }
                 }
             }

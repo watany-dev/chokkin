@@ -780,9 +780,9 @@ mod tests {
                             .chain(passed)
                             .filter(|&(name, _)| hands_on(target, name) && !defines.contains(name))
                             .collect();
-                        for pair in handed {
-                            changed |= got[index].insert(pair);
-                        }
+                        let before = got[index].len();
+                        got[index].extend(handed);
+                        changed |= got[index].len() != before;
                     }
                 }
                 if !changed {
