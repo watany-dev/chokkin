@@ -572,7 +572,7 @@ def finding_diff(base: Path, head: Path, slugs: list[str]) -> tuple[list[list[st
             # Findings whose level did not move cancel out; what is left pairs
             # up as CHANGED and the surplus on either side is GONE or NEW.
             old, new = sorted((b - a).elements()), sorted((a - b).elements())
-            pairs = [("CHANGED", o, n) for o, n in zip(old, new)]
+            pairs = [("CHANGED", o, n) for o, n in zip(old, new, strict=False)]
             pairs += [("GONE", o, "-") for o in old[len(new):]] + [("NEW", "-", n) for n in new[len(old):]]
             rows += [[status, slug, code, tsv_field(fp), o, n] for status, o, n in pairs]
     return rows, skipped

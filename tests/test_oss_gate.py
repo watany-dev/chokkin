@@ -70,7 +70,7 @@ class JudgeTest(unittest.TestCase):
         self.assertNotIn("issues", res)
 
     def test_exit_2_with_no_output_on_every_run_is_a_rejection(self) -> None:
-        res = gate.judge({v: (2, b"") for v in gate.VARIANTS}, NoErrors())
+        res = gate.judge(dict.fromkeys(gate.VARIANTS, (2, b"")), NoErrors())
         self.assertTrue(res["rejected"])
         res = gate.judge({"cold": (2, b""), "warm": (2, b""), "nocache": (0, report([]))}, NoErrors())
         self.assertFalse(res["rejected"])
@@ -124,7 +124,7 @@ class SchemaTest(unittest.TestCase):
             "suppressed": {"baseline": 0},
         }
         out = json.dumps(report).encode()
-        res = gate.judge({v: (0, out) for v in gate.VARIANTS}, self.validator)
+        res = gate.judge(dict.fromkeys(gate.VARIANTS, (0, out)), self.validator)
         self.assertEqual(res["schema_errors"], [])
 
         del report["mode"]

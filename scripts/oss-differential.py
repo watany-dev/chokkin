@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import json
 import re
 import shutil
@@ -184,10 +185,8 @@ def run_tool(cmd: list[str], cwd: Path, log: Path) -> str:
 def rel_path(proj: Path, path: str) -> str:
     p = Path(path)
     if p.is_absolute():
-        try:
+        with contextlib.suppress(ValueError):
             p = p.relative_to(proj)
-        except ValueError:
-            pass
     return p.as_posix().removeprefix("./")
 
 

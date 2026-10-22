@@ -3,11 +3,13 @@ CARGO_DENY_VERSION          ?= 0.19.2
 CARGO_LLVM_COV_VERSION      ?= 0.9.1
 CARGO_MUTANTS_VERSION       ?= 27.1.0
 CARGO_NEXTEST_VERSION       ?= 0.9.133
+RUFF_VERSION                ?= 0.16.10
+SHELLCHECK_PY_VERSION       ?= 0.11.0.1
 
-.PHONY: check build test lint fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist sdist-smoke tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts pbt-deep formal tlc mutants mutants-diff kani help
+.PHONY: check build test lint lint-scripts fmt fmt-check doc deny machete coverage wheel wheel-smoke sdist sdist-smoke tools bench bench-save bench-cmp oss-fixtures oss-clones oss-metrics oss-gate oss-envs oss-oracle oss-diff oss-mutation bench-gate check-generated test-scripts pbt-deep formal tlc mutants mutants-diff kani help
 
 ## ─── Pre-commit gate ──────────────────────────────────────────────────────────
-check: fmt-check lint test deny machete
+check: fmt-check lint lint-scripts test deny machete
 
 ## ─── Core ─────────────────────────────────────────────────────────────────────
 build:
@@ -27,6 +29,16 @@ fmt-check:
 
 doc:
 	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+
+# lint-scripts: ruff (ruff.toml) over the Python helpers and shellcheck over
+#               scripts/*.sh, through uvx. CI installs the same versions with
+#               pip and passes RUFF=ruff SHELLCHECK=shellcheck.
+RUFF       ?= uvx ruff@$(RUFF_VERSION)
+SHELLCHECK ?= uvx --from shellcheck-py==$(SHELLCHECK_PY_VERSION) shellcheck
+
+lint-scripts:
+	$(RUFF) check .
+	$(SHELLCHECK) scripts/*.sh
 
 ## ─── Property-based tests (#861) ─────────────────────────────────────────────
 # pbt-deep: every proptest block at PBT_CASES / 256 times its usual cases

@@ -119,7 +119,7 @@ def path_to_module(path: str, layout: Layout) -> str | None:
     if not path.endswith(".py"):
         return None
     stem = path[: -len(".py")]
-    module_path = stem[: -len("/__init__")] if stem.endswith("/__init__") else stem
+    module_path = stem.removesuffix("/__init__")
     if layout.kind == "Src":
         if module_path.startswith("src/"):
             return module_path[len("src/") :].replace("/", ".")
@@ -186,7 +186,7 @@ PATHS = [
     "main.py",
 ]
 
-LEVELS = range(0, 5)
+LEVELS = range(5)
 SUFFIXES = [None, "", "models", "models.user"]
 NAMES = [None, "thing"]
 
