@@ -944,10 +944,12 @@ fn include_group_is_checked_once_under_its_declaring_group() {
         .filter(|dep| dep.name == "boto3")
         .collect::<Vec<_>>();
     assert_eq!(boto3.len(), 1);
-    assert_eq!(
-        boto3[0].included_via,
-        vec![vec!["server".to_owned(), "Shared_Libs".to_owned()]]
-    );
+    let includes = boto3[0]
+        .included_via
+        .iter()
+        .map(|include| (include.group.as_str(), include.via.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(includes, [("server", "Shared_Libs")]);
 
     let report = reconcile_fixture("include_group");
     // httpx is only declared in a group, but `server` pulls it into runtime.

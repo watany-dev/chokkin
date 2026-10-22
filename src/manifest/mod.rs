@@ -27,6 +27,7 @@ mod uv_tool;
 mod warnings;
 mod wheel;
 
+pub(crate) use dependency_groups::include_chains;
 pub use error::ManifestError;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub(crate) use extract::{infer_target_version_from_requires_python, requires_python_max_minor};
@@ -55,6 +56,6 @@ pub(crate) use types::{
 };
 pub use types::{DependencyContext, DependencyOrigin, ExtrasState, LoadedManifest, LockfileKind};
 #[cfg(test)]
-pub(crate) use types::{EntryPointDecl, LockfileSource, UvSource};
+pub(crate) use types::{EntryPointDecl, GroupInclude, LockfileSource, UvSource};
 pub(crate) use uv_tool::source_entries as uv_source_entries;
 pub use warnings::ManifestWarning;

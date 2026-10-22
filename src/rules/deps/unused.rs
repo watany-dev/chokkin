@@ -392,7 +392,10 @@ mod tests {
     fn reports_group_included_by_runtime_group_with_include_path() {
         let config = default_config();
         let mut shared = dep(DependencyContext::Group("shared".to_owned()));
-        shared.included_via = vec![vec!["server".to_owned(), "shared".to_owned()]];
+        shared.included_via = vec![crate::manifest::GroupInclude {
+            group: "server".to_owned(),
+            via: "shared".to_owned(),
+        }];
         let candidates = detect_unused_dependencies(
             &[&shared],
             &indexmap::IndexSet::new(),
@@ -415,7 +418,10 @@ mod tests {
     fn suppresses_group_included_only_by_dev_groups() {
         let config = default_config();
         let mut test_dep = dep(DependencyContext::Group("test".to_owned()));
-        test_dep.included_via = vec![vec!["dev".to_owned(), "test".to_owned()]];
+        test_dep.included_via = vec![crate::manifest::GroupInclude {
+            group: "dev".to_owned(),
+            via: "test".to_owned(),
+        }];
         let candidates = detect_unused_dependencies(
             &[&test_dep],
             &indexmap::IndexSet::new(),
