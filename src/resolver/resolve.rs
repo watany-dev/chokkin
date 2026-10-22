@@ -1,6 +1,7 @@
 //! Import resolution orchestration.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
 use crate::graph::ModuleOrigin;
@@ -120,13 +121,13 @@ pub fn resolve_imports_for_analysis(
         } else {
             merge.replay(site.warnings, &mut warnings);
         }
-        imports.push(site.import);
+        imports.push(Arc::new(site.import));
     }
 
     let mut cache = RootCache::new();
     for reference in plugin_refs {
         let mut log = Vec::new();
-        imports.push(resolver.site(
+        imports.push(Arc::new(resolver.site(
             &Site {
                 full_module: &reference.module,
                 imported: &reference.module,
@@ -142,7 +143,7 @@ pub fn resolve_imports_for_analysis(
             },
             &mut cache,
             &mut log,
-        ));
+        )));
         merge.replay(log, &mut warnings);
     }
 

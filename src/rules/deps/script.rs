@@ -305,6 +305,8 @@ fn unused_in_script(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::manifest::{DeclaredDependency, DependencyContext, DependencyOrigin};
     use crate::parser::ImportContext;
@@ -360,7 +362,10 @@ mod tests {
             invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
-            imports: vec![import("rich", "rich", 7), import("yaml", "pyyaml", 8)],
+            imports: vec![import("rich", "rich", 7), import("yaml", "pyyaml", 8)]
+                .into_iter()
+                .map(Arc::new)
+                .collect(),
             ..ResolutionIndex::default()
         };
         let reachable = HashSet::from(["scripts/tool.py"]);
@@ -402,7 +407,7 @@ mod tests {
             invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
-            imports,
+            imports: imports.into_iter().map(Arc::new).collect(),
             ..ResolutionIndex::default()
         };
         detect_script_dependency_issues(
@@ -514,7 +519,10 @@ mod tests {
             invalid_requirements: Vec::new(),
         };
         let resolution = ResolutionIndex {
-            imports: vec![import("yaml", "pyyaml", 8)],
+            imports: vec![import("yaml", "pyyaml", 8)]
+                .into_iter()
+                .map(Arc::new)
+                .collect(),
             ..ResolutionIndex::default()
         };
         let parse = ParseSummary {
@@ -613,7 +621,10 @@ mod tests {
                 import("common_utils", "common-utils", 5),
                 import("helpers", "helpers", 6),
                 import("common", "common", 7),
-            ],
+            ]
+            .into_iter()
+            .map(Arc::new)
+            .collect(),
             ..ResolutionIndex::default()
         };
         let files: Vec<DiscoveredFile> = [
@@ -694,7 +705,10 @@ mod tests {
                 own_project,
                 project_package,
                 helper_import,
-            ],
+            ]
+            .into_iter()
+            .map(Arc::new)
+            .collect(),
             ..ResolutionIndex::default()
         };
         let files: Vec<DiscoveredFile> = ["scripts/tool.py", "scripts/common_utils.py"]
@@ -754,7 +768,10 @@ mod tests {
                 at("helpers_extra.py", "httpx", "httpx"),
                 at("scripts/run.py", "helpers", "helpers"),
                 at("scripts/run.py", "rich", "rich"),
-            ],
+            ]
+            .into_iter()
+            .map(Arc::new)
+            .collect(),
             ..ResolutionIndex::default()
         };
         let files: Vec<DiscoveredFile> = [

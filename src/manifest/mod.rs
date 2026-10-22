@@ -27,6 +27,7 @@ mod uv_tool;
 mod warnings;
 mod wheel;
 
+pub(crate) use dependency_groups::include_chains;
 pub use error::ManifestError;
 pub use extract::{extract_manifest, extract_manifest_with_cache, resolve_target_version};
 pub(crate) use extract::{infer_target_version_from_requires_python, requires_python_max_minor};
@@ -49,6 +50,8 @@ pub(crate) use script::{InlineScript, inline_script_target};
 pub(crate) use setup_cfg::{IniLine, ini_lines};
 pub(crate) use setup_py::builds_distribution;
 pub(crate) use setuptools_reqs::setuptools_requirement_items;
+#[cfg(any(test, kani))]
+pub(crate) use types::GroupInclude;
 pub(crate) use types::{
     DeclaredDependency, LockfileGraph, ManifestSources, PackageFind, ProjectMetadata, UvSourceKind,
     UvToolSettings, WheelTargets,

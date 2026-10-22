@@ -212,11 +212,15 @@ fn without_build_environment_imports(
             .zip(import.distribution.as_ref())
             .is_some_and(|(requires, distribution)| requires.contains(distribution))
     };
-    resolution.imports.iter().any(provided).then(|| {
-        let mut resolution = resolution.clone();
-        resolution.imports.retain(|import| !provided(import));
-        resolution
-    })
+    resolution
+        .imports
+        .iter()
+        .any(|import| provided(import))
+        .then(|| {
+            let mut resolution = resolution.clone();
+            resolution.imports.retain(|import| !provided(import));
+            resolution
+        })
 }
 
 /// `(file, group)` of each dependency group that declares a
@@ -300,6 +304,8 @@ fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSe
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::graph::ProjectGraph;
@@ -376,7 +382,7 @@ mod tests {
         let mut reachability = ReachabilityReport::default();
         reachability.reachable.insert(file_id);
         let mut resolution = ResolutionIndex::default();
-        resolution.imports.push(crate::resolver::ResolvedImport {
+        resolution.imports.push(Arc::new(ResolvedImport {
             import_root: "requests".to_owned(),
             full_module: "requests".to_owned(),
             file: "src/app.py".to_owned(),
@@ -389,7 +395,7 @@ mod tests {
             origin: crate::graph::ModuleOrigin::ThirdParty,
             distribution: Some("requests".to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,
-        });
+        }));
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),
@@ -592,7 +598,7 @@ mod tests {
         let mut reachability = ReachabilityReport::default();
         reachability.reachable.insert(file_id);
         let mut resolution = ResolutionIndex::default();
-        resolution.imports.push(crate::resolver::ResolvedImport {
+        resolution.imports.push(Arc::new(ResolvedImport {
             import_root: "yaml".to_owned(),
             full_module: "yaml".to_owned(),
             file: "src/app.py".to_owned(),
@@ -605,7 +611,7 @@ mod tests {
             origin: crate::graph::ModuleOrigin::ThirdParty,
             distribution: Some("pyyaml".to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,
-        });
+        }));
         let plugins = PluginHints {
             contributions: Vec::new(),
             config_binary_usages: Vec::new(),

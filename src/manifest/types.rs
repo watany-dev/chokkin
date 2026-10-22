@@ -25,7 +25,7 @@ pub enum DependencyContext {
 }
 
 /// Declaration location for reports, `--explain`, and fix.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DependencyOrigin {
     /// Root-relative path, e.g. `pyproject.toml`.
     pub file: String,
@@ -33,6 +33,20 @@ pub struct DependencyOrigin {
     pub line: Option<u32>,
     /// TOML key path or requirements file context.
     pub label: String,
+}
+
+/// A group that includes a group requirement's declaring group. Only the
+/// next hop of each chain is kept, so `n` groups including each other in a
+/// line cost `O(n^2)` entries rather than `O(n^3)` names (#1046);
+/// `include_chains` spells the chains out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupInclude {
+    /// The including group, as written.
+    pub group: String,
+    /// The group it includes next on its shortest chain: the declaring group
+    /// for a direct include, otherwise the `group` of another entry of the
+    /// same `included_via`.
+    pub via: String,
 }
 
 /// A declared third-party or path dependency from manifest sources.
@@ -52,10 +66,10 @@ pub struct DeclaredDependency {
     pub origin: DependencyOrigin,
     /// URL / VCS without extractable distribution name.
     pub opaque: bool,
-    /// PEP 735 `include-group` chains that pull this group requirement into
-    /// other groups, each ordered from the including group to the declaring one.
+    /// Groups that pull this group requirement in through PEP 735
+    /// `include-group`, directly or through other groups.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub included_via: Vec<Vec<String>>,
+    pub included_via: Vec<GroupInclude>,
     /// A key of the declaration's table that a PEP 508 requirement cannot
     /// carry (Poetry `git`, `path`, `url`, `source`, ...), so `--fix` does
     /// not rewrite the declaration as one (#1041).

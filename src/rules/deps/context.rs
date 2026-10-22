@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use crate::config::{ChokkinConfig, DependencyGroupsConfig};
-use crate::manifest::{DeclaredDependency, DependencyContext};
+use crate::manifest::{DeclaredDependency, DependencyContext, include_chains};
 use crate::parser::ImportContext;
 use crate::sources::{DiscoveredSources, FileContext, assign_layout_file_context};
 
@@ -88,8 +88,7 @@ pub(crate) fn declaration_buckets(
     buckets.extend(
         dep.included_via
             .iter()
-            .filter_map(|chain| chain.first())
-            .map(|includer| group_bucket(includer, groups)),
+            .map(|include| group_bucket(&include.group, groups)),
     );
     buckets
 }
@@ -97,8 +96,8 @@ pub(crate) fn declaration_buckets(
 /// `--explain` lines naming the include chains behind a group declaration.
 #[must_use]
 pub(super) fn include_path_details(dep: &DeclaredDependency) -> Vec<String> {
-    dep.included_via
-        .iter()
+    include_chains(&dep.included_via)
+        .into_iter()
         .map(|chain| format!("included via dependency-groups: {}", chain.join(" -> ")))
         .collect()
 }
@@ -114,8 +113,7 @@ fn declaration_matches_usage(
         || dep
             .included_via
             .iter()
-            .filter_map(|chain| chain.first())
-            .any(|includer| bucket_matches_usage(&group_bucket(includer, groups), usage))
+            .any(|include| bucket_matches_usage(&group_bucket(&include.group, groups), usage))
 }
 
 fn bucket_matches_usage(bucket: &DeclarationBucket, usage: UsageContext) -> bool {
@@ -300,7 +298,12 @@ mod verification {
             opaque: false,
             unportable_key: None,
             included_via: includer
-                .map(|(name, _)| vec![vec![name.to_owned(), "inner".to_owned()]])
+                .map(|(name, _)| {
+                    vec![crate::manifest::GroupInclude {
+                        group: name.to_owned(),
+                        via: "inner".to_owned(),
+                    }]
+                })
                 .unwrap_or_default(),
         };
         let usage = any_usage();
@@ -394,7 +397,10 @@ mod tests {
             UsageContext::Test,
             &config
         ));
-        typing_dep.included_via = vec![vec!["dev".to_owned(), "typing".to_owned()]];
+        typing_dep.included_via = vec![crate::manifest::GroupInclude {
+            group: "dev".to_owned(),
+            via: "typing".to_owned(),
+        }];
         assert!(is_directly_declared(
             &[&typing_dep],
             UsageContext::Test,
@@ -406,7 +412,10 @@ mod tests {
     fn runtime_usage_accepts_group_included_by_runtime_group() {
         let config = default_config();
         let mut shared = dep(DependencyContext::Group("shared".to_owned()));
-        shared.included_via = vec![vec!["server".to_owned(), "shared".to_owned()]];
+        shared.included_via = vec![crate::manifest::GroupInclude {
+            group: "server".to_owned(),
+            via: "shared".to_owned(),
+        }];
         assert!(is_directly_declared(
             &[&shared],
             UsageContext::Runtime,

@@ -521,6 +521,8 @@ pub(super) fn collect_optional_imports(parse: &ParseSummary) -> HashSet<(String,
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use std::collections::BTreeMap;
 
     use super::*;
@@ -625,7 +627,7 @@ mod tests {
         let config = default_config();
         let sources = sources();
         let resolution = ResolutionIndex {
-            imports: vec![import],
+            imports: vec![Arc::new(import)],
             warnings: Vec::new(),
             transitive: lockfile.unwrap_or_default(),
             binary_resolutions: BTreeMap::new(),
@@ -656,7 +658,7 @@ mod tests {
     }
 
     /// Parse output carrying each import's `optional` / `platform_guarded` flags.
-    fn parse_for(imports: &[ResolvedImport]) -> ParseSummary {
+    fn parse_for(imports: &[Arc<ResolvedImport>]) -> ParseSummary {
         let imports = imports
             .iter()
             .map(|import| crate::parser::ImportRef {

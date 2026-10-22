@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::config::{Confidence, DependencyGroupsConfig, PluginId, TargetVersion};
 use crate::entry::{ModuleIndex, beside_origin, resolve_module_to_path};
@@ -803,7 +804,7 @@ fn is_under(path: &str, dir: &str) -> bool {
 /// One gap per unread path source directory, and one per distribution a file
 /// under one imports, at its first import: an entry of the source may run
 /// any file under it, reached from the root or not.
-fn path_source_gaps(imports: &[ResolvedImport], dirs: &[String]) -> Vec<Gap> {
+fn path_source_gaps(imports: &[Arc<ResolvedImport>], dirs: &[String]) -> Vec<Gap> {
     let mut first: BTreeMap<&str, (&str, Option<u32>)> = BTreeMap::new();
     for import in imports {
         let Some(distribution) = import.distribution.as_deref() else {
@@ -1428,7 +1429,8 @@ mod tests {
             import(Some("click"), "sub2/a.py", Some(1)),
             import(Some("rich"), "sub2/a.py", Some(1)),
             import(None, "sub/a.py", Some(1)),
-        ];
+        ]
+        .map(Arc::new);
         let sites: Vec<_> = path_source_gaps(&imports, &["sub".to_owned()])
             .into_iter()
             .map(|gap| (gap.kind, gap.file, gap.site))

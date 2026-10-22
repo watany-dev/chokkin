@@ -294,6 +294,8 @@ fn unused_confidence(conditional: bool, strict: bool) -> (Confidence, Severity) 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::config::default_config;
     use crate::discovery::{ProjectRoot, RootMarker};
@@ -390,7 +392,10 @@ mod tests {
     fn reports_group_included_by_runtime_group_with_include_path() {
         let config = default_config();
         let mut shared = dep(DependencyContext::Group("shared".to_owned()));
-        shared.included_via = vec![vec!["server".to_owned(), "shared".to_owned()]];
+        shared.included_via = vec![crate::manifest::GroupInclude {
+            group: "server".to_owned(),
+            via: "shared".to_owned(),
+        }];
         let candidates = detect_unused_dependencies(
             &[&shared],
             &indexmap::IndexSet::new(),
@@ -413,7 +418,10 @@ mod tests {
     fn suppresses_group_included_only_by_dev_groups() {
         let config = default_config();
         let mut test_dep = dep(DependencyContext::Group("test".to_owned()));
-        test_dep.included_via = vec![vec!["dev".to_owned(), "test".to_owned()]];
+        test_dep.included_via = vec![crate::manifest::GroupInclude {
+            group: "dev".to_owned(),
+            via: "test".to_owned(),
+        }];
         let candidates = detect_unused_dependencies(
             &[&test_dep],
             &indexmap::IndexSet::new(),
@@ -454,14 +462,14 @@ mod tests {
         }
 
         let mut resolution = ResolutionIndex::default();
-        resolution.imports.push(legacy_boto3_import());
-        resolution.imports.push(ResolvedImport {
+        resolution.imports.push(Arc::new(legacy_boto3_import()));
+        resolution.imports.push(Arc::new(ResolvedImport {
             import_root: "requests".to_owned(),
             full_module: "requests".to_owned(),
             file: "src/acme/main.py".to_owned(),
             distribution: Some("requests".to_owned()),
             ..legacy_boto3_import()
-        });
+        }));
 
         let reachability = ReachabilityReport::default();
         let reachable = HashSet::from(["src/acme/main.py"]);
@@ -582,7 +590,7 @@ mod tests {
             });
 
         let mut resolution = ResolutionIndex::default();
-        resolution.imports.push(legacy_boto3_import());
+        resolution.imports.push(Arc::new(legacy_boto3_import()));
 
         let reachable = HashSet::from(["src/acme/main.py"]);
         let sources = empty_sources();

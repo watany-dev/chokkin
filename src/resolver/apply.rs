@@ -38,6 +38,8 @@ pub fn apply_resolution_to_graph(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use std::collections::BTreeMap;
 
     use super::*;
@@ -65,7 +67,7 @@ mod tests {
         let _module_id = graph.intern_module("yaml".to_owned(), ModuleOrigin::Unknown);
 
         let index = ResolutionIndex {
-            imports: vec![ResolvedImport {
+            imports: vec![Arc::new(ResolvedImport {
                 import_root: "yaml".to_owned(),
                 full_module: "yaml".to_owned(),
                 file: "app.py".to_owned(),
@@ -78,7 +80,7 @@ mod tests {
                 origin: ModuleOrigin::ThirdParty,
                 distribution: Some("pyyaml".to_owned()),
                 confidence: ResolveConfidence::Certain,
-            }],
+            })],
             warnings: Vec::new(),
             transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
@@ -112,7 +114,7 @@ mod tests {
 
         let index = ResolutionIndex {
             imports: vec![
-                ResolvedImport {
+                Arc::new(ResolvedImport {
                     import_root: "yaml".to_owned(),
                     full_module: "yaml".to_owned(),
                     file: "app.py".to_owned(),
@@ -125,8 +127,8 @@ mod tests {
                     origin: ModuleOrigin::Unknown,
                     distribution: None,
                     confidence: ResolveConfidence::Maybe,
-                },
-                ResolvedImport {
+                }),
+                Arc::new(ResolvedImport {
                     import_root: "yaml".to_owned(),
                     full_module: "yaml".to_owned(),
                     file: "app.py".to_owned(),
@@ -139,7 +141,7 @@ mod tests {
                     origin: ModuleOrigin::ThirdParty,
                     distribution: Some("pyyaml".to_owned()),
                     confidence: ResolveConfidence::Certain,
-                },
+                }),
             ],
             warnings: Vec::new(),
             transitive: LockfileGraph::default(),
