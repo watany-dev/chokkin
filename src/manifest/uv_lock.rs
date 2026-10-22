@@ -60,6 +60,8 @@ pub(super) fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestErro
     Ok(lock_graph(lock))
 }
 
+/// A name listed more than once, one entry per locked version or marker
+/// fork, depends on what any of its entries depends on, each name once.
 fn lock_graph(lock: UvLock) -> LockfileGraph {
     let mut graph = LockfileGraph::default();
     for package in lock.package {
@@ -67,18 +69,25 @@ fn lock_graph(lock: UvLock) -> LockfileGraph {
             continue;
         };
         if !package.optional_dependencies.is_empty() {
-            let extras = package
-                .optional_dependencies
-                .into_iter()
-                .map(|(extra, deps)| (normalized(extra), dependency_names(deps)))
-                .collect();
-            graph.extras.insert(name.clone(), extras);
+            let extras = graph.extras.entry(name.clone()).or_default();
+            for (extra, deps) in package.optional_dependencies {
+                merge_names(extras.entry(normalized(extra)).or_default(), deps);
+            }
         }
-        graph
-            .edges
-            .insert(name, dependency_names(package.dependencies));
+        merge_names(
+            graph.edges.entry(name).or_default(),
+            package.dependencies,
+        );
     }
     graph
+}
+
+fn merge_names(names: &mut Vec<String>, deps: Vec<UvDependency>) {
+    for dep in dependency_names(deps) {
+        if !names.contains(&dep) {
+            names.push(dep);
+        }
+    }
 }
 
 enum ArrayTarget {
@@ -500,6 +509,19 @@ mod tests {
         lock_graph(toml::from_str(contents).expect("valid TOML"))
     }
 
+    /// A fork resolution locks one entry per version; the later one must not
+    /// drop what the earlier one depends on.
+    #[test]
+    fn forked_versions_merge_their_dependencies() {
+        let lock = "version = 1\nrequires-python = \">=3.9\"\n\n[[package]]\nname = \"numpy\"\nversion = \"1.26.4\"\ndependencies = [\n    { name = \"legacy-helper\" },\n]\n\n[[package]]\nname = \"numpy\"\nversion = \"2.1.0\"\ndependencies = [\n    { name = \"new-helper\" },\n]\n";
+        for graph in [parse(lock).expect("valid uv.lock"), toml_graph(lock)] {
+            assert_eq!(
+                graph.edges.get("numpy"),
+                Some(&vec!["legacy-helper".to_owned(), "new-helper".to_owned()])
+            );
+        }
+    }
+
     #[test]
     fn scanner_reads_uv_layout_like_toml() {
         let scanned = scan_uv_layout(UV_LAYOUT).map(lock_graph);
@@ -676,6 +698,21 @@ mod tests {
             "[A-Za-z0-9]([A-Za-z0-9._-]{0,12}[A-Za-z0-9])?"
         }
 
+        /// Reference merge: a name's entries union their dependencies,
+        /// normalized, each once in first-seen order.
+        fn merged(
+            expected: &mut std::collections::BTreeMap<String, Vec<String>>,
+            name: &str,
+            deps: &[String],
+        ) {
+            let entry = expected.entry(normalize_distribution_name(name)).or_default();
+            for dep in deps.iter().map(|dep| normalize_distribution_name(dep)) {
+                if !entry.contains(&dep) {
+                    entry.push(dep);
+                }
+            }
+        }
+
         proptest! {
             #[test]
             fn extract_uv_lock_never_panics(contents in "\\PC{0,400}") {
@@ -703,16 +740,12 @@ mod tests {
 
                 let graph = parse(&contents).expect("generated uv.lock is valid TOML");
 
-                // Distinct raw names may normalize to the same key, so compare
-                // against a reference map built with the same normalization.
+                // Distinct raw names may normalize to the same key, whose
+                // entries merge, so compare against a reference map built with
+                // the same normalization.
                 let mut expected = std::collections::BTreeMap::new();
                 for (name, deps) in &packages {
-                    expected.insert(
-                        normalize_distribution_name(name),
-                        deps.iter()
-                            .map(|dep| normalize_distribution_name(dep))
-                            .collect::<Vec<_>>(),
-                    );
+                    merged(&mut expected, name, deps);
                 }
                 prop_assert_eq!(graph.edges.len(), expected.len());
                 for (name, deps) in &expected {
@@ -742,10 +775,7 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join(", ");
                     writeln!(contents, "dependencies = [{rendered}]").expect("write");
-                    expected.insert(
-                        normalize_distribution_name(name),
-                        deps.iter().map(|dep| normalize_distribution_name(dep)).collect::<Vec<_>>(),
-                    );
+                    merged(&mut expected, name, deps);
                 }
 
                 let graph = parse(&contents).expect("generated uv.lock is valid TOML");
