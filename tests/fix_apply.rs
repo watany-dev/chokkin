@@ -1,6 +1,10 @@
 //! Integration tests for optional fix (pipeline step 13).
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::too_many_lines)]
+#![expect(
+    clippy::expect_used,
+    clippy::too_many_lines,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step; scenarios run end to end"
+)]
 
 use std::path::{Path, PathBuf};
 

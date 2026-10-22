@@ -1,6 +1,9 @@
 //! v0.3 contract stabilization regression tests.
 
-#![allow(clippy::expect_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
 
 use std::fs;
 use std::path::Path;

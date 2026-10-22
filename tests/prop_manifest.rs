@@ -4,11 +4,9 @@
 //! manifests through `extract_manifest` and check that it never panics and
 //! that parsed output upholds documented invariants.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::fmt::Write as _;

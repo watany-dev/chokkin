@@ -181,7 +181,10 @@ fn unread_path_sources(
 /// # Errors
 ///
 /// Returns [`ProbeError`] when a pipeline step fails fatally.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "probe phases run in order, each guarded by its cache check"
+)]
 pub(super) fn probe_project_with_cache(
     start: &Path,
     project_root_override: Option<&Path>,
@@ -671,7 +674,10 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, ProbeError> {
 }
 
 /// Write human-readable probe summary to `out`.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one section per report field, written in output order"
+)]
 pub fn write_probe_report(report: &ProbeReport, out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "chokkin {} (probe)", report.version)?;
     writeln!(out)?;

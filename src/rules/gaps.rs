@@ -188,8 +188,10 @@ impl GapKind {
     /// block itself could not read lowers that script's alone (#936). A
     /// string naming a module may load it, so it lowers that file's absence
     /// finding to a note (#1026).
-    // One table, so each gap's lowering is read in one place.
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one table, so each gap's lowering is read in one place"
+    )]
     const fn lowering(self, candidate: &IssueCandidate) -> Option<Lowering> {
         match (self, candidate.rule, &candidate.subject) {
             (
@@ -441,7 +443,10 @@ impl Gap {
 /// paths skipped as not discovered, less those that do not exist, which run
 /// nothing.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub fn collect_gaps(
     context: &RuleContext<'_>,
     manifest: &LoadedManifest,

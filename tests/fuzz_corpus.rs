@@ -5,13 +5,6 @@
 //! historically broken hand-rolled parsers. Every case must complete without
 //! panicking; specific cases additionally assert Ok/Err behavior.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
-)]
-
 use std::fs;
 use std::path::Path;
 

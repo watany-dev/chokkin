@@ -21,7 +21,10 @@ use super::types::{ReachPredecessor, ReachabilityReport, TraceStep, UnreachableF
 /// # Errors
 ///
 /// Returns `ReachabilityError` when framework globs cannot be compiled.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub fn analyze_reachability(
     graph: &mut ProjectGraph,
     sources: &DiscoveredSources,

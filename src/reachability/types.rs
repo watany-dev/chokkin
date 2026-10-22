@@ -102,7 +102,10 @@ pub(super) struct ReachPredecessor {
 }
 
 /// Outcome of reachability analysis.
-#[allow(clippy::partial_pub_fields)]
+#[expect(
+    clippy::partial_pub_fields,
+    reason = "the result sets are public data; the private fields are lookup state built from them"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ReachabilityReport {
     /// Files reachable from entry roots or framework globs.

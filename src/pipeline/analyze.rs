@@ -103,7 +103,10 @@ pub struct AnalyzeOptions {
 /// # Errors
 ///
 /// Returns `AnalyzeError` when a pipeline step fails fatally.
-#[allow(clippy::needless_pass_by_value)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "callers build the options for this one call; borrowing would only add `&` at each call site"
+)]
 pub fn analyze_project(
     start: &Path,
     project_root_override: Option<&Path>,
@@ -175,7 +178,10 @@ struct AnalysisCore {
     warnings: Vec<ProbeWarning>,
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "pipeline steps run in order, each one call; splitting would only pass the results around"
+)]
 fn run_analysis_core(
     probe: &ProbeReport,
     overrides: &RuntimeOverrides,

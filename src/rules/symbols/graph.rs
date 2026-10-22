@@ -116,7 +116,10 @@ impl ReferenceIndex {
     }
 
     /// The references in one importing module.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "takes the per-pass indexes and star-import cache its caller builds once"
+    )]
     fn add_module<'m, 'a>(
         &mut self,
         module: &'m ParsedModule,

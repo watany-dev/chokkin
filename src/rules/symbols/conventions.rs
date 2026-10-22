@@ -216,7 +216,10 @@ pub(super) fn config_star_symbols(
 /// build backend (#782), defined there or re-exported by a package (#873).
 /// pluggy hooks are marked by their decorator
 /// (`external::is_registration_decorator`).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub(super) fn host_hook_symbols(
     registry: &[RegistryEntry],
     reexports: &[ReExport],

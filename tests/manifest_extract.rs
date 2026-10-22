@@ -1,10 +1,8 @@
 //! Integration tests for manifest extraction.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::path::{Path, PathBuf};

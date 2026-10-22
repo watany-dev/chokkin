@@ -834,7 +834,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
         self.gated_depth = gated_depth;
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one short arm per statement kind; splitting the match would scatter them"
+    )]
     fn visit_stmt(&mut self, stmt: &'ast Stmt) {
         match stmt {
             Stmt::Import(import) => self.visit_import(import),
@@ -3106,7 +3109,10 @@ value = t\"{utils.C}\"
             fallback_for: Vec<String>,
         }
 
-        #[allow(clippy::struct_excessive_bools)]
+        #[expect(
+            clippy::struct_excessive_bools,
+            reason = "independent scope flags pushed and popped together with the frame"
+        )]
         #[derive(Clone, Default)]
         struct Frame {
             /// Inside a `try` body or a suppressing `with` (#614), up to the

@@ -462,7 +462,10 @@ fn scan_tox_toml(
 /// config: `deps` provide distributions, `extras` mark optional dependencies
 /// used and `commands*` run binaries, as in `tox.ini`. `prefix` is the dotted
 /// path of `table` (`tool.tox` in pyproject, empty in `tox.toml`).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shares its caller's result, dedup set and binary lookup across tox sections"
+)]
 fn scan_native_tox(
     ctx: &PluginContext<'_>,
     table: &toml::Table,
@@ -549,7 +552,10 @@ const TOX_COMMAND_KEYS: [&str; 3] = ["commands", "commands_pre", "commands_post"
 /// Binaries run by `commands` / `commands_pre` / `commands_post` in any
 /// section. Other keys (`deps`, `description`, `allowlist_externals`, ...)
 /// name tools without running them, so their words are not commands (#494).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "shares its caller's result, dedup set and binary lookup across tox sections"
+)]
 fn scan_tox_commands(
     rel: &str,
     line_offset: usize,

@@ -126,7 +126,10 @@ pub(super) fn detect_missing_dependencies(
 }
 
 /// §10: CHK004 when a lockfile accounts for the import, CHK003 otherwise.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one import's fields plus the lock closure cache shared across imports"
+)]
 fn undeclared_candidate<'i>(
     import: &ResolvedImport,
     distribution: &str,

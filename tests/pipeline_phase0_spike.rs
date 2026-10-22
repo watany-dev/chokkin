@@ -1,7 +1,5 @@
 //! End-to-end Phase 0 pipeline: discover → graph skeleton → parse → import edges.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::path::PathBuf;
 
 use chokkin::internals::{

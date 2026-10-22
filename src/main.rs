@@ -1,7 +1,11 @@
 //! CLI entry point. Logic belongs in the library; this file only handles
 //! argument dispatch and process exit.
 
-#![allow(clippy::print_stdout, clippy::print_stderr)]
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "the CLI entry point writes reports and errors to the terminal"
+)]
 
 use std::fmt::Display;
 use std::io::Write;

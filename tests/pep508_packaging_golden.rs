@@ -1,13 +1,6 @@
 //! Requirement acceptance pinned against `packaging`
 //! (`scripts/generate-pep508-golden.py` writes the golden file).
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
-)]
-
 use std::path::PathBuf;
 
 use chokkin::internals::{ManifestWarning, ProjectRoot, RootMarker, extract_manifest, load_config};

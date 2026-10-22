@@ -343,7 +343,10 @@ fn parse_release(release: &str) -> Vec<u64> {
 }
 
 /// PEP 440 version (the `packaging` reference pattern, anchored).
-#[allow(clippy::expect_used)]
+#[expect(
+    clippy::expect_used,
+    reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
+)]
 static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?ix)^

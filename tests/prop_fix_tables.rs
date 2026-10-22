@@ -3,11 +3,9 @@
 //! a shared name leaves one table per run (ADR 0003), and a fresh analysis
 //! after the fix finds exactly the applied issues gone.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::collections::BTreeSet;

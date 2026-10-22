@@ -1,7 +1,5 @@
 //! Django plugin extractor.
 
-#![allow(clippy::too_many_lines)]
-
 mod apps;
 mod settings_refs;
 
@@ -88,6 +86,10 @@ struct Lookup {
 }
 
 /// Extract Django-related plugin hints.
+#[expect(
+    clippy::too_many_lines,
+    reason = "reads every config surface the framework uses, in order; each block is short"
+)]
 pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Django);
     let mut warnings = Vec::new();
@@ -366,6 +368,10 @@ fn push_unread(
 
 /// Read the settings module and the project modules it star-imports: each
 /// field is read from every file that sets it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "reads each settings field from every file that sets it, one block per field"
+)]
 fn read_settings(
     ctx: &PluginContext<'_>,
     settings_rel: &str,

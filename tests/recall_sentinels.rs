@@ -4,7 +4,10 @@
 //! notice a sentinel going silent. This replays its recall and CHK002 labelling
 //! checks on the in-repo fixtures only.
 
-#![allow(clippy::expect_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
 
 use std::collections::BTreeSet;
 use std::fs;

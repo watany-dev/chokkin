@@ -1,5 +1,4 @@
 //! Fixed cost of bundled and configured resolver maps.
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 use chokkin::internals::default_config;
 use chokkin::internals::{ImportMap, VenvIndex, build_binary_map};
 use criterion::{Criterion, criterion_group, criterion_main};

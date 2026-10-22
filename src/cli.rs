@@ -12,7 +12,10 @@ use crate::reporters::ReporterId;
 
 /// Parsed CLI invocation.
 #[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent CLI flag"
+)]
 #[command(
     name = "chokkin",
     about = "Find unused files, dependencies, and public symbols in Python projects",

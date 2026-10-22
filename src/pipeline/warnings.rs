@@ -460,8 +460,10 @@ fn write_member_manifest_warning(
     }
 }
 
-// One arm per variant; splitting the match would only scatter the texts.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one arm per variant; splitting the match would only scatter the texts"
+)]
 fn write_manifest_warning(
     formatter: &mut fmt::Formatter<'_>,
     warning: &ManifestWarning,

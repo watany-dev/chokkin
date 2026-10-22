@@ -1,7 +1,5 @@
 //! Reporter rendering regression tests for CI-facing formats.
 
-#![allow(clippy::expect_used)]
-
 use chokkin::internals::{
     Confidence, DependencyOrigin, Issue, IssueLocation, IssueReport, IssueSubject, IssueSummary,
     ManifestWarning, ProbeWarning, ProjectMode, ReporterId, ResolveWarning, RuleId, Severity,

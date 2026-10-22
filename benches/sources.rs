@@ -3,7 +3,10 @@
 //! warm-up pass fills the page cache before measurement; cold-cache walks
 //! are not reproducible enough to benchmark.
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![expect(
+    clippy::expect_used,
+    reason = "bench setup aborts on a failed fixture step"
+)]
 
 mod support;
 

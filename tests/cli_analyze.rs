@@ -1,6 +1,9 @@
 //! Integration tests for the full analysis CLI (Phase 1).
 
-#![allow(clippy::expect_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -4050,7 +4053,10 @@ fn binary_django_import_settings_reach_files_in_production() {
 
 /// An installed app in the shape of Django's tutorial: what Django loads by
 /// convention from it, and what it reads by name there, is used (#399).
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the fixture lists every file of the project it models"
+)]
 fn django_app_project(installed: &str) -> tempfile::TempDir {
     let settings = format!("INSTALLED_APPS = {installed}\nROOT_URLCONF = 'mysite.urls'\n");
     write_project(&[

@@ -30,7 +30,10 @@ use super::types::RuleId;
 /// before overrides, ignores, and filters read severity or confidence
 /// (ADR 0005).
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub fn emit_issues(
     unreachable: &ReachabilityReport,
     deps: &DependencyReport,

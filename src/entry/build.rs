@@ -34,7 +34,10 @@ pub(crate) type MemberEntryInput<'a> = (&'a str, &'a LoadedManifest, &'a Discove
 /// and, under `mode = auto`, those that ship as libraries become
 /// `library_members`.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub fn build_entry_roots(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
@@ -290,7 +293,10 @@ fn collect_config_entries(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "split out of its caller, it takes the caller's locals and output buffers as they are"
+)]
 fn collect_manifest_entries(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
@@ -581,7 +587,10 @@ fn command_label(origin: &ReferenceOrigin) -> String {
 /// to itself, its usual build context (#1061). A module that maps to
 /// no discovered file is a third-party or missing app and adds nothing,
 /// unless the file is on disk and discovery left it out.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "split out of its caller, it takes the caller's locals and output buffers as they are"
+)]
 fn collect_server_app_entries(
     plugins: &PluginHints,
     sources: &DiscoveredSources,
@@ -650,7 +659,10 @@ fn beside_origin_where(
         .find(|path| exists(path))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "split out of its caller, it takes the caller's locals and output buffers as they are"
+)]
 fn collect_symbol_ref_entries(
     plugins: &PluginHints,
     sources: &DiscoveredSources,

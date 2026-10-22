@@ -3,7 +3,10 @@
 //! config load (step 2). Inputs are few but large files, so after warm-up
 //! the measurement is dominated by parsing rather than I/O.
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![expect(
+    clippy::expect_used,
+    reason = "bench setup aborts on a failed fixture step"
+)]
 
 mod support;
 

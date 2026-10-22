@@ -1,7 +1,5 @@
 //! Regression tests for frozen ignore directive syntax (v0.3 draft).
 
-#![allow(clippy::expect_used)]
-
 use chokkin::internals::extract_ignores;
 
 #[test]

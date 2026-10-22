@@ -16,11 +16,11 @@
 //!   CHK005 and CHK009 move both ways by design (a test-only dependency stops
 //!   being used, a dev group stops being read), so they are not compared.
 
-#![allow(
+#![expect(
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::collections::{BTreeMap, BTreeSet};

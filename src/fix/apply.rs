@@ -413,7 +413,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one scenario end to end; splitting it would scatter its fixture and assertions"
+    )]
     fn dry_run_does_not_write_files() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let path = dir.path().join("pyproject.toml");
