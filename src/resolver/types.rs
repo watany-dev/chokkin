@@ -1,6 +1,7 @@
 //! Resolver types for import → distribution resolution.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::graph::ModuleOrigin;
 use crate::manifest::LockfileGraph;
@@ -103,7 +104,7 @@ pub enum ResolveWarning {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ResolutionIndex {
     /// Resolved imports from parse output and plugin refs.
-    pub imports: Vec<ResolvedImport>,
+    pub imports: Vec<Arc<ResolvedImport>>,
     /// Non-fatal warnings.
     pub warnings: Vec<ResolveWarning>,
     /// Lockfile transitive edges.

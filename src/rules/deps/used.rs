@@ -428,6 +428,8 @@ pub(super) fn mark_self_referential_distribution(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::config::{Confidence, ProjectMode};
     use crate::discovery::{ProjectRoot, RootMarker};
@@ -507,7 +509,7 @@ mod tests {
             report
         };
         let resolution = ResolutionIndex {
-            imports: vec![ResolvedImport {
+            imports: vec![Arc::new(ResolvedImport {
                 import_root: "yaml".to_owned(),
                 full_module: "yaml".to_owned(),
                 file: "src/app.py".to_owned(),
@@ -520,7 +522,7 @@ mod tests {
                 origin: ModuleOrigin::ThirdParty,
                 distribution: Some("pyyaml".to_owned()),
                 confidence: ResolveConfidence::Certain,
-            }],
+            })],
             warnings: Vec::new(),
             transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
@@ -679,26 +681,26 @@ mod tests {
     fn member_imports_stay_in_member_tree() {
         let resolution = ResolutionIndex {
             imports: vec![
-                resolved(
+                Arc::new(resolved(
                     "airflow-core/src/airflow/models/dag.py",
                     "airflow.sdk",
                     ModuleOrigin::FirstParty,
-                ),
-                resolved(
+                )),
+                Arc::new(resolved(
                     "airflow-core/src/airflow/models/dag.py",
                     "airflow.sdk.definitions.dag",
                     ModuleOrigin::ThirdParty,
-                ),
-                resolved(
+                )),
+                Arc::new(resolved(
                     "airflow-core/src/airflow/models/dag.py",
                     "os",
                     ModuleOrigin::Stdlib,
-                ),
-                resolved(
+                )),
+                Arc::new(resolved(
                     "airflow-core-extra/src/extra.py",
                     "extra.api",
                     ModuleOrigin::FirstParty,
-                ),
+                )),
             ],
             warnings: Vec::new(),
             transitive: LockfileGraph::default(),
@@ -819,11 +821,11 @@ mod tests {
         let import = |file: &str, module: &str| resolved(file, module, ModuleOrigin::FirstParty);
         let resolution = ResolutionIndex {
             imports: vec![
-                import("src/app.py", "corepkg.models"),
-                import("src/app.py", "straypkg"),
-                import("src/app.py", "plainpkg"),
-                import("scripts/old.py", "extrapkg"),
-                import("core/src/corepkg/models.py", "sdkpkg"),
+                Arc::new(import("src/app.py", "corepkg.models")),
+                Arc::new(import("src/app.py", "straypkg")),
+                Arc::new(import("src/app.py", "plainpkg")),
+                Arc::new(import("scripts/old.py", "extrapkg")),
+                Arc::new(import("core/src/corepkg/models.py", "sdkpkg")),
             ],
             ..ResolutionIndex::default()
         };
@@ -878,10 +880,10 @@ mod tests {
         let import = |file: &str, module: &str| resolved(file, module, ModuleOrigin::FirstParty);
         let resolution = ResolutionIndex {
             imports: vec![
-                import("src/app.py", "alphapkg.thing"),
-                import("alpha/src/alphapkg/__init__.py", "betapkg"),
-                import("alpha/src/alphapkg/__init__.py", "gammapkg"),
-                import("beta/src/betapkg/__init__.py", "deltapkg"),
+                Arc::new(import("src/app.py", "alphapkg.thing")),
+                Arc::new(import("alpha/src/alphapkg/__init__.py", "betapkg")),
+                Arc::new(import("alpha/src/alphapkg/__init__.py", "gammapkg")),
+                Arc::new(import("beta/src/betapkg/__init__.py", "deltapkg")),
             ],
             ..ResolutionIndex::default()
         };
@@ -932,7 +934,7 @@ mod tests {
             kind: crate::manifest::UvSourceKind::Path("lib".to_owned()),
         });
         let resolution = ResolutionIndex {
-            imports: vec![ResolvedImport {
+            imports: vec![Arc::new(ResolvedImport {
                 import_root: "streamlit".to_owned(),
                 full_module: "streamlit.web".to_owned(),
                 file: "e2e/app.py".to_owned(),
@@ -945,7 +947,7 @@ mod tests {
                 origin: ModuleOrigin::FirstParty,
                 distribution: None,
                 confidence: ResolveConfidence::Certain,
-            }],
+            })],
             ..ResolutionIndex::default()
         };
         let sources = crate::sources::DiscoveredSources {
