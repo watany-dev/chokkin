@@ -195,7 +195,6 @@ fn write(root: &Path, file: &str, text: &str) {
     fs::write(path, text).expect("write");
 }
 
-/// The modules' names, in index order.
 fn module_names(spec: &Spec) -> Vec<String> {
     spec.modules
         .iter()

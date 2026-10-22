@@ -2423,7 +2423,6 @@ mod tests {
                 .collect()
         }
 
-        /// What the run reports: each emitted finding, and the exit status.
         fn emitted(
             candidates: &[IssueCandidate],
             gaps: &[Gap],

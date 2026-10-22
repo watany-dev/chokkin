@@ -82,7 +82,6 @@ fn state_strategy() -> impl Strategy<Value = State> {
         )
 }
 
-/// `state` with field `field` taken from `from`.
 fn edited(state: &State, field: usize, from: &State) -> State {
     let mut next = state.clone();
     match field {
@@ -102,7 +101,6 @@ fn lines<'a>(indices: &BTreeSet<usize>, names: &[&'a str]) -> Vec<&'a str> {
     indices.iter().map(|&index| names[index]).collect()
 }
 
-/// Every file of the project in `state`, by root-relative path.
 fn files(state: &State) -> BTreeMap<&'static str, String> {
     let mut files = BTreeMap::new();
     let dependencies = state.pyproject.as_ref().map_or_else(String::new, |names| {
@@ -182,7 +180,6 @@ fn apply(
     }
 }
 
-/// The JSON report and exit code of one run.
 fn run(root: &Path, cache: bool) -> (serde_json::Value, Option<i32>) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_chokkin"));
     command.args(["--reporter", "json"]);
