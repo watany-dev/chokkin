@@ -71,7 +71,10 @@ pub fn trace_output(
     format_negative_trace(report, graph, entry, sources, target, file_id)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 fn format_negative_trace(
     report: &ReachabilityReport,
     graph: &ProjectGraph,
@@ -226,7 +229,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one scenario end to end; splitting it would scatter its fixture and assertions"
+    )]
     fn negative_trace_lists_entry_roots_and_incoming_imports() {
         let sources = sources_with(&[
             "src/acme/cli.py",

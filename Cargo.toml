@@ -125,6 +125,11 @@ unnecessary_self_imports = "deny"
 unneeded_field_pattern = "deny"
 self_named_module_files = "deny"
 semicolon_inside_block = "deny"
+# Exemptions are `#[expect(lint, reason = "...")]`: the reason records why the
+# lint does not apply there, and an expectation that stops firing fails the
+# build (`unfulfilled_lint_expectations`), so stale exemptions get removed.
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
 # Integration tests and property-test macros need root-level #[test].
 tests_outside_test_module = "allow"
 

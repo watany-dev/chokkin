@@ -1,8 +1,11 @@
 # Stricter than clippy defaults; keeps early codebase reviewable as modules grow.
-cognitive-complexity-threshold = 10
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 5
 max-struct-bools = 3
+# Nesting depth (mod/impl/fn/closure/block) instead of cognitive_complexity:
+# that lint sits in the restriction group, so a threshold for it does nothing
+# unless the lint is enabled, and clippy itself calls its score misleading.
+excessive-nesting-threshold = 6
 
 # Allow common test idioms; applies to #[cfg(test)] and tests/ (requires clippy >=1.71).
 allow-unwrap-in-tests = true

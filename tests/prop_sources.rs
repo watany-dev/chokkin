@@ -4,11 +4,9 @@
 //! unique output, root-relative `/` paths, exclusion guarantees, production
 //! subset behavior, and determinism.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::fs;

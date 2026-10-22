@@ -19,7 +19,10 @@ use super::missing::{ImportDeclarations, WorkspaceDeclaredIndex, collect_optiona
 use super::used::{DeclaredIndex, file_paths};
 
 /// Detect runtime usage of dev-only dependencies (and similar mismatches).
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the imports that weighs every signal for a finding together"
+)]
 pub(super) fn detect_misplaced_dependencies(
     declared: &DeclaredIndex<'_>,
     dependency: &DependencyRuleContext<'_>,
@@ -255,7 +258,10 @@ impl ImportStrength {
 
 /// What CHK005 knows about one runtime import of a dev-only distribution:
 /// the import site, and where the file importing it sits.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent signals about one import site, weighed together by CHK005"
+)]
 #[derive(Debug, Clone, Copy)]
 struct ImportSignals {
     /// From the site alone: `Optional`, `Deferred` or `TopLevel`.

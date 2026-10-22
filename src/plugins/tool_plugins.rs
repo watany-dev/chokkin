@@ -216,17 +216,16 @@ pub(super) fn datamodel_codegen_formatters(ctx: &PluginContext<'_>) -> SourceHit
             for name in names {
                 let target = match name {
                     Ok(module) if is_dotted_identifier(module) => {
-                        match formatter_files(ctx, dir, module, &known).as_slice() {
+                        let found = formatter_files(ctx, dir, module, &known);
+                        if found.is_empty() {
+                            hits.push_module(module, &origin);
+                        }
+                        match found.as_slice() {
                             [path] => CommandTarget::Script {
                                 paths: vec![path.clone()],
                             },
-                            found => {
-                                if found.is_empty() {
-                                    hits.push_module(module, &origin);
-                                }
-                                CommandTarget::Opaque {
-                                    text: module.to_owned(),
-                                }
+                            _ => CommandTarget::Opaque {
+                                text: module.to_owned(),
                             },
                         }
                     },

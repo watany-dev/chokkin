@@ -1,7 +1,5 @@
 //! `FastAPI` / uvicorn plugin extractor.
 
-#![allow(clippy::too_many_lines)]
-
 use crate::config::PluginId;
 use crate::sources::FileContext;
 
@@ -22,6 +20,10 @@ use super::warnings::PluginsWarning;
 const SRC_APP_ENTRY_CANDIDATES: &[&str] = &["src/asgi.py", "src/main.py"];
 
 /// Extract `FastAPI` / uvicorn-related plugin hints.
+#[expect(
+    clippy::too_many_lines,
+    reason = "reads every config surface the framework uses, in order; each block is short"
+)]
 pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Fastapi);
     let mut warnings = Vec::new();

@@ -369,25 +369,6 @@ if is_psycopg3 and settings.DEBUG:
 
         impl Program {
             fn render_cond(&mut self, cond: &Cond, noise: &mut Noise<'_>) -> (String, Fact) {
-                let join = |this: &mut Self, conds: &[Cond], op: &str, noise: &mut Noise<'_>| {
-                    let mut text = String::new();
-                    let mut facts = Vec::new();
-                    for (i, cond) in conds.iter().enumerate() {
-                        if i > 0 {
-                            text.push_str(match noise.next(3) {
-                                0 => " ",
-                                1 => "\n        ",
-                                _ => "  # why\n",
-                            });
-                            text.push_str(op);
-                            text.push(' ');
-                        }
-                        let (part, fact) = this.render_cond(cond, noise);
-                        let _ = write!(text, "({part})");
-                        facts.push(fact);
-                    }
-                    (text, facts)
-                };
                 match cond {
                     Cond::Atom(atom) => {
                         let id = self.atoms.len();
@@ -399,14 +380,39 @@ if is_psycopg3 and settings.DEBUG:
                         (format!("not ({text})"), Fact::Not(Box::new(fact)))
                     },
                     Cond::And(conds) => {
-                        let (text, facts) = join(self, conds, "and", noise);
+                        let (text, facts) = self.render_join(conds, "and", noise);
                         (text, Fact::All(facts))
                     },
                     Cond::Or(conds) => {
-                        let (text, facts) = join(self, conds, "or", noise);
+                        let (text, facts) = self.render_join(conds, "or", noise);
                         (text, Fact::Any(facts))
                     },
                 }
+            }
+
+            fn render_join(
+                &mut self,
+                conds: &[Cond],
+                op: &str,
+                noise: &mut Noise<'_>,
+            ) -> (String, Vec<Fact>) {
+                let mut text = String::new();
+                let mut facts = Vec::new();
+                for (i, cond) in conds.iter().enumerate() {
+                    if i > 0 {
+                        text.push_str(match noise.next(3) {
+                            0 => " ",
+                            1 => "\n        ",
+                            _ => "  # why\n",
+                        });
+                        text.push_str(op);
+                        text.push(' ');
+                    }
+                    let (part, fact) = self.render_cond(cond, noise);
+                    let _ = write!(text, "({part})");
+                    facts.push(fact);
+                }
+                (text, facts)
             }
 
             fn render_line(&mut self, indent: usize, line: &str, noise: &mut Noise<'_>) {
@@ -452,7 +458,7 @@ if is_psycopg3 and settings.DEBUG:
                 noise: &mut Noise<'_>,
             ) {
                 for block in body {
-                    match block {
+                    let (branches, orelse) = match block {
                         Block::Import(root) => {
                             let id = self.imports.len();
                             self.imports.push((*root, path.to_vec()));
@@ -461,26 +467,26 @@ if is_psycopg3 and settings.DEBUG:
                                 &format!("import {}.i{id}", ROOTS[*root]),
                                 noise,
                             );
+                            continue;
                         },
-                        Block::If(branches, orelse) => {
-                            let mut failed = Vec::new();
-                            for (i, (cond, body)) in branches.iter().enumerate() {
-                                let keyword = if i == 0 { "if" } else { "elif" };
-                                let fact = self.render_test(indent, keyword, cond, noise);
-                                let mut runs = failed.clone();
-                                runs.push(fact.clone());
-                                let mut inner = path.to_vec();
-                                inner.push(Fact::All(runs));
-                                self.render_body(indent + 4, &inner, body, noise);
-                                failed.push(Fact::Not(Box::new(fact)));
-                            }
-                            if let Some(body) = orelse {
-                                self.render_line(indent, "else:", noise);
-                                let mut inner = path.to_vec();
-                                inner.push(Fact::All(failed));
-                                self.render_body(indent + 4, &inner, body, noise);
-                            }
-                        },
+                        Block::If(branches, orelse) => (branches, orelse),
+                    };
+                    let keywords = std::iter::once("if").chain(std::iter::repeat("elif"));
+                    let mut failed = Vec::new();
+                    for ((cond, body), keyword) in branches.iter().zip(keywords) {
+                        let fact = self.render_test(indent, keyword, cond, noise);
+                        let mut runs = failed.clone();
+                        runs.push(fact.clone());
+                        let mut inner = path.to_vec();
+                        inner.push(Fact::All(runs));
+                        self.render_body(indent + 4, &inner, body, noise);
+                        failed.push(Fact::Not(Box::new(fact)));
+                    }
+                    if let Some(body) = orelse {
+                        self.render_line(indent, "else:", noise);
+                        let mut inner = path.to_vec();
+                        inner.push(Fact::All(failed));
+                        self.render_body(indent + 4, &inner, body, noise);
                     }
                 }
             }
@@ -517,15 +523,13 @@ if is_psycopg3 and settings.DEBUG:
                         .position(|&leaf| leaf == id)
                         .is_some_and(|at| (bits >> at) & 1 == 1)
                 };
+                let value = |picks: u32, unknowns: u32, id: usize| {
+                    fixed(self.atoms[id])
+                        .unwrap_or_else(|| bit(&picked, picks, id) || bit(&unknown, unknowns, id))
+                };
                 (0..1u32 << picked.len()).any(|picks| {
-                    (0..1u32 << unknown.len()).all(|unknowns| {
-                        let value = |id: usize| {
-                            fixed(self.atoms[id]).unwrap_or_else(|| {
-                                bit(&picked, picks, id) || bit(&unknown, unknowns, id)
-                            })
-                        };
-                        !branch.holds(&value)
-                    })
+                    (0..1u32 << unknown.len())
+                        .all(|unknowns| !branch.holds(&|id| value(picks, unknowns, id)))
                 })
             }
 

@@ -1,5 +1,8 @@
 //! Realistic source sizes and disk-cache paths; setup and cleanup are untimed.
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![expect(
+    clippy::expect_used,
+    reason = "bench setup aborts on a failed fixture step"
+)]
 mod support;
 use chokkin::internals::analyze_reachability;
 use chokkin::internals::{
@@ -17,7 +20,10 @@ fn clear_cache(root: &std::path::Path) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one benchmark group per pipeline step, sharing one fixture"
+)]
 fn bench_pipeline(c: &mut Criterion) {
     let sizes = if std::env::var_os("CHOKKIN_BENCH_LARGE").is_some() {
         vec![1_000, 5_000, 10_000]

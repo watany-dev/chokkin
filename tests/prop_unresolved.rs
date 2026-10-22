@@ -6,11 +6,9 @@
 //! lines listed in the explain, a warning when any import can fail, and an
 //! inline `# chokkin: ignore[CHK010]` that suppresses it only on every line.
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::fs;

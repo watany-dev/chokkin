@@ -4,10 +4,14 @@
 //! loop) inside a [`tempfile::TempDir`], so benchmark iterations only pay
 //! for the pipeline step under test.
 
-// Each bench target compiles this module independently, so helpers used by
-// only one target look dead in the other.
-#![allow(dead_code)]
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![expect(
+    dead_code,
+    reason = "each bench target compiles this module independently, so helpers used by only one target look dead in the other"
+)]
+#![expect(
+    clippy::expect_used,
+    reason = "bench setup aborts on a failed fixture step"
+)]
 
 use std::fmt::Write as _;
 use std::fs;

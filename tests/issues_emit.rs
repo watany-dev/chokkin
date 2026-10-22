@@ -1,6 +1,9 @@
 //! Integration tests for issue emission (pipeline step 12).
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -40,7 +43,10 @@ fn load_emit(path: &Path) -> EmitInputs {
 /// `strict_deps` only affects dependency reconciliation, so step 12 can still
 /// apply the configured confidence floor to candidates that non-strict step 10
 /// would never produce (e.g. marker-guarded dependencies).
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "replays the pipeline steps before emit, in order, to build its inputs"
+)]
 fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
     let root = discover_project_root(path).unwrap_or_else(|_| ProjectRoot {
         path: std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),

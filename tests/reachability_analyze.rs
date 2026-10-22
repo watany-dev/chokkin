@@ -1,6 +1,9 @@
 //! Integration tests for reachability analysis (pipeline step 9).
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -286,6 +286,12 @@ jobs:
       - name: Test scripts
         if: ${{ !cancelled() }}
         run: make test-scripts
+      # Versions match RUFF_VERSION / SHELLCHECK_PY_VERSION in the Makefile.
+      - name: Lint scripts (ruff, shellcheck)
+        if: ${{ !cancelled() }}
+        run: |
+          python -m pip install ruff==0.16.10 shellcheck-py==0.11.0.1
+          make lint-scripts RUFF=ruff SHELLCHECK=shellcheck
       - name: Check generated resolver maps
         if: ${{ !cancelled() }}
         run: make check-generated

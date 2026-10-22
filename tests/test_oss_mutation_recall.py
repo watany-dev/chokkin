@@ -3,6 +3,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 from scripts_import import load
 
@@ -31,7 +32,7 @@ class KeysTest(unittest.TestCase):
 
 
 class OutcomeTest(unittest.TestCase):
-    EXPECTED = {("CHK002", "chokkin-mut-unused")}
+    EXPECTED: ClassVar[set[tuple[str, str]]] = {("CHK002", "chokkin-mut-unused")}
 
     def test_an_injection_is_detected_only_when_new(self) -> None:
         self.assertEqual(

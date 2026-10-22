@@ -72,7 +72,10 @@ pub enum GraphEdge {
 }
 
 /// Project-wide reachability graph (skeleton in Phase 0).
-#[allow(clippy::partial_pub_fields)]
+#[expect(
+    clippy::partial_pub_fields,
+    reason = "`root` is plain data; the indexes stay private so they cannot drift from the node lists"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectGraph {
     /// Project root from discovery.

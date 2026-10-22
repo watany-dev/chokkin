@@ -302,7 +302,10 @@ impl TryFrom<String> for EntrySpec {
 }
 
 /// Dependency group name mappings (§5 `[tool.chokkin.dependencies]`).
-#[allow(clippy::struct_field_names)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "field names mirror the `dev-groups` / `runtime-groups` / `type-groups` config keys"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyGroupsConfig {
     /// Group names treated as dev context.

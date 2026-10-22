@@ -256,7 +256,10 @@ pub struct LockfileSource {
 
 /// Which manifest files contributed to extraction.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one independent flag per manifest file that can contribute"
+)]
 pub struct ManifestSources {
     /// `pyproject.toml` contributed project metadata or dependencies.
     pub pyproject_toml: bool,

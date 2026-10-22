@@ -6,11 +6,9 @@
 //! even an optional import CHK004 (#504, as a warning per #582), a locked-only distribution is a
 //! Likely CHK004, and an unguarded import nothing resolves caps CHK002 at Likely (#911).
 
-#![allow(
+#![expect(
     clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
 )]
 
 use std::collections::BTreeSet;
@@ -30,7 +28,10 @@ fn module(name: &str) -> String {
     name.replace('-', "_")
 }
 
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent axis the property test varies"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Dep {
     /// `Some(marker)` when declared in `project.dependencies`.

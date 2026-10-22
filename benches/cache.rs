@@ -1,6 +1,9 @@
 //! Warm disk parse-cache benchmarks (the release gate for 10k warm files).
 
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+#![expect(
+    clippy::expect_used,
+    reason = "bench setup aborts on a failed fixture step"
+)]
 
 mod support;
 

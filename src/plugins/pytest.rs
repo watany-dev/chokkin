@@ -1,7 +1,5 @@
 //! pytest plugin extractor.
 
-#![allow(clippy::too_many_lines)]
-
 use std::path::Path;
 
 use crate::config::PluginId;
@@ -20,6 +18,10 @@ use super::util::{
 use super::warnings::PluginsWarning;
 
 /// Extract pytest-related plugin hints.
+#[expect(
+    clippy::too_many_lines,
+    reason = "reads every config surface the framework uses, in order; each block is short"
+)]
 pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<PluginsWarning>) {
     let mut contrib = PluginContribution::empty(PluginId::Pytest);
     let mut warnings = Vec::new();

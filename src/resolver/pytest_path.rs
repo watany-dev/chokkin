@@ -210,13 +210,11 @@ impl PytestImportPaths {
         for dirs in by_name.values_mut() {
             dirs.sort_unstable();
         }
-        // Many files share hints and ancestors, so each ancestor is listed
-        // once and each candidate checked once; most hints name nothing
-        // there. Names are lowercased to stay a superset on case-insensitive
-        // file systems.
-        let mut listed: HashMap<&str, Option<HashSet<String>>> = HashMap::new();
-        // Candidate → its module names, or `None` when it is no directory.
-        let mut on_disk: HashMap<String, Option<HashSet<String>>> = HashMap::new();
+        let mut probe = HintProbe {
+            root,
+            listed: HashMap::new(),
+            on_disk: HashMap::new(),
+        };
         for module in &parse.modules {
             let holder_dir = parent_dir(&module.path);
             let mut found = Vec::new();
@@ -237,24 +235,9 @@ impl PytestImportPaths {
                 let mut ancestor = holder_dir;
                 loop {
                     let candidate = join(ancestor, hint);
-                    if !self.dirs.contains(&candidate) {
-                        let names = on_disk.entry(candidate.clone()).or_insert_with(|| {
-                            let entries = listed
-                                .entry(ancestor)
-                                .or_insert_with(|| entry_names(&on_disk_path(root, ancestor)));
-                            // A non-ASCII name may be stored in another
-                            // Unicode normalization form, so only `stat` decides.
-                            if head.is_ascii()
-                                && entries.as_ref().is_some_and(|names| !names.contains(&head))
-                            {
-                                return None;
-                            }
-                            let path = on_disk_path(root, &candidate);
-                            path.is_dir().then(|| module_names(&path))
-                        });
-                        if names.is_some() {
-                            found.push(candidate);
-                        }
+                    if !self.dirs.contains(&candidate) && probe.is_dir(ancestor, &candidate, &head)
+                    {
+                        found.push(candidate);
                     }
                     if ancestor.is_empty() {
                         break;
@@ -274,7 +257,8 @@ impl PytestImportPaths {
             }
         }
         self.add_imported_hints(imports);
-        self.hinted_on_disk = on_disk
+        self.hinted_on_disk = probe
+            .on_disk
             .into_iter()
             .filter_map(|(dir, names)| Some((dir, names?)))
             .collect();
@@ -640,6 +624,52 @@ fn on_disk_path(root: &Path, relative: &str) -> PathBuf {
         .split('/')
         .filter(|segment| !segment.is_empty())
         .fold(root.to_path_buf(), |path, segment| path.join(segment))
+}
+
+/// Disk lookups for `sys.path` hint candidates. Many files share hints and
+/// ancestors, so each ancestor is listed once and each candidate checked once;
+/// most hints name nothing there. Names are lowercased to stay a superset on
+/// case-insensitive file systems.
+struct HintProbe<'a> {
+    root: &'a Path,
+    /// Ancestor → its entry names, or `None` when it cannot be listed.
+    listed: HashMap<&'a str, Option<HashSet<String>>>,
+    /// Candidate → its module names, or `None` when it is no directory.
+    on_disk: HashMap<String, Option<HashSet<String>>>,
+}
+
+impl<'a> HintProbe<'a> {
+    /// Whether `candidate`, a hint joined onto `ancestor` whose first
+    /// component lowercases to `head`, is a directory on disk.
+    fn is_dir(&mut self, ancestor: &'a str, candidate: &str, head: &str) -> bool {
+        if let Some(names) = self.on_disk.get(candidate) {
+            return names.is_some();
+        }
+        let names = self.module_names(ancestor, candidate, head);
+        let is_dir = names.is_some();
+        self.on_disk.insert(candidate.to_owned(), names);
+        is_dir
+    }
+
+    fn module_names(
+        &mut self,
+        ancestor: &'a str,
+        candidate: &str,
+        head: &str,
+    ) -> Option<HashSet<String>> {
+        let root = self.root;
+        let entries = self
+            .listed
+            .entry(ancestor)
+            .or_insert_with(|| entry_names(&on_disk_path(root, ancestor)));
+        // A non-ASCII name may be stored in another Unicode normalization
+        // form, so only `stat` decides.
+        if head.is_ascii() && entries.as_ref().is_some_and(|names| !names.contains(head)) {
+            return None;
+        }
+        let path = on_disk_path(root, candidate);
+        path.is_dir().then(|| module_names(&path))
+    }
 }
 
 /// Lowercased entry names in `dir`, or `None` when it cannot be listed.
@@ -1523,6 +1553,43 @@ mod tests {
         }
 
         impl Linear {
+            /// The directories `hint` names for a file in `holder`: discovered
+            /// ones ending in it, then `hint` under `holder` and each of its
+            /// ancestors where that is a directory discovery did not list
+            /// (their module names go into `on_disk`).
+            fn hint_dirs(
+                built: &Built,
+                dirs: &[&String],
+                holder: &str,
+                hint: &str,
+                on_disk: &mut HashMap<String, HashSet<String>>,
+            ) -> Vec<String> {
+                if hint.is_empty() {
+                    return vec![holder.to_owned()];
+                }
+                let suffix = format!("/{hint}");
+                let mut found: Vec<String> = dirs
+                    .iter()
+                    .filter(|dir| **dir == hint || dir.ends_with(&suffix))
+                    .map(|dir| (*dir).clone())
+                    .collect();
+                let mut ancestor = Some(holder);
+                while let Some(dir) = ancestor {
+                    let candidate = if dir.is_empty() {
+                        hint.to_owned()
+                    } else {
+                        format!("{dir}/{hint}")
+                    };
+                    let path = on_disk_path(&built.root, &candidate);
+                    if !built.base.dirs.contains(&candidate) && path.is_dir() {
+                        on_disk.insert(candidate.clone(), module_names(&path));
+                        found.push(candidate);
+                    }
+                    ancestor = (!dir.is_empty()).then(|| parent_dir(dir));
+                }
+                found
+            }
+
             fn new(built: &Built) -> Self {
                 let mut dirs: Vec<&String> = built.base.dirs.iter().collect();
                 dirs.sort();
@@ -1533,30 +1600,7 @@ mod tests {
                     let holder = parent_dir(&module.path);
                     let mut found: Vec<String> = Vec::new();
                     for hint in &module.sys_path_hints {
-                        if hint.is_empty() {
-                            found.push(holder.to_owned());
-                            continue;
-                        }
-                        let suffix = format!("/{hint}");
-                        found.extend(
-                            dirs.iter()
-                                .filter(|dir| **dir == hint || dir.ends_with(&suffix))
-                                .map(|dir| (*dir).clone()),
-                        );
-                        let mut ancestor = Some(holder);
-                        while let Some(dir) = ancestor {
-                            let candidate = if dir.is_empty() {
-                                hint.clone()
-                            } else {
-                                format!("{dir}/{hint}")
-                            };
-                            let path = on_disk_path(&built.root, &candidate);
-                            if !built.base.dirs.contains(&candidate) && path.is_dir() {
-                                on_disk.insert(candidate.clone(), module_names(&path));
-                                found.push(candidate);
-                            }
-                            ancestor = (!dir.is_empty()).then(|| parent_dir(dir));
-                        }
+                        found.extend(Self::hint_dirs(built, &dirs, holder, hint, &mut on_disk));
                     }
                     let mut seen = HashSet::new();
                     found.retain(|dir| seen.insert(dir.clone()));

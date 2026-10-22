@@ -1,12 +1,5 @@
 //! Property-based tests for reporters and baseline round-trips.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
-)]
-
 use chokkin::internals::ProjectMode;
 use chokkin::internals::{
     Confidence, Issue, IssueLocation, IssueReport, IssueSubject, ReporterId, RuleId, Severity,

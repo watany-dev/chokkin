@@ -1,12 +1,5 @@
 //! Property-based tests for cache key hashing, fingerprints, and CLI parsing.
 
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::panic,
-    clippy::indexing_slicing
-)]
-
 use chokkin::internals::SourceFingerprint;
 use chokkin::internals::{CacheKeyHasher, stable_hex_hash, stable_list_hash};
 use chokkin::parse_cli_args;

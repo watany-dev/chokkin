@@ -714,23 +714,25 @@ mod tests {
         let entries: Vec<_> = std::iter::once(None)
             .chain(ENTRIES.iter().copied().map(Some))
             .collect();
+        let names = [(false, false), (true, false), (false, true)];
+        let layouts = names.into_iter().flat_map(|(name, dynamic_name)| {
+            [false, true].map(|src_layout| (name, dynamic_name, src_layout))
+        });
         let mut checked = 0;
-        for (name, dynamic_name) in [(false, false), (true, false), (false, true)] {
-            for src_layout in [false, true] {
-                for package in [Package::Absent, Package::WithoutInit, Package::WithInit] {
-                    for &entry in &entries {
-                        for &file in &files {
-                            let case = ModeCase {
-                                name,
-                                dynamic_name,
-                                src_layout,
-                                package,
-                                entry,
-                                file,
-                            };
-                            check_mode_case(&case);
-                            checked += 1;
-                        }
+        for (name, dynamic_name, src_layout) in layouts {
+            for package in [Package::Absent, Package::WithoutInit, Package::WithInit] {
+                for &entry in &entries {
+                    for &file in &files {
+                        let case = ModeCase {
+                            name,
+                            dynamic_name,
+                            src_layout,
+                            package,
+                            entry,
+                            file,
+                        };
+                        check_mode_case(&case);
+                        checked += 1;
                     }
                 }
             }

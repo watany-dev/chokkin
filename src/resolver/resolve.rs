@@ -42,7 +42,11 @@ pub struct ScopedDeclarations {
 /// `sys_path_imports` lets an importer resolve through its import's
 /// `sys.path` edits.
 #[must_use]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub fn resolve_imports_for_analysis(
     config: &ChokkinConfig,
     manifest: &LoadedManifest,
@@ -397,7 +401,10 @@ impl Resolver<'_> {
             })
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one site's resolution steps in order; each step falls through to the next"
+    )]
     fn site(
         &self,
         site: &Site<'_>,
@@ -584,7 +591,10 @@ fn site_origin(
         .then_some(ModuleOrigin::FirstParty)
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes the resolver's per-run indexes and warning buffer its caller builds once"
+)]
 fn resolve_import_root(
     root_name: &str,
     stdlib: StdlibRange,

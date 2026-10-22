@@ -8,7 +8,10 @@ use ruff_text_size::TextSize;
 use super::lines::LineIndex;
 use super::types::IgnoreDirective;
 
-#[allow(clippy::expect_used)]
+#[expect(
+    clippy::expect_used,
+    reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
+)]
 static IGNORE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"#\s*chokkin:\s*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
         .expect("valid ignore regex")

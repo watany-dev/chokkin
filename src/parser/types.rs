@@ -98,15 +98,20 @@ impl ImportRef {
 }
 
 /// Serialization helper: `relative_level` is `0` for the common absolute import.
-// serde's `skip_serializing_if` hands the field by reference.
-#[allow(clippy::trivially_copy_pass_by_ref)]
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's `skip_serializing_if` hands the field by reference"
+)]
 fn is_zero_level(level: &u8) -> bool {
     *level == 0
 }
 
 /// A literal dynamic import (`importlib.import_module("…")` or `__import__("…")`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent serialized flags mirrored from `ImportRef`; an enum would not fit"
+)]
 pub struct DynamicImport {
     /// Resolved module name from a string literal.
     pub module: String,
@@ -328,7 +333,10 @@ pub struct ServerApp {
 
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent serialized per-module flags; the cache format stores them as is"
+)]
 pub struct ParsedModule {
     /// Root-relative path using `/` separators.
     pub path: String,

@@ -53,7 +53,10 @@ pub(super) struct PyprojectExtraction {
 }
 
 /// Extract manifest data from `pyproject.toml`.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one block per pyproject table, read in order"
+)]
 pub(super) fn extract_pyproject(
     root: &Path,
     path: &Path,
@@ -154,7 +157,10 @@ pub(super) fn extract_pyproject(
 }
 
 /// Push every `<name> = ["req", ...]` array of `table`, with `context(name)`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "split out of its caller, it takes the caller's locals and output buffers as they are"
+)]
 pub(super) fn push_dependency_table(
     table: &toml::Table,
     rel: &str,
@@ -177,7 +183,10 @@ pub(super) fn push_dependency_table(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "split out of its caller, it takes the caller's locals and output buffers as they are"
+)]
 fn push_dependency_array(
     deps: &[Value],
     rel: &str,
@@ -417,7 +426,10 @@ fn extract_poetry_dependencies(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "split out of its caller, it takes the caller's locals and output buffers as they are"
+)]
 fn push_poetry_dependency(
     dependencies: &mut Vec<DeclaredDependency>,
     warnings: &mut Vec<ManifestWarning>,

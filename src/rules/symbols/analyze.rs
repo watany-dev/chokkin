@@ -58,7 +58,10 @@ fn surface_modules<'m>(
 
 /// Analyze public symbol usage and unresolved imports (§12).
 #[must_use]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub fn analyze_with_context(
     context: &RuleContext<'_>,
     entry: &EntryPlan,

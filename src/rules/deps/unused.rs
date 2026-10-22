@@ -27,7 +27,10 @@ pub(super) struct UnusedEvidenceContext<'a> {
 }
 
 /// Detect declared dependencies with no matching usage.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub(super) fn detect_unused_dependencies(
     declared: &[&DeclaredDependency],
     used: &indexmap::IndexSet<String>,

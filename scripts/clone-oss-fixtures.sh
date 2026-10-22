@@ -114,7 +114,7 @@ export OUTPUT FORCE
 
 # Build the worklist (slug, ref, url) from the manifest.
 worklist="$(mktemp)"
-while IFS=$'\t' read -r slug category size ref url || [[ -n "$slug" ]]; do
+while IFS=$'\t' read -r slug _category _size ref url || [[ -n "$slug" ]]; do
   slug="${slug%%#*}"
   [[ -z "${slug// /}" ]] && continue
   printf '%s\t%s\t%s\n' "$slug" "${ref:-}" "$url" >>"$worklist"

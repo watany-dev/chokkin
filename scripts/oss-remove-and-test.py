@@ -88,7 +88,6 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 import threading
 import tokenize
@@ -442,7 +441,7 @@ def measure_project(slug: str, args, rows: list[dict], projects: dict, envs: dic
 
 
 def counts(rows: list[dict]) -> dict[str, int]:
-    c = {s: 0 for s in STATUSES}
+    c = dict.fromkeys(STATUSES, 0)
     for r in rows:
         c[r["status"]] += 1
     c["total"] = len(rows)
@@ -469,7 +468,7 @@ def write_outputs(args, rows: list[dict], projects: dict, meta: dict) -> None:
         by_strategy: dict[str, dict[str, int]] = {}
         for r in rows:
             if r["strategy"] in ("delete", "privatize"):
-                by_strategy.setdefault(r["strategy"], {s: 0 for s in STATUSES})[r["status"]] += 1
+                by_strategy.setdefault(r["strategy"], dict.fromkeys(STATUSES, 0))[r["status"]] += 1
         summary["by_strategy"] = by_strategy
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 

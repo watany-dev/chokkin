@@ -612,7 +612,10 @@ pub(crate) fn parse_uvicorn_script_target(value: &str) -> Option<(String, String
     })
 }
 
-#[allow(clippy::expect_used)]
+#[expect(
+    clippy::expect_used,
+    reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
+)]
 static DJANGO_SETTINGS_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']\s*,\s*["']([^"']+)["']"#,
@@ -621,7 +624,10 @@ static DJANGO_SETTINGS_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid django settings regex")
 });
 
-#[allow(clippy::expect_used)]
+#[expect(
+    clippy::expect_used,
+    reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
+)]
 static DJANGO_SETTINGS_SET_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r#"setdefault\s*\(\s*["']DJANGO_SETTINGS_MODULE["']"#,
@@ -630,7 +636,10 @@ static DJANGO_SETTINGS_SET_RE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid django settings set regex")
 });
 
-#[allow(clippy::expect_used)]
+#[expect(
+    clippy::expect_used,
+    reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
+)]
 static UVICORN_SCRIPT_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"uvicorn\s+([A-Za-z_][A-Za-z0-9_.]*):([A-Za-z_][A-Za-z0-9_]*)")
         .expect("valid uvicorn script regex")
@@ -684,7 +693,10 @@ pub(super) fn find_settings_candidates(root: &Path, skip_dirs: &[&str]) -> Vec<S
     candidates
 }
 
-#[allow(clippy::expect_used)]
+#[expect(
+    clippy::expect_used,
+    reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
+)]
 static SETTINGS_SHAPE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?m)^[ \t]*(?:(?:INSTALLED_APPS|ROOT_URLCONF)\s*(?::[^=\n]*)?\+?=|from\s+\S+\s+import\s+\*|include\()",

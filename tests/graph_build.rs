@@ -1,6 +1,9 @@
 //! Integration tests for graph skeleton construction.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "helpers outside `#[test]` fns abort the test on a failed setup step"
+)]
 
 use std::path::PathBuf;
 

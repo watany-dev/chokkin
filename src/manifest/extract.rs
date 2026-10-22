@@ -35,7 +35,10 @@ struct ManifestCachePayload {
 }
 
 /// Extract declared dependencies, entry points, and lockfile graph.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "reads each manifest source in turn and merges them; the order is the logic"
+)]
 pub fn extract_manifest(
     root: &ProjectRoot,
     config: &LoadedConfig,
@@ -583,7 +586,10 @@ fn merge_metadata(
     base
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "names both sources so the conflict warning can say which one won"
+)]
 fn merge_optional_field(
     base: &mut Option<String>,
     overlay: Option<String>,

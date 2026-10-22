@@ -1,0 +1,14 @@
+# Lint for the Python helpers (scripts/, tests/test_*.py, docs/dev/formal/).
+# `make lint-scripts` runs it; CI runs the same target in repo-checks.
+# The scripts run on every python3.X the generated maps cover (ci.yml).
+target-version = "py310"
+# Fixture projects are chokkin's input, not code we maintain.
+extend-exclude = ["tests/fixtures"]
+
+[lint]
+# On top of ruff's defaults: likely bugs (B), stale syntax (UP), and
+# simplifications (SIM, C4, PERF).
+extend-select = ["B", "UP", "SIM", "C4", "PERF"]
+# Multi-line f-strings inside list literals are the house style for report
+# lines; a missing comma between two strings still shows up in review.
+ignore = ["ISC004"]

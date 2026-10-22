@@ -23,7 +23,10 @@ pub(super) fn is_script_third_party(import: &ResolvedImport, script_paths: &Hash
 }
 
 /// Per-script CHK002 and CHK003 candidates for reachable scripts.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub(super) fn detect_script_dependency_issues(
     scripts: &[InlineScript],
     resolution: &ResolutionIndex,

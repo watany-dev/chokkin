@@ -210,7 +210,10 @@ impl BfsState<'_> {
 /// Framework-glob files are seeded after the walk from the entry roots and
 /// plugin refs has finished, so a file those reach keeps its import trace;
 /// the imports of the seeded files are then followed like any other file's.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
 pub(super) fn run_reachability_bfs(
     graph: &ProjectGraph,
     entry: &EntryPlan,
@@ -346,7 +349,10 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId, class: Reach, 
 /// Importing `pkg.sub.mod` runs `pkg/__init__.py` and `pkg/sub/__init__.py`
 /// before `mod`, so every dotted prefix that resolves is reached from the
 /// same site.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one import site's fields plus the BFS state they are queued into"
+)]
 fn enqueue_import(
     state: &mut BfsState<'_>,
     from_file: FileId,

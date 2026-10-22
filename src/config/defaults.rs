@@ -11,7 +11,10 @@ use super::types::{
 /// Optional dependency group keys for one layer. Missing keys keep lower-priority values.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(clippy::struct_field_names)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "field names mirror the `dev-groups` / `runtime-groups` / `type-groups` config keys"
+)]
 pub(super) struct PartialDependencyGroups {
     pub dev_groups: Option<Vec<String>>,
     pub runtime_groups: Option<Vec<String>>,
