@@ -163,8 +163,11 @@ plus the only code path that rewrites user files:
 `.github/workflows/verification.yml` runs it weekly and on demand
 (`full-mutants`), and on a PR only the mutants on the lines the PR changes
 (`make mutants-diff`, any file under `src/`). Both fail on a missed mutant
-(#837); a weekly failure reaches whoever last edited the cron through GitHub's
-scheduled-workflow notification. The plan job counts the mutants with
+(#837). A failed weekly or full run opens an issue listing its missed
+mutants, or comments on the one still open (`mutants-issue`, #1119): GitHub's
+scheduled-workflow e-mail alone left a missed mutant on main for days (#1117).
+Each shard's summary also lists its timed-out mutants, which count as caught
+but may be a missed mutant that only slows a test down. The plan job counts the mutants with
 `--list` and splits the run into shards of about 50 (at most 12), so a large
 diff still finishes within the 60-minute job timeout. `Mutants` is the one
 stable check name to require in branch protection.
