@@ -128,6 +128,12 @@ Recommended consumer keys:
 
 Message text is not a stable identifier.
 
+In `target` (and so `fingerprint`), a path or workspace member id that holds
+`%` or `:` has them percent-encoded as `%25` and `%3A` (#1108), so `:` only
+separates the parts: member `a` with `b.py` is `a:b.py`, a root-level file
+named `a:b.py` is `a%3Ab.py`. Every other target is unchanged; a baseline
+entry for such a path was written in the old form and goes stale once.
+
 ### PEP 723 script subjects (v0.5, additive)
 
 CHK002 / CHK003 findings scoped to a PEP 723 script (`# /// script` block) use
