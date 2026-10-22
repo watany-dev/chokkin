@@ -530,6 +530,15 @@ fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
     Some(module_path.replace('/', "."))
 }
 
+/// Whether the package `path` (`foo/__init__.py`) shadows `held`, the module
+/// beside it (`foo.py`): in one directory the path finder tries the package
+/// first. Files in different directories never shadow each other here; which
+/// one Python imports is `sys.path` order (#1108).
+#[must_use]
+pub(crate) fn shadows(path: &str, held: &str) -> bool {
+    path.ends_with("/__init__.py") && module_path(path) == module_path(held)
+}
+
 /// `None` when a path component holds a `.` (`foo.bar.py`, `.hidden/`): no
 /// import can name it, and as `foo.bar` it would shadow `foo/bar.py`.
 pub(crate) fn module_path(path: &str) -> Option<&str> {

@@ -13,7 +13,7 @@ use crate::manifest::literals::{assigned_value, parse_module, string_list, strin
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::LineIndex;
 use crate::path_util::rel_to_root;
-use crate::sources::{DiscoveredSources, FileContext, path_to_module};
+use crate::sources::{DiscoveredSources, FileContext, path_to_module, shadows};
 
 use super::context::PluginContext;
 use super::types::{
@@ -400,13 +400,20 @@ fn constant_strings(value: &Expr) -> Option<Vec<String>> {
     })
 }
 
-/// Module name → root-relative file of the discovered sources, the first
-/// file winning.
+/// Module name → root-relative file of the discovered sources: a package
+/// over the module beside it, else the first file winning (#1108).
 fn module_files(sources: &DiscoveredSources) -> HashMap<String, String> {
-    let mut modules = HashMap::new();
+    let mut modules: HashMap<String, String> = HashMap::new();
     for file in &sources.files {
         if let Some(module) = path_to_module(&file.path, &sources.layout) {
-            modules.entry(module).or_insert_with(|| file.path.clone());
+            modules
+                .entry(module)
+                .and_modify(|held| {
+                    if shadows(&file.path, held) {
+                        held.clone_from(&file.path);
+                    }
+                })
+                .or_insert_with(|| file.path.clone());
         }
     }
     modules
