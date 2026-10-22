@@ -1,5 +1,6 @@
 //! Cross-module path normalization helpers.
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -62,14 +63,20 @@ pub(crate) fn join_rel(base: &str, rel: &str) -> String {
 /// # Errors
 ///
 /// Returns the I/O error from canonicalizing the existing ancestor, including when
-/// a `..` sits below a missing directory and so cannot be resolved.
+/// a `..` sits below a missing directory and so cannot be resolved, or the
+/// ancestor is a dangling symlink.
 pub(crate) fn resolve_under_root(
     canonical_root: &Path,
     path: &Path,
 ) -> io::Result<Option<PathBuf>> {
-    let mut ancestor = path;
+    // Components drop a `.`, which would make the name before it look up as
+    // a directory, so a dangling link before a trailing `/.` looks missing.
+    let path: PathBuf = path.components().collect();
+    let mut ancestor = path.as_path();
     let mut missing = Vec::new();
-    while !ancestor.exists() {
+    // A dangling symlink is no missing name: a write through it creates its
+    // target, so it is canonicalized (and fails) like any existing link.
+    while fs::symlink_metadata(ancestor).is_err() {
         let Some(name) = ancestor.file_name() else {
             break;
         };
@@ -134,6 +141,18 @@ mod tests {
         let (_dir, root) = canonical_tempdir();
         let resolved = resolve_under_root(&root, &root.join("a").join("b.json")).expect("resolve");
         assert_eq!(resolved, Some(root.join("a").join("b.json")));
+    }
+
+    /// A write through a dangling link creates its target wherever it points.
+    #[cfg(unix)]
+    #[test]
+    fn resolve_under_root_refuses_a_dangling_symlink() {
+        let (_dir, root) = canonical_tempdir();
+        let (_outside, outside) = canonical_tempdir();
+        std::os::unix::fs::symlink(outside.join("gone"), root.join("link")).expect("symlink");
+        assert!(resolve_under_root(&root, &root.join("link")).is_err());
+        assert!(resolve_under_root(&root, &root.join("link").join("x")).is_err());
+        assert!(resolve_under_root(&root, &root.join("link/.")).is_err());
     }
 
     #[test]
