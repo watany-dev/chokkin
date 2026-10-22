@@ -120,9 +120,7 @@ pub(super) fn collect_used_distributions(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        // Plugin refs read from config files (pytest `-p`, mypy plugins) name a
-        // file outside the graph; those count even though no BFS reaches them.
-        if !reachable.contains(import.file.as_str()) && graph.file_id(&import.file).is_some() {
+        if !counts_as_use(import.file.as_str(), reachable, graph) {
             continue;
         }
         used.insert(distribution.clone());
@@ -135,6 +133,13 @@ pub(super) fn collect_used_distributions(
     }
 
     used
+}
+
+/// Whether an import in `file` is a use: the file is reachable, or it is a
+/// config file outside the graph whose plugin refs (pytest `-p`, mypy
+/// plugins) name modules no BFS reaches.
+fn counts_as_use(file: &str, reachable: &HashSet<&str>, graph: &ProjectGraph) -> bool {
+    reachable.contains(file) || graph.file_id(file).is_none()
 }
 
 /// `workspace = true` dependencies, and `path` sources that hold the project's
@@ -164,7 +169,8 @@ pub(super) fn mark_workspace_source_distributions(
         .imports
         .iter()
         .filter(|import| {
-            import.origin == ModuleOrigin::FirstParty && reachable.contains(import.file.as_str())
+            import.origin == ModuleOrigin::FirstParty
+                && counts_as_use(import.file.as_str(), reachable, context.graph)
         })
         .map(|import| import.full_module.as_str())
         .collect();
