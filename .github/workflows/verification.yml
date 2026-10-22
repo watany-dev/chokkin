@@ -60,14 +60,18 @@ jobs:
       - name: Count mutants and pick the shards
         id: plan
         # A mutant takes about 40 s at -j 2 (incremental rebuild plus the
-        # nextest run). A PR runs about 50 per shard, at most 12 shards, which
-        # fit comfortably inside the 60-minute job timeout with the baseline
-        # build on top. All of src/ is too much for 12 shards (#1123), so the
-        # weekly run splits it into slices of 12 shards of at most 100 and runs
-        # the slice the ISO week picks: every mutant runs once per round.
+        # nextest run), half that when two run at once. A PR runs about 50 per
+        # shard, at most 12 shards, which fit comfortably inside the 60-minute
+        # job timeout with the baseline build on top. All of src/ is too much
+        # for 12 shards (#1123), so the weekly run splits it into slices of 12
+        # shards of at most 100 and runs one slice a week in turn, counting
+        # weeks since the epoch so no slice is skipped at a year boundary.
+        # 100 is inside the measured weekly rate: shards of 125 took 19-47
+        # minutes on 2026-10-19.
         env:
           SLICE: ${{ inputs.mutants-slice }}
         run: |
+          case "$SLICE" in "" | [0-9] | [1-9][0-9]) ;; *) echo "mutants-slice must be a number: $SLICE" >&2; exit 1 ;; esac
           mkdir -p target
           make -s "$MUTANTS_TARGET" ARGS=--list > target/mutants-list.txt
           count=$(grep -c . target/mutants-list.txt || true)
@@ -82,7 +86,7 @@ jobs:
             slices=$(( (total + 11) / 12 ))
             if [ "$slices" -gt 1 ]; then total=$(( slices * 12 )); fi
           fi
-          slice=$(( ${SLICE:-$(( 10#$(date -u +%V) ))} % slices ))
+          slice=$(( ${SLICE:-$(( $(date -u +%s) / 604800 ))} % slices ))
           first=$(( slice * 12 ))
           run=$(( total < 12 ? total : 12 ))
           echo "count=$count" >> "$GITHUB_OUTPUT"
@@ -255,15 +259,17 @@ jobs:
           echo "plan: $PLAN, shards: $SHARDS"
           [ "$PLAN" = success ] && { [ "$SHARDS" = success ] || [ "$SHARDS" = skipped ]; }
 
-  # A failed weekly or full run files its missed mutants as an issue (#1119):
-  # the scheduled-workflow e-mail alone left #1117 on main for days. One open
-  # issue collects every failed run, each as a comment.
+  # A failed weekly or full run on main files its missed mutants as an issue
+  # (#1119): the scheduled-workflow e-mail alone left #1117 on main for days.
+  # One open issue collects every failed run, each as a comment. A cancelled
+  # run (superseded, or stopped by hand) files nothing.
   mutants-issue:
     name: Mutants (file missed on main)
     needs: [mutants-plan, mutants]
     if: >-
       always() && github.event_name != 'pull_request' &&
-      contains(fromJSON('["failure", "cancelled"]'), needs.mutants.result)
+      github.ref == 'refs/heads/main' &&
+      (needs.mutants-plan.result == 'failure' || needs.mutants.result == 'failure')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -292,7 +298,7 @@ jobs:
               echo "$missed"
               echo '```'
             else
-              echo "No shard reported a missed mutant: a shard did not finish (job timeout, runner lost, build failure). See the run."
+              echo "No shard reported a missed mutant: the plan or a shard did not finish (job timeout, runner lost, build failure). See the run."
             fi
           } > body.md
           number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
