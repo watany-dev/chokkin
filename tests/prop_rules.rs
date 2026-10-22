@@ -775,3 +775,123 @@ proptest! {
         prop_assert_eq!(dev, rest);
     }
 }
+
+// ---------------------------------------------------------------------------
+// CHK008: binaries a Makefile runs, against the declared distributions.
+
+/// Binaries the bundled map resolves to a distribution of the same name,
+/// with spellings that normalize to it.
+const BINARIES: [(&str, &[&str]); 6] = [
+    ("ruff", &["ruff", "Ruff"]),
+    ("black", &["black", "BLACK"]),
+    ("mypy", &["mypy", "MyPy"]),
+    ("pytest", &["pytest", "PyTest"]),
+    ("tox", &["tox", "TOX"]),
+    ("pre-commit", &["pre-commit", "Pre_Commit", "pre.commit"]),
+];
+
+#[derive(Debug, Clone)]
+struct BinarySpec {
+    /// `(used in the Makefile, declared, spelling, in the dev group)` per
+    /// `BINARIES` entry.
+    binaries: Vec<(bool, bool, usize, bool)>,
+    /// Recipe and declaration order: a permutation of `BINARIES` indices.
+    order: Vec<usize>,
+}
+
+fn binary_spec_strategy() -> impl Strategy<Value = BinarySpec> {
+    (
+        prop::collection::vec(
+            (any::<bool>(), any::<bool>(), 0usize..3, any::<bool>()),
+            BINARIES.len(),
+        ),
+        Just((0..BINARIES.len()).collect::<Vec<usize>>()).prop_shuffle(),
+    )
+        .prop_map(|(binaries, order)| BinarySpec { binaries, order })
+}
+
+fn binary_project(spec: &BinarySpec) -> TempDir {
+    let dir = TempDir::new().expect("tempdir");
+    let root = dir.path();
+    let mut runtime = Vec::new();
+    let mut dev = Vec::new();
+    let mut makefile = String::new();
+    for &index in &spec.order {
+        let (used, declared, spelling, in_dev) = spec.binaries[index];
+        let (binary, spellings) = BINARIES[index];
+        if declared {
+            let name = spellings[spelling % spellings.len()].to_owned();
+            if in_dev { dev.push(name) } else { runtime.push(name) }
+        }
+        if used {
+            write!(makefile, "{index}:\n\t{binary} --version\n\n").expect("fmt");
+        }
+    }
+    write(
+        root,
+        "pyproject.toml",
+        &format!(
+            "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\ndependencies = [{}]\n\n[dependency-groups]\ndev = [{}]\n\n[tool.chokkin]\nmode = \"app\"\n",
+            quoted(&runtime),
+            quoted(&dev),
+        ),
+    );
+    write(root, "Makefile", &makefile);
+    write(root, "src/pkg/__init__.py", "");
+    dir
+}
+
+/// The binaries CHK008 reports.
+fn unlisted_binaries(root: &Path) -> BTreeSet<String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--reporter", "json", "--no-cache"])
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    assert!(
+        output.status.code().is_some_and(|code| code <= 1),
+        "chokkin failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("json reporter output");
+    parsed["issues"]
+        .as_array()
+        .expect("issues array")
+        .iter()
+        .filter(|issue| issue["code"] == "CHK008")
+        .map(|issue| issue["target"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(24)))]
+
+    /// CHK008 reports exactly the binaries run but not declared, whatever
+    /// the declaration order, group or PEP 503 spelling.
+    #[test]
+    fn unlisted_binaries_match_reference_model(spec in binary_spec_strategy()) {
+        let expected: BTreeSet<String> = spec
+            .binaries
+            .iter()
+            .zip(BINARIES)
+            .filter(|((used, declared, ..), _)| *used && !*declared)
+            .map(|(_, (binary, _))| binary.to_owned())
+            .collect();
+        let dir = binary_project(&spec);
+        prop_assert_eq!(unlisted_binaries(dir.path()), expected, "{:?}", spec);
+    }
+
+    /// Declaring one more distribution never adds a CHK008.
+    #[test]
+    fn declaring_a_distribution_never_adds_chk008(
+        spec in binary_spec_strategy(),
+        pick in any::<prop::sample::Index>(),
+    ) {
+        let before = unlisted_binaries(binary_project(&spec).path());
+        let mut declared = spec;
+        declared.binaries[pick.index(BINARIES.len())].1 = true;
+        let after = unlisted_binaries(binary_project(&declared).path());
+        prop_assert!(after.is_subset(&before), "{after:?} vs {before:?}");
+    }
+}
