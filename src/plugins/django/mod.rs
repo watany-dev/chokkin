@@ -17,6 +17,7 @@ use crate::manifest::literals::{
 };
 use crate::manifest::util::read_to_string;
 use crate::parser::{LineIndex, resolve_relative_import};
+use crate::path_util::is_file_named;
 use crate::rules::import_site;
 use crate::sources::FileContext;
 
@@ -95,7 +96,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let mut warnings = Vec::new();
     apps::receivers(ctx, &mut contrib);
     let root = ctx.root.path.as_path();
-    let has_manage = root.join("manage.py").is_file();
+    let has_manage = is_file_named(root, "manage.py");
     let known: BTreeSet<String> = ctx.sources.files.iter().map(|f| f.path.clone()).collect();
 
     if has_manage {

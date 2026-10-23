@@ -91,6 +91,16 @@ pub enum ResolveWarning {
         /// The `Name:` field, or the directory name when METADATA has none.
         name: String,
     },
+    /// A POSIX `.venv` holds several `lib/<interpreter>/site-packages` and
+    /// `pyvenv.cfg` does not pick one, so the highest version is read (#1169).
+    VenvSitePackagesAmbiguous {
+        /// Root-relative `lib` directory of the virtualenv.
+        path: String,
+        /// Interpreter directory whose `site-packages` is read.
+        chosen: String,
+        /// Every interpreter directory considered, sorted by version.
+        candidates: Vec<String>,
+    },
     /// Project `.venv` metadata could not be read.
     VenvUnreadable {
         /// Root-relative virtualenv path.

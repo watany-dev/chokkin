@@ -115,6 +115,55 @@ fn binary_wheel_smoke_fixture_matches_expected_report() {
         .expect("expected report matches the published schema");
 }
 
+/// The sample report in README.md, README.ja.md and spec §2 is this
+/// fixture's output, so the docs cannot drift from the binary (#1161). The
+/// READMEs also name the current version; the spec's version line is left
+/// alone.
+#[test]
+fn binary_readme_example_matches_docs() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let project = temp.path().join("acme-api");
+    copy_dir_recursive(&fixture_path(&["readme_example"]), &project).expect("copy fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "."])
+        .current_dir(&project)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let report = String::from_utf8(output.stdout).expect("utf8");
+    let (version_line, body) = report.split_once('\n').expect("version line");
+    assert_eq!(version_line, concat!("chokkin ", env!("CARGO_PKG_VERSION")));
+
+    for (doc, heading, check_version) in [
+        ("README.md", "## What you get", true),
+        ("README.ja.md", "## 何が出るか", true),
+        ("docs/dev/spec.ja.md", "出力例。", false),
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(doc);
+        // Windows checkouts may convert the docs to CRLF.
+        let text = fs::read_to_string(&path)
+            .expect("read doc")
+            .replace("\r\n", "\n");
+        let after_heading = text.split_once(heading).expect("heading").1;
+        let block = after_heading
+            .split_once("```text\n")
+            .and_then(|(_, rest)| rest.split_once("```\n"))
+            .expect("text block")
+            .0;
+        let (doc_version_line, doc_body) = block.split_once('\n').expect("doc version line");
+        if check_version {
+            assert_eq!(doc_version_line, version_line, "version line in {doc}");
+        }
+        assert_eq!(
+            doc_body, body,
+            "update the sample report in {doc} to this output:\n{report}"
+        );
+    }
+}
+
 #[test]
 fn binary_github_reporter_outputs_annotations() {
     let root = fixture_path(&["deps", "unused_boto3"]);
@@ -182,6 +231,31 @@ fn binary_dry_run_without_fix_errors() {
         output.status.code(),
         Some(ExitStatus::UsageError.code().into())
     );
+}
+
+/// A typo in `--include` used to hide every issue and exit 0, so a CI step
+/// stayed green; it is a usage error now (#1126).
+#[test]
+fn binary_unknown_rule_code_is_a_usage_error() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    for args in [
+        ["--include", "CHK02"],
+        ["--exclude", "chk002"],
+        ["--include", ","],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(args)
+            .arg(&root)
+            .output()
+            .expect("run chokkin");
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::UsageError.code().into()),
+            "{args:?}"
+        );
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains("unknown rule code"), "{args:?}: {stderr}");
+    }
 }
 
 #[test]
@@ -358,6 +432,54 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
         );
     }
     assert_eq!(skipped.len(), 5, "{stderr}");
+}
+
+/// A source file whose path is not UTF-8 is skipped with a warning, not
+/// read back under its lossy name, which fails the whole run (#1146). Linux
+/// only: macOS and Windows file systems refuse such names.
+#[cfg(target_os = "linux")]
+#[test]
+fn binary_non_utf8_source_paths_are_skipped_with_a_warning() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    let package = root.join("src/demo");
+    fs::create_dir_all(&package).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n\
+         [project.scripts]\ndemo = \"demo.cli:main\"\n",
+    )
+    .expect("write pyproject");
+    fs::write(package.join("__init__.py"), "").expect("write package");
+    fs::write(package.join("cli.py"), "def main():\n    pass\n").expect("write module");
+    let bad_dir = package.join(OsStr::from_bytes(b"b\xffd"));
+    fs::create_dir(&bad_dir).expect("mkdir");
+    fs::write(bad_dir.join("m.py"), "X = 1\n").expect("write module");
+    fs::write(package.join(OsStr::from_bytes(b"bad\xff.py")), "Y = 1\n").expect("write module");
+    fs::write(package.join(OsStr::from_bytes(b"data\xff.txt")), "").expect("write data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("is not valid UTF-8"))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            "sources: skipped `src/demo/bad\u{fffd}.py`: its path is not valid UTF-8",
+            "sources: skipped `src/demo/b\u{fffd}d/m.py`: its path is not valid UTF-8",
+        ],
+        "{stderr}"
+    );
 }
 
 /// A link that is neither dangling nor a loop is named with the OS error,
@@ -1004,6 +1126,31 @@ fn binary_module_removed_in_py310_is_stdlib_for_a_py38_project() {
     }
     let keys = issue_keys(&json_issues(temp.path(), &[]));
     assert!(keys.is_empty(), "{keys:?}");
+}
+
+#[test]
+fn binary_module_only_older_minors_ship_is_stdlib_without_a_lower_bound() {
+    // #1172: with neither `requires-python` nor `target_version`, py311 is
+    // only a guess, so modules gone before 3.11 still count as stdlib; an
+    // explicit `target_version` is the lower bound.
+    for (tool, unresolved) in [("", false), ("target_version = \"py311\"\n", true)] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let pyproject = format!(
+            "[project]\nname = \"legacy\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nlegacy = \"legacy:main\"\n\n[tool.chokkin]\n{tool}"
+        );
+        fs::write(temp.path().join("pyproject.toml"), pyproject).expect("write fixture");
+        fs::write(
+            temp.path().join("legacy.py"),
+            "import binhex\nimport formatter\nimport symbol\n\n\ndef main() -> None:\n    pass\n",
+        )
+        .expect("write fixture");
+        let keys = issue_keys(&json_issues(temp.path(), &[]));
+        assert_eq!(
+            keys.len(),
+            if unresolved { 3 } else { 0 },
+            "{tool}: {keys:?}"
+        );
+    }
 }
 
 #[test]
@@ -4994,6 +5141,34 @@ fn binary_member_build_script_outside_its_tree_is_not_a_skipped_entry() {
     );
 }
 
+/// Config paths and globs written with a leading `./` or `\\` separators
+/// match the discovered root-relative paths, like `--trace` targets (#1168).
+#[test]
+fn binary_dot_slash_and_backslash_config_paths_match_discovered_files() {
+    for (entry, exclude) in [
+        ("./src/app.py", "./legacy/**"),
+        (r"src\app.py", "legacy/**"),
+    ] {
+        let pyproject = format!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = ['{entry}']\nexclude = ['{exclude}']\n"
+        );
+        let project = write_project(&[
+            ("pyproject.toml", pyproject.as_str()),
+            ("src/app.py", "import helper\n"),
+            ("src/helper.py", "# helper\n"),
+            ("legacy/old.py", "# old\n"),
+        ]);
+        assert_eq!(issue_levels(project.path()), [], "{entry} / {exclude}");
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!stderr.contains("skipped entry"), "{stderr}");
+    }
+}
+
 /// A member's manifest entry the root excludes is skipped like a root one:
 /// its imports are unknown, so what it may use falls to likely (#934).
 #[test]
@@ -7719,7 +7894,7 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
             "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
              [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
         ),
-        (".gitignore", "bad{glob\n"),
+        (".gitignore", "bad[z-a]{glob\n"),
         ("acme/__init__.py", ""),
         (
             "packages/core/pyproject.toml",
@@ -7744,7 +7919,7 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
         .expect("canonical root")
         .join(".gitignore");
     let expected = format!(
-        "sources: could not read `{}`: line 1: error parsing glob 'bad{{glob'",
+        "sources: could not read `{}`: line 1: error parsing glob 'bad[z-a]{{glob'",
         gitignore.display()
     );
     assert_eq!(sources.len(), 1, "{stderr}");
@@ -9071,4 +9246,30 @@ fn binary_unreadable_entry_point_is_reported() {
         ),
         "{stderr}"
     );
+}
+
+/// `helper.PY` is collected and named like `helper.py`, as Python on
+/// Windows and macOS lowercases extensions when it looks a module up: the
+/// import resolves and the file's own imports are read (#1170).
+#[test]
+fn binary_resolves_module_with_uppercase_extension() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"x\"\ndependencies = []\n\n[tool.chokkin]\nentry = [\"app.py\"]\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("app.py"), "import helper\n").expect("write app");
+    fs::write(root.join("helper.PY"), "import requests\n").expect("write helper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(!stdout.contains("Unresolved imports"), "{stdout}");
+    assert!(!stdout.contains("Unused files"), "{stdout}");
+    assert!(stdout.contains("helper.PY:1 requests"), "{stdout}");
 }
