@@ -305,7 +305,7 @@ CHK006 = "info"
 
 `mode = "auto"` は次のいずれかを選びます。
 
-- **app** — 明確な entry(`console_scripts` / `manage.py` / `asgi.py` / `wsgi.py` / `app.py`)がある場合。unused file を積極的に報告します。
+- **app** — 明確な entry がある場合。`gui_scripts`、自 package の外を指す `console_scripts`、package の外にある runtime の `manage.py` / `asgi.py` / `wsgi.py` / `app.py` のいずれかです。unused file を積極的に報告します。自 package を指す console script(`acme = "acme.cli:main"`)は library の CLI とみなし、workspace member を除いて app の根拠にしません。CLI 付きの library で unused file を厳密に見たい場合は `mode = "app"` にするか `entry` を書いてください。
 - **library** — `[project] name` と package があり、明確な entry がない場合。public module は見えない利用者から import され得るので、unused file / export は低 confidence か info で報告します。library で本気の unused file 検出をしたい場合は `entry` を明示してください。
 - **workspace** — 複数の `pyproject.toml` または `tool.uv.workspace.members` がある場合。共有 lockfile を使いつつ member ごとに解析し、`[tool.chokkin.workspaces.<name>]` で member 別の設定ができます。workspace 宣言のない repository では、`[project]` name を持つ入れ子の `pyproject.toml`(4 階層まで)を自動で member にします。member でない入れ子 project(独自の `[project]` を持つ example app など)は warning を出して解析対象から外します。
 
