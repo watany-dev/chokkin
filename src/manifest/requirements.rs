@@ -436,12 +436,7 @@ fn push_editable_dependency(
         (String::new(), true)
     } else {
         (
-            normalize_distribution_name(
-                Path::new(path_spec)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(path_spec),
-            ),
+            normalize_distribution_name(editable_path_basename(path_spec)),
             true,
         )
     };
@@ -457,6 +452,21 @@ fn push_editable_dependency(
         included_via: Vec::new(),
         unportable_key: None,
     });
+}
+
+/// Last component of an `-e` path, split on both `/` and `\` so the guess
+/// does not depend on the host OS (#1171): `Path::file_name` splits on `\`
+/// only on Windows, so `-e "libs\foo"` was `foo` there and `libs-foo`
+/// elsewhere. A trailing separator is skipped, as `Path::file_name` does; a
+/// last component of `.` or `..` names nothing, so the whole spec is kept.
+fn editable_path_basename(spec: &str) -> &str {
+    match spec
+        .split(['/', '\\'])
+        .rfind(|component| !component.is_empty())
+    {
+        Some("." | "..") | None => spec,
+        Some(component) => component,
+    }
 }
 
 /// Distribution a requirements-file line declares, read the way [`extract_requirements_file`]
@@ -990,6 +1000,30 @@ mod tests {
         ] {
             assert_eq!(pip_line_options(options), None, "{options:?}");
         }
+    }
+
+    #[test]
+    fn editable_path_name_does_not_depend_on_the_host_separator() {
+        // #1171: `Path::file_name` split `libs\foo` only on Windows. The
+        // value is quoted because pip's `shlex.split` drops an unquoted `\`.
+        let result = parse_requirements_text(
+            "-e \"libs\\foo\"\n\
+             -e libs/bar\n\
+             -e libs/baz/\n\
+             -e 'C:\\work\\Qux_Pkg'\n\
+             -e libs\\quux\n",
+        );
+        assert_eq!(
+            declared(&result),
+            [
+                ("foo", Some(1)),
+                ("bar", Some(2)),
+                ("baz", Some(3)),
+                ("qux-pkg", Some(4)),
+                ("libsquux", Some(5)),
+            ]
+        );
+        assert!(result.dependencies.iter().all(|dep| dep.opaque));
     }
 
     #[test]

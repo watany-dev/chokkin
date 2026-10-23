@@ -120,6 +120,13 @@ exit codeはCI向けに固定する。
                  evidence（top-level modules、reachable/unreachable import）を出す。
 --trace        : 到達可能な file には entry からの positive trace、未到達 file には
                  negative trace（未到達理由、entry roots、incoming import 連鎖）を出す。
+--probe        : pipeline の step 1〜4 (root・config・manifest・source の発見) だけを
+                 実行し、text で表示する。issue を作らないので、issue を絞る・出力する・
+                 直す・baseline に書く flag (`--strict` `--include` `--exclude`
+                 `--confidence` `--reporter` `--no-exit-code` `--explain` `--trace`
+                 `--fix` 系 `--baseline` `--update-baseline`) との併用は exit 2 で拒否する
+                 (黙って無視しない、#1128)。`--production` `--no-auto-workspace`
+                 `--no-cache` `--project-root` は発見の結果を変えるので併用できる。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
