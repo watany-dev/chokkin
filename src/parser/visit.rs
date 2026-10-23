@@ -615,6 +615,16 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    /// `x += 1` reads `x` before it writes it, though a name target is in
+    /// store context (#1142). Kept out of `visit_stmt` so its frame, which
+    /// every nesting level pays for, does not grow.
+    fn visit_aug_assign_target(&mut self, target: &'ast Expr) {
+        if let Expr::Name(name) = target {
+            insert_name(&mut self.loaded_names, &name.id);
+        }
+        self.visit_expr(target);
+    }
+
     /// pytest imports the modules a module-level `pytest_plugins` names, in
     /// a conftest or in a module it loaded as a plugin.
     fn record_pytest_plugins(&mut self, target: &str, value: &Expr) {
@@ -944,12 +954,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 {
                     self.record_pytest_plugins(name.id.as_str(), &aug_assign.value);
                 }
-                // `x += 1` reads `x` before it writes it, though the target
-                // is in store context (#1142).
-                if let Expr::Name(name) = &*aug_assign.target {
-                    insert_name(&mut self.loaded_names, &name.id);
-                }
-                self.visit_expr(&aug_assign.target);
+                self.visit_aug_assign_target(&aug_assign.target);
                 self.visit_expr(&aug_assign.value);
             },
             Stmt::Return(return_stmt) => {
