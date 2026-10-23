@@ -76,6 +76,12 @@ fn infers_src_layout() {
             "**/*.ipynb".to_owned(),
             "conftest.py".to_owned(),
             "setup.py".to_owned(),
+            "main.py".to_owned(),
+            "app.py".to_owned(),
+            "manage.py".to_owned(),
+            "asgi.py".to_owned(),
+            "wsgi.py".to_owned(),
+            "noxfile.py".to_owned(),
         ]
     );
 

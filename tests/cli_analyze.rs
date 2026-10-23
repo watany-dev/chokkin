@@ -9003,3 +9003,36 @@ fn binary_unreadable_entry_point_is_reported() {
         "{stderr}"
     );
 }
+
+/// Root `main.py` and root scripts with a `__main__` block are entries in
+/// flat and src layouts too, so what only they import is used (#1137). A
+/// root module that is neither stays outside the walk, as before.
+#[test]
+fn binary_root_entry_scripts_are_read_in_package_layouts() {
+    let pyproject = "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"requests\", \"rich\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    for package in ["app", "src/app"] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject),
+            (&format!("{package}/__init__.py"), ""),
+            ("main.py", "import requests\nimport app\n"),
+            (
+                "tool.py",
+                "import rich\n\nif __name__ == '__main__':  # run directly\n    pass\n",
+            ),
+            ("util.py", "x = 1\n"),
+        ]);
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(issue_keys(&issues), Vec::new(), "{package}: {issues:?}");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--trace", "main.py"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(
+            !stdout.contains("was not discovered"),
+            "{package}: {stdout}"
+        );
+    }
+}
