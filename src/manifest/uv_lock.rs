@@ -45,18 +45,10 @@ pub(super) fn extract_uv_lock(path: &Path) -> Result<LockfileGraph, ManifestErro
     if let Some(lock) = scan_uv_layout(&contents) {
         return Ok(lock_graph(lock));
     }
-
-    // A filtered lock that no longer parses means the strip guessed wrong, so
-    // the full text decides whether the file is really invalid.
-    let stripped = strip_artifacts(&contents);
-    let lock: UvLock = stripped
-        .as_deref()
-        .map_or_else(|| toml::from_str(&contents), toml::from_str)
-        .or_else(|_| toml::from_str(&contents))
-        .map_err(|error| ManifestError::InvalidUvLock {
-            path: path.to_path_buf(),
-            message: error.to_string(),
-        })?;
+    let lock: UvLock = toml::from_str(&contents).map_err(|error| ManifestError::InvalidUvLock {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
     Ok(lock_graph(lock))
 }
 
@@ -102,8 +94,8 @@ enum Table {
 /// Read a lock in the exact layout uv writes without a TOML parser: even
 /// stripped of artifacts, parsing 600 member lockfiles took a third of an
 /// undeclared monorepo's member probe (#592). `None` for any line uv would
-/// not write, such as a comment or an inline `dependencies` array, so `toml`
-/// decides those files.
+/// not write, such as a comment on its own line or an inline `dependencies`
+/// array, so `toml` decides those files.
 fn scan_uv_layout(contents: &str) -> Option<UvLock> {
     if !single_line_strings(contents) {
         return None;
@@ -377,31 +369,6 @@ fn normalized(name: String) -> String {
     }
 }
 
-/// Drop the `sdist` and `wheels` lines uv writes for every package: they are
-/// ~95% of a lock's bytes and TOML parsing them dominated the probe of a
-/// monorepo with hundreds of member lockfiles (#513). `None` when a `wheels`
-/// block is not uv's one-table-per-line layout, since skipping to the next
-/// `]` line could then drop graph lines and still parse.
-fn strip_artifacts(contents: &str) -> Option<String> {
-    let mut kept = String::with_capacity(contents.len() / 16);
-    let mut in_wheels = false;
-    for line in contents.lines() {
-        if in_wheels {
-            in_wheels = line != "]";
-            let item = line.trim();
-            if in_wheels && !(item.starts_with('{') && item.ends_with("},")) {
-                return None;
-            }
-        } else if line == "wheels = [" {
-            in_wheels = true;
-        } else if !line.starts_with("sdist = ") && !line.starts_with("wheels = [{") {
-            kept.push_str(line);
-            kept.push('\n');
-        }
-    }
-    (!in_wheels).then_some(kept)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,31 +432,6 @@ mod tests {
 
         assert_eq!(graph.edges.get("acme"), Some(&vec!["idna".to_owned()]));
         assert_eq!(graph.edges.get("idna"), Some(&Vec::new()));
-    }
-
-    // The full-text fallback hides a wrong strip from `parse`, so check the
-    // filtered text itself.
-    #[test]
-    fn strip_artifacts_keeps_only_graph_lines() {
-        let stripped = strip_artifacts(
-            "[[package]]\nname = \"acme\"\n\
-             sdist = { url = \"https://x/acme.tar.gz\" }\n\
-             wheels = [\n    { url = \"https://x/acme.whl\" },\n]\n\
-             dependencies = [{ name = \"idna\" }]\n\
-             wheels = [{ url = \"https://x/idna.whl\" }]\n",
-        );
-
-        assert_eq!(
-            stripped.as_deref(),
-            Some("[[package]]\nname = \"acme\"\ndependencies = [{ name = \"idna\" }]\n")
-        );
-        assert_eq!(
-            strip_artifacts("wheels = [\n    { url = \"a\" }]\nx = 1\n]\n"),
-            None
-        );
-        assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\" },\n"), None);
-        assert_eq!(strip_artifacts("wheels = [\n    { url = \"a\",\n]\n"), None);
-        assert_eq!(strip_artifacts("wheels = [\n    url = \"a\" },\n]\n"), None);
     }
 
     #[test]
@@ -726,19 +668,14 @@ mod tests {
         assert_eq!(graph.extras["acme-lib"]["socks"], ["pysocks".to_owned()]);
     }
 
-    /// Pins the strip and the scanner to the layout a real `uv lock` writes,
-    /// which the hand-written locks above only approximate (#560).
+    /// Pins the scanner to the layout a real `uv lock` writes, which the
+    /// hand-written locks above only approximate (#560).
     #[test]
     fn real_uv_output_skips_artifacts_and_keeps_the_graph() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/manifest/uv_lock_real/uv.lock");
         let contents = std::fs::read_to_string(path).expect("read fixture");
         let full = toml_graph(&contents);
-
-        let stripped = strip_artifacts(&contents).expect("uv wheels layout");
-        assert_eq!(toml_graph(&stripped), full);
-        assert!(!stripped.contains("sdist = ") && !stripped.contains("wheels = "));
-        assert!(stripped.lines().count() * 2 < contents.lines().count());
         assert_eq!(
             scan_uv_layout(&contents).map(lock_graph),
             Some(full.clone())
