@@ -144,6 +144,31 @@ fn respects_gitignore() {
 }
 
 #[test]
+fn gitignore_braces_are_literal_like_git() {
+    // git has no brace expansion: `{}` and `*.{py,pyc}` ignore nothing here,
+    // and `c[{l]i.py` is a class holding `{` and `l` (#1149).
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        (".git/info/exclude", "{build,dist}/\n"),
+        (
+            ".gitignore",
+            "{}\n*.{py,pyc}\nsrc/acme/c[{l]i.py\nsrc/acme/\\{x}.py\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", ""),
+        ("src/acme/{x}.py", ""),
+        ("src/acme/build/out.py", ""),
+    ]);
+    assert_eq!(
+        paths(&sources),
+        ["src/acme/__init__.py", "src/acme/build/out.py"]
+    );
+}
+
+#[test]
 fn skips_gitignore_when_disabled() {
     let sources = discover_fixture("gitignore_disabled");
     let discovered = paths(&sources);

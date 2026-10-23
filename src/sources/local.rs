@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::manifest::{LoadedManifest, ProjectMetadata, UvSourceKind, UvToolSettings};
-use crate::path_util::resolve_under_root;
+use crate::path_util::{resolve_under_root, strip_source_suffix};
 
 use super::layout::infer_layout;
 use super::types::DiscoveredFile;
@@ -162,10 +162,7 @@ pub(crate) fn importable_modules<'a>(
     let mut modules: HashMap<String, bool> = HashMap::new();
     for path in paths {
         let path = path.replace('\\', "/");
-        let Some(stem) = path
-            .strip_suffix(".py")
-            .or_else(|| path.strip_suffix(".pyi"))
-        else {
+        let Some(stem) = strip_source_suffix(&path) else {
             continue;
         };
         let module = if stem == "__init__" {
