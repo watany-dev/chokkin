@@ -57,6 +57,34 @@ fn binary_probe_broken_pyproject_exits_two() {
     assert!(stderr.contains("invalid TOML"), "{stderr}");
 }
 
+/// The reason a manifest cannot be read is printed with its path (#1160).
+#[test]
+fn binary_probe_non_utf8_pyproject_names_the_reason() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    // UTF-16LE with a BOM, as some Windows editors save it.
+    let utf16: Vec<u8> = [0xFF, 0xFE]
+        .into_iter()
+        .chain(
+            "[project]\nname = \"x\"\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        )
+        .collect();
+    std::fs::write(temp.path().join("pyproject.toml"), utf16).expect("write");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into())
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("pyproject.toml: "), "{stderr}");
+    assert!(stderr.contains("UTF-8"), "{stderr}");
+}
+
 #[test]
 fn probe_report_contains_expected_sections() {
     let root = fixture_path("sources/src_layout");

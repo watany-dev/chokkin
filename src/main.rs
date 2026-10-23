@@ -7,16 +7,15 @@
     reason = "the CLI entry point writes reports and errors to the terminal"
 )]
 
-use std::fmt::Display;
 use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
 use chokkin::{
     AnalysisReport, CliArgs, ExitStatus, RenderContext, RuntimeOverrides, VERSION, analyze_project,
-    config_label_from_sources, escape_control, escape_control_lines, explain_issue, init_project,
-    parse_cli_args, probe_project, render_baseline_report, render_fix_report, render_issues,
-    trace_output, write_diagnostics, write_probe_report, write_probe_warnings,
+    config_label_from_sources, error_chain, escape_control, escape_control_lines, explain_issue,
+    init_project, parse_cli_args, probe_project, render_baseline_report, render_fix_report,
+    render_issues, trace_output, write_diagnostics, write_probe_report, write_probe_warnings,
 };
 
 const USAGE: &str = "\
@@ -191,8 +190,8 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
     ExitCode::from(report.issues.exit_status.code())
 }
 
-fn fail(error: &dyn Display, usage: bool) -> ExitCode {
-    eprintln!("{}", escape_control_lines(&error.to_string()));
+fn fail(error: &dyn std::error::Error, usage: bool) -> ExitCode {
+    eprintln!("{}", escape_control_lines(&error_chain(error)));
     let status = if usage {
         ExitStatus::UsageError
     } else {
