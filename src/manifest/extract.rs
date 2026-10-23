@@ -9,7 +9,7 @@ use crate::cache::{
 };
 use crate::config::{ChokkinConfig, LoadedConfig, TargetVersion};
 use crate::discovery::ProjectRoot;
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 use super::error::ManifestError;
 use super::lockfile::extract_lockfile;
@@ -54,7 +54,7 @@ pub fn extract_manifest(
     let mut uv = UvToolSettings::default();
     let mut pyproject_dynamic_extras: Option<ExtrasState> = None;
     let pyproject_path = root_path.join("pyproject.toml");
-    if pyproject_path.is_file() {
+    if is_file_named(root_path, "pyproject.toml") {
         let extracted = extract_pyproject(root_path, &pyproject_path)?;
         metadata = extracted.metadata;
         dependencies.extend(extracted.dependencies);
@@ -86,7 +86,7 @@ pub fn extract_manifest(
     // Requirements files setup.* reads as its declarations.
     let mut setup_files_read: Vec<String> = Vec::new();
     let setup_cfg_path = root_path.join("setup.cfg");
-    if setup_cfg_path.is_file() {
+    if is_file_named(root_path, "setup.cfg") {
         let extracted = extract_setup_cfg(root_path, &setup_cfg_path)?;
         if extracted.skipped || extracted.runtime_unknown {
             runtime_unknown_in = Some("setup.cfg");
@@ -120,7 +120,7 @@ pub fn extract_manifest(
     }
 
     let setup_py_path = root_path.join("setup.py");
-    if setup_py_path.is_file() {
+    if is_file_named(root_path, "setup.py") {
         let extracted = extract_setup_py(root_path, &setup_py_path)?;
         if extracted.runtime_unknown {
             runtime_unknown_in = Some("setup.py");
@@ -512,6 +512,11 @@ pub(crate) fn infer_target_version_from_requires_python(specifier: &str) -> Opti
         })
         .max()?;
     TargetVersion::parse(&format!("py{major}{minor:02}"))
+}
+
+/// Whether `requires-python` parses as a specifier set at all.
+pub(crate) fn requires_python_is_readable(specifier: &str) -> bool {
+    parse_version_specifiers(specifier).is_some()
 }
 
 /// Highest Python 3 minor `requires-python` allows, from `<`/`<=`/`==`/`~=`

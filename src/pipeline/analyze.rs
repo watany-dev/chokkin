@@ -339,7 +339,10 @@ fn run_analysis_core(
         .collect();
     apply_distributed_surfaces(&mut reachability, &distributed_surfaces, &entry);
 
-    let stdlib = StdlibRange::new(&target, probe.manifest.metadata.requires_python.as_deref());
+    let stdlib = StdlibRange::for_project(
+        probe.effective_config.target_version.as_ref(),
+        probe.manifest.metadata.requires_python.as_deref(),
+    );
     let member_imports: Vec<Vec<String>> = probe
         .workspace_inputs
         .iter()

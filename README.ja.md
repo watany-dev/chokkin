@@ -34,9 +34,9 @@ Unused files  2
   src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
 Unused dependencies  3
-  boto3                    pyproject.toml         declared in project.dependencies[1], no reachable import, config, or binary usage found
-  python-dotenv            pyproject.toml         declared in project.dependencies[3], no reachable import, config, or binary usage found
-  rich                     pyproject.toml         declared in project.dependencies[2], no reachable import, config, or binary usage found
+  boto3                    pyproject.toml:6       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
+  python-dotenv            pyproject.toml:8       python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
+  rich                     pyproject.toml:7       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
 
 Missing dependencies  1
   src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
@@ -139,21 +139,23 @@ uvx chokkin --fix --allow-remove-files    # certain な未到達ファイルも�
 **主要な flag:**
 
 - `--production` は dev/test/docs/lint/type context を外し、runtime code だけで到達性を判定します。dev 専用のファイル・依存は消え、「production で未使用」が厳密に出ます。
-- `--strict` は transitive 依存の直接 import を error にし、workspace member ごとの依存宣言を要求し、未宣言の type/test/docs/dev import も `CHK003` にし、environment marker 付き依存の unused も error にし、`maybe` の finding も表示します。
+- `--strict` は transitive 依存の直接 import を error にし、workspace member ごとの依存宣言を要求し、未宣言の type/test/docs/dev import も `CHK003` にし、environment marker 付き依存の unused も error にし、`maybe` の finding も表示します。さらに `warning` や `maybe` の finding でも exit 1 にします。
 - `--reporter default|compact|json|markdown|github|sarif` で出力を選びます。`github` は workflow annotation、`sarif` は code scanning 用の SARIF 2.1.0 subset です。読めなかった入力についての warning は常に stderr に出ます。`json`・`markdown`・`github`・`sarif` は warning を 1 件ずつ載せ、`default` と `compact` は最後に `Warnings: N (see stderr)` と件数を出します。同じ種類の warning が 5 件を超えると、stderr・`markdown`・`github` は最初の 5 件だけを出して残りは件数にまとめます。`json` と `sarif` は全件を残します。
 - `--no-exit-code` は finding があっても 0 を返します。導入期間や summary 用です。
 - `--no-cache` は `.chokkin/` 配下の parse cache を無効化します。cache は file stat をキーにし、stale や破損は miss として扱います。
 - `--no-auto-workspace` は入れ子の `pyproject.toml` を workspace member にしたり、別 project として除外したりしません。
-- `--init` は auto discovery の結果を反映した `[tool.chokkin]` の雛形を追記します。
+- `--init` は auto discovery の結果を反映した `[tool.chokkin]` の雛形を追記します。追記先は project root にある既存の `pyproject.toml` だけで、新しく作ることはしません。`pyproject.toml` が無い project(`requirements.txt` だけ、など)では exit code 2 で終了します。既に config がある場合(`[tool.chokkin]`・`chokkin.toml`・`.chokkin.toml`)や、`pyproject.toml` が root 外への symlink の場合も、書かずに exit code 2 で終了します。
 
 exit code は CI 向けに固定です。
 
 ```text
 0: reportable issueなし
-1: issueあり
+1: reportable issueあり
 2: CLI/config error
 3: internal error
 ```
+
+reportable issue は severity が `error` かつ confidence が `likely` 以上の finding です。それ未満の finding は表示されますが exit code は 0 のままなので、既定 `warning` の rule(`CHK001` の未使用ファイルなど)しか出ない project は 0 で終わります。`--strict` ではこの基準が severity `warning`・confidence `maybe` まで下がります。
 
 ## 既存プロジェクトへの導入
 
@@ -200,7 +202,7 @@ jobs:
 | `baseline` | — | baseline ファイル。新規 finding だけで失敗 |
 | `reporter` | `github` | 判定用 run の reporter |
 | `sarif-file` | — | SARIF の出力先(判定 run が失敗しても書き出す) |
-| `args` | — | 追加の CLI 引数(例: `--production --confidence likely`) |
+| `args` | — | 追加の CLI 引数(例: `--production --confidence likely`)。ここに書いた `--reporter`・`--baseline`・`--no-cache` は input より優先し、SARIF の実行では `--reporter` と `--no-exit-code` を無視する |
 | `cache` | `false` | `true` で `.chokkin/` キャッシュを読み書きする。PR に含まれるキャッシュで結果が変わらないよう既定は無効 |
 
 action を使わない場合は `uvx` でバージョンを固定します。
@@ -241,7 +243,7 @@ CHK006 = "info"
 
 ## 設定
 
-デフォルトは zero config です。精密さが必要になったら `pyproject.toml` に `[tool.chokkin]` を追加します(単独の `chokkin.toml` / `.chokkin.toml` も使えます)。`chokkin --init` で雛形を書き出せます。以下はすべて省略可能です。
+デフォルトは zero config です。精密さが必要になったら `pyproject.toml` に `[tool.chokkin]` を追加します(単独の `chokkin.toml` / `.chokkin.toml` も使えます。その場合は `tool.chokkin` を付けずにトップレベルに書きます。たとえば `entry = [...]` はヘッダーなし、`[tool.chokkin.severity]` は `[severity]`)。`chokkin --init` で雛形を書き出せます。以下はすべて省略可能です。
 
 ```toml
 [tool.chokkin]
@@ -305,7 +307,7 @@ CHK006 = "info"
 
 `mode = "auto"` は次のいずれかを選びます。
 
-- **app** — 明確な entry(`console_scripts` / `manage.py` / `asgi.py` / `wsgi.py` / `app.py`)がある場合。unused file を積極的に報告します。
+- **app** — 明確な entry がある場合。`gui_scripts`、自 package の外を指す `console_scripts`、package の外にある runtime の `manage.py` / `asgi.py` / `wsgi.py` / `app.py` のいずれかです。unused file を積極的に報告します。自 package を指す console script(`acme = "acme.cli:main"`)は library の CLI とみなし、workspace member を除いて app の根拠にしません。CLI 付きの library で unused file を厳密に見たい場合は `mode = "app"` にするか `entry` を書いてください。
 - **library** — `[project] name` と package があり、明確な entry がない場合。public module は見えない利用者から import され得るので、unused file / export は低 confidence か info で報告します。library で本気の unused file 検出をしたい場合は `entry` を明示してください。
 - **workspace** — 複数の `pyproject.toml` または `tool.uv.workspace.members` がある場合。共有 lockfile を使いつつ member ごとに解析し、`[tool.chokkin.workspaces.<name>]` で member 別の設定ができます。workspace 宣言のない repository では、`[project]` name を持つ入れ子の `pyproject.toml`(4 階層まで)を自動で member にします。member でない入れ子 project(独自の `[project]` を持つ example app など)は warning を出して解析対象から外します。
 

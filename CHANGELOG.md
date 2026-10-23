@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Python 3.15's standard library (`profiling` from PEP 799, ...) is in the
+  stdlib table, so `import profiling` is no longer CHK010; `sre_compile` /
+  `sre_constants` / `sre_parse`, which 3.15 removed, count as stdlib only up
+  to 3.14 (#1156).
 - The module a loader API names in its first string argument is a dynamic
   import: `import_string`, `symbol_by_name`, `import_from_string`,
   `load_object`, and cyclopts `command("pkg.mod:app")`, plus the functions
@@ -33,6 +37,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- Src, flat and package-root layouts read the root `main.py`, `app.py`,
+  `manage.py`, `asgi.py`, `wsgi.py` and `noxfile.py`, and root `.py` files
+  with a plain `if __name__ == "__main__":` line, so these entries no longer
+  go undiscovered and a dependency only they import is no longer a certain
+  CHK002 that `--fix` removes (#1137).
+- The GitHub Action no longer fails with a usage error when `args` repeats a
+  flag the action adds itself: the SARIF run drops `--no-exit-code` and
+  `--reporter` from `args`, and a `--reporter`, `--baseline` or `--no-cache`
+  in `args` replaces the one from the inputs (#1147).
+- A notebook cell with a help escape after unbalanced brackets
+  (`y = (1,` then `b]` then `?obj.attr`) no longer aborts the run with a
+  panic in the parser: the cell is lexed, not parsed, to find where its
+  statements start (#1104).
+- A PEP 723 `dependencies` entry is reported on the line that lists it. A
+  short name such as `s` took the `dependencies = [` line, and a repeated
+  entry took the line of the first one (#1104).
+- A `uv.lock` that locks one name more than once (one entry per version of a
+  fork resolution) keeps what every entry depends on. Only the last entry's
+  dependencies were kept, so those of an earlier version looked unlocked
+  (#1104).
+- An `[options.entry_points]` group name in `setup.cfg` keeps its case, as
+  setuptools reads it: `MyPlugins` was read as `myplugins` (#1104).
 - A workspace member only a pytest `-p` option or the `pytest-*` naming
   convention uses is no longer a certain CHK002, and the members its tree
   imports are used through it: the member fixed point now reads the plugin

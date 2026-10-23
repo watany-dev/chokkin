@@ -109,10 +109,25 @@ proptest! {
         prop_assert!(parse_cli_args(vec!["--fix".to_owned(), flag.to_owned()]).is_ok());
     }
 
-    /// `--include`/`--exclude` split on commas and round-trip the items.
+    /// `--include`/`--exclude` split on commas and round-trip the rule codes.
     #[test]
-    fn include_splits_on_commas(items in prop::collection::vec("[a-z*./]{1,6}", 1..5)) {
+    fn include_splits_on_commas(items in prop::collection::vec("CHK00[1-9]|CHK010", 1..5)) {
         let cli = parse_cli_args(vec![format!("--include={}", items.join(","))]).expect("parse");
         prop_assert_eq!(cli.include, Some(items));
+    }
+
+    /// One element that is not a rule code rejects the whole list (#1126).
+    #[test]
+    fn include_rejects_any_unknown_code(
+        items in prop::collection::vec("CHK00[1-9]|CHK010", 0..4),
+        bad in "[a-zA-Z0-9*./]{0,6}",
+        at in 0usize..4,
+    ) {
+        let known = (1..=10).map(|n| format!("CHK{n:03}")).any(|code| code == bad);
+        prop_assume!(!known);
+        let mut items = items;
+        items.insert(at.min(items.len()), bad);
+        let arg = format!("--include={}", items.join(","));
+        prop_assert!(parse_cli_args(vec![arg]).is_err());
     }
 }
