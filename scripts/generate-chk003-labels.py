@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate CHK003 triage labels from oss-metrics findings.tsv.
 
-Heuristic triage for Step 0 volume (see docs/dev/plans/phase-3x-step0-chk003-measurement.md).
+Heuristic triage for Step 0 volume (see https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/plans/phase-3x-step0-chk003-measurement.md).
 Re-run after `make oss-metrics` when the OSS clone set or chokkin version changes.
 
 Labels match on (slug, code, target), and one target can carry several

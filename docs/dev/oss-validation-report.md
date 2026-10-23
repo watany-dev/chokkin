@@ -62,7 +62,7 @@ and prints a per-rule label-coverage table in `target/oss-metrics/report.md`.
 §17 gate conditions are unchanged (CHK002 FP / crash / speed / recall).
 
 Full stocktake (CHK003 baseline, blind spots for CHK001/CHK004–010): see
-[`v0.3-stocktake-coverage.md`](./v0.3-stocktake-coverage.md).
+[`v0.3-stocktake-coverage.md`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/v0.3-stocktake-coverage.md).
 
 ## Per-rule precision samples (#656, 2026-10-08)
 

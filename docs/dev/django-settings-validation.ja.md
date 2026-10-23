@@ -71,7 +71,7 @@ production で消えた CHK001 は 28 件。すべて HEAD の `--trace` で set
 | `saleor/webhook/circuit_breaker/storage.py` | `Trace path: → └─ plugin ref saleor.webhook.circuit_breaker.storage (BREAKER_BOARD_STORAGE_CLASS)` |
 | `saleor/webhook/transport/payment.py` | `Trace path: → ├─ plugin ref saleor.plugins.webhook.plugin (BUILTIN_PLUGINS) → └─ import saleor.webhook.transport.payment (line 105)` |
 
-各 finding の NEW / GONE / CHANGED は [`issue-1003-saleor-diff.tsv`](./issue-1003-saleor-diff.tsv) に 1 件ずつ固定した。
+各 finding の NEW / GONE / CHANGED は [`issue-1003-saleor-diff.tsv`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/issue-1003-saleor-diff.tsv) に 1 件ずつ固定した。
 
 - CHK002 の production の GONE 2 件は `kombu` と `stripe`。到達するようになった transport / payment module の import が根拠。
 - CHK006 の production の GONE 45 件は、新しく到達した plugin とその import 先から参照される symbol。NEW 19 件は、新しく到達した module の未参照 symbol。registry 経由の class 使用を CHK006 に反映する作業は #698。
