@@ -1084,6 +1084,39 @@ mod tests {
     }
 
     #[test]
+    fn mtime_exactly_one_window_old_is_settled() {
+        let now = UNIX_EPOCH + Duration::from_mins(10);
+        let now_ns = Duration::from_mins(10).as_nanos();
+        let window_ns = RACY_MTIME_WINDOW.as_nanos();
+        assert!(is_racy_mtime(now_ns - window_ns + 1, now));
+        assert!(!is_racy_mtime(now_ns - window_ns, now));
+    }
+
+    #[test]
+    fn absent_fingerprint_keeps_the_path_and_a_non_hex_hash() {
+        let root = Path::new("/repo");
+        let fingerprint = SourceFingerprint::absent(root, &root.join("requirements/dev.txt"));
+        assert_eq!(fingerprint.path, "requirements/dev.txt");
+        assert_eq!(fingerprint.size, 0);
+        assert_eq!(fingerprint.modified_ns, None);
+        assert_eq!(fingerprint.content_hash, "absent");
+    }
+
+    #[test]
+    fn reading_a_missing_cache_is_none_but_other_errors_surface() {
+        let root = temp_cache_test_dir("read-missing");
+        assert!(matches!(
+            read_cache_bytes(&root.join("missing.json")),
+            Ok(None)
+        ));
+        // A directory where the cache file should be is not "no cache yet".
+        let error =
+            read_cache_bytes(&root.join("src")).expect_err("a directory is not a cache file");
+        assert_ne!(error.kind(), io::ErrorKind::NotFound);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn filesystem_now_reads_the_probe_mtime() {
         let root = temp_cache_test_dir("fs-now");
         let options = CacheOptions::default();

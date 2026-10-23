@@ -9,6 +9,7 @@ use crate::config::{Confidence, RuntimeOverrides};
 use crate::fix::FixOptions;
 use crate::pipeline::AnalyzeOptions;
 use crate::reporters::ReporterId;
+use crate::rules::RuleId;
 
 /// Parsed CLI invocation.
 #[derive(Debug, Clone, Parser, PartialEq, Eq, Default)]
@@ -44,11 +45,11 @@ pub struct CliArgs {
     pub no_exit_code: bool,
 
     /// Only emit issues for these rule codes (comma-separated `CHK00x`).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', value_parser = parse_rule_code)]
     pub include: Option<Vec<String>>,
 
     /// Suppress issues for these rule codes (comma-separated `CHK00x`).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', value_parser = parse_rule_code)]
     pub exclude: Option<Vec<String>>,
 
     /// Output reporter (`default`, `compact`, `json`, `markdown`, `github`, `sarif`).
@@ -60,10 +61,11 @@ pub struct CliArgs {
     pub confidence: Option<Confidence>,
 
     /// Explain a specific issue (e.g. `CHK002:boto3`).
-    #[arg(long, value_name = "SELECTOR")]
+    #[arg(long, value_name = "SELECTOR", value_parser = parse_explain_selector)]
     pub explain: Option<String>,
 
-    /// Show reachability trace to a file path.
+    /// Show reachability trace to a file path (relative to the project root
+    /// or the current directory, or absolute).
     #[arg(long, value_name = "PATH")]
     pub trace: Option<String>,
 
@@ -183,13 +185,87 @@ fn parse_reporter(value: &str) -> Result<ReporterId, String> {
     ReporterId::parse(value).ok_or_else(|| format!("unknown reporter `{value}`"))
 }
 
+/// A code no issue carries would make `--include` hide every issue and exit 0,
+/// so reject it like `[tool.chokkin.ignore]` does: exact upper-case `CHK00x`
+/// only, and no empty element from a stray comma (#1126).
+fn parse_rule_code(value: &str) -> Result<String, String> {
+    match RuleId::parse_code(value) {
+        Some(rule) if rule.as_code() == value => Ok(value.to_owned()),
+        _ => Err(format!(
+            "unknown rule code `{value}` (expected one of CHK001..CHK010)"
+        )),
+    }
+}
+
 fn parse_confidence(value: &str) -> Result<Confidence, String> {
     Confidence::parse(value).ok_or_else(|| format!("unknown confidence `{value}`"))
+}
+
+/// A selector is `CODE:KEY` with a known rule code; anything else is a usage
+/// error rather than a selector that never matches (#1159).
+fn parse_explain_selector(value: &str) -> Result<String, String> {
+    match value.split_once(':') {
+        Some((code, key)) if !key.is_empty() => match RuleId::parse_code(code) {
+            Some(_) => Ok(value.to_owned()),
+            None => Err(format!("unknown rule code `{code}` in selector `{value}`")),
+        },
+        _ => Err(format!(
+            "selector `{value}` is not `CODE:KEY` (e.g. `CHK002:boto3`)"
+        )),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_selector_needs_a_known_rule_code_and_a_key() {
+        let parse = |selector: &str| {
+            parse_cli_args(vec!["--explain".to_owned(), selector.to_owned()])
+                .map(|args| args.explain)
+        };
+        assert_eq!(parse("CHK002:boto3"), Ok(Some("CHK002:boto3".to_owned())));
+        assert_eq!(
+            parse("chk006:acme.utils:f"),
+            Ok(Some("chk006:acme.utils:f".to_owned()))
+        );
+        for selector in ["boto3", "CHK002:"] {
+            let error = parse(selector).expect_err(selector);
+            assert!(error.contains("is not `CODE:KEY`"), "{selector}: {error}");
+        }
+        for selector in ["CHK999:boto3", ":boto3"] {
+            let error = parse(selector).expect_err(selector);
+            assert!(error.contains("unknown rule code"), "{selector}: {error}");
+        }
+    }
+
+    #[test]
+    fn accepts_known_rule_codes() {
+        let args = parse_cli_args(vec![
+            "--include".to_owned(),
+            "CHK002,CHK010".to_owned(),
+            "--exclude".to_owned(),
+            "CHK006".to_owned(),
+        ])
+        .expect("parse");
+        assert_eq!(
+            args.include,
+            Some(vec!["CHK002".to_owned(), "CHK010".to_owned()])
+        );
+        assert_eq!(args.exclude, Some(vec!["CHK006".to_owned()]));
+    }
+
+    #[test]
+    fn rejects_unknown_empty_and_lowercase_rule_codes() {
+        for flag in ["--include", "--exclude"] {
+            for value in ["CHK02", "CHK999", ",", "CHK002,", "chk002", ""] {
+                let err = parse_cli_args(vec![flag.to_owned(), value.to_owned()])
+                    .expect_err(&format!("{flag} {value:?} should be rejected"));
+                assert!(err.contains("unknown rule code"), "{flag} {value:?}: {err}");
+            }
+        }
+    }
 
     #[test]
     fn parses_production_flag() {

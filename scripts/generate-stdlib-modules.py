@@ -24,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src" / "resolver" / "stdlib" / "modules.txt"
 
-VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
 
 # `sys.stdlib_module_names` is 3.10+, so each older minor is the next one's
 # set with these roots added and removed. They are what the stdlib and

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Python 3.15's standard library (`profiling` from PEP 799, ...) is in the
+  stdlib table, so `import profiling` is no longer CHK010; `sre_compile` /
+  `sre_constants` / `sre_parse`, which 3.15 removed, count as stdlib only up
+  to 3.14 (#1156).
 - The module a loader API names in its first string argument is a dynamic
   import: `import_string`, `symbol_by_name`, `import_from_string`,
   `load_object`, and cyclopts `command("pkg.mod:app")`, plus the functions
@@ -33,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- Src, flat and package-root layouts read the root `main.py`, `app.py`,
+  `manage.py`, `asgi.py`, `wsgi.py` and `noxfile.py`, and root `.py` files
+  with a plain `if __name__ == "__main__":` line, so these entries no longer
+  go undiscovered and a dependency only they import is no longer a certain
+  CHK002 that `--fix` removes (#1137).
 - The GitHub Action no longer fails with a usage error when `args` repeats a
   flag the action adds itself: the SARIF run drops `--no-exit-code` and
   `--reporter` from `args`, and a `--reporter`, `--baseline` or `--no-cache`

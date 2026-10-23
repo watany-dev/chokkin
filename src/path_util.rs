@@ -1,5 +1,6 @@
 //! Cross-module path normalization helpers.
 
+use std::borrow::Cow;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -80,6 +81,40 @@ pub(crate) fn is_submodule(path: &str, is_init: impl Fn(&str) -> bool) -> bool {
         dir = parent;
     }
     false
+}
+
+/// `path` without a `.py` suffix of any case, as `source_kind` collects
+/// `helper.PY` too: Python on Windows and macOS lowercases extensions when
+/// it lists a directory, so `import helper` finds that file (#1170).
+#[must_use]
+pub(crate) fn strip_py_suffix(path: &str) -> Option<&str> {
+    strip_suffix_ignore_case(path, ".py")
+}
+
+/// `path` without a `.py` or `.pyi` suffix of any case (#1170).
+#[must_use]
+pub(crate) fn strip_source_suffix(path: &str) -> Option<&str> {
+    strip_py_suffix(path).or_else(|| strip_suffix_ignore_case(path, ".pyi"))
+}
+
+/// `path` with its extension in lowercase (`helper.PY` → `helper.py`), the
+/// spelling Python looks a module up by on Windows and macOS (#1170).
+#[must_use]
+pub(crate) fn lowercase_extension(path: &str) -> Cow<'_, str> {
+    match path.rsplit_once('.') {
+        Some((stem, ext))
+            if !ext.contains('/') && ext.bytes().any(|byte| byte.is_ascii_uppercase()) =>
+        {
+            Cow::Owned(format!("{stem}.{}", ext.to_ascii_lowercase()))
+        },
+        _ => Cow::Borrowed(path),
+    }
+}
+
+fn strip_suffix_ignore_case<'a>(path: &'a str, suffix: &str) -> Option<&'a str> {
+    let split = path.len().checked_sub(suffix.len())?;
+    let (stem, tail) = (path.get(..split)?, &path[split..]);
+    tail.eq_ignore_ascii_case(suffix).then_some(stem)
 }
 
 /// Join root-relative `/`-separated paths, where `""` is the root.
@@ -196,6 +231,31 @@ mod tests {
     fn rel_to_root_falls_back_to_full_path_outside_root() {
         let root = Path::new("/proj");
         assert_eq!(rel_to_root(root, Path::new("/other/x.txt")), "/other/x.txt");
+    }
+
+    #[test]
+    fn source_suffixes_strip_in_any_case() {
+        assert_eq!(strip_py_suffix("pkg/helper.PY"), Some("pkg/helper"));
+        assert_eq!(strip_py_suffix("pkg/helper.Py"), Some("pkg/helper"));
+        assert_eq!(strip_py_suffix("pkg/helper.pyi"), None);
+        assert_eq!(strip_source_suffix("pkg/stub.PYI"), Some("pkg/stub"));
+        assert_eq!(strip_source_suffix("pkg/helper.py"), Some("pkg/helper"));
+        assert_eq!(strip_source_suffix("py"), None);
+        assert_eq!(strip_source_suffix("é.txt"), None);
+    }
+
+    #[test]
+    fn lowercase_extension_touches_only_the_extension() {
+        assert_eq!(lowercase_extension("Pkg/Helper.PY"), "Pkg/Helper.py");
+        assert!(matches!(
+            lowercase_extension("pkg/helper.py"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            lowercase_extension("Pkg.D/README"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(lowercase_extension("Makefile"), Cow::Borrowed(_)));
     }
 
     fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
