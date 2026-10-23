@@ -4,14 +4,19 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
+    # A PR skips the cross-compiled wheels unless it touches their build
+    # inputs (scripts/ci-changes.py), so main builds and tests every target
+    # after each merge, before a tag depends on them.
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 # Serialize releases; do not cancel in-progress to protect partial uploads.
-# PR runs never publish, so a newer push to the same PR supersedes them.
+# PR and main runs never publish, so a newer push to the same ref supersedes
+# them.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -23,11 +28,42 @@ env:
   RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
+  # A PR that only edits prose skips the build and test jobs, as in ci.yml
+  # (see the comment on its `changes` job), and a PR that does not touch the
+  # build inputs skips the `cross: true` targets (cross-compiled, tested under
+  # QEMU or a 32-bit container). The matrix jobs skip their steps instead, so
+  # `Wheel (<target>)` and `Test wheel (<target>)` still report. Pushes and
+  # manual runs build everything.
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+      cross: ${{ steps.diff.outputs.cross }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # HEAD is the PR merge commit; HEAD^1 is the base it was merged onto.
+          fetch-depth: 2
+      - id: diff
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | python3 scripts/ci-changes.py >>"$GITHUB_OUTPUT"
+          else
+            printf 'code=true\ncross=true\n' >>"$GITHUB_OUTPUT"
+          fi
+
   # ── Build wheels ──────────────────────────────────────────────────────────────
   build-wheels:
     name: Wheel (${{ matrix.platform.target }})
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
+    env:
+      BUILD: ${{ needs.changes.outputs.code != 'false' && (!matrix.platform.cross || needs.changes.outputs.cross != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,21 +83,27 @@ jobs:
           - runner: ubuntu-24.04
             target: i686-unknown-linux-gnu
             manylinux: auto
+            cross: true
           - runner: ubuntu-24.04
             target: armv7-unknown-linux-gnueabihf
             manylinux: auto
+            cross: true
           - runner: ubuntu-24.04
             target: powerpc64le-unknown-linux-gnu
             manylinux: auto
+            cross: true
           - runner: ubuntu-24.04
             target: s390x-unknown-linux-gnu
             manylinux: auto
+            cross: true
           - runner: ubuntu-24.04
             target: i686-unknown-linux-musl
             manylinux: musllinux_1_2
+            cross: true
           - runner: ubuntu-24.04
             target: armv7-unknown-linux-musleabihf
             manylinux: musllinux_1_2
+            cross: true
           - runner: macos-14
             target: x86_64-apple-darwin
             manylinux: ""
@@ -79,9 +121,11 @@ jobs:
             manylinux: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.BUILD == 'true'
         with:
           persist-credentials: false
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        if: env.BUILD == 'true'
         env:
           # psm (via ruff_python_parser -> stacker) assembles `lay`, which the
           # manylinux2014 s390x cross gcc rejects at its default -march.
@@ -99,6 +143,7 @@ jobs:
           # to influence release artifacts (zizmor cache-poisoning, High).
           sccache: "false"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: env.BUILD == 'true'
         with:
           name: wheel-${{ matrix.platform.target }}
           path: dist/*.whl
@@ -107,6 +152,8 @@ jobs:
   # ── Build sdist ───────────────────────────────────────────────────────────────
   build-sdist:
     name: sdist
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -129,9 +176,12 @@ jobs:
   # whose wheels fail them publishes nothing.
   test-wheels:
     name: Test wheel (${{ matrix.target }})
-    needs: [build-wheels]
+    needs: [changes, build-wheels]
+    if: ${{ !cancelled() && needs.build-wheels.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    env:
+      BUILD: ${{ needs.changes.outputs.code != 'false' && (!matrix.cross || needs.changes.outputs.cross != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -166,53 +216,61 @@ jobs:
             image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
           - target: i686-unknown-linux-gnu
             runner: ubuntu-24.04
+            cross: true
             platform: linux/386
             image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
           - target: i686-unknown-linux-musl
             runner: ubuntu-24.04
+            cross: true
             platform: linux/386
             image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
           - target: armv7-unknown-linux-gnueabihf
             runner: ubuntu-24.04
+            cross: true
             platform: linux/arm/v7
             image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
             qemu: true
           - target: armv7-unknown-linux-musleabihf
             runner: ubuntu-24.04
+            cross: true
             platform: linux/arm/v7
             image: python:3.13-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
             qemu: true
           - target: powerpc64le-unknown-linux-gnu
             runner: ubuntu-24.04
+            cross: true
             platform: linux/ppc64le
             image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
             qemu: true
           - target: s390x-unknown-linux-gnu
             runner: ubuntu-24.04
+            cross: true
             platform: linux/s390x
             image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
             qemu: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.BUILD == 'true'
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.BUILD == 'true'
         with:
           name: wheel-${{ matrix.target }}
           path: dist
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: matrix.image == ''
+        if: env.BUILD == 'true' && matrix.image == ''
         with:
           python-version: "3.13"
           architecture: ${{ matrix.python-arch }}
       - name: Smoke-test the wheel
-        if: matrix.image == ''
+        if: env.BUILD == 'true' && matrix.image == ''
         shell: bash
         run: python scripts/wheel-smoke.py dist/*.whl
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        if: matrix.qemu
+        if: env.BUILD == 'true' && matrix.qemu
       - name: Smoke-test the wheel in a container
-        if: matrix.image != ''
+        if: env.BUILD == 'true' && matrix.image != ''
         env:
           PLATFORM: ${{ matrix.platform }}
           IMAGE: ${{ matrix.image }}
@@ -226,7 +284,8 @@ jobs:
   # and runs (#846).
   test-sdist:
     name: Test sdist (source build, MSRV)
-    needs: [build-sdist]
+    needs: [changes, build-sdist]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.build-sdist.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -252,6 +311,8 @@ jobs:
   # the integration tests then run; the in-process unit tests still unwind.
   test-dist:
     name: Test (dist profile, RUST_TOOLCHAIN)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -266,7 +327,8 @@ jobs:
   # change to action.yml is tested against the binary it will ship with.
   test-action:
     name: Test action (HEAD wheel)
-    needs: [build-wheels]
+    needs: [changes, build-wheels]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.build-wheels.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -291,6 +353,8 @@ jobs:
           version: ${{ steps.fixture.outputs.wheel }}
           working-directory: ${{ runner.temp }}/demo
           sarif-file: out/chokkin.sarif
+          # Flags the action also adds itself must not reach chokkin twice.
+          args: --no-exit-code --reporter compact
       - name: Check action SARIF output
         env:
           SARIF: ${{ steps.chokkin.outputs.sarif-file }}
