@@ -571,7 +571,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v48".to_owned(),
+        unit_version: "parse-v49".to_owned(),
     }
 }
 
