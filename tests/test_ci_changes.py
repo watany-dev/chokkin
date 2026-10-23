@@ -30,5 +30,17 @@ class CodeChangedTest(unittest.TestCase):
         self.assertTrue(changes.code_changed([]))
 
 
+class CrossChangedTest(unittest.TestCase):
+    def test_a_source_change_does_not_rebuild_the_cross_wheels(self) -> None:
+        self.assertFalse(changes.cross_changed(["src/lib.rs", "tests/cli_analyze.rs"]))
+
+    def test_a_build_input_rebuilds_them(self) -> None:
+        for path in sorted(changes.CROSS_INPUTS):
+            self.assertTrue(changes.cross_changed(["src/lib.rs", path]), path)
+
+    def test_an_empty_diff_rebuilds_them(self) -> None:
+        self.assertTrue(changes.cross_changed([]))
+
+
 if __name__ == "__main__":
     unittest.main()

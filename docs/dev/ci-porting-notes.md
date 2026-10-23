@@ -61,6 +61,13 @@ them when a maintainer, workflow, or job name changes.
   skipped as a whole reports under its unexpanded name and leaves the required
   checks pending. Do not require `Changes`.
 
+  A PR also skips the six `cross: true` wheels in `release.yml` (i686, armv7,
+  ppc64le, s390x: cross-compiled, then tested under QEMU or a 32-bit
+  container) unless it changes one of their build inputs
+  (`CROSS_INPUTS` in `scripts/ci-changes.py`). Their checks pass without
+  running; the Release run on each push to `main` builds and tests every
+  target, so a regression on one of them shows up there before a tag.
+
 **`pypi-chokkin` environment** (Settings → Environments):
 
 - Deployment branches and tags: selected tags only, pattern `v*`.
