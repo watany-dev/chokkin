@@ -25,6 +25,7 @@ on:
       # exit_status_z3.py
       - "src/rules/emit.rs"
       - "src/rules/filter.rs"
+      - "src/rules/types.rs"
       - "src/baseline/store.rs"
       # ignore_model.py
       - "src/rules/ignore.rs"
@@ -32,6 +33,7 @@ on:
       - "src/reachability/bfs.rs"
       - "src/reachability/build.rs"
       - "src/reachability/trace.rs"
+      - "src/reachability/module_index.rs"
       - "src/graph/edges.rs"
   schedule:
     - cron: "0 3 * * 1"
@@ -80,9 +82,9 @@ jobs:
           relative_import_model src/parser/relative.rs src/sources/layout.rs
           import_precedence_model src/resolver/resolve.rs
           deps_rules_z3 src/rules/deps/context.rs src/rules/deps/missing.rs src/rules/deps/misplaced.rs
-          exit_status_z3 src/rules/emit.rs src/rules/filter.rs src/baseline/store.rs
+          exit_status_z3 src/rules/emit.rs src/rules/filter.rs src/rules/types.rs src/baseline/store.rs
           ignore_model src/rules/ignore.rs
-          Reachability src/reachability/bfs.rs src/reachability/build.rs src/reachability/trace.rs src/graph/edges.rs
+          Reachability src/reachability/bfs.rs src/reachability/build.rs src/reachability/trace.rs src/reachability/module_index.rs src/sources/layout.rs src/graph/edges.rs
           EOF
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:

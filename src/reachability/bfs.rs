@@ -434,7 +434,8 @@ fn build_submodule_imports(
 }
 
 /// `import_module("pkg.commands." + name)` may load any module under
-/// `pkg.commands`, so each such site reaches all of them.
+/// `pkg.commands`, so each such site reaches all of them, and `pkg` and
+/// `pkg.commands`, which Python imports first whatever `name` is (#1108).
 fn build_prefix_imports(
     graph: &ProjectGraph,
     parse: &ParseSummary,
@@ -446,7 +447,12 @@ fn build_prefix_imports(
             continue;
         };
         for prefix in &module.dynamic_import_prefixes {
-            for (name, target) in module_index.under(&prefix.module) {
+            let packages = module_and_parents(&prefix.module).filter_map(|name| {
+                module_index
+                    .resolve_from(&module.path, name)
+                    .map(|target| (name, target))
+            });
+            for (name, target) in packages.chain(module_index.under(&prefix.module)) {
                 sites
                     .entry(file_id)
                     .or_default()
@@ -783,6 +789,54 @@ mod tests {
                 "expected a dynamic import step, got {step:?}"
             );
             assert_eq!(reached_from(&outcome, file_id), Some(main_id));
+        }
+    }
+
+    /// `import_module("acme.plugins." + name)` imports `acme` and
+    /// `acme.plugins` before any module under it (#1108).
+    #[test]
+    fn prefixed_dynamic_import_reaches_the_package_and_its_parents() {
+        const FILES: [&str; 4] = [
+            "src/acme/__init__.py",
+            "src/acme/main.py",
+            "src/acme/plugins/__init__.py",
+            "src/acme/plugins/one.py",
+        ];
+        let root = test_root();
+        let mut main = parsed("src/acme/main.py", &[], &[]);
+        main.dynamic_import_prefixes.push(DynamicImport {
+            module: "acme.plugins".to_owned(),
+            line: 2,
+            ..DynamicImport::default()
+        });
+        let modules = vec![main];
+        let graph = graph_with_files(root.clone(), &FILES, &[], &modules);
+        let sources = DiscoveredSources {
+            files: FILES
+                .iter()
+                .map(|path| DiscoveredFile {
+                    path: (*path).to_owned(),
+                    kind: FileKind::Python,
+                    context: FileContext::Runtime,
+                })
+                .collect(),
+            ..sources(&root)
+        };
+        let module_index = ModuleIndex::build(&graph, &sources);
+        let outcome = run_reachability_bfs(
+            &graph,
+            &entry_plan(),
+            &no_plugins(),
+            &ParseSummary { modules },
+            &module_index,
+            Vec::new(),
+        );
+
+        let main_id = graph.file_id("src/acme/main.py").expect("main");
+        for path in [FILES[0], FILES[2], FILES[3]] {
+            let file_id = graph.file_id(path).expect(path);
+            assert!(outcome.certain.contains(&file_id), "{path}");
+            assert_eq!(reached_from(&outcome, file_id), Some(main_id), "{path}");
         }
     }
 
@@ -1243,10 +1297,11 @@ mod tests {
         /// Files under a runtime `__init__.py` of the package.
         const SUBMODULE: [bool; 6] = [false, true, true, true, true, false];
 
-        /// One import site: importing file, module, `importlib`, lazy
-        /// (0 no, 1 function-local, 2 `TYPE_CHECKING`), optional (0 no,
+        /// One import site: importing file, module, kind (0 `import`,
+        /// 1 `importlib`, 2 `importlib` of the module's name plus a suffix),
+        /// lazy (0 no, 1 function-local, 2 `TYPE_CHECKING`), optional (0 no,
         /// 1 `try`, 2 platform guard).
-        type Site = (usize, usize, bool, u8, u8);
+        type Site = (usize, usize, u8, u8, u8);
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         enum RootKind {
@@ -1273,7 +1328,7 @@ mod tests {
                 Just(RootKind::Public)
             ];
             (
-                prop::collection::vec((0..6usize, 0..5usize, any::<bool>(), 0..3u8, 0..3u8), 0..12),
+                prop::collection::vec((0..6usize, 0..5usize, 0..3u8, 0..3u8, 0..3u8), 0..12),
                 prop::array::uniform5(root),
                 any::<bool>(),
                 any::<bool>(),
@@ -1302,21 +1357,36 @@ mod tests {
                 .collect()
         }
 
+        /// A prefixed site also reaches every module under its package.
+        fn site_targets(&(_, module, kind, ..): &Site) -> Vec<usize> {
+            let mut found = targets(module);
+            if kind == 2 {
+                let package = format!("{}.", MODULES[module]);
+                found.extend((0..MODULES.len()).filter(|&m| MODULES[m].starts_with(&package)));
+            }
+            found
+        }
+
         fn parse(project: &Project) -> Vec<ParsedModule> {
             let mut modules: Vec<ParsedModule> =
                 FILES.iter().map(|path| parsed(path, &[], &[])).collect();
-            for (line, &(from, module, dynamic, lazy, optional)) in (1u32..).zip(&project.sites) {
+            for (line, &(from, module, kind, lazy, optional)) in (1u32..).zip(&project.sites) {
                 let module = MODULES[module].to_owned();
                 let parsed = &mut modules[from];
-                if dynamic {
-                    parsed.dynamic_imports.push(DynamicImport {
+                if kind != 0 {
+                    let dynamic = DynamicImport {
                         module,
                         line,
                         deferred: lazy != 0,
                         optional: optional == 1,
                         platform_guarded: optional == 2,
                         ..DynamicImport::default()
-                    });
+                    };
+                    if kind == 1 {
+                        parsed.dynamic_imports.push(dynamic);
+                    } else {
+                        parsed.dynamic_import_prefixes.push(dynamic);
+                    }
                 } else {
                     let mut import = self::parsed("", &[(module.as_str(), line)], &[])
                         .imports
@@ -1473,7 +1543,7 @@ mod tests {
                     .iter()
                     .filter(|site| reached.contains(&site.0))
                     .flat_map(|site| {
-                        targets(site.1)
+                        site_targets(site)
                             .into_iter()
                             .filter(move |target| follows(project, level, site, *target))
                     })

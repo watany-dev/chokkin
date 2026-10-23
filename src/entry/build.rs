@@ -995,7 +995,8 @@ mod tests {
 
     /// The file `CPython` would import `module` from when the bases are on
     /// `sys.path` in order, written as a path → module name map: the lowest
-    /// base wins, and in one base the module file before the package.
+    /// base wins, and in one base the package before the module file, as
+    /// the path finder tries `foo/__init__.py` first (#1108).
     fn module_file<'a>(module: &str, src: bool, files: &[&'a str]) -> Option<&'a str> {
         let bases: &[&str] = if src {
             &["src", "", "svc/src", "svc"]
@@ -1013,8 +1014,8 @@ mod tests {
                     };
                     let (name, kind) = rest
                         .strip_suffix("/__init__.py")
-                        .map(|name| (name, 1))
-                        .or_else(|| rest.strip_suffix(".py").map(|name| (name, 0)))?;
+                        .map(|name| (name, 0))
+                        .or_else(|| rest.strip_suffix(".py").map(|name| (name, 1)))?;
                     (name.replace('/', ".") == module).then_some(((rank, kind), *file))
                 })
             })
