@@ -50,12 +50,8 @@ pub(super) fn write_manifest(
     bom: bool,
     text: &str,
 ) -> Result<(), FixError> {
-    let mut bytes = Vec::with_capacity(BOM.len() + text.len());
-    if bom {
-        bytes.extend_from_slice(BOM.as_bytes());
-    }
-    bytes.extend_from_slice(text.as_bytes());
-    atomic_write(path, &bytes, true).map_err(|source| FixError::Io {
+    let bytes = [if bom { BOM } else { "" }, text].concat();
+    atomic_write(path, bytes.as_bytes(), true).map_err(|source| FixError::Io {
         path: rel.to_owned(),
         source,
     })
