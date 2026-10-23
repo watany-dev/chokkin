@@ -297,7 +297,8 @@ pub struct SourceFingerprint {
     #[serde(default)]
     pub change_ns: Option<u128>,
     /// Stable hash of file bytes, empty when `(size, modified_ns, file_id,
-    /// change_ns)` alone identified the file (see [`SourceFingerprint::from_absolute_stat`]).
+    /// change_ns)` alone identified the file (see
+    /// [`SourceFingerprint::from_absolute_stat`]).
     pub content_hash: String,
 }
 
@@ -351,8 +352,9 @@ impl SourceFingerprint {
     /// Build a file fingerprint from `stat` alone where that is unambiguous.
     ///
     /// Leaves [`Self::content_hash`] empty when `(size, modified_ns)` plus the
-    /// platform's file identity and change stamp already identify the file, so a warm cache lookup costs one `stat` per source
-    /// instead of reading and hashing every byte of the project. Falls back to
+    /// platform's file identity and change stamp already identify the file,
+    /// so a warm cache lookup costs one `stat` per source instead of reading
+    /// and hashing every byte of the project. Falls back to
     /// [`Self::from_absolute`] when the modified time is missing or falls
     /// inside the racy-mtime window before the system clock, and likewise for
     /// the Unix ctime, which a backdating `touch` cannot move. Use
@@ -437,7 +439,8 @@ fn file_change_stamp(metadata: &std::fs::Metadata) -> (Option<u64>, Option<u128>
 #[cfg(windows)]
 fn file_change_stamp(metadata: &std::fs::Metadata) -> (Option<u64>, Option<u128>) {
     use std::os::windows::fs::MetadataExt;
-    (None, Some(u128::from(metadata.creation_time())))
+    // 100 ns ticks since 1601; only equality matters, but keep the unit.
+    (None, Some(u128::from(metadata.creation_time()) * 100))
 }
 
 #[cfg(not(any(unix, windows)))]
