@@ -132,6 +132,67 @@ fn binary_help_exits_zero() {
     assert!(stdout.contains("Usage: chokkin"));
 }
 
+/// The hand-written `USAGE` in `main.rs` must not drift from the clap
+/// definition: every long flag is listed, flags that clap rejects without a
+/// companion say so, and descriptions share one column (#1166).
+#[test]
+fn binary_help_matches_clap_definition() {
+    use clap::CommandFactory;
+    use clap::error::ErrorKind;
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--help")
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let option_lines: Vec<&str> = stdout
+        .lines()
+        .skip_while(|line| *line != "Options:")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    let description_column = |line: &str| {
+        let flag_end = line.trim_start().find("  ").expect("description gap");
+        let indent = line.len() - line.trim_start().len();
+        let rest = &line[indent + flag_end..];
+        indent + flag_end + (rest.len() - rest.trim_start().len())
+    };
+    let column = description_column(option_lines[0]);
+    for line in &option_lines {
+        let actual = if line.trim_start().starts_with('-') {
+            description_column(line)
+        } else {
+            line.len() - line.trim_start().len()
+        };
+        assert_eq!(actual, column, "misaligned help line: {line:?}");
+    }
+
+    let mut command = chokkin::CliArgs::command();
+    command.build();
+    for arg in command.get_arguments() {
+        let Some(long) = arg.get_long() else { continue };
+        let flag = format!("--{long}");
+        let line = option_lines
+            .iter()
+            .find(|line| {
+                line.split_whitespace()
+                    .any(|word| word.trim_end_matches(',') == flag)
+            })
+            .unwrap_or_else(|| panic!("{flag} missing from --help"));
+        if arg.get_action().takes_values() {
+            continue;
+        }
+        let missing_companion = chokkin::CliArgs::command()
+            .try_get_matches_from(["chokkin", flag.as_str()])
+            .is_err_and(|err| err.kind() == ErrorKind::MissingRequiredArgument);
+        assert_eq!(
+            line.contains("(requires --"),
+            missing_companion,
+            "--help line for {flag} disagrees with clap `requires`: {line:?}"
+        );
+    }
+}
+
 #[test]
 fn binary_probe_fixture_exits_zero() {
     let root = fixture_path("probe/empty");
