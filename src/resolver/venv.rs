@@ -107,16 +107,14 @@ fn find_site_packages(
         .filter_map(|entry| entry.file_name().into_string().ok())
         .map(|name| (interpreter_version(&name), name))
         .collect();
-    if candidates.len() > 1 {
-        let configured = configured_version(venv);
-        let matching: Vec<_> = candidates
-            .iter()
-            .filter(|(version, _)| version.is_some() && *version == configured)
-            .cloned()
-            .collect();
-        if !matching.is_empty() {
-            candidates = matching;
-        }
+    let configured = configured_version(venv);
+    let matching: Vec<_> = candidates
+        .iter()
+        .filter(|(version, _)| version.is_some() && *version == configured)
+        .cloned()
+        .collect();
+    if !matching.is_empty() {
+        candidates = matching;
     }
     candidates.sort();
     let (_, chosen) = candidates.last()?;
