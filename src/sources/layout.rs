@@ -13,6 +13,7 @@ use crate::path_util::{join_rel, strip_py_suffix};
 use crate::plugins::pytest_import_settings;
 
 use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
+use super::glob::check_braces;
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
 
@@ -201,7 +202,8 @@ fn top_level_package(root: &Path, path: &str) -> Option<(String, String)> {
 fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
     let matches = |patterns: &[String], name: &str| {
         patterns.iter().any(|pattern| {
-            Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
+            check_braces(pattern).is_ok()
+                && Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
         })
     };
     find.where_dirs

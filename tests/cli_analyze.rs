@@ -9465,6 +9465,63 @@ fn binary_unreadable_entry_point_is_reported() {
     );
 }
 
+/// A project with `pyproject.toml` declaring a `demo` console script and
+/// `exclude` as its only `tool.chokkin.exclude` entry (#1145).
+fn deep_brace_project(dir: &Path, exclude: &str) {
+    fs::create_dir_all(dir.join("src/demo")).expect("mkdir");
+    fs::write(
+        dir.join("pyproject.toml"),
+        format!(
+            "[project]\nname = \"demo\"\nversion = \"0.1\"\n\
+             [project.scripts]\ndemo = \"demo.cli:main\"\n\
+             [tool.chokkin]\nexclude = [\"{exclude}\"]\n"
+        ),
+    )
+    .expect("write pyproject");
+    fs::write(dir.join("src/demo/__init__.py"), "").expect("write init");
+    fs::write(dir.join("src/demo/cli.py"), "def main():\n    pass\n").expect("write cli");
+}
+
+#[test]
+fn binary_deeply_nested_glob_braces_are_a_config_error_not_an_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let deep = format!("{}{}", "{".repeat(100_000), "}".repeat(100_000));
+    deep_brace_project(temp.path(), &deep);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into()),
+        "{:?}",
+        stderr.lines().last()
+    );
+    assert!(stderr.contains("more than the 1000 chokkin compiles"));
+}
+
+#[test]
+fn binary_deeply_nested_gitignore_braces_do_not_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    deep_brace_project(temp.path(), "nothing/**");
+    let deep = format!("{}{}\n", "{".repeat(100_000), "}".repeat(100_000));
+    fs::write(temp.path().join(".gitignore"), deep).expect("write gitignore");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{:?}",
+        stderr.lines().last()
+    );
+}
+
 /// A project with only `requirements.txt` and a flat package resolves to app
 /// mode with no entry root. Nothing is known to run, so no file or
 /// distribution is certainly unused: the findings stay below certain, a
