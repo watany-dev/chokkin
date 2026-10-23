@@ -94,7 +94,12 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
     } = parse_toml::<PyProject>(path)?;
 
     let partial = chokkin.unwrap_or_default();
-    validate(path, &partial)?;
+    validate(path, &partial).map_err(|mut error| {
+        if let ConfigError::Validation { field, .. } = &mut error {
+            field.insert_str(0, "tool.chokkin.");
+        }
+        error
+    })?;
 
     let (workspace, sources) = uv.map_or_else(Default::default, |uv| (uv.workspace, uv.sources));
     let mut uv_path_sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -399,6 +404,38 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn pyproject_validation_error_names_file_and_full_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pyproject.toml");
+        fs::write(&path, "[tool.chokkin.severity]\nCHK999 = \"off\"\n").expect("write");
+        let Err(err) = parse_pyproject_config(&path) else {
+            panic!("CHK999 is not a rule");
+        };
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "invalid config at {}: tool.chokkin.severity.CHK999: unknown rule code",
+                path.display()
+            )
+        );
+    }
+
+    #[test]
+    fn standalone_validation_error_names_file_and_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("chokkin.toml");
+        fs::write(&path, "[severity]\nCHK999 = \"off\"\n").expect("write");
+        let err = parse_standalone_config(&path).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "invalid config at {}: severity.CHK999: unknown rule code",
+                path.display()
+            )
+        );
     }
 
     #[test]
