@@ -83,25 +83,26 @@ proptest! {
         lines in prop::collection::vec("\\PC{0,80}", 0..20),
     ) {
         let temp = tempfile::tempdir().expect("tempdir");
-        let contents = lines.join("\n");
-        write_file(&temp.path().join("requirements.txt"), &contents);
+        write_file(&temp.path().join("requirements.txt"), &lines.join("\n"));
         let root = project_root_at(temp.path());
         let config = default_loaded_config(&root);
 
         // Arbitrary content may be an include error or parse fine; it must not panic.
         if let Ok(manifest) = extract_manifest(&root, &config) {
-            // pip's `str.splitlines()` ends a line at every Python line
-            // boundary, so `\PC` text can hold more lines than `lines` (#1154).
-            let boundaries = contents
-                .chars()
+            let line_count = u32::try_from(lines.len()).expect("line count fits u32");
+            // pip's `str.splitlines()` also ends a line at the other Python
+            // line boundaries `\PC` can generate inside one entry (#1154).
+            let inner_breaks = lines
+                .iter()
+                .flat_map(|line| line.chars())
                 .filter(|c| {
                     matches!(
                         c,
-                        '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}'..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+                        '\r' | '\u{b}' | '\u{c}' | '\u{1c}'..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
                     )
                 })
                 .count();
-            let line_count = u32::try_from(boundaries + 1).expect("line count fits u32");
+            let line_count = line_count + u32::try_from(inner_breaks).expect("line count fits u32");
             for dep in &manifest.dependencies {
                 prop_assert_eq!(normalized(&dep.name), dep.name.clone());
                 prop_assert_eq!(dep.origin.file.as_str(), "requirements.txt");
