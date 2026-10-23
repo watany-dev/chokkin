@@ -310,7 +310,9 @@ CHK006 = "info"
 ## Configuration
 
 Zero config is the default. When you need precision, add `[tool.chokkin]` to
-`pyproject.toml` (a standalone `chokkin.toml` or `.chokkin.toml` also works).
+`pyproject.toml` (a standalone `chokkin.toml` or `.chokkin.toml` also works;
+there, drop the `tool.chokkin` prefix: write `entry = [...]` at the top level
+and `[severity]` instead of `[tool.chokkin.severity]`).
 `chokkin --init` writes a starter section for you. Everything below is
 optional:
 
