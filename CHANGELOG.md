@@ -35,6 +35,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sphinx reads, not CHK006, even inside a package, and it is docs context
   wherever it is, so the extensions it loads are no CHK005 against a docs
   group. A `conf.py` with no root document beside it is not read (#814).
+- Entry points declared outside `[project]` root their targets as
+  `[project.scripts]` does: `[tool.poetry.scripts]` (a string or a
+  `{ reference = "...", type = "console" }` table) and
+  `[tool.poetry.plugins."group"]`, `setup.cfg`'s `[options.entry_points]`,
+  and a statically readable `setup(entry_points=...)` in `setup.py`. A CLI
+  declared only there is no longer CHK001 / CHK006, and `console_scripts` /
+  `gui_scripts` weigh in app / library mode detection like
+  `[project.scripts]`. A declaration in none of these forms (not a string or
+  table, a `type = "file"` script, a non-literal `entry_points`, ...) roots
+  nothing and is reported as `manifest: skipped entry point ...`, without
+  lowering findings. A trailing `[extras]` in a target is dropped, so
+  `acme.cli:main [cli]` roots `main` (#916).
+- The Django plugin reads the conventions of the apps `INSTALLED_APPS`
+  names. For a project package or a project `AppConfig` class, the app's
+  `apps.py`, `models.py` (or `models/__init__.py`), `admin.py` (or
+  `admin/__init__.py`) when the admin is installed, the `templatetags/`
+  modules that bind `register` and the `management/commands/` modules that
+  bind `Command` are entries, as Django loads them by convention. The config
+  class, `Command`, and names decorated with `@register.*`,
+  `@checks.register()` or `@admin.register(...)` in an app module are used,
+  and so are `@receiver`-decorated names in any module. The admin counts as
+  installed when `django.contrib.admin` or a project `AdminConfig` subclass
+  is listed, or when `INSTALLED_APPS` could not be read in full. Third-party
+  apps add nothing. The models, admin, template tags and management commands
+  of wger's and weblate's apps are no longer CHK001 (#399).
 
 ### Fixed
 - A source file whose PEP 263 declaration names a CJK codec (`shift_jis`,
@@ -78,13 +103,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A cold run of a large workspace is fast again: since 0.7.8 every string
   naming a module was looked up in each workspace member over every project
   file, which made airflow's run 1.5 s -> 4.5 s. Only the files whose path
-  ends in the name are looked at now; output is unchanged (airflow 1.8 s).
+  ends in the name are looked at now, and a name that `sys.path` hints may
+  provide is looked up in an index shared by files with the same hints
+  instead of in every hinted directory. Output is unchanged; airflow runs
+  within 1.15x of 0.7.7 again (#1080).
 - A cold run does less work per file again: the nesting check added for
   over-deep trees skips nodes too short to reach the limit, the module-level
   platform-guard scan runs only when a platform module is imported under
-  another name, and loader-name lookups and module-reference strings are
-  rejected sooner. Output is unchanged; sqlalchemy runs about 3% fewer
-  instructions (#1087).
+  another name, loader-name lookups and module-reference strings are
+  rejected sooner, the parse walk's name sets use a faster hash, and the
+  `uv.lock` scan splits lines and keys with less work and finds repeated
+  keys without a quadratic search. Output is unchanged; sqlalchemy runs
+  about 6% fewer instructions and llama_index's probe of its 602 member
+  lockfiles about 8% fewer (#1047, #1087).
 - `--fix` no longer moves a Poetry group dependency whose table says where
   it comes from (`git`, `path`, `url`, `source`, or any key besides
   `version`, `extras`, `markers`, `platform`, `python` and `optional`;
@@ -135,6 +166,277 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comprehension, a tuple) and a star import not followed are a gap
   (`UnreadSphinxExtensions`) with a plugin warning, which lowers CHK001 and
   distribution CHK002 to likely (#1062).
+- Dependency checks take less memory and time on large inputs: resolved
+  imports are shared instead of copied (peak RSS: transformers 157 MiB ->
+  123 MiB, airflow 201 MiB -> 156 MiB), CHK009 groups the declarations of a
+  name instead of comparing every pair (3,000 `foo==i` lines: 3.0 s ->
+  0.06 s), and an `include-group` chain keeps the next group per includer
+  instead of every full path (400 groups in a line: 3.03 s and 1269 MiB ->
+  0.06 s and 26 MiB). Findings are unchanged; when several shortest include
+  chains reach a group, `--explain` may print a different one of the same
+  length (#1046, #1048, #1092).
+- A server app that a `Dockerfile` or `Containerfile` below the root runs
+  (`CMD uvicorn app.main:app`, gunicorn, ...) is an entry root with
+  `--trace` origin `command: CMD (<file>:<line>)`, resolved from the root
+  and then from the Dockerfile's directory, its usual build context.
+  Airflow's `providers/informatica/dev/informatica_simulator/app/main.py`
+  is no longer CHK001. A nested Dockerfile's scripts, `-m` modules and
+  binaries are not read, and exclude and `.gitignore` apply to it. An app
+  found only beside its Dockerfile runs in the image's own tree, whose
+  installs are not read, so CHK003 / CHK004 / CHK010 for imports under that
+  directory and CHK005 for distributions imported there drop to info /
+  maybe, with the reason in `--explain` (#1061).
+- A directory whose `setup.py` imports `setuptools` or `distutils`, or any
+  `setup` (`from skbuild import setup`), is a separate project like a nested
+  `pyproject.toml` with `[project].name`: its files leave the inventory and
+  count in the `workspace: skipped N nested projects` warning. Click 8.1's
+  `setup.py`-only `examples/*/`, read since 0.7.8, no longer report
+  `setuptools` and the `PIL` their own `install_requires` declares as CHK003
+  under `--strict`. A `setup.py` that does not decode or parse is a project
+  too; one that reads with no such import (a script calling
+  `django.setup()`) stays a root file, and a directory with only
+  `setup.cfg` is not a project (#1078).
+- An import of a namespace portion such as `optimum.intel` resolves to the
+  `{namespace}-{portion}` distribution (`optimum-intel`) that the file's
+  PEP 723 block, its workspace member or the root declares, as a likely
+  match, even when the shared root `optimum` resolves through the map, venv
+  or lock (here only as `optimum-intel`'s own dependency). The declaration
+  is no longer CHK002 and the import no longer CHK004. A portion only the
+  lock names does not win. `optimum.intel` and `optimum.exporters.openvino`
+  are also in the bundled map, so an undeclared import of them is CHK003
+  for `optimum-intel` (#1022).
+- A `[tool.uv.sources]` path source outside the project root (an absolute
+  path or one through `..`) keeps its warning but is no longer read to infer
+  its package layout: its import name falls back to the distribution name
+  (`my-lib` -> `my_lib`), as for a tree with no packages, so no file outside
+  the analyzed project is read (#1042).
+- A file whose statements, expressions or patterns nest deeper than 1,000
+  levels is skipped like a syntax error, with `parse: skipped ...: syntax
+  error at line N: nested deeper than 1000 levels, which chokkin does not
+  walk`, instead of aborting the run with a stack overflow (a 1 MiB thread
+  stack holds about 2,000 levels). As for any skipped file, a reachable one
+  lowers CHK001 and CHK002. A `setup.py` or other file a manifest or plugin
+  reads that deep is unreadable, and a string annotation that deep reads as
+  one that does not parse (#1045).
+- Under `--production`, a library's tests count as callers of its public
+  names only through the public modules they reach, by imports, literal
+  dynamic imports, `pytest_plugins`, `from pkg import sub` and prefixed
+  `import_module("pkg." + name)`. A public module nothing reaches, tests
+  included, no longer clears the names it uses, so a CHK006 the default run
+  reports stays under `--production` unless its file becomes CHK001, as
+  sqlalchemy's `testing/plugin/plugin_base.py` functions do now. A module
+  the tests reach only through a plugin reference or a framework glob is
+  not followed, which can only report more (#950).
+- A Sphinx extension that `conf.py`'s `extensions` names, found beside the
+  `conf.py` or in a directory its `sys.path` hints point to, resolves its
+  own imports with that `conf.py`'s `sys.path`, including what the modules
+  `conf.py` imports add, since Sphinx imports extensions after running
+  `conf.py`. Airflow's four `sphinx_exts` that import `provider_yaml_utils`
+  beside them no longer report it as CHK010. An extension that resolves as
+  a first-party package module, and the modules an extension imports, keep
+  their own paths (#1086).
+- A dependency-rule config ignore spelled as the manifest spells the
+  distribution (`CHK002 = ["typing_extensions", "Boto3"]`) now matches: the
+  pattern is PEP 503 normalized (lowercase, runs of `-`, `_` and `.` to `-`)
+  before it meets the normalized name, keeping glob syntax and leaving
+  `[...]` classes as written. In `script:<path>:<name>` only the name part
+  is normalized; CHK008's binary name is still matched as written (#1106).
+- An inline or file-level ignore, or a vendored path, on one CHK005 import
+  of a distribution covers only that import. CHK005 kept only the strongest
+  site, so ignoring it hid every other runtime import, and an ignore on any
+  other site had no effect. Ignored sites now drop out before the rest are
+  weighed: the finding stands on the strongest site left, at that site's
+  confidence (an ignored top-level import no longer makes a deferred
+  `import` inside a function `certain`), and goes only when every site is
+  ignored (#1107).
+- The `markdown` reporter keeps a table row whole when a subject or
+  location holds a `|` or a backtick: the cell is a code span with the pipe
+  escaped and a fence longer than any backtick run inside, instead of
+  single backticks that split the row or broke the span (#1105).
+- `--init` escapes control characters as `\uXXXX` in the strings it writes
+  into the starter `[tool.chokkin]` table, so a glob taken from a directory
+  name with a tab or newline no longer leaves `pyproject.toml` unreadable
+  (#1105).
+- A `--fix` target or `--update-baseline` file reached through a dangling
+  symlink under the root (`link -> /outside/gone`) is refused. The link was
+  read as a missing name inside the root, so the write created its target
+  outside the root (#1105).
+- A fatal error prints its cause after the message: a `pyproject.toml`,
+  `.chokkin.toml` or lockfile that is not UTF-8 (or a symlink loop) said
+  only `failed to read <path>`, and an invalid `uv.lock` or other lockfile
+  now names the parse reason (#1160).
+- A `.py` file that starts with two BOMs is skipped as a syntax error
+  (`invalid non-printable character U+FEFF`), as Python rejects it, instead
+  of being parsed (#1160).
+- Names in `match` case patterns count as reads: value patterns
+  (`case m.CONST:`, `case Color.RED:`), class patterns
+  (`case Point(x=0):`) and mapping keys (`case {m.KEY: _}:`), so the
+  symbols they name are no longer CHK006. Capture names (`case [*rest]:`,
+  `as y`) still only bind (#1141).
+- An augmented assignment reads its target, so `TOTAL += 1` (after
+  `global TOTAL`), `CACHE["a"] += 1`, and `m.counter += 1` or
+  `m.REGISTRY["k"] += 1` on an imported module count as uses, and those
+  module-level names are no longer CHK006 (#1142).
+- A standalone `chokkin.toml` or `.chokkin.toml` with a `[tool.chokkin]`
+  header copied from `pyproject.toml` fails with a hint to write the keys at
+  the top level (`[severity]` instead of `[tool.chokkin.severity]`, and
+  `entry = [...]` without a header), not only "unknown field `tool`"; the
+  README shows the standalone form (#1151).
+- `--help` marks `--allow-remove-files` and `--add-missing` as
+  `(requires --fix)` and `--update-baseline` as `(requires --baseline)`, as
+  clap enforces, and lines up every description in one column (#1166).
+- An `m.X` inside a string annotation (`y: "m.Param"`, `-> "m.Ret"`) or a
+  typing string argument (`cast("m.Cast", v)`, `TypeVar`) counts as a use of
+  `X` in the module the import `m` names. So does an attribute of a literal
+  `importlib.import_module("pkg.m")`, read off the call or off a name the
+  same scope binds to it (`mod = import_module("pkg.m")` then `mod.f()`).
+  These symbols are no longer CHK006. `__import__("pkg.m")` is left out, as
+  it returns `pkg` (#1144).
+- A requirements file is split into lines as pip splits it, with
+  `str.splitlines()`: a lone `\r` (classic Mac line endings) and the other
+  Python line boundaries (`\f`, `\x85`, U+2028, ...) end a line, so
+  `requests\rflask\r` declares two requirements instead of one invalid one,
+  and `--fix` removes the line a finding names (#1154).
+- A `.py`, `.pyi` or `.ipynb` file whose directory or file name is not
+  UTF-8 no longer stops the run with exit 2. Python cannot import it, so it
+  is left out with one `sources: skipped <path>: its path is not valid
+  UTF-8` warning per file, in path order, the bad bytes shown as U+FFFD.
+  Excluded and gitignored paths and non-source files stay silent (#1146).
+- The parse cache no longer serves a stale result when `cp -p`,
+  `rsync -a` or a `tar` extract swaps in a same-size file that keeps the old
+  mtime. The stat-only key now also records the inode and ctime on Unix
+  (the creation time on Windows), and a file whose ctime is under 2 s old
+  is hashed, as a fresh mtime already was, so a backdating `touch` right
+  after a write is not taken as settled (#1158).
+- A config validation error separates the file from the key and names a
+  `pyproject.toml` key with its `tool.chokkin.` table: `invalid config at
+  pyproject.toml: tool.chokkin.severity.CHK999: unknown rule code`, not
+  `invalid config at pyproject.toml.severity.CHK999: ...`. A `chokkin.toml`
+  key reads `severity.CHK999` (#1167).
+- `getattr(m, "name")`, `hasattr`, `setattr` and `delattr` with a
+  string-literal name use `m.name` like the attribute form, on an imported
+  module (`getattr(acme.dotted, "x", None)` too) or one a literal
+  `importlib.import_module("pkg.m")` returned, so that symbol is no longer
+  CHK006. A computed name (`getattr(m, name)`) names nothing (#1143).
+- A `\` in a config path glob (`project`, `exclude`, `vendored`,
+  `[tool.chokkin.ignore]` path patterns, pytest `testpaths`, wheel target
+  paths) is a path separator on every OS, as in workspace member paths.
+  `exclude = ['legacy\**']` matched only on Windows, as `\` escapes
+  elsewhere; spell a literal glob character as a class (`[*]`) (#1165).
+- The name guessed for a `-e` path in a requirements file splits on both
+  `/` and `\` whatever the OS, so `-e "libs\foo"` names `foo` everywhere,
+  as on Windows, instead of `libs-foo` on Linux and macOS. A trailing
+  separator is skipped (`-e libs/baz/` is `baz`) (#1171).
+- `--probe` combined with a flag that filters, reports, fixes or baselines
+  issues (`--strict`, `--include`, `--exclude`, `--confidence`,
+  `--reporter`, `--no-exit-code`, `--explain`, `--trace`, `--fix` and its
+  options, `--baseline`, `--update-baseline`) is a usage error (exit 2).
+  Probe stops before issues exist, so `--probe --reporter json` printed text
+  and `--fix` exited 0 without acting. `--production`, `--no-cache`,
+  `--no-auto-workspace` and `--project-root` still combine (#1128).
+- A POSIX `.venv` holding several `lib/pythonX.Y/site-packages`, as
+  `--upgrade` leaves behind, reads the one whose version `pyvenv.cfg` names
+  (`version_info` from uv, `version` from `python -m venv`) instead of
+  whichever the file system lists first, so imports resolve the same on
+  every machine. When the cfg picks none (or both `python3.13` and
+  `python3.13t` match), the highest version is read (`python3.10` over
+  `python3.9`) with a `resolve: virtualenv ... has several interpreters`
+  warning (#1169).
+- Root markers, manifests, lockfiles, `chokkin.toml` / `.chokkin.toml`,
+  requirements files and the root files plugins read (`alembic.ini`,
+  Django's `manage.py`, `ty.toml`, ...) count only under their exact
+  spelling, so macOS and Windows read what Linux does: `Requirements.txt`,
+  `Setup.py` or `UV.lock` was found as `requirements.txt`, `setup.py` or
+  `uv.lock` on a case-insensitive file system (#1163).
+- `entry` paths written with a leading `./` or with `\` (`./src/app.py`,
+  `src\app.py`) match the discovered file, as `--trace` targets do, instead
+  of being a skipped entry whose imports were not counted. Path globs drop
+  a leading `./` too, so `exclude = ['./legacy/**']` no longer silently
+  matches nothing. An entry that normalizes to empty, `.` or `..` (`./`)
+  is a config error (#1168).
+- `.gitignore` and `.git/info/exclude` read `{` and `}` literally, as git
+  does, in the source walk and in workspace member auto-detection. They
+  were read as alternation, so a `{}` line dropped the whole project and
+  `*.{py,pyc}` every `.py` file; braces inside a character class
+  (`c[{l]i.py`) and escaped ones (`\{x}.py`) keep their meaning (#1149).
+- `--include` and `--exclude` reject an element that is not a rule code
+  (`CHK02`, `CHK999`, a lowercase `chk002`, an empty element from a stray
+  comma) as a usage error (exit 2). A typo used to match no issue, so
+  `--include` hid every finding and the run exited 0 (#1126).
+- A source file whose extension is not lowercase (`helper.PY`, `stub.PYI`)
+  is named and resolved like `helper.py` on every OS, as CPython on Windows
+  and macOS finds it for `import helper`: the default `**/*.py` globs and
+  `include` / `exclude` / test globs match it, and pytest and script
+  `sys.path` lookups find it. The import is no longer CHK010 and the file's
+  own imports count (#1170).
+- With no `target_version` and no lower bound in `requires-python` (none,
+  or one like `<3.13`), every bundled minor from 3.8 up to the upper bound
+  counts for the stdlib check, since the py311 default is only a guess.
+  Imports of modules that only older minors ship (`formatter`, `symbol`,
+  `binhex`) are no longer CHK010. An explicit `target_version` is still the
+  lower bound, and an unreadable `requires-python` still assumes py311
+  (#1172).
+- `--explain` compares a distribution key after PEP 503 normalization, so
+  `CHK002:Boto3` and `CHK002:python_dotenv` select `boto3` and
+  `python-dotenv`, and it selects a CHK003 / CHK004 import by the
+  distribution its message names as well as by its module (`CHK003:pyyaml`
+  as well as `CHK003:yaml`). Module, symbol and path keys still compare
+  exactly. A selector that is not `CODE:KEY` (`boto3`, `CHK002:`) or names
+  an unknown rule code (`CHK999:boto3`) is a usage error (exit 2) instead of
+  matching nothing; a selector that matches no issue prints a note and
+  leaves the exit code to the findings (#1159).
+- The bundled package map knows more distributions that share one import:
+  `opencv-python-headless`, `opencv-contrib-python` and
+  `opencv-contrib-python-headless` (`cv2`), `msgpack-python` (`msgpack`),
+  `psycopg2` (`psycopg2`, beside `psycopg2-binary`) and `pillow-simd`
+  (`PIL`). Without a readable environment (uvx, CI), declaring one of them
+  made the declaration a certain CHK002 and the import a certain CHK003,
+  and `--fix --add-missing` swapped in `opencv-python` or `msgpack`. The
+  declared variant now owns the import, and no ambiguous-import warning is
+  given when one of the candidates is declared (#1139).
+- `--trace` accepts an absolute path or one relative to the current
+  directory (`--trace util.py` from inside `src/acme`, `../acme/util.py`)
+  when it points inside the project root, also through a symlinked root.
+  These were reported as not discovered even when the file existed. An
+  absolute path outside the root now says so, and the not-discovered
+  message names the root that paths are relative to (#1157).
+- `--fix` reads past a leading UTF-8 BOM when it edits a manifest, as the
+  analysis does, and writes the BOM back. A dependency on the first line of
+  a BOM-prefixed `requirements.txt` was skipped as `dependency ... not
+  found`, a BOM-prefixed `setup.cfg` was skipped as `could not find
+  options.install_requires[0]`, and an edited `pyproject.toml` lost its BOM
+  (#1152).
+- The `[project.scripts]` entry of a workspace member under root
+  `examples/` (or another tree only the root's `examples/**`, `docs/**` or
+  `**/*.ipynb` globs reach) is no longer a skipped entry. The root leaves
+  that member's files to the member's own layout on purpose, so its `entry:
+  skipped entry` warning lowered the root's unused dependencies to likely.
+  With explicit `project` globs, an entry that `exclude` removes is still
+  skipped (#1140).
+- An explicit `--confidence` wins over `--strict`, which now lowers only the
+  default (config) floor to `maybe`. `--strict --confidence certain` showed
+  `likely` findings anyway and failed the run on them; it now shows only
+  `certain` findings, and the exit code follows the shown ones (#1134).
+- An app-mode project with no entry root at all (such as a
+  `requirements.txt` project with a flat package) no longer reports every
+  file and dependency as a certain CHK001 / CHK002, which made `--fix` empty
+  `requirements.txt`. The missing root is a gap that caps CHK001 and
+  distribution CHK002 at `likely`, with one `entry: no entry root was
+  found; ...` warning and a `--explain` line (`no entry root was found, so
+  no file is known to run`). Set `entry` in `[tool.chokkin]` to restore
+  certain findings. Library mode is unaffected, as its public modules stand
+  in for roots (#1138).
+- `--fix` sets the exit code from the findings it leaves standing: a run
+  that applies every fix exits 0, and one `--add-missing` edit resolves
+  every import of that distribution. `--dry-run` previews and skipped fixes
+  still count, and the report still lists the findings as they were before
+  the edits. `--update-baseline` exits 0 once the baseline is written, so
+  the README's adoption steps no longer stop under `set -e` (#1164).
+- A glob that nests thousands of `{` (in `[tool.chokkin]` `project` /
+  `exclude`, `[tool.uv.workspace]` members, ...) no longer aborts chokkin
+  with a stack overflow (exit 134). A config pattern holding more than 1000
+  `{` is an invalid glob and a config error (exit 2); an ignore or wheel
+  target pattern like that matches nothing (#1145).
 
 ## [0.7.8] - 2026-10-20
 
