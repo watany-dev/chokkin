@@ -10,6 +10,7 @@
 //! `Ignore::matched` for the options [`super::walk`] sets (git ignore +
 //! exclude, parents, no global or `.ignore` files, `require_git`).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, FileType};
@@ -138,6 +139,33 @@ impl SourcesCache {
         let base = root.canonicalize().ok()?;
         let dirs = base.ancestors().skip(1).map(|dir| self.dir(dir)).collect();
         Some(Ancestors { base, dirs })
+    }
+
+    /// Whether `.gitignore` files drop `path` for a walk with only
+    /// `git_ignore` on (no parents, no exclude, `require_git(false)`), as
+    /// `ignore`'s `matched_ignore` answers it: the directories from `root`
+    /// down to `path`'s parent, closest first. Without `require_git`,
+    /// `ignore` sees no `.git`, so a nested repository does not stop them.
+    pub(crate) fn gitignore_only_skips(&self, root: &Path, path: &Path, is_dir: bool) -> bool {
+        let Some(below) = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+        else {
+            return false;
+        };
+        let mut dir = root.to_path_buf();
+        let mut chain = vec![self.dir(&dir)];
+        for component in below.components() {
+            dir.push(component);
+            chain.push(self.dir(&dir));
+        }
+        for dir in chain.iter().rev() {
+            let matched = dir.gitignore.matched(path, is_dir);
+            if !matched.is_none() {
+                return matched.is_ignore();
+            }
+        }
+        false
     }
 
     /// Directories whose ignore files have been read so far.
@@ -304,9 +332,119 @@ fn compile(content: &[u8]) -> Option<Gitignore> {
         } else {
             &line
         };
-        builder.add_line(None, line).ok()?;
+        builder.add_line(None, &literal_braces(line)).ok()?;
     }
     builder.build().ok()
+}
+
+/// `line` with each `{` and `}` that `globset` would read as alternation
+/// escaped: git's wildmatch has no brace expansion, so `*.{py,pyc}` names a
+/// file literally called that and `{}` matches nothing (#1149). Escapes and
+/// character classes are copied as `globset` tokenizes them, so every other
+/// character keeps the meaning `ignore` gives it.
+fn literal_braces(line: &str) -> Cow<'_, str> {
+    if !line.contains(['{', '}']) {
+        return Cow::Borrowed(line);
+    }
+    let mut out = String::with_capacity(line.len() + 2);
+    let mut chars = line.chars();
+    let mut unclosed_class = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push(c);
+                out.extend(chars.next());
+            },
+            '{' | '}' => {
+                out.push('\\');
+                out.push(c);
+            },
+            '[' if !unclosed_class => {
+                out.push(c);
+                match class_len(chars.as_str()) {
+                    Some(len) => {
+                        out.push_str(&chars.as_str()[..len]);
+                        chars = chars.as_str()[len..].chars();
+                    },
+                    // `ignore` allows unclosed classes: this `[` and every
+                    // later one is a literal.
+                    None => unclosed_class = true,
+                }
+            },
+            c => out.push(c),
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Byte length of a character class body after its `[`, through the closing
+/// `]`, as `globset`'s `parse_class` reads it: an optional `!` or `^`, a
+/// leading `]` taken literally, no escapes. `None` when it never closes.
+fn class_len(rest: &str) -> Option<usize> {
+    let body = rest.strip_prefix(['!', '^']).unwrap_or(rest);
+    let skipped = rest.len() - body.len();
+    let first = body.strip_prefix(']').map_or(0, |_| 1);
+    let close = body[first..].find(']')?;
+    Some(skipped + first + close + 1)
+}
+
+/// `GitignoreBuilder::add` for `path`, with each line through
+/// [`literal_braces`] and parse errors naming the line as written.
+fn add_file(builder: &mut GitignoreBuilder, path: &Path) -> Option<ignore::Error> {
+    let tagged = |err: ignore::Error, line: u64| ignore::Error::WithPath {
+        path: path.to_path_buf(),
+        err: Box::new(ignore::Error::WithLineNumber {
+            line,
+            err: Box::new(err),
+        }),
+    };
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            return Some(ignore::Error::WithPath {
+                path: path.to_path_buf(),
+                err: Box::new(ignore::Error::Io(err)),
+            });
+        },
+    };
+    let mut errors = Vec::new();
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let lineno = index as u64 + 1;
+        let line = match line {
+            Ok(line) => line,
+            Err(err) => {
+                errors.push(tagged(ignore::Error::Io(err), lineno));
+                break;
+            },
+        };
+        let line = if index == 0 {
+            line.trim_start_matches('\u{feff}')
+        } else {
+            &line
+        };
+        if let Err(err) = builder.add_line(Some(path.to_path_buf()), &literal_braces(line)) {
+            let err = match err {
+                ignore::Error::Glob { glob, err } => ignore::Error::Glob {
+                    glob: glob.map(|_| {
+                        if line.ends_with("\\ ") {
+                            line
+                        } else {
+                            line.trim_end()
+                        }
+                        .to_owned()
+                    }),
+                    err,
+                },
+                err => err,
+            };
+            errors.push(tagged(err, lineno));
+        }
+    }
+    match errors.len() {
+        0 => None,
+        1 => errors.pop(),
+        _ => Some(ignore::Error::Partial(errors)),
+    }
 }
 
 /// `Gitignore::strip` for a matcher rooted at `root`. The shared matcher,
@@ -366,7 +504,7 @@ fn create_gitignore(dir: &Path, path: &Path, errors: &mut Vec<ignore::Error>) ->
     let mut builder = GitignoreBuilder::new(dir);
     let mut added_cleanly = true;
     if (cfg!(windows) || path.exists())
-        && let Some(error) = builder.add(path)
+        && let Some(error) = add_file(&mut builder, path)
     {
         added_cleanly = false;
         if !error.is_io() {
@@ -483,6 +621,48 @@ impl<'a> MatchState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn literal_braces_escapes_only_alternation() {
+        for (line, expected) in [
+            ("*.py", "*.py"),
+            ("{}", "\\{\\}"),
+            ("*.{py,pyc}", "*.\\{py,pyc\\}"),
+            ("\\{a}", "\\{a\\}"),
+            ("a\\\\{b}", "a\\\\\\{b\\}"),
+            ("[{]x}", "[{]x\\}"),
+            ("[!{}]", "[!{}]"),
+            ("[]{]}", "[]{]\\}"),
+            ("[{x", "[\\{x"),
+            ("[{x[}]", "[{x[}]"),
+            ("{\\", "\\{\\"),
+        ] {
+            assert_eq!(literal_braces(line), expected, "line {line}");
+        }
+    }
+
+    /// Escaped braces leave no alternation for `globset` to recurse into.
+    #[test]
+    fn deeply_nested_braces_compile() {
+        let line = format!("{}{}", "{".repeat(10_000), "}".repeat(10_000));
+        assert!(compile(line.as_bytes()).is_some());
+    }
+
+    /// The per-directory path names the line as written in its errors.
+    #[test]
+    fn add_file_reports_the_original_line() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join(".gitignore");
+        fs::write(&path, "ok\n{[z-a]}\n").expect("write");
+        let mut builder = GitignoreBuilder::new(temp.path());
+        let error = add_file(&mut builder, &path).expect("error");
+        let message = error.to_string();
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains("{[z-a]}"), "{message}");
+        assert!(!message.contains('\\'), "{message}");
+        let gitignore = builder.build().expect("build");
+        assert!(gitignore.matched("ok", false).is_ignore());
+    }
 
     /// A shared matcher with [`strip`] answers as `ignore`'s matcher rooted
     /// at the directory, including for bare names that merely start with it.

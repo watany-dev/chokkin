@@ -7650,7 +7650,7 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
             "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
              [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
         ),
-        (".gitignore", "bad{glob\n"),
+        (".gitignore", "bad[z-a]{glob\n"),
         ("acme/__init__.py", ""),
         (
             "packages/core/pyproject.toml",
@@ -7675,7 +7675,7 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
         .expect("canonical root")
         .join(".gitignore");
     let expected = format!(
-        "sources: could not read `{}`: line 1: error parsing glob 'bad{{glob'",
+        "sources: could not read `{}`: line 1: error parsing glob 'bad[z-a]{{glob'",
         gitignore.display()
     );
     assert_eq!(sources.len(), 1, "{stderr}");
