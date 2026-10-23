@@ -396,9 +396,7 @@ fn run_analysis_core(
         parse: &parse,
         surface: surface.as_ref(),
     };
-    let production_tests = if production
-        && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
-    {
+    let production_tests = if reads_production_tests(production, &entry) {
         Some(parse_production_tests(probe, &target)?)
     } else {
         None
@@ -748,6 +746,12 @@ fn shipped_surface(input: &WorkspaceMemberInputs) -> PublicSurface {
 /// the evidence that a public module's name is called from outside (#588).
 /// The root walk kept them aside, and what it could not read is already among
 /// the probe's warnings (#899, #844).
+/// Only a `--production` run holds tests back, and only a public surface
+/// (a library or its members) has names for them to vouch for.
+fn reads_production_tests(production: bool, entry: &EntryPlan) -> bool {
+    production && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
+}
+
 fn parse_production_tests(
     probe: &ProbeReport,
     target: &crate::config::TargetVersion,
