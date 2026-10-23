@@ -144,7 +144,7 @@ uvx chokkin --fix --allow-remove-files    # certain な未到達ファイルも�
 - `--no-exit-code` は finding があっても 0 を返します。導入期間や summary 用です。
 - `--no-cache` は `.chokkin/` 配下の parse cache を無効化します。cache は file stat をキーにし、stale や破損は miss として扱います。
 - `--no-auto-workspace` は入れ子の `pyproject.toml` を workspace member にしたり、別 project として除外したりしません。
-- `--init` は auto discovery の結果を反映した `[tool.chokkin]` の雛形を追記します。
+- `--init` は auto discovery の結果を反映した `[tool.chokkin]` の雛形を追記します。追記先は project root にある既存の `pyproject.toml` だけで、新しく作ることはしません。`pyproject.toml` が無い project(`requirements.txt` だけ、など)では exit code 2 で終了します。既に config がある場合(`[tool.chokkin]`・`chokkin.toml`・`.chokkin.toml`)や、`pyproject.toml` が root 外への symlink の場合も、書かずに exit code 2 で終了します。
 
 exit code は CI 向けに固定です。
 
