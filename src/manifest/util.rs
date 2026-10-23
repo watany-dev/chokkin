@@ -62,21 +62,21 @@ fn wide_bom(bytes: &[u8]) -> Option<(&[u8], WideDecoder)> {
 }
 
 fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> Option<String> {
-    let chunks = bytes.chunks_exact(2);
-    if !chunks.remainder().is_empty() {
+    let (pairs, []) = bytes.as_chunks::<2>() else {
         return None;
-    }
-    let units = chunks.map(|pair| unit([pair[0], pair[1]]));
-    char::decode_utf16(units).collect::<Result<_, _>>().ok()
+    };
+    char::decode_utf16(pairs.iter().map(|&pair| unit(pair)))
+        .collect::<Result<_, _>>()
+        .ok()
 }
 
 fn decode_utf32(bytes: &[u8], unit: fn([u8; 4]) -> u32) -> Option<String> {
-    let chunks = bytes.chunks_exact(4);
-    if !chunks.remainder().is_empty() {
+    let (quads, []) = bytes.as_chunks::<4>() else {
         return None;
-    }
-    chunks
-        .map(|quad| char::from_u32(unit([quad[0], quad[1], quad[2], quad[3]])))
+    };
+    quads
+        .iter()
+        .map(|&quad| char::from_u32(unit(quad)))
         .collect()
 }
 

@@ -35,7 +35,7 @@ pub(crate) fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
 fn has_eten_kana(bytes: &[u8]) -> bool {
     let mut rest = bytes;
     while let Some((&lead, tail)) = rest.split_first() {
-        if lead < 0x80 {
+        if lead.is_ascii() {
             rest = tail;
             continue;
         }
@@ -355,6 +355,92 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// Every Python alias of a supported CJK codec, as `encodings.aliases`
+    /// lists it, decodes; `0xA4A4` is two half-width katakana in `Shift_JIS`.
+    #[test]
+    fn every_python_cjk_alias_is_recognised() {
+        for (text, names) in [
+            (
+                "\u{ff64}\u{ff64}",
+                &[
+                    "932",
+                    "csshiftjis",
+                    "ms932",
+                    "ms_kanji",
+                    "mskanji",
+                    "s_jis",
+                    "shiftjis",
+                    "sjis",
+                    "windows_31j",
+                    "x_mac_japanese",
+                ][..],
+            ),
+            (
+                "い",
+                &[
+                    "936",
+                    "chinese",
+                    "cp936",
+                    "csiso58gb231280",
+                    "euc_cn",
+                    "euccn",
+                    "eucgb2312_cn",
+                    "eucjp",
+                    "gb18030_2000",
+                    "gb2312_1980",
+                    "gb2312_80",
+                    "iso_ir_58",
+                    "ms936",
+                    "u_jis",
+                    "ujis",
+                    "x_mac_simp_chinese",
+                ][..],
+            ),
+            (
+                "中",
+                &[
+                    "950",
+                    "big5_hkscs",
+                    "big5_tw",
+                    "csbig5",
+                    "hkscs",
+                    "ms950",
+                    "x_mac_trad_chinese",
+                ][..],
+            ),
+            (
+                "ㄴ",
+                &[
+                    "949",
+                    "euckr",
+                    "korean",
+                    "ks_c_5601",
+                    "ks_c_5601_1987",
+                    "ks_x_1001",
+                    "ksc5601",
+                    "ksx1001",
+                    "ms949",
+                    "uhc",
+                    "x_mac_korean",
+                ][..],
+            ),
+        ] {
+            for name in names {
+                let source = format!("# coding: {name}\ns = '").into_bytes();
+                let decoded = decode_python_source([source, b"\xa4\xa4'\n".to_vec()].concat());
+                assert_eq!(
+                    decoded.as_deref(),
+                    Some(format!("# coding: {name}\ns = '{text}'\n").as_str()),
+                    "{name}"
+                );
+            }
+        }
+        // The HKSCS aliases skip the ETEN kana check that `big5` needs.
+        assert!(
+            decode_python_source(b"# coding: hkscs\ns = '\xa4\xa4\xc6\xa6'\n".to_vec()).is_some()
+        );
     }
 
     #[test]
