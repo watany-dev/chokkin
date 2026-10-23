@@ -22,7 +22,7 @@ pub(crate) use context::{
 pub use discover::discover_sources;
 pub(crate) use discover::{Discovery, discover_named_files, discover_sources_cached};
 pub use error::SourcesError;
-pub(crate) use glob::build_glob_set;
+pub(crate) use glob::{build_glob_set, check_braces};
 pub(crate) use layout::unpackaged_module_dirs;
 pub(crate) use layout::{module_path, path_to_module};
 pub use local::LocalTrees;

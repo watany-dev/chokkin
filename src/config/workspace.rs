@@ -10,7 +10,7 @@ use ignore::{WalkBuilder, WalkState};
 
 use crate::discovery::ProjectRoot;
 use crate::manifest::builds_distribution;
-use crate::sources::{SourcesCache, build_glob_set};
+use crate::sources::{SourcesCache, build_glob_set, check_braces};
 
 use super::error::ConfigError;
 use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
@@ -126,6 +126,11 @@ fn uv_member_globs(root: &Path, patterns: &[String], field: &str) -> Result<Glob
     };
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
+        check_braces(pattern).map_err(|message| ConfigError::Validation {
+            path: root.join("pyproject.toml"),
+            field: format!("tool.uv.workspace.{field}"),
+            message,
+        })?;
         let glob = GlobBuilder::new(&normalize_relative_path(pattern))
             .literal_separator(true)
             .build()

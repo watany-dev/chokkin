@@ -13,15 +13,35 @@ const MANDATORY_EXCLUDES: &[&str] = &[
     CACHE_PATTERN,
 ];
 
+/// Most `{` a pattern may hold. `globset` compiles alternations
+/// recursively, so a pattern nesting ten thousand of them overflows the
+/// stack and aborts the process (#1145); counting every `{` bounds the
+/// nesting whatever the escapes and classes around them.
+const MAX_BRACES: usize = 1000;
+
+/// `Err` with the reason when `pattern` holds too many `{` to hand to
+/// `globset`; every pattern a project supplies passes through here first.
+pub(crate) fn check_braces(pattern: &str) -> Result<(), String> {
+    let braces = pattern.matches('{').count();
+    if braces > MAX_BRACES {
+        return Err(format!(
+            "pattern holds {braces} `{{`, more than the {MAX_BRACES} chokkin compiles"
+        ));
+    }
+    Ok(())
+}
+
 /// Build a glob matcher from pattern strings.
 pub(crate) fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
     let mut builder = GlobSetBuilder::new();
     let mut compiled = Vec::with_capacity(patterns.len());
     for pattern in patterns {
-        let glob = Glob::new(pattern).map_err(|error| SourcesError::InvalidGlob {
+        let invalid = |reason| SourcesError::InvalidGlob {
             pattern: pattern.clone(),
-            reason: error.to_string(),
-        })?;
+            reason,
+        };
+        check_braces(pattern).map_err(invalid)?;
+        let glob = Glob::new(pattern).map_err(|error| invalid(error.to_string()))?;
         builder.add(glob);
         compiled.push(pattern.clone());
     }
@@ -62,6 +82,23 @@ mod tests {
         let patterns = vec!["src/[unclosed".to_owned()];
         let error = build_glob_set(&patterns).expect_err("invalid glob");
         assert!(matches!(error, SourcesError::InvalidGlob { .. }));
+    }
+
+    #[test]
+    fn rejects_deeply_nested_braces_without_overflowing() {
+        let deep = format!("{}{}", "{".repeat(10_000), "}".repeat(10_000));
+        let error = build_glob_set(&[deep]).expect_err("too deep");
+        assert!(
+            matches!(&error, SourcesError::InvalidGlob { reason, .. } if reason.contains("10000 `{`")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn check_braces_allows_up_to_the_limit() {
+        assert!(check_braces(&"{a}".repeat(MAX_BRACES)).is_ok());
+        assert!(check_braces(&"{a}".repeat(MAX_BRACES + 1)).is_err());
+        assert!(check_braces("*.{py,pyi}").is_ok());
     }
 
     #[test]
