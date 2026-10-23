@@ -28,7 +28,7 @@ inputs:
     required: false
     default: ""
   args:
-    description: Extra CLI arguments, whitespace-separated (e.g. "--production --confidence likely").
+    description: Extra CLI arguments, whitespace-separated (e.g. "--production --confidence likely"). A --reporter, --baseline or --no-cache here replaces the one from the inputs; the SARIF run ignores --reporter and --no-exit-code.
     required: false
     default: ""
   cache:
@@ -64,12 +64,24 @@ runs:
           *.whl) spec=(--from "$CHOKKIN_VERSION" chokkin) ;;
           *) spec=("chokkin@$CHOKKIN_VERSION") ;;
         esac
+        # A repeated flag is a usage error. This run needs its own reporter and
+        # exit code, so those are dropped from args; a --baseline or --no-cache
+        # in args replaces the one the inputs would add.
+        args=() skip=false has_baseline=false has_no_cache=false
+        for arg in $CHOKKIN_ARGS; do
+          if $skip; then skip=false; continue; fi
+          case "$arg" in
+            --no-exit-code | --reporter=*) continue ;;
+            --reporter) skip=true; continue ;;
+            --baseline | --baseline=*) has_baseline=true ;;
+            --no-cache) has_no_cache=true ;;
+          esac
+          args+=("$arg")
+        done
         cmd=(uvx "${spec[@]}" --no-exit-code --reporter sarif)
-        [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
-        # A repeated --no-cache is a usage error.
-        [ "$CHOKKIN_CACHE" = true ] || [[ " $CHOKKIN_ARGS " == *" --no-cache "* ]] || cmd+=(--no-cache)
-        # shellcheck disable=SC2206
-        cmd+=($CHOKKIN_ARGS)
+        [ -z "$CHOKKIN_BASELINE" ] || $has_baseline || cmd+=(--baseline "$CHOKKIN_BASELINE")
+        [ "$CHOKKIN_CACHE" = true ] || $has_no_cache || cmd+=(--no-cache)
+        cmd+=("${args[@]}")
         mkdir -p "$(dirname "$CHOKKIN_SARIF")"
         "${cmd[@]}" > "$CHOKKIN_SARIF"
         echo "path=$(cd "$(dirname "$CHOKKIN_SARIF")" && pwd)/$(basename "$CHOKKIN_SARIF")" >> "$GITHUB_OUTPUT"
@@ -89,10 +101,20 @@ runs:
           *.whl) spec=(--from "$CHOKKIN_VERSION" chokkin) ;;
           *) spec=("chokkin@$CHOKKIN_VERSION") ;;
         esac
-        cmd=(uvx "${spec[@]}" --reporter "$CHOKKIN_REPORTER")
-        [ -z "$CHOKKIN_BASELINE" ] || cmd+=(--baseline "$CHOKKIN_BASELINE")
-        # A repeated --no-cache is a usage error.
-        [ "$CHOKKIN_CACHE" = true ] || [[ " $CHOKKIN_ARGS " == *" --no-cache "* ]] || cmd+=(--no-cache)
-        # shellcheck disable=SC2206
-        cmd+=($CHOKKIN_ARGS)
+        # A repeated flag is a usage error, so a --reporter, --baseline or
+        # --no-cache in args replaces the one the inputs would add.
+        args=() has_reporter=false has_baseline=false has_no_cache=false
+        for arg in $CHOKKIN_ARGS; do
+          case "$arg" in
+            --reporter | --reporter=*) has_reporter=true ;;
+            --baseline | --baseline=*) has_baseline=true ;;
+            --no-cache) has_no_cache=true ;;
+          esac
+          args+=("$arg")
+        done
+        cmd=(uvx "${spec[@]}")
+        $has_reporter || cmd+=(--reporter "$CHOKKIN_REPORTER")
+        [ -z "$CHOKKIN_BASELINE" ] || $has_baseline || cmd+=(--baseline "$CHOKKIN_BASELINE")
+        [ "$CHOKKIN_CACHE" = true ] || $has_no_cache || cmd+=(--no-cache)
+        cmd+=("${args[@]}")
         "${cmd[@]}"
