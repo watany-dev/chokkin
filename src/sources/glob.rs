@@ -96,9 +96,9 @@ mod tests {
 
     #[test]
     fn check_braces_allows_up_to_the_limit() {
-        assert!(check_braces(&"{a}".repeat(MAX_BRACES)).is_ok());
-        assert!(check_braces(&"{a}".repeat(MAX_BRACES + 1)).is_err());
-        assert!(check_braces("*.{py,pyi}").is_ok());
+        assert_eq!(check_braces(&"{a}".repeat(MAX_BRACES)), Ok(()));
+        check_braces(&"{a}".repeat(MAX_BRACES + 1)).expect_err("one too many");
+        assert_eq!(check_braces("*.{py,pyi}"), Ok(()));
     }
 
     #[test]

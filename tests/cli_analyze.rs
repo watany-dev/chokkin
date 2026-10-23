@@ -9040,3 +9040,23 @@ fn binary_deeply_nested_glob_braces_are_a_config_error_not_an_abort() {
     );
     assert!(stderr.contains("more than the 1000 chokkin compiles"));
 }
+
+#[test]
+fn binary_deeply_nested_gitignore_braces_do_not_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    deep_brace_project(temp.path(), "nothing/**");
+    let deep = format!("{}{}\n", "{".repeat(100_000), "}".repeat(100_000));
+    fs::write(temp.path().join(".gitignore"), deep).expect("write gitignore");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{:?}",
+        stderr.lines().last()
+    );
+}
