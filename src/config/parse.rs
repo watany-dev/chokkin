@@ -78,17 +78,11 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
     } = parse_toml::<PyProject>(path)?;
 
     let partial = chokkin.unwrap_or_default();
-    validate(path, &partial).map_err(|error| match error {
-        ConfigError::Validation {
-            path,
-            field,
-            message,
-        } => ConfigError::Validation {
-            path,
-            field: format!("tool.chokkin.{field}"),
-            message,
-        },
-        other => other,
+    validate(path, &partial).map_err(|mut error| {
+        if let ConfigError::Validation { field, .. } = &mut error {
+            field.insert_str(0, "tool.chokkin.");
+        }
+        error
     })?;
 
     let (workspace, sources) = uv.map_or_else(Default::default, |uv| (uv.workspace, uv.sources));
