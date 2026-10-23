@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- A source file whose PEP 263 declaration names a CJK codec (`shift_jis`,
+  `cp932`, `euc_jp`, `gbk`, `gb18030`, `big5`, `euc_kr` and their Python
+  aliases) is read instead of skipped, so its imports count (#1150).
+- A `requirements.txt`, `setup.cfg` or file `setup.py` reads requirements
+  from that starts with a UTF-16 or UTF-32 BOM, as Windows PowerShell 5.1
+  writes `pip freeze > requirements.txt`, is decoded like pip does instead
+  of skipped (#1153).
 - A workspace member only a pytest `-p` option or the `pytest-*` naming
   convention uses is no longer a certain CHK002, and the members its tree
   imports are used through it: the member fixed point now reads the plugin

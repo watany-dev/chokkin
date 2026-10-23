@@ -34,31 +34,31 @@ pub(crate) fn read_text(path: &Path) -> Result<Option<String>, ManifestError> {
         path: path.to_path_buf(),
         source,
     })?;
-    Ok(match decode_wide_bom(&bytes) {
-        Some(decoded) => decoded,
+    Ok(match wide_bom(&bytes) {
+        Some((rest, decode)) => decode(rest),
         None => crate::parser::decode_python_source(bytes),
     })
 }
 
-/// Decode `bytes` that start with a UTF-32 or UTF-16 BOM, which is dropped.
-///
-/// `None` when there is no such BOM; `Some(None)` when there is one but the
-/// rest is not valid in that encoding (odd length, lone surrogate). UTF-32
+/// Decodes the text after a BOM; `None` when it is not valid in that
+/// encoding (odd length, lone surrogate).
+type WideDecoder = fn(&[u8]) -> Option<String>;
+
+/// The bytes after a leading UTF-32 or UTF-16 BOM, and their decoder. UTF-32
 /// is tried first because its little-endian BOM starts with UTF-16LE's.
-fn decode_wide_bom(bytes: &[u8]) -> Option<Option<String>> {
-    if let Some(rest) = bytes.strip_prefix(b"\xff\xfe\0\0") {
-        return Some(decode_utf32(rest, u32::from_le_bytes));
-    }
-    if let Some(rest) = bytes.strip_prefix(b"\0\0\xfe\xff") {
-        return Some(decode_utf32(rest, u32::from_be_bytes));
-    }
-    if let Some(rest) = bytes.strip_prefix(b"\xff\xfe") {
-        return Some(decode_utf16(rest, u16::from_le_bytes));
-    }
-    if let Some(rest) = bytes.strip_prefix(b"\xfe\xff") {
-        return Some(decode_utf16(rest, u16::from_be_bytes));
-    }
-    None
+fn wide_bom(bytes: &[u8]) -> Option<(&[u8], WideDecoder)> {
+    let boms: [(&[u8], WideDecoder); 4] = [
+        (b"\xff\xfe\0\0", |rest| {
+            decode_utf32(rest, u32::from_le_bytes)
+        }),
+        (b"\0\0\xfe\xff", |rest| {
+            decode_utf32(rest, u32::from_be_bytes)
+        }),
+        (b"\xff\xfe", |rest| decode_utf16(rest, u16::from_le_bytes)),
+        (b"\xfe\xff", |rest| decode_utf16(rest, u16::from_be_bytes)),
+    ];
+    boms.into_iter()
+        .find_map(|(bom, decode)| Some((bytes.strip_prefix(bom)?, decode)))
 }
 
 fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> Option<String> {
@@ -115,69 +115,64 @@ pub(crate) fn push_dependency(push: DependencyPush<'_>) {
 mod tests {
     use super::*;
 
-    fn bom_encoded(text: &str, encoding: &str) -> Vec<u8> {
-        let units: Vec<u16> = text.encode_utf16().collect();
-        match encoding {
-            "utf-16le" => [
-                vec![0xFF, 0xFE],
-                units.iter().flat_map(|u| u.to_le_bytes()).collect(),
-            ]
-            .concat(),
-            "utf-16be" => [
-                vec![0xFE, 0xFF],
-                units.iter().flat_map(|u| u.to_be_bytes()).collect(),
-            ]
-            .concat(),
-            "utf-32le" => [
-                vec![0xFF, 0xFE, 0, 0],
-                text.chars()
-                    .flat_map(|c| u32::from(c).to_le_bytes())
-                    .collect(),
-            ]
-            .concat(),
-            "utf-32be" => [
-                vec![0, 0, 0xFE, 0xFF],
-                text.chars()
-                    .flat_map(|c| u32::from(c).to_be_bytes())
-                    .collect(),
-            ]
-            .concat(),
-            _ => unreachable!("{encoding}"),
-        }
+    fn utf16(bom: [u8; 2], text: &str, unit: fn(u16) -> [u8; 2]) -> Vec<u8> {
+        bom.into_iter()
+            .chain(text.encode_utf16().flat_map(unit))
+            .collect()
+    }
+
+    fn utf32(bom: [u8; 4], text: &str, unit: fn(u32) -> [u8; 4]) -> Vec<u8> {
+        bom.into_iter()
+            .chain(text.chars().flat_map(|ch| unit(u32::from(ch))))
+            .collect()
+    }
+
+    /// The decoded text, `Ok(None)` when it is invalid, `Err` without a BOM.
+    fn decode(bytes: &[u8]) -> Result<Option<String>, &'static str> {
+        wide_bom(bytes)
+            .map(|(rest, decode)| decode(rest))
+            .ok_or("no BOM")
     }
 
     #[test]
     fn wide_boms_decide_the_codec() {
         let text = "requests==2.31.0\r\n# caf\u{e9} \u{1f600}\r\n";
-        for encoding in ["utf-16le", "utf-16be", "utf-32le", "utf-32be"] {
-            assert_eq!(
-                decode_wide_bom(&bom_encoded(text, encoding)),
-                Some(Some(text.to_owned())),
-                "{encoding}"
-            );
+        for (label, bytes) in [
+            ("utf-16le", utf16([0xFF, 0xFE], text, u16::to_le_bytes)),
+            ("utf-16be", utf16([0xFE, 0xFF], text, u16::to_be_bytes)),
+            (
+                "utf-32le",
+                utf32([0xFF, 0xFE, 0, 0], text, u32::to_le_bytes),
+            ),
+            (
+                "utf-32be",
+                utf32([0, 0, 0xFE, 0xFF], text, u32::to_be_bytes),
+            ),
+        ] {
+            assert_eq!(decode(&bytes), Ok(Some(text.to_owned())), "{label}");
         }
     }
 
     #[test]
     fn invalid_wide_text_is_undecodable_not_misread() {
         // Odd length, a lone surrogate, and a code point past U+10FFFF.
-        assert_eq!(decode_wide_bom(b"\xff\xfer\0e"), Some(None));
-        assert_eq!(decode_wide_bom(b"\xff\xfe\x00\xd8r\0"), Some(None));
-        assert_eq!(decode_wide_bom(b"\0\0\xfe\xff\0\x11\0\0"), Some(None));
+        assert_eq!(decode(b"\xff\xfer\0e"), Ok(None));
+        assert_eq!(decode(b"\xff\xfe\x00\xd8r\0"), Ok(None));
+        assert_eq!(decode(b"\0\0\xfe\xff\0\x11\0\0"), Ok(None));
     }
 
     #[test]
     fn utf8_and_pep263_bytes_have_no_wide_bom() {
-        assert_eq!(decode_wide_bom(b"requests\n"), None);
-        assert_eq!(decode_wide_bom(b"\xef\xbb\xbfrequests\n"), None);
-        assert_eq!(decode_wide_bom(b""), None);
+        assert_eq!(decode(b"requests\n"), Err("no BOM"));
+        assert_eq!(decode(b"\xef\xbb\xbfrequests\n"), Err("no BOM"));
+        assert_eq!(decode(b""), Err("no BOM"));
     }
 
     #[test]
     fn read_text_reads_powershell_pip_freeze_output() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("requirements.txt");
-        std::fs::write(&path, bom_encoded("requests\r\n", "utf-16le")).unwrap();
+        std::fs::write(&path, utf16([0xFF, 0xFE], "requests\r\n", u16::to_le_bytes)).unwrap();
         assert_eq!(read_text(&path).unwrap().as_deref(), Some("requests\r\n"));
     }
 

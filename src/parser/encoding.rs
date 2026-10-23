@@ -1,11 +1,11 @@
-//! Decode Python source bytes (UTF-8, or a PEP 263 single-byte coding).
+//! Decode Python source bytes (UTF-8, or a PEP 263 coding).
 
 /// Decode `bytes` as Python would, for the encodings chokkin supports.
 ///
 /// Valid UTF-8 is used as is, minus a leading BOM as Python drops it.
-/// Otherwise the PEP 263 declaration decides: latin-1 and cp1252 are
-/// decoded, anything else (or no declaration) is `None` so the caller can
-/// skip the file instead of guessing.
+/// Otherwise the PEP 263 declaration decides: latin-1, cp1252 and the CJK
+/// multibyte codecs (#1150) are decoded, anything else (or no declaration)
+/// is `None` so the caller can skip the file instead of guessing.
 #[must_use]
 pub(crate) fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
     let bytes = match String::from_utf8(bytes) {
@@ -17,22 +17,61 @@ pub(crate) fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
         },
         Err(error) => error.into_bytes(),
     };
-    match single_byte_codec(&declared_coding(&bytes)?)? {
+    match codec(&declared_coding(&bytes)?)? {
         Codec::Latin1 => Some(bytes.iter().copied().map(char::from).collect()),
         Codec::Cp1252 => bytes.iter().copied().map(cp1252_char).collect(),
+        Codec::Multibyte(encoding) => encoding
+            .decode_without_bom_handling_and_without_replacement(&bytes)
+            .map(std::borrow::Cow::into_owned),
+        Codec::Big5 if has_eten_kana(&bytes) => None,
+        Codec::Big5 => encoding_rs::BIG5
+            .decode_without_bom_handling_and_without_replacement(&bytes)
+            .map(std::borrow::Cow::into_owned),
     }
+}
+
+/// Whether Big5 `bytes` hold a character in the ETEN kana rows: lead `0xC6`
+/// with a trail from `0xA1`, or lead `0xC7`.
+fn has_eten_kana(bytes: &[u8]) -> bool {
+    let mut rest = bytes;
+    while let Some((&lead, tail)) = rest.split_first() {
+        if lead < 0x80 {
+            rest = tail;
+            continue;
+        }
+        let trail = tail.first().copied().unwrap_or(0);
+        if lead == 0xC7 || (lead == 0xC6 && trail >= 0xA1) {
+            return true;
+        }
+        rest = tail.get(1..).unwrap_or_default();
+    }
+    false
 }
 
 enum Codec {
     Latin1,
     Cp1252,
+    /// A CJK codec, decoded by its WHATWG counterpart (#1150). Each WHATWG
+    /// decoder reads a superset of the bytes its Python codec reads
+    /// (`Shift_JIS` reads cp932, GBK reads GB18030, Big5 reads HKSCS, EUC-KR
+    /// reads cp949), and maps them to the same characters but for a few
+    /// symbols (`〜` U+301C is `～` U+FF5E, for example), which only change
+    /// strings and comments; GB2312's `0xA1A4` middle dot is the one that can
+    /// sit in a name, as `·` instead of `・`. Bytes WHATWG does not map, such as cp932's
+    /// `0xA0`, make the file `None`. The JIS X 0213 and ISO-2022 codecs map
+    /// bytes differently, so they stay unsupported.
+    Multibyte(&'static encoding_rs::Encoding),
+    /// Python's `big5` and `cp950` put the ETEN kana at `0xC6A1..=0xC7FC`,
+    /// where WHATWG (HKSCS) has other characters, letters among them: a
+    /// file using them is `None` rather than read with other identifiers.
+    Big5,
 }
 
 /// The codec a declared coding `name` selects, by `CPython`'s rules: the
 /// tokenizer maps `latin-1-unix` and similar spellings itself, the rest goes
 /// through `encodings`, which folds every run of `-`/`_` to one `_` and looks
 /// the result up as an alias (also with `.` read as `_`) or a codec module.
-fn single_byte_codec(name: &str) -> Option<Codec> {
+fn codec(name: &str) -> Option<Codec> {
     let tokenizer_latin1 = ["latin-1", "iso-8859-1", "iso-latin-1"]
         .iter()
         .any(|spelling| {
@@ -51,6 +90,20 @@ fn single_byte_codec(name: &str) -> Option<Codec> {
         "latin1" | "l1" | "latin" | "8859" | "cp819" | "ibm819" | "csisolatin1" | "iso8859"
         | "iso8859_1" | "iso_8859_1" | "iso_8859_1_1987" | "iso_ir_100" => Some(Codec::Latin1),
         "1252" | "windows_1252" => Some(Codec::Cp1252),
+        "csshiftjis" | "shiftjis" | "sjis" | "s_jis" | "932" | "ms932" | "mskanji" | "ms_kanji"
+        | "windows_31j" | "x_mac_japanese" => Some(Codec::Multibyte(encoding_rs::SHIFT_JIS)),
+        "eucjp" | "ujis" | "u_jis" => Some(Codec::Multibyte(encoding_rs::EUC_JP)),
+        "936" | "cp936" | "ms936" | "chinese" | "csiso58gb231280" | "euc_cn" | "euccn"
+        | "eucgb2312_cn" | "gb2312_1980" | "gb2312_80" | "iso_ir_58" | "x_mac_simp_chinese" => {
+            Some(Codec::Multibyte(encoding_rs::GBK))
+        },
+        "gb18030_2000" => Some(Codec::Multibyte(encoding_rs::GB18030)),
+        "big5_tw" | "csbig5" | "950" | "ms950" | "x_mac_trad_chinese" => Some(Codec::Big5),
+        "hkscs" | "big5_hkscs" => Some(Codec::Multibyte(encoding_rs::BIG5)),
+        "euckr" | "korean" | "ksc5601" | "ks_c_5601" | "ks_c_5601_1987" | "ksx1001"
+        | "ks_x_1001" | "949" | "ms949" | "uhc" | "x_mac_korean" => {
+            Some(Codec::Multibyte(encoding_rs::EUC_KR))
+        },
         _ => None,
     };
     alias(&normalized)
@@ -58,6 +111,13 @@ fn single_byte_codec(name: &str) -> Option<Codec> {
         .or(match normalized.as_str() {
             "latin_1" => Some(Codec::Latin1),
             "cp1252" => Some(Codec::Cp1252),
+            "shift_jis" | "cp932" => Some(Codec::Multibyte(encoding_rs::SHIFT_JIS)),
+            "euc_jp" => Some(Codec::Multibyte(encoding_rs::EUC_JP)),
+            "gbk" | "gb2312" => Some(Codec::Multibyte(encoding_rs::GBK)),
+            "gb18030" => Some(Codec::Multibyte(encoding_rs::GB18030)),
+            "big5" | "cp950" => Some(Codec::Big5),
+            "big5hkscs" => Some(Codec::Multibyte(encoding_rs::BIG5)),
+            "euc_kr" | "cp949" => Some(Codec::Multibyte(encoding_rs::EUC_KR)),
             _ => None,
         })
 }
@@ -255,6 +315,96 @@ mod tests {
             decode_python_source(b"# plain\rx = 1\r# coding: latin\rs = '\xe9'\r".to_vec()),
             None
         );
+    }
+
+    /// The #1150 reproducer: the backslash-valued trail bytes of `ソ` and
+    /// `表` must not end the string literal.
+    #[test]
+    fn shift_jis_declaration_decodes_multibyte_text() {
+        let source = b"# -*- coding: shift_jis -*-\n# \x93\xfa\x96{\x8c\xea\x82\xcc\x83R\x83\x81\x83\x93\x83g\ns = '\x83\\\x95\\'\nimport requests\n";
+        assert_eq!(
+            decode_python_source(source.to_vec()).as_deref(),
+            Some("# -*- coding: shift_jis -*-\n# 日本語のコメント\ns = 'ソ表'\nimport requests\n")
+        );
+    }
+
+    #[test]
+    fn cjk_codecs_and_aliases_decode() {
+        for (name, body, text) in [
+            ("cp932", &b"'\x87@\xee\xe0'"[..], "'①髙'"),
+            ("MS_Kanji", b"'\x83\\'", "'ソ'"),
+            ("euc-jp", b"'\xa5\xbd\xc9\xbd'", "'ソ表'"),
+            ("ujis", b"'\xa5\xbd'", "'ソ'"),
+            ("gbk", b"'\xd6\xd0\xce\xc4'", "'中文'"),
+            ("gb2312", b"'\xd6\xd0'", "'中'"),
+            ("gb18030", b"'\x81\x30\x81\x30'", "'\u{80}'"),
+            ("big5", b"'\xa4\xa4\xa4\xe5'", "'中文'"),
+            ("cp950", b"'\xa4\xa4'", "'中'"),
+            ("big5hkscs", b"'\xa4\xa4\xc6\xa6'", "'中⑥'"),
+            ("euc-kr", b"'\xc7\xd1\xb1\xb9\xbe\xee'", "'한국어'"),
+            ("cp949", b"'\xc7\xd1'", "'한'"),
+        ] {
+            let source = [
+                format!("# coding: {name}\ns = ").into_bytes(),
+                body.to_vec(),
+            ]
+            .concat();
+            assert_eq!(
+                decode_python_source(source).as_deref(),
+                Some(format!("# coding: {name}\ns = {text}").as_str()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn cjk_bytes_the_codec_does_not_map_are_rejected() {
+        // A truncated Shift_JIS pair, and a byte cp932 maps to a private-use
+        // character that WHATWG leaves undefined.
+        assert_eq!(
+            decode_python_source(b"# coding: sjis\ns = '\x83".to_vec()),
+            None
+        );
+        assert_eq!(
+            decode_python_source(b"# coding: cp932\ns = '\xa0'\n".to_vec()),
+            None
+        );
+    }
+
+    /// Python's `big5` reads `0xC6A6` as `あ`, WHATWG as `⑥`. Each source also
+    /// holds `中` (`0xA4A4`) so that it is not valid UTF-8.
+    #[test]
+    fn big5_eten_kana_is_rejected_not_misread() {
+        assert_eq!(
+            decode_python_source(b"# coding: big5\n\xc6\xa6 = '\xa4\xa4'\n".to_vec()),
+            None
+        );
+        assert_eq!(
+            decode_python_source(b"# coding: cp950\ns = '\xa4\xa4\xc7\xa1'\n".to_vec()),
+            None
+        );
+        // `0xC6` with a low trail is outside the kana rows.
+        assert_eq!(
+            decode_python_source(b"# coding: big5\ns = '\xc6\x40'\n".to_vec()).as_deref(),
+            Some("# coding: big5\ns = '\u{8b96}'\n")
+        );
+    }
+
+    #[test]
+    fn jis_x_0213_and_iso_2022_codecs_stay_unsupported() {
+        for name in [
+            "shift_jis_2004",
+            "euc-jisx0213",
+            "iso2022_jp",
+            "iso-2022-kr",
+        ] {
+            let source = format!("# coding: {name}\ns = '").into_bytes();
+            assert_eq!(
+                decode_python_source([source, b"\x83\\'\n".to_vec()].concat()),
+                None,
+                "{name}"
+            );
+        }
     }
 
     #[test]
