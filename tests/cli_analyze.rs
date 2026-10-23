@@ -5077,6 +5077,35 @@ fn binary_examples_member_entry_is_not_a_skipped_entry() {
     assert!(!stderr.contains("skipped entry"), "{stderr}");
 }
 
+/// Explicit `project` globs drop no member file, so a member entry they
+/// reach but `exclude` removes stays a skipped entry, even when a glob is
+/// spelled like the default `examples/**` one (#1140).
+#[test]
+fn binary_examples_member_entry_excluded_under_explicit_globs_is_skipped() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"lib\"\nversion = \"0\"\n\n[tool.chokkin]\nproject = [\"src/**/*.py\", \"examples/**/*.{py,pyi,ipynb}\"]\nexclude = [\"examples/demo/demo.py\"]\n",
+        ),
+        ("src/lib/__init__.py", "x = 1\n"),
+        (
+            "examples/demo/pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0\"\n\n[project.scripts]\ndemo = \"demo:cli\"\n",
+        ),
+        ("examples/demo/demo.py", "def cli():\n    pass\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: skipped entry `examples/demo/demo.py`"),
+        "{stderr}"
+    );
+}
+
 /// An entry chokkin skips because it is not a discovered source runs code
 /// whose imports are unknown, so the files and distributions it may use fall
 /// to likely; one that does not exist hides nothing (#923).
