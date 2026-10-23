@@ -190,7 +190,8 @@ and reports anything it skipped on stderr.
 - `--strict` makes direct imports of transitive dependencies an error, requires
   workspace members to declare their own dependencies, reports undeclared
   type/test/docs/dev imports as `CHK003`, errors on unused
-  environment-marker dependencies, and shows `maybe` findings.
+  environment-marker dependencies, and shows `maybe` findings unless an
+  explicit `--confidence` says otherwise.
 - `--reporter default|compact|json|markdown|github|sarif` picks the output.
   `github` emits workflow annotations; `sarif` writes a SARIF 2.1.0 subset for
   code scanning. Warnings about input chokkin could not read always go to
