@@ -136,6 +136,8 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// the ones read through an import binding, which only the whole
     /// module's imports tell.
     attribute_sites: Vec<&'ast ExprAttribute>,
+    /// Every `getattr(x, "attr")` and kin, read like `x.attr` (#1143).
+    literal_getattr_sites: Vec<&'ast ExprCall>,
     parsed: ParsedModule,
 }
 
@@ -182,6 +184,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             module_refs: BTreeMap::new(),
             loaded_names: FxHashSet::default(),
             attribute_sites: Vec::new(),
+            literal_getattr_sites: Vec::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -243,18 +246,28 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             })
             .flatten()
             .collect();
+        let attribute_sites = self.attribute_sites.iter().map(|attribute| {
+            (
+                &*attribute.value,
+                attribute.attr.as_str(),
+                self.line_number(*attribute),
+            )
+        });
+        let getattr_sites = self.literal_getattr_sites.iter().filter_map(|call| {
+            let (receiver, name) = literal_getattr(call)?;
+            Some((receiver, name, self.line_number(*call)))
+        });
         let mut receiver = String::new();
-        self.attribute_sites
-            .iter()
-            .filter_map(|attribute| {
+        attribute_sites
+            .chain(getattr_sites)
+            .filter_map(|(value, name, line)| {
                 receiver.clear();
-                (write_receiver(&attribute.value, &mut receiver)
-                    && receivers.contains(receiver.as_str()))
-                .then(|| AttributeAccess {
-                    receiver: receiver.clone(),
-                    name: attribute.attr.to_string(),
-                    line: self.line_number(*attribute),
-                })
+                (write_receiver(value, &mut receiver) && receivers.contains(receiver.as_str()))
+                    .then(|| AttributeAccess {
+                        receiver: receiver.clone(),
+                        name: name.to_owned(),
+                        line,
+                    })
             })
             .collect()
     }
@@ -1088,6 +1101,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     AnnotationNames(&mut self.loaded_names).visit_expr(argument);
                 }
                 self.record_computed_getattr(call);
+                if literal_getattr(call).is_some() {
+                    self.literal_getattr_sites.push(call);
+                }
                 self.sys_path.edited |= edits_sys_path(&call.func);
                 if let Some((label, app, app_dir)) = self.server_names.app(call) {
                     let line = self.line_number(call);
@@ -1131,6 +1147,25 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
         self.function_depth -= 1;
         self.caught_depth = caught_depth;
     }
+}
+
+/// The receiver and name of `getattr(x, "name")`, `hasattr`, `setattr` or
+/// `delattr`: the same reference as `x.name`. A computed name, or a call
+/// with too few arguments, is `None` and names nothing.
+fn literal_getattr(call: &ExprCall) -> Option<(&Expr, &str)> {
+    let Expr::Name(func) = &*call.func else {
+        return None;
+    };
+    if !matches!(
+        func.id.as_str(),
+        "getattr" | "hasattr" | "setattr" | "delattr"
+    ) {
+        return None;
+    }
+    let [receiver, Expr::StringLiteral(name), ..] = &*call.arguments.args else {
+        return None;
+    };
+    Some((receiver, name.value.to_str()))
 }
 
 /// Adds `name`, allocating only the first time: a module reads most names
@@ -1513,6 +1548,27 @@ mod tests {
         assert!(parsed.attribute_accesses.iter().any(|access| {
             access.receiver == "acme.utils" && access.name == "CONFIG" && access.line == 3
         }));
+    }
+
+    #[test]
+    fn reads_literal_getattr_as_an_attribute_access() {
+        let parsed = visit_source(
+            "import acme.utils\nfrom acme import m\ngetattr(m, \"a\")\nhasattr(acme.utils, \"b\")\nsetattr(m, \"c\", 1)\ndelattr(m, \"d\")\ngetattr(m, name)\ngetattr(m)\ngetattr(other, \"e\")\nobj.getattr(m, \"f\")\n",
+        );
+        let accesses: Vec<(&str, &str, u32)> = parsed
+            .attribute_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str(), access.line))
+            .collect();
+        assert_eq!(
+            accesses,
+            [
+                ("m", "a", 3),
+                ("acme.utils", "b", 4),
+                ("m", "c", 5),
+                ("m", "d", 6),
+            ]
+        );
     }
 
     #[test]
