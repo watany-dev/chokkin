@@ -75,38 +75,69 @@ impl FixAction {
 }
 
 /// Build fix actions from an issue report.
+#[cfg(test)]
 pub(super) fn plan_fixes(
     report: &IssueReport,
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
     options: FixOptions,
 ) -> (Vec<FixAction>, Vec<SkippedFix>) {
-    let mut actions = Vec::new();
+    let (planned, skipped) =
+        plan_fixes_with_sources(report, manifest, workspace_manifests, options);
+    (
+        planned.into_iter().map(|plan| plan.action).collect(),
+        skipped,
+    )
+}
+
+/// A fix action and the indices into `IssueReport::issues` it resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PlannedFix {
+    pub action: FixAction,
+    /// More than one issue when several imports need the same missing dependency.
+    pub issues: Vec<usize>,
+}
+
+/// Build fix actions from an issue report, keeping which issues each resolves.
+pub(super) fn plan_fixes_with_sources(
+    report: &IssueReport,
+    manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
+    options: FixOptions,
+) -> (Vec<PlannedFix>, Vec<SkippedFix>) {
+    let mut planned: Vec<PlannedFix> = Vec::new();
     let mut skipped = Vec::new();
 
-    for issue in &report.issues {
+    for (index, issue) in report.issues.iter().enumerate() {
         match plan_issue_fix(issue, manifest, workspace_manifests, options) {
             Ok(Some(action)) => {
-                if is_duplicate_add_missing(&actions, &action) {
+                if let Some(existing) = duplicate_add_missing(&mut planned, &action) {
+                    existing.issues.push(index);
                     continue;
                 }
-                actions.push(action);
+                planned.push(PlannedFix {
+                    action,
+                    issues: vec![index],
+                });
             },
             Ok(None) => {},
             Err(skip) => skipped.push(skip),
         }
     }
 
-    (actions, skipped)
+    (planned, skipped)
 }
 
-fn is_duplicate_add_missing(actions: &[FixAction], action: &FixAction) -> bool {
+fn duplicate_add_missing<'a>(
+    planned: &'a mut [PlannedFix],
+    action: &FixAction,
+) -> Option<&'a mut PlannedFix> {
     let FixAction::AddMissingDependency { name, file } = action else {
-        return false;
+        return None;
     };
-    actions.iter().any(|existing| {
+    planned.iter_mut().find(|existing| {
         matches!(
-            existing,
+            &existing.action,
             FixAction::AddMissingDependency {
                 name: existing_name,
                 file: existing_file,

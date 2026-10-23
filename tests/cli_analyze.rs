@@ -343,6 +343,10 @@ fn binary_fix_dry_run_reports_planned_not_applied() {
     assert!(stderr.contains("  planned CHK002 boto3"), "{stderr}");
     assert!(!stderr.contains("  applied CHK"), "{stderr}");
     assert_eq!(
+        dry_run.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    assert_eq!(
         fs::read_to_string(&pyproject).expect("read pyproject"),
         before
     );
@@ -355,6 +359,57 @@ fn binary_fix_dry_run_reports_planned_not_applied() {
     let stderr = String::from_utf8(fix.stderr).expect("utf8");
     assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
     assert!(!stderr.contains("  planned CHK"), "{stderr}");
+    // Every finding was fixed, so nothing is left to fail on (#1164).
+    assert_eq!(fix.status.code(), Some(ExitStatus::Success.code().into()));
+}
+
+/// #1164: a finding `--fix` leaves standing still fails the run, and one
+/// `--add-missing` edit resolves every import of the distribution.
+#[test]
+fn binary_fix_add_missing_counts_every_resolved_import() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"boto3\"]\n",
+    )
+    .expect("write pyproject");
+    let package = temp.path().join("src/acme");
+    fs::create_dir_all(&package).expect("mkdir");
+    fs::write(package.join("__init__.py"), "from acme import a, b\n").expect("write init");
+    fs::write(package.join("a.py"), "import yaml\n").expect("write a");
+    fs::write(package.join("b.py"), "import yaml\n").expect("write b");
+
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "compact"])
+            .args(args)
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin")
+    };
+    let partial = run(&["--fix"]);
+    let stderr = String::from_utf8(partial.stderr).expect("utf8");
+    assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
+    assert_eq!(
+        partial.status.code(),
+        Some(ExitStatus::IssuesFound.code().into()),
+        "{stderr}"
+    );
+
+    let fix = run(&["--fix", "--add-missing"]);
+    let stdout = String::from_utf8(fix.stdout).expect("utf8");
+    let stderr = String::from_utf8(fix.stderr).expect("utf8");
+    assert_eq!(stdout.matches("CHK003").count(), 2, "{stdout}");
+    assert!(stderr.contains("  applied CHK003 pyyaml"), "{stderr}");
+    assert_eq!(
+        fix.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(
+        run(&[]).status.code(),
+        Some(ExitStatus::Success.code().into())
+    );
 }
 
 /// A `pyproject.toml` symlinked outside the root: `--fix` refuses it, and
@@ -617,9 +672,10 @@ fn binary_baseline_update_then_suppresses_existing_issue() {
         .arg(temp.path())
         .output()
         .expect("run chokkin");
+    // Writing the baseline is the run's purpose, so it succeeds (#1164).
     assert_eq!(
         update.status.code(),
-        Some(ExitStatus::IssuesFound.code().into())
+        Some(ExitStatus::Success.code().into())
     );
     let baseline_contents = fs::read_to_string(&baseline).expect("read baseline");
     assert!(baseline_contents.contains("CHK002:boto3"));
@@ -9406,6 +9462,63 @@ fn binary_unreadable_entry_point_is_reported() {
             "manifest: skipped entry point `tool.poetry.scripts.acme` in `pyproject.toml`: not a string or script table"
         ),
         "{stderr}"
+    );
+}
+
+/// A project with `pyproject.toml` declaring a `demo` console script and
+/// `exclude` as its only `tool.chokkin.exclude` entry (#1145).
+fn deep_brace_project(dir: &Path, exclude: &str) {
+    fs::create_dir_all(dir.join("src/demo")).expect("mkdir");
+    fs::write(
+        dir.join("pyproject.toml"),
+        format!(
+            "[project]\nname = \"demo\"\nversion = \"0.1\"\n\
+             [project.scripts]\ndemo = \"demo.cli:main\"\n\
+             [tool.chokkin]\nexclude = [\"{exclude}\"]\n"
+        ),
+    )
+    .expect("write pyproject");
+    fs::write(dir.join("src/demo/__init__.py"), "").expect("write init");
+    fs::write(dir.join("src/demo/cli.py"), "def main():\n    pass\n").expect("write cli");
+}
+
+#[test]
+fn binary_deeply_nested_glob_braces_are_a_config_error_not_an_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let deep = format!("{}{}", "{".repeat(100_000), "}".repeat(100_000));
+    deep_brace_project(temp.path(), &deep);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into()),
+        "{:?}",
+        stderr.lines().last()
+    );
+    assert!(stderr.contains("more than the 1000 chokkin compiles"));
+}
+
+#[test]
+fn binary_deeply_nested_gitignore_braces_do_not_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    deep_brace_project(temp.path(), "nothing/**");
+    let deep = format!("{}{}\n", "{".repeat(100_000), "}".repeat(100_000));
+    fs::write(temp.path().join(".gitignore"), deep).expect("write gitignore");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{:?}",
+        stderr.lines().last()
     );
 }
 

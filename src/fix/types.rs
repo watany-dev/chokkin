@@ -93,4 +93,6 @@ pub struct FixReport {
     pub skipped: Vec<SkippedFix>,
     /// Post-fix reminders (e.g. refresh lockfile).
     pub reminders: Vec<String>,
+    /// Indices into `IssueReport::issues` that a written edit resolved; empty on `--dry-run`.
+    pub resolved_issues: Vec<usize>,
 }
