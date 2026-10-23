@@ -6,8 +6,8 @@ use rustc_hash::FxHashSet;
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
-    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom,
+    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
+    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -554,8 +554,20 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
-    /// `import_module("pkg.m").f` reads `f` from `pkg.m` (#1144).
-    fn record_loaded_module_access(&mut self, attribute: &ExprAttribute) {
+    /// The names in the arguments typing reads as type expressions. Kept out
+    /// of [`Self::visit_expr`], whose frame every nesting level pays for.
+    fn visit_type_expression_arguments(&mut self, call: &ExprCall) {
+        for argument in type_expression_arguments(call, &self.typing_aliases) {
+            AnnotationNames::new(&mut self.loaded_names, &mut self.string_attribute_sites)
+                .visit_expr(argument);
+        }
+    }
+
+    /// Keep the site for [`Self::import_attribute_accesses`]; and
+    /// `import_module("pkg.m").f` reads `f` from `pkg.m` (#1144). Kept out of
+    /// [`Self::visit_expr`], whose frame every nesting level pays for.
+    fn record_attribute(&mut self, attribute: &'ast ExprAttribute) {
+        self.attribute_sites.push(attribute);
         if let Some(module) = self.loaded_module(&attribute.value) {
             let line = self.line_number(attribute);
             self.parsed.loaded_module_accesses.push(AttributeAccess {
@@ -1147,15 +1159,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
         }
         match expr {
             Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
-            Expr::Attribute(attribute) => {
-                self.attribute_sites.push(attribute);
-                self.record_loaded_module_access(attribute);
-            },
+            Expr::Attribute(attribute) => self.record_attribute(attribute),
             Expr::Call(call) => {
-                for argument in type_expression_arguments(call, &self.typing_aliases) {
-                    AnnotationNames::new(&mut self.loaded_names, &mut self.string_attribute_sites)
-                        .visit_expr(argument);
-                }
+                self.visit_type_expression_arguments(call);
                 self.record_computed_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
                 if let Some((label, app, app_dir)) = self.server_names.app(call) {
@@ -1237,6 +1243,33 @@ impl<'n> AnnotationNames<'n> {
             string_at: None,
         }
     }
+
+    /// An `x.attr` inside a string; the module walk keeps the ones outside.
+    /// This and [`Self::visit_string`] stay out of `visit_expr`, whose frame
+    /// every nesting level pays for.
+    fn record_attribute(&mut self, attribute: &ExprAttribute) {
+        if let Some(at) = self.string_at {
+            let mut receiver = String::new();
+            if write_receiver(&attribute.value, &mut receiver) {
+                self.attributes.push(StringAttributeSite {
+                    receiver,
+                    name: attribute.attr.to_string(),
+                    at,
+                });
+            }
+        }
+    }
+
+    fn visit_string(&mut self, string: &ExprStringLiteral) {
+        // One nested past the walk limit (#1045) reads like one
+        // that does not parse: its names are not collected.
+        if let Some(parsed) = super::depth::parse_walkable_expression(string.value.to_str()) {
+            let outer = self.string_at;
+            self.string_at = Some(outer.unwrap_or_else(|| string.start()));
+            self.visit_expr(&parsed);
+            self.string_at = outer;
+        }
+    }
 }
 
 impl<'a> Visitor<'a> for AnnotationNames<'_> {
@@ -1244,29 +1277,10 @@ impl<'a> Visitor<'a> for AnnotationNames<'_> {
         match expr {
             Expr::Name(name) => insert_name(self.names, &name.id),
             Expr::Attribute(attribute) => {
-                if let Some(at) = self.string_at {
-                    let mut receiver = String::new();
-                    if write_receiver(&attribute.value, &mut receiver) {
-                        self.attributes.push(StringAttributeSite {
-                            receiver,
-                            name: attribute.attr.to_string(),
-                            at,
-                        });
-                    }
-                }
+                self.record_attribute(attribute);
                 walk_expr(self, expr);
             },
-            Expr::StringLiteral(string) => {
-                // One nested past the walk limit (#1045) reads like one
-                // that does not parse: its names are not collected.
-                if let Some(parsed) = super::depth::parse_walkable_expression(string.value.to_str())
-                {
-                    let outer = self.string_at;
-                    self.string_at = Some(outer.unwrap_or_else(|| string.start()));
-                    self.visit_expr(&parsed);
-                    self.string_at = outer;
-                }
-            },
+            Expr::StringLiteral(string) => self.visit_string(string),
             // `Literal["fast"]` and the metadata of `Annotated[T, Field(alias="x")]`
             // hold values, not names.
             Expr::Subscript(subscript) => match subscript_name(&subscript.value) {
