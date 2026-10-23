@@ -14,7 +14,7 @@ use crate::config::ConfigSources;
 use crate::fix::atomic_write;
 use crate::manifest::{ManifestSources, extra_requirements_candidates, lockfile_candidates};
 use crate::parser::ParsedModule;
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 /// Default cache directory name below the project root.
 pub(crate) const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -421,9 +421,8 @@ fn config_input_fingerprints(
     if let Some(path) = &sources.chokkin_toml {
         paths.push(path.clone());
     }
-    let pyproject = root.join("pyproject.toml");
-    if pyproject.is_file() {
-        paths.push(pyproject);
+    if is_file_named(root, "pyproject.toml") {
+        paths.push(root.join("pyproject.toml"));
     }
     fingerprint_paths(root, paths)
 }
@@ -465,9 +464,8 @@ fn manifest_input_fingerprints(
 fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {
     let mut paths = Vec::new();
     for filename in ["pyproject.toml", "setup.cfg", "setup.py"] {
-        let path = root.join(filename);
-        if path.is_file() {
-            paths.push(path);
+        if is_file_named(root, filename) {
+            paths.push(root.join(filename));
         }
     }
     // Every present lockfile, not just the one read, so a new higher-priority

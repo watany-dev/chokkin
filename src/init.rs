@@ -130,7 +130,7 @@ fn reject_existing_config(config: &crate::config::LoadedConfig) -> Result<(), In
 fn infer_entry_roots(root: &Path) -> Vec<String> {
     ["manage.py", "app.py", "main.py"]
         .into_iter()
-        .filter(|candidate| root.join(candidate).is_file())
+        .filter(|candidate| is_file_named(root, candidate))
         .map(str::to_owned)
         .collect()
 }
