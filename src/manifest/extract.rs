@@ -514,6 +514,11 @@ pub(crate) fn infer_target_version_from_requires_python(specifier: &str) -> Opti
     TargetVersion::parse(&format!("py{major}{minor:02}"))
 }
 
+/// Whether `requires-python` parses as a specifier set at all.
+pub(crate) fn requires_python_is_readable(specifier: &str) -> bool {
+    parse_version_specifiers(specifier).is_some()
+}
+
 /// Highest Python 3 minor `requires-python` allows, from `<`/`<=`/`==`/`~=`
 /// bounds. `None` when no bound caps the 3.x minor (or the specifier is invalid).
 pub(crate) fn requires_python_max_minor(specifier: &str) -> Option<u32> {
