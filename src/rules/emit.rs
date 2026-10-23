@@ -162,9 +162,7 @@ fn subject_key_matches(subject: &IssueSubject, key: &str) -> bool {
                 || distribution.as_deref().is_some_and(same_distribution)
         },
         IssueSubject::ScriptDistribution { script, name } => {
-            key.strip_prefix("script:")
-                .and_then(|rest| rest.strip_prefix(script.as_str()))
-                .and_then(|rest| rest.strip_prefix(':'))
+            key.strip_prefix(&format!("script:{script}:"))
                 .is_some_and(|rest| same_name(rest, name))
                 || same_distribution(name)
         },
