@@ -27,29 +27,29 @@ Arguments:
   [PATH]  Directory to analyze (default: current directory)
 
 Options:
-  -h, --help              Print help
-  -V, --version           Print version
-      --production        Analyze runtime context only (exclude test/docs/dev files)
-      --strict            Enable strict analysis policies
-      --no-exit-code      Report issues but return exit code 0
-      --include <RULES>   Only emit these rule codes (comma-separated CHK00x)
-      --exclude <RULES>   Suppress these rule codes (comma-separated CHK00x)
-      --reporter <ID>     Output reporter: default, compact, json, markdown, github, sarif
-      --confidence <LVL>  Minimum confidence: certain, likely, maybe
-      --explain <SEL>     Explain an issue (e.g. CHK002:boto3)
-      --trace <PATH>      Show reachability trace to a file
-      --fix               Apply safe automatic manifest fixes
-      --dry-run           Preview fixes without writing files (requires --fix)
-      --allow-remove-files Allow --fix to remove unreachable project files
-      --add-missing       Add unambiguous missing dependencies when safe
-      --baseline <PATH>   Suppress issues already recorded in a baseline file
-      --update-baseline   Write current issues to --baseline
-      --no-cache          Disable cache reads and writes
-      --no-auto-workspace Do not treat nested pyproject.toml as workspace members
-                      or skip them as separate projects
-      --probe             Run probe mode (pipeline steps 1-4 only)
-      --init              Append starter [tool.chokkin] config to pyproject.toml
-      --project-root PATH Override project root discovery start directory
+  -h, --help                 Print help
+  -V, --version              Print version
+      --production           Analyze runtime context only (exclude test/docs/dev files)
+      --strict               Enable strict analysis policies
+      --no-exit-code         Report issues but return exit code 0
+      --include <RULES>      Only emit these rule codes (comma-separated CHK00x)
+      --exclude <RULES>      Suppress these rule codes (comma-separated CHK00x)
+      --reporter <ID>        Output reporter: default, compact, json, markdown, github, sarif
+      --confidence <LVL>     Minimum confidence: certain, likely, maybe
+      --explain <SEL>        Explain an issue (e.g. CHK002:boto3)
+      --trace <PATH>         Show reachability trace to a file
+      --fix                  Apply safe automatic manifest fixes
+      --dry-run              Preview fixes without writing files (requires --fix)
+      --allow-remove-files   Remove unreachable project files (requires --fix)
+      --add-missing          Add unambiguous missing dependencies (requires --fix)
+      --baseline <PATH>      Suppress issues already recorded in a baseline file
+      --update-baseline      Write current issues to the baseline (requires --baseline)
+      --no-cache             Disable cache reads and writes
+      --no-auto-workspace    Do not treat nested pyproject.toml as workspace members
+                             or skip them as separate projects
+      --probe                Run probe mode (pipeline steps 1-4 only)
+      --init                 Append starter [tool.chokkin] config to pyproject.toml
+      --project-root <PATH>  Override project root discovery start directory
 
 See https://github.com/watany-dev/chokkin for the specification and roadmap.";
 
