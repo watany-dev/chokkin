@@ -5129,6 +5129,8 @@ fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
                 "import requests\nfrom acme import helper\n\ndef main():\n    pass\n",
             ),
             ("acme/helper.py", "# helper\n"),
+            // A root that uses neither, so no root at all is not what lowers (#1138).
+            ("acme/__main__.py", "pass\n"),
         ])
     };
     let project = files(manifest("acme.cli:main"));
@@ -5179,6 +5181,7 @@ fn binary_production_module_entry_in_tests_is_not_a_skipped_entry() {
         ),
         ("acme/__init__.py", ""),
         ("acme/helper.py", "# helper\n"),
+        ("acme/__main__.py", "pass\n"),
         ("tests/__init__.py", ""),
         ("tests/app.py", "import requests\n\ndef main():\n    pass\n"),
     ]);
@@ -5438,6 +5441,8 @@ fn binary_skipped_entry_lowers_unused_files_and_distributions() {
         ),
         ("acme/__init__.py", ""),
         ("acme/helper.py", "# helper\n"),
+        // A root that uses neither, so no root at all is not what lowers (#1138).
+        ("acme/__main__.py", "pass\n"),
     ]);
     assert_eq!(
         issue_levels(project.path()),
@@ -9459,6 +9464,79 @@ fn binary_deeply_nested_gitignore_braces_do_not_abort() {
         "{:?}",
         stderr.lines().last()
     );
+}
+
+/// A project with only `requirements.txt` and a flat package resolves to app
+/// mode with no entry root. Nothing is known to run, so no file or
+/// distribution is certainly unused: the findings stay below certain, a
+/// warning says why, and `--fix` keeps every requirement (#1138).
+#[test]
+fn binary_app_without_entry_roots_keeps_requirements_under_fix() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let requirements = "PyYAML\nattrs\nrequests\n";
+    fs::write(project.path().join("requirements.txt"), requirements).expect("requirements");
+    fs::create_dir(project.path().join("app")).expect("package");
+    fs::write(
+        project.path().join("app/__init__.py"),
+        "import yaml, attr\n",
+    )
+    .expect("init");
+    fs::write(project.path().join("app/x.py"), "import yaml\n").expect("module");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let mut issues: Vec<(&str, &str, &str)> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    issues.sort_unstable();
+    assert_eq!(
+        issues,
+        [
+            ("CHK001", "app/x.py", "likely"),
+            ("CHK002", "attrs", "likely"),
+            ("CHK002", "pyyaml", "likely"),
+            ("CHK002", "requests", "likely"),
+        ],
+        "{parsed}"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: no entry root was found"),
+        "{stderr}"
+    );
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:requests"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains("no entry root was found, so no file is known to run"),
+        "{stderr}"
+    );
+
+    let fix = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--fix"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin --fix");
+    assert!(fix.status.code().is_some(), "{fix:?}");
+    let after = fs::read_to_string(project.path().join("requirements.txt")).expect("read");
+    assert_eq!(after, requirements);
 }
 
 /// Root `main.py` and root scripts with a `__main__` block are entries in
