@@ -12,6 +12,7 @@ use crate::plugins::{
 };
 use crate::sources::{
     DiscoveredSources, FileContext, LayoutInfo, PublicSurface, assign_file_context, is_dockerfile,
+    only_entry_trees_reach,
 };
 
 use super::auto::{detect_auto_entries, is_app_entry_file};
@@ -106,9 +107,15 @@ pub fn build_entry_roots(
         collect_library_package_entries(sources, &file_contexts, &mut candidates);
     }
     let mut member_warnings = Vec::new();
+    // Inferred globs only: explicit `project` globs drop no member file.
+    let inferred_globs = config
+        .project
+        .is_empty()
+        .then_some(sources.effective_globs.as_slice());
     collect_member_entries(
         members,
         &known_paths,
+        inferred_globs,
         production,
         &mut candidates,
         &mut member_warnings,
@@ -180,9 +187,14 @@ fn distributed_member_reason(member: &str, dep: &DeclaredDependency) -> String {
 /// The root manifest never names a member's `[project.scripts]`, so without
 /// these every file of an app member is an orphan (#488). They join after
 /// mode resolution, which reads the root's own entries only.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the root's inventory and globs are two views of one walk; a bundle struct would only rename them"
+)]
 fn collect_member_entries(
     members: &[MemberEntryInput<'_>],
     root_paths: &BTreeSet<String>,
+    inferred_globs: Option<&[String]>,
     production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
@@ -212,9 +224,13 @@ fn collect_member_entries(
             candidate.spec.path = format!("{member_path}/{}", candidate.spec.path);
             if root_paths.contains(&candidate.spec.path) {
                 candidates.push(candidate);
-            } else {
+            } else if !inferred_globs
+                .is_some_and(|globs| only_entry_trees_reach(globs, &candidate.spec.path))
+            {
                 // The member's own walk found the file but the root's did not
                 // (a root `exclude`): it is skipped like a root entry is (#934).
+                // One only the root's `examples/**`-style globs reach is left
+                // out on purpose: no read was skipped (#1140).
                 warnings.push(EntryWarning::MissingEntryPath {
                     path: candidate.spec.path,
                 });
