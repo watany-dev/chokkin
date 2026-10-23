@@ -12,7 +12,7 @@ mod surface;
 mod types;
 mod walk;
 #[cfg(test)]
-mod walk_reference;
+mod walk_fixtures;
 mod warnings;
 
 pub(crate) use cache::SourcesCache;
