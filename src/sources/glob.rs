@@ -1,6 +1,6 @@
 //! Glob set construction and matching.
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 use super::error::SourcesError;
 
@@ -13,12 +13,23 @@ const MANDATORY_EXCLUDES: &[&str] = &[
     CACHE_PATTERN,
 ];
 
+/// Compile a path glob written in config so it means the same on every OS.
+///
+/// globset reads `\` as a separator on Windows and as an escape elsewhere, so
+/// `legacy\**` would match only on Windows. `\` is always a separator here,
+/// as in workspace member paths; a literal metacharacter is spelled `[*]`.
+pub(crate) fn path_glob(pattern: &str) -> Result<Glob, globset::Error> {
+    GlobBuilder::new(&pattern.replace('\\', "/"))
+        .backslash_escape(false)
+        .build()
+}
+
 /// Build a glob matcher from pattern strings.
 pub(crate) fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
     let mut builder = GlobSetBuilder::new();
     let mut compiled = Vec::with_capacity(patterns.len());
     for pattern in patterns {
-        let glob = Glob::new(pattern).map_err(|error| SourcesError::InvalidGlob {
+        let glob = path_glob(pattern).map_err(|error| SourcesError::InvalidGlob {
             pattern: pattern.clone(),
             reason: error.to_string(),
         })?;
@@ -55,6 +66,15 @@ mod tests {
         let patterns = vec!["src/**/*.py".to_owned()];
         let set = build_glob_set(&patterns).expect("valid glob");
         assert!(set.is_match("src/pkg/module.py"));
+    }
+
+    #[test]
+    fn backslash_is_a_separator_on_every_os() {
+        let patterns = vec!["legacy\\**".to_owned(), "src\\pkg\\*.py".to_owned()];
+        let set = build_glob_set(&patterns).expect("valid glob");
+        assert!(set.is_match("legacy/old.py"));
+        assert!(set.is_match("src/pkg/mod.py"));
+        assert!(!set.is_match("legacy*"));
     }
 
     #[test]

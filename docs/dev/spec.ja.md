@@ -288,6 +288,8 @@ CHK002 = "error"
 
 `entry` / `project` / `exclude` / `vendored` と `workspaces.<id>` の `path` / `entry` / `project` は root 相対で書く。絶対パスに加え、`..` を字面で畳んで root の外に出る path（`../shared/**`）も設定の検証エラー（exit 2）にする (#981)。root の外は走査しないので、黙って何にも一致しない設定になるのを防ぐ。
 
+設定の path glob（`project` / `exclude` / `vendored`、`[tool.chokkin.ignore]` の path pattern、pytest の `testpaths`、wheel target の path）の `\` は OS によらずパス区切りとして読み、`/` と同じに扱う (#1165)。globset の既定では Windows で区切り、それ以外でエスケープになり、Windows で書いた `legacy\**` が Linux の CI で黙って何にも一致しなくなるため。workspace member の path と揃える。glob 記号そのものに一致させたいときは `[*]` のように文字クラスで書く。
+
 `vendored` は `exclude` と違い走査から外さない。vendored code 経由の import や symbol 参照は到達性と参照元に数え、そこで見つかった issue だけを報告しない（`SuppressReason::Vendored`。baseline 件数には含めない）。layer をまたいでは置き換えで、`vendored = []` で無効にできる。
 
 `module_loaders` は §11 の loader API に足す関数の名前で、呼び出しの関数名 (`x.LazyFeature(...)` なら属性名) と一致させる。identifier でない名前 (`pkg.LazyFeature`) はどの呼び出しにも一致しないので、設定の検証エラー（exit 2）にする。既定は空で、layer をまたいでは置き換える。
