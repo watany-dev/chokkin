@@ -459,6 +459,31 @@ fn import_module_attribute_access_counts_as_external_reference() {
 }
 
 #[test]
+fn string_annotation_and_loaded_module_accesses_count_as_references() {
+    // #1144: `"m.X"` in a string annotation or `cast`, and attributes of the
+    // module a literal `import_module` returned, are references.
+    let report = analyze_fixture("string_and_loaded_module_access");
+    for name in [
+        "AnnotParam",
+        "AnnotRet",
+        "CastTarget",
+        "via_import_module",
+        "via_bound",
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme.m", name),
+            "{name} reported"
+        );
+    }
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.m",
+        "dead_api"
+    ));
+}
+
+#[test]
 fn star_import_in_init_is_not_a_reexport() {
     // Generated at test time: a checked-in copy would be analyzed by the
     // repository's own chokkin baseline run.

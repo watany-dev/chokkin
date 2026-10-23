@@ -25,11 +25,39 @@ env:
   RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
+  # A PR that only edits prose (scripts/ci-changes.py) skips the jobs below:
+  # a job skipped by its `if` reports success, so its required check passes.
+  # They test `!= 'false'` under `!cancelled()`, so a failed `changes` job
+  # runs everything instead of skipping it.
+  # The Test matrix skips its steps instead, because a job skipped before its
+  # matrix expands reports under the unexpanded name and leaves
+  # `Test (ubuntu-24.04)` and the others pending.
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # HEAD is the PR merge commit; HEAD^1 is the base it was merged onto.
+          fetch-depth: 2
+      - id: diff
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | python3 scripts/ci-changes.py >>"$GITHUB_OUTPUT"
+          else
+            echo code=true >>"$GITHUB_OUTPUT"
+          fi
+
   # Short checks share one job to save runner slots and setup time.
   # Each check step runs even if an earlier one failed (`!cancelled()`).
   lint:
     name: Lint (fmt, clippy, doc, machete)
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -58,7 +86,8 @@ jobs:
 
   test:
     name: Test (${{ matrix.os }})
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -67,21 +96,25 @@ jobs:
         os: [ubuntu-24.04, macos-14, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code != 'false'
         with:
           persist-credentials: false
       # bash on every OS: Windows defaults to pwsh, which checks only the
       # exit code of the last command.
       - name: Install toolchain
+        if: needs.changes.outputs.code != 'false'
         shell: bash
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: needs.changes.outputs.code != 'false'
       - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        if: needs.changes.outputs.code != 'false'
         with:
           tool: cargo-nextest@0.9.133
       - name: Configure Windows temp directory
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && needs.changes.outputs.code != 'false'
         shell: pwsh
         run: |
           $testTmp = Join-Path $env:RUNNER_TEMP 'chokkin-test-tmp'
@@ -92,12 +125,15 @@ jobs:
       # No --all-targets: it adds --benches, which runs every criterion bench
       # once as a test (8-15 s each on Windows). The lint job's clippy
       # --all-targets keeps the benches compiling.
-      - run: cargo nextest run --locked
-      - run: cargo test --locked --doc
+      - if: needs.changes.outputs.code != 'false'
+        run: cargo nextest run --locked
+      - if: needs.changes.outputs.code != 'false'
+        run: cargo test --locked --doc
 
   msrv:
     name: MSRV (1.96) + chokkin baseline
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -137,7 +173,8 @@ jobs:
   # the full corpus runs in oss-metrics.yml.
   oss-gate:
     name: OSS gate (in-repo fixtures)
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -176,7 +213,8 @@ jobs:
 
   coverage:
     name: Coverage
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -244,6 +282,8 @@ jobs:
 
   security:
     name: Security (cargo-deny)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -261,7 +301,8 @@ jobs:
 
   repo-checks:
     name: Repo checks (actionlint, generated maps)
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -298,7 +339,8 @@ jobs:
 
   zizmor:
     name: Zizmor
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -316,7 +358,8 @@ jobs:
 
   semgrep:
     name: Semgrep
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

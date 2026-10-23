@@ -62,9 +62,9 @@ Unused files  2
   src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
 Unused dependencies  3
-  boto3                    pyproject.toml:8       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
-  python-dotenv            pyproject.toml:10      python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
-  rich                     pyproject.toml:9       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
+  boto3                    pyproject.toml:6       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
+  python-dotenv            pyproject.toml:8       python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
+  rich                     pyproject.toml:7       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
 
 Missing dependencies  1
   src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
@@ -297,6 +297,8 @@ CHK002 = "error"
 `respect_gitignore = true` のとき、走査が出会った `.gitignore` を読めなかった場合（root でも配下の directory でも、UTF-8 でない・読み取り権限がない・リンク先のない symlink）は、そのファイルごとに `sources: could not read <path>; its ignore rules may be missing` を 1 回出す。workspace member の走査が同じファイルに出会っても重ねて出さない (#915)。読めなかった ignore 規則は除外を減らす方向にしか働かず、finding を誤って消さないので gap にはしない。
 
 ソース走査は symlink を辿らない（root 自体が symlink の場合だけは、その先を root として走査する）。root 内を指す symlink は、実体を実体の path で 1 回だけ数えるので無言で飛ばす（同じファイルを 2 つの module 名で数えない）。root の外を指すもの・ループするもの・リンク先がないものは、ユーザーが解析させるつもりで置いた可能性があるので、リンクごとに `sources: did not follow symlink <path>: <reason>` を出す（reason は `it points outside the project root` / `it forms a loop` / `it points to nothing`。それ以外の読めなかった理由は OS の文言をそのまま出す）。対象は、ソースの拡張子（`.py` / `.pyi` / `.ipynb`）を持つ名前、ディレクトリを指すもの、リンク先が分からず拡張子も先頭の `.` もない名前に限る。ほかの名前（`LICENSE.txt`・`.gitignore` など）はもとから走査しないので、辿っても読まない。exclude と `.gitignore` で除かれる path は出さない。workspace member の走査が出したものは root の走査が同じリンクを見るので落とす（member 間のリンクは root 内なので出さない）。多いときは他の warning と同じく `… and N more like the above` にまとめる (#986)。root の外を辿らないのは解析対象の外を読まないための既定で、変えない。root の外のコードは project の外なので、その import を依存の使用に数えないのが既定どおりで、gap にはしない（ループとリンク先のないものには読む中身がない）。
+
+path (ディレクトリ名かファイル名) が UTF-8 でないソースファイル (`.py` / `.pyi` / `.ipynb`) は inventory に入れず、ファイルごとに `sources: skipped <path>: its path is not valid UTF-8` を出す (path は不正な byte を `U+FFFD` に置き換えて表示する)。Python はその名前の module を import できず、置き換えた path では読み戻せないため、解析全体を止めずに飛ばす。exclude と `.gitignore` で除かれる path、ソースでないファイルは出さない。workspace member の走査が出したものは root の走査が同じファイルを見るので落とす。import できないので gap にはしない (#1146)。
 
 ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
@@ -1767,7 +1769,7 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。parse cache はdisk bundleだけで、in-memory storeは持たない（1 runで各sourceを1回しかparseしないため）。disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。bundleから読んだ `ParsedModule` はcloneせずmoveで取り出し、書き戻しは借用のまま（`ParseCacheBundleRef`）直列化するので、disk warm runでは `ParsedModule` のcloneが発生しない。bundleを書いた時点で `parse/` 内の他の `*.json`（別contextのbundleや旧形式）を削除する。削除はbest-effortで、失敗しても解析は失敗させない。拡張子のない一時fileは並行runのatomic write中のものなので残す。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
+cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` に利用者が戻せない stamp (Unix は inode と ctime、Windows は creation time。std に安定した file index / change time が無いため) を加えた組が一意ならcontent hashを空のままにする。`cp -p` / `rsync -a` / `tar` 展開のように mtime を保ったまま同じサイズの別の版に差し替えても、inode か ctime が変わるので古い parse 結果を返さない (#1158)。mtimeが取得できない場合と、mtime か Unix の ctime が直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。ctime も見るのは、mtime を過去に戻した直後の書き換えを settled と誤判定しないため。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。parse cache はdisk bundleだけで、in-memory storeは持たない（1 runで各sourceを1回しかparseしないため）。disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。bundleから読んだ `ParsedModule` はcloneせずmoveで取り出し、書き戻しは借用のまま（`ParseCacheBundleRef`）直列化するので、disk warm runでは `ParsedModule` のcloneが発生しない。bundleを書いた時点で `parse/` 内の他の `*.json`（別contextのbundleや旧形式）を削除する。削除はbest-effortで、失敗しても解析は失敗させない。拡張子のない一時fileは並行runのatomic write中のものなので残す。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
 
 parse cache keyは以下を使う（`CacheKeyContext` + `SourceFingerprint`）。
 
@@ -1780,6 +1782,7 @@ unit version        # parse-v11。ParsedModule の形や key 規則を変えた�
 file path
 file size
 file mtime
+file inode / ctime (Windows は creation time)
 file content hash   # mtime 不明か racy window 内のときだけ。それ以外は空
 ```
 
