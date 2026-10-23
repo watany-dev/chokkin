@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 358480a947f9a4003d9a93032453ff58f32b63e2e37bf55c95a2be20a3a7f001 # shrinks to cell = "z = [a,\n     2)\n?obj.attr"
+cc 0afa12cfb58ba64e348c5f0a185c7643bc2ab59ffb0a398c939aa1c1f6a4ee77 # shrinks to cell = "y = (1,\nb]\n?obj.attr", cr = false

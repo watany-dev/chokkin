@@ -7,6 +7,7 @@ use globset::{Glob, GlobMatcher};
 use crate::manifest::{PackageFind, WheelTargets};
 use crate::path_util::join_rel;
 
+use super::glob::path_glob;
 use super::types::{DiscoveredFile, LayoutInfo};
 
 /// Discovered files a wheel ships, resolved from `WheelTargets`.
@@ -99,7 +100,7 @@ impl PathTarget {
     fn new(path: &str) -> Option<Self> {
         if path.contains(['*', '?', '[', '{']) {
             // An invalid pattern ships nothing we can resolve, so it is ignored.
-            return Glob::new(path)
+            return path_glob(path)
                 .ok()
                 .map(|glob| Self::Glob(glob.compile_matcher()));
         }

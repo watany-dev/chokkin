@@ -385,11 +385,14 @@ fn member_sources_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<Pr
                 .iter()
                 // The root walk covers every member tree, so the root's count
                 // already includes these files, and a link from one member
-                // into another is inside the root (#986).
+                // into another is inside the root (#986). The root walk meets
+                // a member's non-UTF-8 paths too (#1146).
                 .filter(|warning| {
                     !matches!(
                         warning,
-                        SourcesWarning::LargeProject { .. } | SourcesWarning::SymlinkSkipped { .. }
+                        SourcesWarning::LargeProject { .. }
+                            | SourcesWarning::SymlinkSkipped { .. }
+                            | SourcesWarning::NonUtf8Path { .. }
                     )
                 })
                 .map(|warning| {
