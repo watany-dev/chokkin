@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::config::{EntrySpec, PluginId};
-use crate::path_util::{join_rel, rel_to_root};
+use crate::path_util::{is_file_named, join_rel, rel_to_root};
 use crate::sources::{FileContext, path_to_module};
 
 use super::config_text::{ini_value, toml_key_line};
@@ -32,7 +32,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
     let root = ctx.root.path.as_path();
     let mut contrib = PluginContribution::empty(PluginId::Alembic);
     let ini = root.join("alembic.ini");
-    if ini.is_file() {
+    if is_file_named(root, "alembic.ini") {
         push_binary(
             &mut contrib,
             "alembic",

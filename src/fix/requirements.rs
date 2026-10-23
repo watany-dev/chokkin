@@ -2,7 +2,7 @@
 
 use crate::manifest::{
     join_continued_lines, normalize_distribution_name, requirements_line_distribution,
-    requirements_line_hashed,
+    requirements_line_hashed, split_lines_inclusive, strip_line_break,
 };
 
 use super::error::FixError;
@@ -19,7 +19,10 @@ pub(super) fn remove_dependency_line(
 
     // A line pip continues with `\` is one requirement over several physical
     // lines (#927): it is matched as a whole and removed as a whole.
-    let logical = join_continued_lines(contents.lines());
+    // Lines are split as the manifest parser splits them, so its line
+    // numbers name the same lines here (#1154).
+    let raw_lines: Vec<&str> = split_lines_inclusive(&contents).collect();
+    let logical = join_continued_lines(raw_lines.iter().map(|line| strip_line_break(line)));
     if logical
         .iter()
         .any(|line| requirements_line_hashed(&line.text))
@@ -30,7 +33,7 @@ pub(super) fn remove_dependency_line(
     }
 
     let target = normalize_distribution_name(distribution);
-    let mut drop = vec![false; contents.split_inclusive('\n').count()];
+    let mut drop = vec![false; raw_lines.len()];
     for joined in &logical {
         let line_no = u32::try_from(joined.first + 1).unwrap_or(u32::MAX);
         if line.is_none_or(|expected| expected == line_no)
@@ -41,7 +44,7 @@ pub(super) fn remove_dependency_line(
     }
     let removed = drop.contains(&true);
     let mut updated = String::with_capacity(contents.len());
-    for (raw_line, dropped) in contents.split_inclusive('\n').zip(drop) {
+    for (raw_line, dropped) in raw_lines.iter().zip(drop) {
         if !dropped {
             updated.push_str(raw_line);
         }
@@ -54,11 +57,13 @@ pub(super) fn remove_dependency_line(
     }
 
     // Dropping an unterminated last line must not leave the new last line terminated.
-    if !contents.ends_with('\n') && updated.ends_with('\n') {
-        updated.pop();
-        if updated.ends_with('\r') {
-            updated.pop();
-        }
+    let terminator_len = |text: &str| {
+        split_lines_inclusive(text)
+            .last()
+            .map_or(0, |line| line.len() - strip_line_break(line).len())
+    };
+    if terminator_len(&contents) == 0 {
+        updated.truncate(updated.len() - terminator_len(&updated));
     }
 
     write_manifest(path, rel, updated.as_bytes())?;
@@ -93,6 +98,20 @@ mod tests {
         remove_dependency_line(&path, "requests", None).expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert_eq!(updated, "boto3");
+    }
+
+    #[test]
+    fn removes_lines_split_by_a_lone_carriage_return() {
+        // The manifest reads `flask` on line 2 of a CR-only file (#1154).
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("requirements.txt");
+        std::fs::write(&path, "requests\rflask\rclick").expect("write");
+        remove_dependency_line(&path, "flask", Some(2)).expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "requests\rclick");
+        remove_dependency_line(&path, "click", Some(2)).expect("remove");
+        let updated = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(updated, "requests");
     }
 
     #[test]
