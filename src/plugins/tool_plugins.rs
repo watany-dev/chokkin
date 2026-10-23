@@ -293,6 +293,19 @@ mod tests {
     }
 
     #[test]
+    fn input_paths_lists_the_files_present_under_their_own_spelling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for name in ["pytest.ini", "ty.toml", "MYPY.INI"] {
+            std::fs::write(temp.path().join(name), "").expect("write");
+        }
+        let paths: Vec<_> = input_paths(temp.path())
+            .iter()
+            .map(|path| rel_to_root(temp.path(), path))
+            .collect();
+        assert_eq!(paths, ["pytest.ini", "ty.toml"]);
+    }
+
+    #[test]
     fn addopts_reads_plugins_and_plugin_options() {
         let mut hits = SourceHits::default();
         push_addopts(
