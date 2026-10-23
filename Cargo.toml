@@ -24,6 +24,8 @@ clap = { version = "4", default-features = false, features = [
   "usage",
   "error-context",
 ] }
+# PEP 263 CJK codecs in source files (#1150); WHATWG tables, no runtime deps.
+encoding_rs = "0.8"
 globset = "0.4"
 ignore = "0.4"
 indexmap = "2"
