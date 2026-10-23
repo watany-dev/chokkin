@@ -134,7 +134,7 @@ uvx chokkin --fix --add-missing           # certain な missing dependency も�
 uvx chokkin --fix --allow-remove-files    # certain な未到達ファイルも削除
 ```
 
-`--fix` は設計上保守的です。`certain` な finding だけを対象にし、行番号が合わなくなった manifest は編集を拒否し、改行コードを保ち、skip したものは stderr に理由付きで報告します。
+`--fix` は設計上保守的です。`certain` な finding だけを対象にし、行番号が合わなくなった manifest は編集を拒否し、改行コードを保ち、skip したものは stderr に理由付きで報告します。レポートには編集前の finding がそのまま出ますが、exit code は修正後に残った finding だけで決まります。全件を直した run は 0 で終わり、`--dry-run` や skip された fix の finding は引き続き数えます。
 
 **主要な flag:**
 
@@ -163,6 +163,8 @@ exit code は CI 向けに固定です。
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 git add chokkin-baseline.json
 ```
+
+`--update-baseline` は書き込みに成功すれば exit 0 で終わるので、`set -e` のスクリプトでも止まりません。
 
 その後、同梱の GitHub Action で pull request を gate します。annotation を出し、code scanning 用に SARIF を書き、baseline にない finding だけで失敗します。
 

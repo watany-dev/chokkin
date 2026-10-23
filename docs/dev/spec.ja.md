@@ -123,7 +123,7 @@ exit codeはCI向けに固定する。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
-`--baseline PATH` と `--update-baseline` は v0.2 導入支援のP0として実装する。`--update-baseline` は必ず `--baseline PATH` と併用し、通常実行では baseline にある fingerprint と一致する issue を抑制する。
+`--baseline PATH` と `--update-baseline` は v0.2 導入支援のP0として実装する。`--update-baseline` は必ず `--baseline PATH` と併用し、通常実行では baseline にある fingerprint と一致する issue を抑制する。`--update-baseline` は書き込みに成功すれば、記録した issue があっても exit code 0 で終わる（#1164）。記録が目的の run なので、`set -e` の導入スクリプトを止めない。
 
 ## 3. issue種別
 
@@ -1172,6 +1172,8 @@ skipped fix として報告し、suggestion/手動修正に留める。`[project
 manifest編集はformat保持が重要。Rustなら `toml_edit` を使い、commentsと順序を極力維持する。requirements系はline-based編集で、hash付きrequirementsやconstraintsは原則自動編集しない。`--hash` は行内のどの形(`--hash=`・`--hash `・継続行)でも検出してファイルごと編集しない。pipが拒むオプションを含む行も、`--hash` の文字があれば hash 付きとみなす。`\` で継続した requirement は、つないだ行として名前を照合し、属する物理行をまとめて消す (#927)。`setup.cfg` もline-based編集だが、対象は宣言のラベル（`options.install_requires[i]` / `options.extras_require.<extra>[i]`）が指すsection・option・itemに限る。itemの数え方はmanifest抽出と同じ行分類器による（重複sectionは合流、コメント・空行はitemではない）。継続行のitemは行末ごと消し、インライン値のitemは `key =` と行末を残すので、空になったoptionも宣言として残る。他の行のバイト列と行末（CRLF）は変えない。そのindexのitemがもう対象のdistributionを指さなければ編集しない。複数行の `project.dependencies` に追加するentry（CHK003 `--add-missing`、CHK005 の移動）は既存のindentで独立した行に置き、直前のentryの行コメントはそのentryの行に残す。
 
 書き込み安全性: manifest編集は同一ディレクトリへの一時ファイル作成→`rename` でアトミックに置換する(`fix/write.rs`)。既存ファイルのpermissionsは可能な範囲で引き継ぐ。fix対象パスはproject root内に収まることを検証し、ルート外への書き込みはskipする。requirementsの `-r`/`-c` インクルードとDjango `settings.py` 探索も同様にルート封じ込めする。
+
+exit code は `--fix` 後に残る finding だけで決める（#1164）。書き込みに成功した fix の元 finding は数えず、`--dry-run` の preview と skipped fix の finding は数える。`--add-missing` の追加1件は、同じ distribution を import する finding すべてを解決したものとして扱う。reporter の出力は fix 前の finding のままで、適用結果は stderr の `Fixes:` に出す。`--update-baseline` と併用した場合は baseline の規則が優先し exit code 0。
 
 lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.lock / poetry.lock等は古くなるが、`chokkin` はlockfileを直接編集しない。fix適用後に、読んだlockfileの種類に応じて `uv lock` / `poetry lock` / `pdm lock` の実行を促すメッセージを出力する(poetry管理のprojectはlockfileがなくても `poetry lock` を促す)。
 
