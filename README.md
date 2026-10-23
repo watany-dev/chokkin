@@ -44,9 +44,9 @@ Unused files  2
   src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
 Unused dependencies  3
-  boto3                    pyproject.toml         declared in project.dependencies[1], no reachable import, config, or binary usage found
-  python-dotenv            pyproject.toml         declared in project.dependencies[3], no reachable import, config, or binary usage found
-  rich                     pyproject.toml         declared in project.dependencies[2], no reachable import, config, or binary usage found
+  boto3                    pyproject.toml:6       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
+  python-dotenv            pyproject.toml:8       python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
+  rich                     pyproject.toml:7       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
 
 Missing dependencies  1
   src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
