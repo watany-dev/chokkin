@@ -1268,3 +1268,24 @@ fn ignores_manifests_spelled_in_another_case() {
     assert!(manifest.sources.requirements_files.is_empty());
     assert!(manifest.sources.lockfile.is_none());
 }
+
+/// pip splits a requirements file with `str.splitlines()`, so a lone `\r`
+/// ends a line as `\n` and `\r\n` do (#1154).
+#[test]
+fn requirements_split_on_every_python_line_boundary() {
+    let manifest = extract_files(&[(
+        "requirements.txt",
+        b"requests\rflask\r\nclick\x0cboto3\xc2\x85rich\n",
+    )]);
+    assert_eq!(
+        dependency_names(&manifest),
+        ["requests", "flask", "click", "boto3", "rich"]
+    );
+    let lines = manifest
+        .dependencies
+        .iter()
+        .map(|dep| dep.origin.line)
+        .collect::<Vec<_>>();
+    assert_eq!(lines, [Some(1), Some(2), Some(3), Some(4), Some(5)]);
+    assert_eq!(manifest.warnings, []);
+}

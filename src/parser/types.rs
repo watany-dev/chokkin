@@ -357,6 +357,11 @@ pub struct ParsedModule {
     /// only those through a receiver one of `imports` binds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attribute_accesses: Vec<AttributeAccess>,
+    /// Attribute accesses on the module a literal `import_module("pkg.m")`
+    /// returned, directly or through a name the same scope binds to it; the
+    /// receiver is that module's absolute name (#1144).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loaded_module_accesses: Vec<AttributeAccess>,
     /// Top-level symbol definitions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub symbols: Vec<SymbolDef>,
