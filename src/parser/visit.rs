@@ -545,6 +545,15 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    /// Keep `getattr(x, "attr")` and its kin for [`Self::into_parsed`],
+    /// which reads them like `x.attr`. A method of its own so its locals
+    /// stay out of the frame [`Self::visit_expr`] recurses with (#1045).
+    fn record_literal_getattr(&mut self, call: &'ast ExprCall) {
+        if literal_getattr(call).is_some() {
+            self.literal_getattr_sites.push(call);
+        }
+    }
+
     /// `[sys.executable, "-m", "pkg"]` uses `pkg` without importing it. It is
     /// recorded as an optional import so it counts as a use but is never
     /// reported missing (`pip` rarely is declared).
@@ -1101,9 +1110,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     AnnotationNames(&mut self.loaded_names).visit_expr(argument);
                 }
                 self.record_computed_getattr(call);
-                if literal_getattr(call).is_some() {
-                    self.literal_getattr_sites.push(call);
-                }
+                self.record_literal_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
                 if let Some((label, app, app_dir)) = self.server_names.app(call) {
                     let line = self.line_number(call);
