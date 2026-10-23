@@ -200,7 +200,7 @@ jobs:
 | `baseline` | — | baseline ファイル。新規 finding だけで失敗 |
 | `reporter` | `github` | 判定用 run の reporter |
 | `sarif-file` | — | SARIF の出力先(判定 run が失敗しても書き出す) |
-| `args` | — | 追加の CLI 引数(例: `--production --confidence likely`) |
+| `args` | — | 追加の CLI 引数(例: `--production --confidence likely`)。ここに書いた `--reporter`・`--baseline`・`--no-cache` は input より優先し、SARIF の実行では `--reporter` と `--no-exit-code` を無視する |
 | `cache` | `false` | `true` で `.chokkin/` キャッシュを読み書きする。PR に含まれるキャッシュで結果が変わらないよう既定は無効 |
 
 action を使わない場合は `uvx` でバージョンを固定します。

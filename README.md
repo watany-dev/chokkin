@@ -266,7 +266,7 @@ can be moved, a SHA cannot, and Dependabot still bumps both.
 | `baseline` | — | Baseline file; only new findings fail the job |
 | `reporter` | `github` | Reporter for the gating run |
 | `sarif-file` | — | Also write SARIF here (written even when the gating run fails) |
-| `args` | — | Extra CLI arguments, e.g. `--production --confidence likely` |
+| `args` | — | Extra CLI arguments, e.g. `--production --confidence likely`; a `--reporter`, `--baseline` or `--no-cache` here replaces the input, and the SARIF run ignores `--reporter` and `--no-exit-code` |
 | `cache` | `false` | `true` reads and writes the `.chokkin/` cache; off so cache files in a PR cannot change the result |
 
 Without the action, pin the version with `uvx`:
