@@ -35,6 +35,29 @@ pub fn escape_control(text: &str) -> Cow<'_, str> {
     Cow::Owned(escaped)
 }
 
+/// `error`'s message followed by each of its causes, as `msg: cause: ...`.
+///
+/// Most errors name only the file in their own message and keep the OS or
+/// parser reason as their `source()` (#1160); without the chain a non-UTF-8
+/// `pyproject.toml` reads as just "failed to read". A cause the message
+/// already ends with (`failed to edit x: {source}`) is not repeated.
+#[must_use]
+pub fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut cause = error.source();
+    while let Some(source) = cause {
+        // `toml`'s errors, here and in the messages that quote them, end
+        // with a newline; `eprintln!` adds its own.
+        let reason = format!(": {}", source.to_string().trim_end());
+        if !text.ends_with(&reason) {
+            text.push_str(&reason);
+        }
+        cause = source.source();
+    }
+    text.truncate(text.trim_end().len());
+    text
+}
+
 /// `escape_control` for multi-line text, such as an error that quotes a
 /// TOML snippet: each `\n` or `\r\n` is kept as a line break, the rest is
 /// escaped.
@@ -226,6 +249,31 @@ mod tests {
         assert_eq!(
             escape_control("a\u{202e}b\u{2066}c\u{2028}d\u{2029}e\u{200d}f"),
             "a\\u{202e}b\\u{2066}c\\u{2028}d\\u{2029}e\u{200d}f"
+        );
+    }
+
+    /// The OS reason behind "failed to read" is printed, once (#1160).
+    #[test]
+    fn error_chain_appends_causes_not_already_in_the_message() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("failed to read pyproject.toml")]
+        struct Bare(#[source] std::io::Error);
+        #[derive(Debug, thiserror::Error)]
+        #[error("failed to edit pyproject.toml: {0}")]
+        struct Quoted(#[source] std::io::Error);
+        let io = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not UTF-8");
+        assert_eq!(
+            error_chain(&Bare(io())),
+            "failed to read pyproject.toml: not UTF-8"
+        );
+        assert_eq!(
+            error_chain(&Quoted(io())),
+            "failed to edit pyproject.toml: not UTF-8"
+        );
+        let snippet = std::io::Error::other("line 1\n  |\n");
+        assert_eq!(
+            error_chain(&Bare(snippet)),
+            "failed to read pyproject.toml: line 1\n  |"
         );
     }
 
