@@ -360,6 +360,54 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
     assert_eq!(skipped.len(), 5, "{stderr}");
 }
 
+/// A source file whose path is not UTF-8 is skipped with a warning, not
+/// read back under its lossy name, which fails the whole run (#1146). Linux
+/// only: macOS and Windows file systems refuse such names.
+#[cfg(target_os = "linux")]
+#[test]
+fn binary_non_utf8_source_paths_are_skipped_with_a_warning() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    let package = root.join("src/demo");
+    fs::create_dir_all(&package).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n\
+         [project.scripts]\ndemo = \"demo.cli:main\"\n",
+    )
+    .expect("write pyproject");
+    fs::write(package.join("__init__.py"), "").expect("write package");
+    fs::write(package.join("cli.py"), "def main():\n    pass\n").expect("write module");
+    let bad_dir = package.join(OsStr::from_bytes(b"b\xffd"));
+    fs::create_dir(&bad_dir).expect("mkdir");
+    fs::write(bad_dir.join("m.py"), "X = 1\n").expect("write module");
+    fs::write(package.join(OsStr::from_bytes(b"bad\xff.py")), "Y = 1\n").expect("write module");
+    fs::write(package.join(OsStr::from_bytes(b"data\xff.txt")), "").expect("write data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("is not valid UTF-8"))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            "sources: skipped `src/demo/bad\u{fffd}.py`: its path is not valid UTF-8",
+            "sources: skipped `src/demo/b\u{fffd}d/m.py`: its path is not valid UTF-8",
+        ],
+        "{stderr}"
+    );
+}
+
 /// A link that is neither dangling nor a loop is named with the OS error,
 /// and one in an excluded directory is pruned before it is judged.
 #[cfg(unix)]

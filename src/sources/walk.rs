@@ -310,6 +310,30 @@ impl SkippedSymlinks {
     }
 }
 
+/// Source files whose paths are not UTF-8 (#1146).
+#[derive(Default)]
+pub(super) struct NonUtf8Paths(Vec<SourcesWarning>);
+
+impl NonUtf8Paths {
+    /// Record `rel` if it is not UTF-8. Its lossy `rel_str` names no file on
+    /// disk, and Python cannot import the module, so it is skipped out loud.
+    pub(super) fn skips(&mut self, rel: &Path, rel_str: &str) -> bool {
+        if rel.to_str().is_some() {
+            return false;
+        }
+        self.0.push(SourcesWarning::NonUtf8Path {
+            path: rel_str.to_owned(),
+        });
+        true
+    }
+
+    /// Append the paths in path order, not the walk's directory order.
+    pub(super) fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
+        self.0.sort_by_cached_key(ToString::to_string);
+        warnings.append(&mut self.0);
+    }
+}
+
 /// Why the walk did not follow the symlink at `entry`, or `None` when the
 /// skip needs no word (#986). The walk follows no link: one inside the root
 /// is read at its target's own path, so it stays silent. One that leaves the
@@ -416,7 +440,7 @@ fn nested_dockerfile(
 
 /// The source kind `path`'s extension names, or `None` for a file the
 /// walk does not collect.
-fn source_kind(path: &Path) -> Option<FileKind> {
+pub(super) fn source_kind(path: &Path) -> Option<FileKind> {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("py") => Some(FileKind::Python),
         Some(ext) if ext.eq_ignore_ascii_case("pyi") => Some(FileKind::Stub),
@@ -462,6 +486,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let mut dockerfiles = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
+    let mut non_utf8 = NonUtf8Paths::default();
     let gitignored =
         |rel: &Path, is_dir| gitignore.is_some_and(|ignore| ignore.gitignore_ignores(rel, is_dir));
 
@@ -501,7 +526,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        if gitignored(rel, false) {
+        if gitignored(rel, false) || non_utf8.skips(rel, &rel_str) {
             continue;
         }
 
@@ -527,6 +552,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     files.sort_by(|left, right| left.path.cmp(&right.path));
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
     dockerfiles.sort();
+    non_utf8.finish(&mut warnings);
     symlinks.finish(&mut warnings);
     Ok(Collected {
         files,

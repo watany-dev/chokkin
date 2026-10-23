@@ -296,6 +296,8 @@ CHK002 = "error"
 
 ソース走査は symlink を辿らない（root 自体が symlink の場合だけは、その先を root として走査する）。root 内を指す symlink は、実体を実体の path で 1 回だけ数えるので無言で飛ばす（同じファイルを 2 つの module 名で数えない）。root の外を指すもの・ループするもの・リンク先がないものは、ユーザーが解析させるつもりで置いた可能性があるので、リンクごとに `sources: did not follow symlink <path>: <reason>` を出す（reason は `it points outside the project root` / `it forms a loop` / `it points to nothing`。それ以外の読めなかった理由は OS の文言をそのまま出す）。対象は、ソースの拡張子（`.py` / `.pyi` / `.ipynb`）を持つ名前、ディレクトリを指すもの、リンク先が分からず拡張子も先頭の `.` もない名前に限る。ほかの名前（`LICENSE.txt`・`.gitignore` など）はもとから走査しないので、辿っても読まない。exclude と `.gitignore` で除かれる path は出さない。workspace member の走査が出したものは root の走査が同じリンクを見るので落とす（member 間のリンクは root 内なので出さない）。多いときは他の warning と同じく `… and N more like the above` にまとめる (#986)。root の外を辿らないのは解析対象の外を読まないための既定で、変えない。root の外のコードは project の外なので、その import を依存の使用に数えないのが既定どおりで、gap にはしない（ループとリンク先のないものには読む中身がない）。
 
+path (ディレクトリ名かファイル名) が UTF-8 でないソースファイル (`.py` / `.pyi` / `.ipynb`) は inventory に入れず、ファイルごとに `sources: skipped <path>: its path is not valid UTF-8` を出す (path は不正な byte を `U+FFFD` に置き換えて表示する)。Python はその名前の module を import できず、置き換えた path では読み戻せないため、解析全体を止めずに飛ばす。exclude と `.gitignore` で除かれる path、ソースでないファイルは出さない。workspace member の走査が出したものは root の走査が同じファイルを見るので落とす。import できないので gap にはしない (#1146)。
+
 ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
 workspace設定。
