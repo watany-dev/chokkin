@@ -141,6 +141,30 @@ fn returns_not_found_for_empty_tree() {
     assert!(matches!(error, DiscoveryError::NotFound { .. }));
 }
 
+/// A marker counts only under its own spelling, so a case-insensitive file
+/// system finds no root where Linux finds none (#1163).
+#[test]
+fn ignores_markers_spelled_in_another_case() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    for name in [
+        "PyProject.toml",
+        "UV.lock",
+        "Setup.cfg",
+        "Setup.py",
+        "Requirements.txt",
+    ] {
+        std::fs::write(temp.path().join(name), "").expect("write marker");
+    }
+    std::fs::create_dir(temp.path().join(".GIT")).expect("create dir");
+
+    if has_project_marker_ancestor(temp.path()) {
+        return;
+    }
+
+    let error = discover_project_root(temp.path()).expect_err("expected not found");
+    assert!(matches!(error, DiscoveryError::NotFound { .. }));
+}
+
 #[test]
 fn returns_invalid_start_for_file() {
     let root = fixture("pyproject_only");

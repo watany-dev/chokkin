@@ -9,7 +9,7 @@ use crate::manifest::{
     PackageFind, ProjectMetadata, UvSourceKind, UvToolSettings, WheelTargets,
     normalize_distribution_name,
 };
-use crate::path_util::join_rel;
+use crate::path_util::{join_rel, strip_py_suffix};
 use crate::plugins::pytest_import_settings;
 
 use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
@@ -533,7 +533,7 @@ fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
 /// `None` when a path component holds a `.` (`foo.bar.py`, `.hidden/`): no
 /// import can name it, and as `foo.bar` it would shadow `foo/bar.py`.
 pub(crate) fn module_path(path: &str) -> Option<&str> {
-    let stem = path.strip_suffix(".py")?;
+    let stem = strip_py_suffix(path)?;
     let stem = stem.strip_suffix("/__init__").unwrap_or(stem);
     stem.split('/')
         .all(|part| !part.is_empty() && !part.contains('.'))
@@ -583,6 +583,21 @@ mod tests {
             Some("acme".to_owned())
         );
         assert_eq!(path_to_module("tests/unit/test_core.py", &layout), None);
+    }
+
+    /// The walk collects `.PY` too, so its module name must match (#1170).
+    #[test]
+    fn path_to_module_ignores_the_extension_case() {
+        let layout = LayoutInfo::new("", vec!["pkg".to_owned()]);
+        assert_eq!(
+            path_to_module("pkg/helper.PY", &layout),
+            Some("pkg.helper".to_owned())
+        );
+        assert_eq!(
+            path_to_module("pkg/sub/__init__.Py", &layout),
+            Some("pkg.sub".to_owned())
+        );
+        assert_eq!(path_to_module("pkg/.PY", &layout), None);
     }
 
     #[test]

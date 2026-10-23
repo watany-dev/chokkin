@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::config::{ChokkinConfig, ResolvedWorkspaceMember, TargetVersion};
+use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::parser::{ImportContext, ParseSummary, ParsedModule, import_context_for_file};
@@ -58,11 +58,10 @@ pub fn resolve_imports_for_analysis(
     script_targets: &BTreeMap<String, StdlibRange>,
     scoped: &ScopedDeclarations,
 ) -> ResolutionIndex {
-    let target = config
-        .target_version
-        .as_ref()
-        .map_or_else(TargetVersion::default_py311, Clone::clone);
-    let stdlib = StdlibRange::new(&target, manifest.metadata.requires_python.as_deref());
+    let stdlib = StdlibRange::for_project(
+        config.target_version.as_ref(),
+        manifest.metadata.requires_python.as_deref(),
+    );
 
     let import_map = ImportMap::build(config).with_local_sources(local.path_imports().clone());
     let mut warnings = Vec::new();

@@ -56,8 +56,8 @@ fn read_venv_index(
     venv: &Path,
     warnings: &mut Vec<ResolveWarning>,
 ) -> Result<VenvIndex, String> {
-    let site_packages =
-        find_site_packages(venv).ok_or_else(|| "site-packages not found".to_owned())?;
+    let site_packages = find_site_packages(root, venv, warnings)
+        .ok_or_else(|| "site-packages not found".to_owned())?;
     let mut index = VenvIndex::default();
 
     let entries = fs::read_dir(&site_packages).map_err(|err| err.to_string())?;
@@ -84,7 +84,15 @@ fn read_venv_index(
     Ok(index)
 }
 
-fn find_site_packages(venv: &Path) -> Option<PathBuf> {
+/// A POSIX venv keeps one `lib/pythonX.Y/site-packages` per interpreter it
+/// was built with, and `--upgrade` leaves the old one behind. `read_dir`
+/// order is the filesystem's, so the one matching `pyvenv.cfg` wins; without
+/// a single match the highest version wins and the rest are reported (#1169).
+fn find_site_packages(
+    root: &Path,
+    venv: &Path,
+    warnings: &mut Vec<ResolveWarning>,
+) -> Option<PathBuf> {
     // Windows venvs use Lib/site-packages (no pythonX.Y segment).
     let windows_style = venv.join("Lib").join("site-packages");
     if windows_style.is_dir() {
@@ -92,18 +100,71 @@ fn find_site_packages(venv: &Path) -> Option<PathBuf> {
     }
 
     let lib = venv.join("lib");
-    let entries = fs::read_dir(&lib).ok()?;
-    for entry in entries.flatten() {
-        let python_dir = entry.path();
-        if !python_dir.is_dir() {
+    let mut candidates: Vec<(Option<(u32, u32)>, String)> = fs::read_dir(&lib)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().join("site-packages").is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .map(|name| (interpreter_version(&name), name))
+        .collect();
+    let configured = configured_version(venv);
+    let matching: Vec<_> = candidates
+        .iter()
+        .filter(|(version, _)| version.is_some() && *version == configured)
+        .cloned()
+        .collect();
+    if !matching.is_empty() {
+        candidates = matching;
+    }
+    candidates.sort();
+    let (_, chosen) = candidates.last()?;
+    if candidates.len() > 1 {
+        warnings.push(ResolveWarning::VenvSitePackagesAmbiguous {
+            path: rel_to_root(root, &lib),
+            chosen: chosen.clone(),
+            candidates: candidates.iter().map(|(_, name)| name.clone()).collect(),
+        });
+    }
+    Some(lib.join(chosen).join("site-packages"))
+}
+
+/// `X.Y` from `pyvenv.cfg`: uv writes `version_info`, `python -m venv`
+/// writes `version`. A file without either decides nothing.
+fn configured_version(venv: &Path) -> Option<(u32, u32)> {
+    let contents = fs::read_to_string(venv.join("pyvenv.cfg")).ok()?;
+    let mut version = None;
+    for line in contents.lines() {
+        let Some((key, value)) = line.split_once('=') else {
             continue;
-        }
-        let site_packages = python_dir.join("site-packages");
-        if site_packages.is_dir() {
-            return Some(site_packages);
+        };
+        match key.trim() {
+            "version_info" => return major_minor(value.trim()),
+            "version" => version = major_minor(value.trim()),
+            _ => {},
         }
     }
-    None
+    version
+}
+
+/// `python3.12` / `python3.13t` / `pypy3.10` → `(3, 12)`; any other
+/// directory name has no version and sorts before every versioned one.
+fn interpreter_version(dir_name: &str) -> Option<(u32, u32)> {
+    let rest = dir_name
+        .strip_prefix("python")
+        .or_else(|| dir_name.strip_prefix("pypy"))?;
+    major_minor(rest.strip_suffix('t').unwrap_or(rest))
+}
+
+fn major_minor(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts
+        .next()?
+        .split(|ch: char| !ch.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()?;
+    Some((major, minor))
 }
 
 /// `Err` carries a name that is not a PEP 508 project name: pip installs
@@ -292,6 +353,102 @@ mod tests {
                 name: "evil\x07".to_owned(),
             }]
         );
+    }
+
+    fn venv_with_interpreters(dirs: &[&str], cfg: Option<&str>) -> tempfile::TempDir {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let venv = dir.path().join(".venv");
+        for name in dirs {
+            std::fs::create_dir_all(venv.join("lib").join(name).join("site-packages"))
+                .expect("mkdir");
+        }
+        if let Some(cfg) = cfg {
+            std::fs::write(venv.join("pyvenv.cfg"), cfg).expect("write");
+        }
+        dir
+    }
+
+    fn chosen_interpreter(dir: &tempfile::TempDir) -> (String, Vec<ResolveWarning>) {
+        let mut warnings = Vec::new();
+        let site = find_site_packages(dir.path(), &dir.path().join(".venv"), &mut warnings)
+            .expect("site-packages");
+        let interpreter = site
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .expect("interpreter dir")
+            .to_owned();
+        (interpreter, warnings)
+    }
+
+    /// `pyvenv.cfg` picks the interpreter a `--upgrade` left behind, whatever
+    /// order `read_dir` lists them in (#1169).
+    #[test]
+    fn pyvenv_cfg_version_picks_the_site_packages() {
+        for cfg in [
+            "home = /usr/bin\nversion = 3.11.9\n",
+            "home = /usr/bin\nversion_info = 3.11.9\nversion = 3.12.0\n",
+        ] {
+            let dir = venv_with_interpreters(&["python3.11", "python3.12"], Some(cfg));
+            assert_eq!(
+                chosen_interpreter(&dir),
+                ("python3.11".to_owned(), Vec::new()),
+                "{cfg}"
+            );
+        }
+    }
+
+    /// Without a deciding `pyvenv.cfg` the highest version is read, not the
+    /// lexically last (`python3.9` > `python3.10`), and the choice is reported.
+    #[test]
+    fn undecided_interpreters_read_the_highest_and_warn() {
+        for cfg in [None, Some("version = 3.8.1\n"), Some("garbage\n")] {
+            let dir = venv_with_interpreters(&["python3.9", "python3.10"], cfg);
+            assert_eq!(
+                chosen_interpreter(&dir),
+                (
+                    "python3.10".to_owned(),
+                    vec![ResolveWarning::VenvSitePackagesAmbiguous {
+                        path: ".venv/lib".to_owned(),
+                        chosen: "python3.10".to_owned(),
+                        candidates: vec!["python3.9".to_owned(), "python3.10".to_owned()],
+                    }]
+                ),
+                "{cfg:?}"
+            );
+        }
+    }
+
+    /// The default and free-threaded builds of one version both match it.
+    #[test]
+    fn one_interpreter_needs_no_cfg_and_two_builds_of_one_version_warn() {
+        let dir = venv_with_interpreters(&["python3.12"], None);
+        assert_eq!(
+            chosen_interpreter(&dir),
+            ("python3.12".to_owned(), Vec::new())
+        );
+
+        let dir = venv_with_interpreters(
+            &["python3.12", "python3.13", "python3.13t"],
+            Some("version_info = 3.13.0\n"),
+        );
+        let (chosen, warnings) = chosen_interpreter(&dir);
+        assert_eq!(chosen, "python3.13t");
+        assert!(matches!(
+            warnings.as_slice(),
+            [ResolveWarning::VenvSitePackagesAmbiguous { candidates, .. }]
+                if candidates == &["python3.13".to_owned(), "python3.13t".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn interpreter_dir_names_parse_their_version() {
+        assert_eq!(interpreter_version("python3.12"), Some((3, 12)));
+        assert_eq!(interpreter_version("python3.13t"), Some((3, 13)));
+        assert_eq!(interpreter_version("pypy3.10"), Some((3, 10)));
+        assert_eq!(interpreter_version("site-python"), None);
+        assert_eq!(major_minor("3.12.0rc1"), Some((3, 12)));
+        assert_eq!(major_minor("3.14rc1"), Some((3, 14)));
     }
 
     #[test]
