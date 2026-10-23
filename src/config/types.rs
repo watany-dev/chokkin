@@ -259,6 +259,9 @@ impl EntrySpec {
     /// Parse an entry string such as `src/pkg/asgi.py:app`.
     ///
     /// At most one `:` is allowed, separating a relative path from a symbol.
+    /// The path is normalized like `--trace` targets and workspace paths: `\`
+    /// becomes `/` and a leading `./` is dropped, so it matches discovered
+    /// source paths (#1168).
     pub fn parse(value: &str) -> Result<Self, &'static str> {
         if value.is_empty() {
             return Err("entry path must not be empty");
@@ -285,12 +288,29 @@ impl EntrySpec {
             },
             None => (value, None),
         };
+        let path = normalize_entry_path(path);
+        if path.is_empty() {
+            return Err("entry path must not be empty");
+        }
+        if path == "." || path == ".." {
+            return Err("entry path must not be . or ..");
+        }
 
         Ok(Self {
-            path: path.to_owned(),
+            path,
             symbol: symbol.map(str::to_owned),
         })
     }
+}
+
+/// `\` to `/`, then strip every leading `./` (`././src/app.py` is `src/app.py`).
+fn normalize_entry_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let mut rest = path.as_str();
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped.trim_start_matches('/');
+    }
+    rest.to_owned()
 }
 
 impl TryFrom<String> for EntrySpec {
@@ -472,6 +492,29 @@ mod tests {
     }
 
     #[test]
+    fn entry_spec_normalizes_dot_slash_and_backslashes() {
+        // #1168: written forms must match discovered paths exactly.
+        for (value, path) in [
+            ("./src/app.py", "src/app.py"),
+            ("././src/app.py", "src/app.py"),
+            (".//src/app.py", "src/app.py"),
+            (r"src\app.py", "src/app.py"),
+            (r".\src\app.py", "src/app.py"),
+            ("./.hidden/app.py", ".hidden/app.py"),
+            ("./../x.py", "../x.py"),
+        ] {
+            let spec = EntrySpec::parse(value).expect("parse entry");
+            assert_eq!(spec.path, path, "{value}");
+        }
+        let spec = EntrySpec::parse("./src/asgi.py:app").expect("parse entry");
+        assert_eq!(spec.path, "src/asgi.py");
+        assert_eq!(spec.symbol.as_deref(), Some("app"));
+        for value in ["./", "./.", "./..", "./:app", ".\\"] {
+            EntrySpec::parse(value).unwrap_err();
+        }
+    }
+
+    #[test]
     fn entry_spec_rejects_empty_symbol() {
         EntrySpec::parse("manage.py:").unwrap_err();
     }
@@ -549,6 +592,8 @@ mod tests {
                     prop_assert!(!spec.path.is_empty());
                     prop_assert!(spec.path != "." && spec.path != "..");
                     prop_assert!(!spec.path.contains(':'));
+                    prop_assert!(!spec.path.starts_with("./"));
+                    prop_assert!(!spec.path.contains('\\'));
                     if let Some(symbol) = &spec.symbol {
                         prop_assert!(!symbol.is_empty());
                     }

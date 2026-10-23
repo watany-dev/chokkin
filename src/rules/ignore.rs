@@ -2,13 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use globset::{Glob, GlobSet};
+use globset::GlobSet;
 
 use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
-use crate::sources::{build_glob_set, check_braces};
+use crate::sources::{build_glob_set, check_braces, path_glob};
 
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
@@ -305,7 +305,7 @@ fn normalize_script_pattern(pattern: &str) -> String {
 
 fn glob_match(pattern: &str, value: &str) -> bool {
     check_braces(pattern).is_ok()
-        && Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(value))
+        && path_glob(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(value))
 }
 
 #[cfg(test)]
@@ -314,6 +314,14 @@ mod tests {
     use crate::config::default_config;
     use crate::parser::ParseSummary;
     use crate::rules::types::{ExplainData, Severity};
+
+    #[test]
+    fn path_patterns_read_backslash_as_separator() {
+        assert!(glob_match(
+            "src\\acme\\migrations\\**",
+            "src/acme/migrations/0001.py"
+        ));
+    }
 
     #[test]
     fn config_ignore_matches_distribution() {
