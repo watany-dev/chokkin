@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::discovery::ProjectRoot;
+use crate::path_util::is_file_named;
 
 use super::defaults::merge_layers;
 use super::error::ConfigError;
@@ -27,10 +28,7 @@ pub(crate) fn load_root_config(
     root: &ProjectRoot,
     auto_workspace: bool,
 ) -> Result<LoadedConfig, ConfigError> {
-    let file_at_root = |name: &str| {
-        let path = root.path.join(name);
-        path.is_file().then_some(path)
-    };
+    let file_at_root = |name: &str| is_file_named(&root.path, name).then(|| root.path.join(name));
     let mut sources = ConfigSources {
         dot_chokkin_toml: file_at_root(".chokkin.toml"),
         chokkin_toml: file_at_root("chokkin.toml"),

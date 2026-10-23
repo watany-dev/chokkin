@@ -1242,3 +1242,50 @@ fn extra_requirements_files_keep_what_they_could_read() {
             .any(|file| file.ends_with("loop.txt"))
     );
 }
+
+/// Manifests and lockfiles are read only under their own spelling, so a
+/// case-insensitive file system reads what Linux reads (#1163).
+#[test]
+fn ignores_manifests_spelled_in_another_case() {
+    let manifest = extract_files(&[
+        (
+            "PyProject.toml",
+            b"[project]\nname = 'acme'\ndependencies = ['attrs']\n",
+        ),
+        ("Setup.cfg", b"[options]\ninstall_requires = click\n"),
+        (
+            "Setup.py",
+            b"from setuptools import setup\nsetup(install_requires=['rich'])\n",
+        ),
+        ("Requirements.txt", b"requests\n"),
+        ("Requirements-dev.txt", b"pytest\n"),
+        ("UV.lock", b"version = 1\n"),
+    ]);
+    assert!(dependency_names(&manifest).is_empty());
+    assert!(!manifest.sources.pyproject_toml);
+    assert!(!manifest.sources.setup_cfg);
+    assert!(!manifest.sources.setup_py);
+    assert!(manifest.sources.requirements_files.is_empty());
+    assert!(manifest.sources.lockfile.is_none());
+}
+
+/// pip splits a requirements file with `str.splitlines()`, so a lone `\r`
+/// ends a line as `\n` and `\r\n` do (#1154).
+#[test]
+fn requirements_split_on_every_python_line_boundary() {
+    let manifest = extract_files(&[(
+        "requirements.txt",
+        b"requests\rflask\r\nclick\x0cboto3\xc2\x85rich\n",
+    )]);
+    assert_eq!(
+        dependency_names(&manifest),
+        ["requests", "flask", "click", "boto3", "rich"]
+    );
+    let lines = manifest
+        .dependencies
+        .iter()
+        .map(|dep| dep.origin.line)
+        .collect::<Vec<_>>();
+    assert_eq!(lines, [Some(1), Some(2), Some(3), Some(4), Some(5)]);
+    assert_eq!(manifest.warnings, []);
+}
