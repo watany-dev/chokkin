@@ -38,7 +38,8 @@ Options:
       --reporter <ID>     Output reporter: default, compact, json, markdown, github, sarif
       --confidence <LVL>  Minimum confidence: certain, likely, maybe
       --explain <SEL>     Explain an issue (e.g. CHK002:boto3)
-      --trace <PATH>      Show reachability trace to a file
+      --trace <PATH>      Show reachability trace to a file (relative to the
+                          project root or current directory, or absolute)
       --fix               Apply safe automatic manifest fixes
       --dry-run           Preview fixes without writing files (requires --fix)
       --allow-remove-files Allow --fix to remove unreachable project files
@@ -153,6 +154,7 @@ fn run_analysis(args: &CliArgs, report: &AnalysisReport) -> ExitCode {
             &report.entry,
             &report.probe.sources,
             target,
+            std::env::current_dir().ok().as_deref(),
         );
         if writeln!(std::io::stderr(), "{text}").is_err() {
             return ExitCode::from(ExitStatus::InternalError.code());

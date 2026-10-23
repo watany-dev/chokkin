@@ -166,7 +166,9 @@ uvx chokkin --trace src/acme/legacy.py    # how (or why not) is this file reache
 ```
 
 `--trace` prints the import chain from an entry root for reachable files, and
-the reason, entry roots, and incoming imports for unreachable ones. This is
+the reason, entry roots, and incoming imports for unreachable ones. The path
+is relative to the project root; an absolute path or one relative to the
+current directory also works when it points inside the root. This is
 the intended path for reporting false positives.
 
 **Fix it** when you agree:

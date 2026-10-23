@@ -1,6 +1,7 @@
 //! Reachability trace formatting for `--trace`.
 
 use std::fmt::Write;
+use std::path::{Component, Path, PathBuf};
 
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::graph::{FileId, GraphEdge, ProjectGraph};
@@ -13,13 +14,86 @@ pub(super) fn normalize_trace_path(path: &str) -> String {
     path.replace('\\', "/").trim_start_matches("./").to_owned()
 }
 
-/// Find a file id for a root-relative trace target.
+/// Why a `--trace` target named no discovered file.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum TraceMiss {
+    /// The path resolves to somewhere outside the project root.
+    OutsideRoot,
+    /// The path is under the root (or could not be placed) but no discovered
+    /// file has it.
+    NotDiscovered,
+}
+
+/// Find a file id for a trace target.
+///
+/// The root-relative spelling is tried first, as it is the documented form.
+/// Otherwise an absolute path, or one relative to `cwd`, is made relative to
+/// `root` and looked up again (#1157). An absolute path outside the root is
+/// reported as such rather than as undiscovered.
 pub(super) fn file_id_for_trace(
     graph: &ProjectGraph,
+    root: &Path,
+    cwd: Option<&Path>,
     target: &str,
-) -> Option<crate::graph::FileId> {
+) -> Result<FileId, TraceMiss> {
     let normalized = normalize_trace_path(target);
-    graph.file_id(&normalized)
+    if let Some(id) = graph.file_id(&normalized) {
+        return Ok(id);
+    }
+    let candidate = Path::new(&normalized);
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else if let Some(cwd) = cwd {
+        cwd.join(candidate)
+    } else {
+        return Err(TraceMiss::NotDiscovered);
+    };
+    let Some(relative) = root_relative(root, &absolute) else {
+        // A relative target was first read as root-relative, so only an
+        // absolute one is surely outside the root.
+        return Err(if candidate.is_absolute() {
+            TraceMiss::OutsideRoot
+        } else {
+            TraceMiss::NotDiscovered
+        });
+    };
+    graph.file_id(&relative).ok_or(TraceMiss::NotDiscovered)
+}
+
+/// `path` relative to `root`, `/`-joined as graph paths are, or `None` when it
+/// is not under `root`. Both sides are canonicalized when they exist so that
+/// symlinked spellings (macOS `/tmp`, Windows `\\?\` prefixes) agree; a path
+/// that does not exist is normalized lexically instead.
+fn root_relative(root: &Path, path: &Path) -> Option<String> {
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| lexical_normalize(root));
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| lexical_normalize(path));
+    let rest = path.strip_prefix(&root).ok()?;
+    let mut parts = Vec::new();
+    for component in rest.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?.to_owned()),
+            _ => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// Drop `.` and resolve `..` against earlier components without touching the
+/// filesystem.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component);
+                }
+            },
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Format a reachability trace as a tree for CLI output.
@@ -51,19 +125,42 @@ fn format_step(step: &TraceStep) -> String {
 }
 
 /// Build trace output for a target path, or an error message when unreachable.
+///
+/// `target` may be relative to the project root, relative to `cwd`, or
+/// absolute; see `file_id_for_trace`.
 #[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase plus the caller's cwd; a bundle struct would only rename them"
+)]
 pub fn trace_output(
     report: &ReachabilityReport,
     graph: &ProjectGraph,
     entry: &EntryPlan,
     sources: &DiscoveredSources,
     target: &str,
+    cwd: Option<&Path>,
 ) -> String {
-    let Some(file_id) = file_id_for_trace(graph, target) else {
-        return format!(
-            "trace: file `{}` was not discovered in this project\n",
-            escape_control(target)
-        );
+    let root = &sources.root.path;
+    let file_id = match file_id_for_trace(graph, root, cwd, target) {
+        Ok(file_id) => file_id,
+        Err(TraceMiss::OutsideRoot) => {
+            return format!(
+                "trace: `{}` is outside the project root `{}`; \
+                 pass a path inside it, relative to the root\n",
+                escape_control(target),
+                escape_control(&root.display().to_string())
+            );
+        },
+        Err(TraceMiss::NotDiscovered) => {
+            return format!(
+                "trace: file `{}` was not discovered in this project\n  \
+                 (paths are relative to the project root `{}`, \
+                 or absolute / relative to the current directory)\n",
+                escape_control(target),
+                escape_control(&root.display().to_string())
+            );
+        },
     };
     if let Some(path) = trace_to_file(report, file_id) {
         return format_trace(&path);
@@ -225,6 +322,56 @@ mod tests {
         assert_eq!(
             normalize_trace_path(".\\src\\pkg\\mod.py"),
             "src/pkg/mod.py"
+        );
+    }
+
+    #[test]
+    fn root_relative_maps_paths_under_the_root_only() {
+        let root = Path::new("/nonexistent-chokkin-root/proj");
+        assert_eq!(
+            root_relative(root, &root.join("src/acme/x.py")).as_deref(),
+            Some("src/acme/x.py")
+        );
+        assert_eq!(
+            root_relative(root, &root.join("src/../src/./acme/x.py")).as_deref(),
+            Some("src/acme/x.py")
+        );
+        assert_eq!(root_relative(root, &root.join("../other/x.py")), None);
+        assert_eq!(root_relative(root, Path::new("/elsewhere/x.py")), None);
+    }
+
+    #[test]
+    fn file_id_for_trace_resolves_cwd_relative_and_absolute_targets() {
+        let sources = sources_with(&["src/acme/legacy.py"]);
+        let mut graph = ProjectGraph::new(sources.root);
+        let id = graph
+            .intern_file(FileNode {
+                path: "src/acme/legacy.py".to_owned(),
+                context: FileContext::Runtime,
+                kind: FileKind::Python,
+            })
+            .expect("intern");
+        let root = Path::new("/nonexistent-chokkin-root/proj");
+        let acme = root.join("src/acme");
+        let lookup =
+            |cwd: Option<&Path>, target: &str| file_id_for_trace(&graph, root, cwd, target);
+        assert_eq!(lookup(None, "src/acme/legacy.py"), Ok(id));
+        assert_eq!(lookup(Some(&acme), "legacy.py"), Ok(id));
+        assert_eq!(
+            lookup(
+                Some(root.parent().expect("parent")),
+                "proj/src/acme/legacy.py"
+            ),
+            Ok(id)
+        );
+        assert_eq!(
+            lookup(Some(&acme), "missing.py"),
+            Err(TraceMiss::NotDiscovered)
+        );
+        assert_eq!(lookup(None, "legacy.py"), Err(TraceMiss::NotDiscovered));
+        assert_eq!(
+            lookup(Some(&acme), "../../../x.py"),
+            Err(TraceMiss::NotDiscovered)
         );
     }
 
