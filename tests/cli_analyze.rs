@@ -5037,6 +5037,46 @@ fn binary_member_entry_outside_the_root_inventory_is_a_skipped_entry() {
     );
 }
 
+/// A member under root `examples/` keeps its own layout, so the root leaves
+/// its files out on purpose (#1023): its manifest entry is not one the root
+/// skipped, and the root's unused dependency stays certain (#1140).
+#[test]
+fn binary_examples_member_entry_is_not_a_skipped_entry() {
+    let build =
+        "[build-system]\nrequires = [\"flit_core\"]\nbuild-backend = \"flit_core.buildapi\"\n";
+    let root = format!(
+        "[project]\nname = \"lib\"\nversion = \"0\"\ndependencies = [\"requests\"]\n\n{build}"
+    );
+    let member = format!(
+        "[project]\nname = \"demo\"\nversion = \"0\"\n\n[project.scripts]\ndemo = \"demo:cli\"\n\n{build}"
+    );
+    let project = write_project(&[
+        ("pyproject.toml", root.as_str()),
+        ("src/lib/__init__.py", "x = 1\n"),
+        ("examples/demo/pyproject.toml", member.as_str()),
+        (
+            "examples/demo/demo.py",
+            "import lib\n\ndef cli():\n    pass\n",
+        ),
+    ]);
+    assert_eq!(
+        issue_levels(project.path()),
+        [(
+            "CHK002".to_owned(),
+            "requests".to_owned(),
+            "error".to_owned(),
+            "certain".to_owned(),
+        )]
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped entry"), "{stderr}");
+}
+
 /// An entry chokkin skips because it is not a discovered source runs code
 /// whose imports are unknown, so the files and distributions it may use fall
 /// to likely; one that does not exist hides nothing (#923).
