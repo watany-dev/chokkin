@@ -194,7 +194,7 @@ impl ProbeWarning {
             },
             Self::Entry(warning) => match warning {
                 EntryWarning::UnresolvedModuleTarget { file, .. } => (Some(file), None),
-                EntryWarning::MissingEntryPath { .. } => (None, None),
+                EntryWarning::MissingEntryPath { .. } | EntryWarning::NoEntryRoot => (None, None),
             },
             Self::Resolve(warning) => match warning {
                 ResolveWarning::UnresolvedImport { file, line, .. } => (Some(file), *line),
