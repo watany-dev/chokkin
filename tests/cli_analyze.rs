@@ -3257,6 +3257,53 @@ fn binary_non_utf8_setup_py_does_not_abort_the_run() {
     assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
 }
 
+/// A `Shift_JIS` source is read through its PEP 263 declaration (#1150), and
+/// a UTF-16LE `requirements.txt` from PowerShell's `pip freeze >` through
+/// its BOM (#1153): the run sees the import and the declaration both hold.
+#[test]
+fn binary_shift_jis_source_and_utf16_requirements_are_read() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[tool.chokkin]\nmode = \"app\"\nentry = [\"app.py\"]\n",
+        ),
+        ("helper.py", "x = 1\n"),
+        ("worker.py", "import urllib3\n"),
+    ]);
+    // `# 日本語` and `s = 'ソ'`, whose second byte is a backslash.
+    fs::write(
+        project.path().join("app.py"),
+        b"# -*- coding: shift_jis -*-\n# \x93\xfa\x96{\x8c\xea\ns = '\x83\\'\nimport requests\nimport helper\nimport worker\n",
+    )
+    .expect("write shift_jis app.py");
+    let requirements: Vec<u8> = [0xFF, 0xFE]
+        .into_iter()
+        .chain(
+            "requests\r\nurllib3\r\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        )
+        .collect();
+    fs::write(project.path().join("requirements.txt"), requirements)
+        .expect("write utf-16 requirements.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let keys = issue_keys(parsed["issues"].as_array().expect("issues"));
+    assert!(keys.is_empty(), "{keys:?}\n{stderr}");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stderr}"
+    );
+}
+
 /// `--production` still parses a library's tests for CHK006, so what the
 /// parser could not read there is reported like any other file (#894).
 #[test]
