@@ -216,6 +216,7 @@ fn collect_member_entries(
                     *file = join_rel(member_path, file);
                 },
                 EntryWarning::MissingEntryPath { path } => *path = join_rel(member_path, path),
+                EntryWarning::NoEntryRoot => {},
             }
         }
         warnings.append(&mut member_warnings);
