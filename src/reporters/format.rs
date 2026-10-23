@@ -46,13 +46,15 @@ pub fn error_chain(error: &dyn std::error::Error) -> String {
     let mut text = error.to_string();
     let mut cause = error.source();
     while let Some(source) = cause {
-        let reason = source.to_string();
+        // `toml`'s errors, here and in the messages that quote them, end
+        // with a newline; `eprintln!` adds its own.
+        let reason = format!(": {}", source.to_string().trim_end());
         if !text.ends_with(&reason) {
-            text.push_str(": ");
             text.push_str(&reason);
         }
         cause = source.source();
     }
+    text.truncate(text.trim_end().len());
     text
 }
 
@@ -267,6 +269,11 @@ mod tests {
         assert_eq!(
             error_chain(&Quoted(io())),
             "failed to edit pyproject.toml: not UTF-8"
+        );
+        let snippet = std::io::Error::other("line 1\n  |\n");
+        assert_eq!(
+            error_chain(&Bare(snippet)),
+            "failed to read pyproject.toml: line 1\n  |"
         );
     }
 

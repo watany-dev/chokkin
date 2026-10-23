@@ -2,9 +2,7 @@
 
 /// Decode `bytes` as Python would, for the encodings chokkin supports.
 ///
-/// Valid UTF-8 is used as is, minus a leading BOM as Python drops it. A
-/// second BOM right after it is `None`: Python rejects it as an invalid
-/// character, while the parser would skip it as another BOM (#1160).
+/// Valid UTF-8 is used as is, minus a leading BOM as Python drops it.
 /// Otherwise the PEP 263 declaration decides: latin-1 and cp1252 are
 /// decoded, anything else (or no declaration) is `None` so the caller can
 /// skip the file instead of guessing.
@@ -12,11 +10,10 @@
 pub(crate) fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
     let bytes = match String::from_utf8(bytes) {
         Ok(text) => {
-            return match text.strip_prefix('\u{feff}') {
-                Some(rest) if rest.starts_with('\u{feff}') => None,
-                Some(rest) => Some(rest.to_owned()),
-                None => Some(text),
-            };
+            return Some(match text.strip_prefix('\u{feff}') {
+                Some(rest) => rest.to_owned(),
+                None => text,
+            });
         },
         Err(error) => error.into_bytes(),
     };
@@ -269,14 +266,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn second_utf8_bom_is_rejected() {
-        assert_eq!(
-            decode_python_source(b"\xef\xbb\xbf\xef\xbb\xbfimport os\n".to_vec()),
-            None
-        );
-    }
-
     mod props {
         use proptest::prelude::*;
 
@@ -351,11 +340,9 @@ mod tests {
             #[test]
             fn utf8_is_identity_minus_bom(text in ".{0,64}", bom in any::<bool>()) {
                 let source = if bom { format!("\u{feff}{text}") } else { text.clone() };
+                let expected = text.strip_prefix('\u{feff}').filter(|_| !bom).unwrap_or(&text);
                 let decoded = decode_python_source(source.into_bytes());
-                // One leading BOM is dropped; a second one rejects the source.
-                let rest = if bom { text.as_str() } else { text.strip_prefix('\u{feff}').unwrap_or(&text) };
-                let doubled = (bom || text.starts_with('\u{feff}')) && rest.starts_with('\u{feff}');
-                prop_assert_eq!(decoded.as_deref(), (!doubled).then_some(rest));
+                prop_assert_eq!(decoded.as_deref(), Some(expected));
             }
 
             #[test]
