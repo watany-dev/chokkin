@@ -179,6 +179,7 @@ impl ProbeWarning {
                 | SourcesWarning::AmbiguousFlatLayout { .. }
                 | SourcesWarning::GuessedPackageDir { .. }
                 | SourcesWarning::PathUnreadable { .. }
+                | SourcesWarning::NonUtf8Path { .. }
                 | SourcesWarning::LargeProject { .. } => (None, None),
             },
             Self::Plugin(warning) => match warning {
