@@ -19,9 +19,9 @@ use super::warnings::SourcesWarning;
 /// Source directory tried after `src/` and the repository root (#487).
 const LIB_DIR: &str = "lib";
 
-/// §8's single-name entries, which run from the root outside any package
+/// §8's single-name entries. At the root they run outside any package
 /// (`python main.py`, `uvicorn asgi:app`), so every layout reads them (#1137).
-const ROOT_ENTRY_NAMES: [&str; 6] = [
+pub(crate) const ROOT_ENTRY_NAMES: [&str; 6] = [
     "main.py",
     "app.py",
     "manage.py",
@@ -440,14 +440,10 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     globs
 }
 
-/// Root `.py` files, as escaped globs, that a module-level
-/// `if __name__ == "__main__":` line marks as scripts run from the root
-/// (§8 `main-block`, #1137). The layout globs stop at the package, so these
-/// would never be read; the parser still decides whether the guard makes the
-/// file an entry. Only the plain comparison is matched: a file is read only
-/// where the parser surely sees the guard, so a root module this scan pulls
-/// in never turns into an orphan the walk used to skip. Files that are not
-/// UTF-8 are left out, as before.
+/// Root `.py` files, as escaped globs, with a plain module-level
+/// `if __name__ == "__main__":` line (§8 `main-block`, #1137): the layout
+/// globs stop at the package. Only a guard the parser surely recognizes
+/// counts, so a root module this pulls in never becomes a new orphan.
 fn root_main_block_scripts(root: &Path) -> Vec<String> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
@@ -474,19 +470,19 @@ fn root_main_block_scripts(root: &Path) -> Vec<String> {
     scripts
 }
 
-/// Whether `line` is an unindented `if __name__ == "__main__":`, either
-/// operand order and quote, with an optional trailing comment.
+/// Whether `line` opens an unindented `if __name__ == "__main__":`, in
+/// either operand order and quote.
 fn is_main_guard_line(line: &str) -> bool {
-    let code = line.split('#').next().unwrap_or_default();
-    let compact: String = code.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
     line.starts_with("if")
-        && matches!(
-            compact.as_str(),
-            r#"if__name__=="__main__":"#
-                | "if__name__=='__main__':"
-                | r#"if"__main__"==__name__:"#
-                | "if'__main__'==__name__:"
-        )
+        && [
+            r#"if__name__=="__main__":"#,
+            "if__name__=='__main__':",
+            r#"if"__main__"==__name__:"#,
+            "if'__main__'==__name__:",
+        ]
+        .iter()
+        .any(|guard| compact.starts_with(guard))
 }
 
 /// Root-relative pytest `testpaths` from the root config and, for a package
@@ -912,6 +908,7 @@ mod tests {
             "if __name__ == \"__main__\":",
             "if __name__=='__main__':  # run",
             "if '__main__' == __name__:",
+            "if __name__ == \"__main__\": main()",
         ] {
             assert!(is_main_guard_line(line), "{line}");
         }
