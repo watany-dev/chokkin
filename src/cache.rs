@@ -285,8 +285,21 @@ pub struct SourceFingerprint {
     pub size: u64,
     /// Modified time in nanoseconds since the Unix epoch, when available.
     pub modified_ns: Option<u128>,
-    /// Stable hash of file bytes, empty when `(size, modified_ns)` alone
-    /// identified the file (see [`SourceFingerprint::from_absolute_stat`]).
+    /// File identity (inode on Unix), set only on stat-only fingerprints.
+    ///
+    /// `cp -p`, `rsync -a` and `tar` keep `(size, mtime)` across a rewrite, so
+    /// a stat-only key also records stamps the user cannot set back (#1158).
+    #[serde(default)]
+    pub file_id: Option<u64>,
+    /// Change stamp the user cannot set back, set only on stat-only
+    /// fingerprints: ctime in nanoseconds on Unix, creation time in 100 ns
+    /// ticks on Windows (std exposes no stable change time or file index
+    /// there).
+    #[serde(default)]
+    pub change_ns: Option<u128>,
+    /// Stable hash of file bytes, empty when `(size, modified_ns, file_id,
+    /// change_ns)` alone identified the file (see
+    /// [`SourceFingerprint::from_absolute_stat`]).
     pub content_hash: String,
 }
 
@@ -321,6 +334,8 @@ impl SourceFingerprint {
                 .ok()
                 .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
                 .map(|duration| duration.as_nanos()),
+            file_id: None,
+            change_ns: None,
             content_hash: stable_hex_hash(&bytes),
         })
     }
@@ -330,16 +345,20 @@ impl SourceFingerprint {
         hasher.field_str(&self.path);
         hasher.field_u64(self.size);
         hasher.field_opt_u128(self.modified_ns);
+        hasher.field_opt_u128(self.file_id.map(u128::from));
+        hasher.field_opt_u128(self.change_ns);
         hasher.field_str(&self.content_hash);
     }
 
     /// Build a file fingerprint from `stat` alone where that is unambiguous.
     ///
-    /// Leaves [`Self::content_hash`] empty when `(size, modified_ns)` already
-    /// identify the file, so a warm cache lookup costs one `stat` per source
-    /// instead of reading and hashing every byte of the project. Falls back to
+    /// Leaves [`Self::content_hash`] empty when `(size, modified_ns)` plus the
+    /// platform's file identity and change stamp already identify the file,
+    /// so a warm cache lookup costs one `stat` per source instead of reading
+    /// and hashing every byte of the project. Falls back to
     /// [`Self::from_absolute`] when the modified time is missing or falls
-    /// inside the racy-mtime window before the system clock. Use
+    /// inside the racy-mtime window before the system clock, and likewise for
+    /// the Unix ctime, which a backdating `touch` cannot move. Use
     /// [`Self::from_absolute_stat_at`] to judge against the filesystem's clock
     /// instead (see [`CacheOptions::filesystem_now`]).
     ///
@@ -366,13 +385,18 @@ impl SourceFingerprint {
         else {
             return Self::from_absolute(root, path);
         };
-        if is_racy_mtime(modified_ns, now) {
+        let (file_id, change_ns) = file_change_stamp(&metadata);
+        if is_racy_mtime(modified_ns, now)
+            || unix_ctime_ns(&metadata).is_some_and(|ctime| is_racy_mtime(ctime, now))
+        {
             return Self::from_absolute(root, path);
         }
         Ok(Self {
             path: cache_key_path(root, path),
             size: metadata.len(),
             modified_ns: Some(modified_ns),
+            file_id,
+            change_ns,
             content_hash: String::new(),
         })
     }
@@ -385,6 +409,8 @@ impl SourceFingerprint {
             path: cache_key_path(root, path),
             size: 0,
             modified_ns: None,
+            file_id: None,
+            change_ns: None,
             content_hash: "absent".to_owned(),
         }
     }
@@ -401,6 +427,45 @@ impl SourceFingerprint {
     ) -> io::Result<Self> {
         let absolute = root.join(path);
         Self::from_absolute_stat_at(root, &absolute, now)
+    }
+}
+
+/// `(file_id, change_ns)` for [`SourceFingerprint::from_absolute_stat_at`].
+/// One function for every platform, so mutation tests on Unix reach its
+/// signature.
+fn file_change_stamp(metadata: &std::fs::Metadata) -> (Option<u64>, Option<u128>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (Some(metadata.ino()), unix_ctime_ns(metadata))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // 100 ns ticks since 1601: only compared for equality.
+        (None, Some(u128::from(metadata.creation_time())))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = metadata;
+        (None, None)
+    }
+}
+
+/// Unix ctime in nanoseconds since the epoch; `None` on other platforms or
+/// before 1970.
+fn unix_ctime_ns(metadata: &std::fs::Metadata) -> Option<u128> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let seconds = u128::try_from(metadata.ctime()).ok()?;
+        let nanos = u128::try_from(metadata.ctime_nsec()).ok()?;
+        Some(seconds * 1_000_000_000 + nanos)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
     }
 }
 
@@ -604,11 +669,17 @@ impl ParseCacheKey {
     #[must_use]
     pub fn entry_id(&self) -> String {
         let input = format!(
-            "{}\n{}\n{}\n{}",
+            "{}\n{}\n{}\n{}\n{}\n{}",
             self.source.path,
             self.source.size,
             self.source
                 .modified_ns
+                .map_or_else(String::new, |value| value.to_string()),
+            self.source
+                .file_id
+                .map_or_else(String::new, |value| value.to_string()),
+            self.source
+                .change_ns
                 .map_or_else(String::new, |value| value.to_string()),
             self.source.content_hash
         );
@@ -831,30 +902,142 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// Rewrite `path` with `contents`, keeping its old modified time, as
+    /// `cp -p` / `rsync -a` / `tar` do.
+    fn write_keeping_mtime(path: &Path, contents: &str, modified: SystemTime) {
+        std::fs::write(path, contents).expect("write source");
+        let handle = std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open source for retiming");
+        handle
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .expect("retime mtime");
+    }
+
+    /// A clock far enough ahead that every stamp written now counts as settled
+    /// (ctime cannot be backdated, so the test moves `now` instead).
+    fn settled_now() -> SystemTime {
+        SystemTime::now() + RACY_MTIME_WINDOW + Duration::from_mins(1)
+    }
+
     #[test]
     fn stat_fingerprint_skips_hashing_a_settled_file() {
         let root = temp_cache_test_dir("stat-settled");
         let path = root.join("src/app.py");
         std::fs::write(&path, "import requests\n").expect("write source");
-        // Backdate past the racy window so the file counts as settled without
-        // making the test sleep.
-        let settled = SystemTime::now() - RACY_MTIME_WINDOW - Duration::from_mins(1);
-        let handle = std::fs::File::options()
-            .write(true)
-            .open(&path)
-            .expect("open source for retiming");
-        handle
-            .set_times(std::fs::FileTimes::new().set_modified(settled))
-            .expect("backdate mtime");
-        drop(handle);
 
-        let stat = SourceFingerprint::from_absolute_stat(&root, &path).expect("stat fingerprint");
+        let stat = SourceFingerprint::from_absolute_stat_at(&root, &path, settled_now())
+            .expect("stat fingerprint");
         let full = SourceFingerprint::from_absolute(&root, &path).expect("full fingerprint");
 
         assert_eq!(stat.path, "src/app.py");
         assert_eq!(stat.content_hash, "");
         assert_eq!(stat.size, full.size);
         assert_eq!(stat.modified_ns, full.modified_ns);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_fingerprint_records_ctime_in_nanoseconds() {
+        let root = temp_cache_test_dir("stat-ctime-unit");
+        let path = root.join("src/app.py");
+        // A write stamps mtime and ctime from the same clock reading.
+        std::fs::write(&path, "import requests\n").expect("write source");
+
+        let fingerprint = SourceFingerprint::from_absolute_stat_at(&root, &path, settled_now())
+            .expect("stat fingerprint");
+
+        assert!(fingerprint.file_id.is_some());
+        assert_eq!(fingerprint.change_ns, fingerprint.modified_ns);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn absent_fingerprint_names_the_probe_and_matches_no_file() {
+        let root = Path::new("/repo");
+        let absent = SourceFingerprint::absent(root, &root.join("src/missing.py"));
+
+        assert_eq!(absent.path, "src/missing.py");
+        assert_ne!(absent, SourceFingerprint::default());
+        assert_ne!(absent.content_hash, stable_hex_hash(b""));
+    }
+
+    #[test]
+    fn read_cache_bytes_reports_errors_other_than_not_found() {
+        let root = temp_cache_test_dir("read-bytes");
+
+        assert!(
+            read_cache_bytes(&root.join("missing.json"))
+                .expect("missing")
+                .is_none()
+        );
+        assert!(
+            read_cache_bytes(&root.join("src")).is_err(),
+            "a directory is not a miss"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn racy_window_excludes_its_far_end() {
+        let now = UNIX_EPOCH + Duration::from_secs(100);
+        let edge = Duration::from_secs(100).as_nanos() - RACY_MTIME_WINDOW.as_nanos();
+
+        assert!(!is_racy_mtime(edge, now));
+        assert!(is_racy_mtime(edge + 1, now));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_fingerprint_hashes_a_settled_mtime_with_a_fresh_ctime() {
+        let root = temp_cache_test_dir("stat-fresh-ctime");
+        let path = root.join("src/app.py");
+        let old = SystemTime::now() - Duration::from_hours(24);
+        write_keeping_mtime(&path, "import requests\n", old);
+
+        let fingerprint =
+            SourceFingerprint::from_absolute_stat(&root, &path).expect("stat fingerprint");
+
+        assert!(
+            !fingerprint.content_hash.is_empty(),
+            "a backdated mtime must not hide a write that just happened"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_fingerprint_changes_when_rewritten_with_same_size_and_mtime() {
+        let root = temp_cache_test_dir("stat-same-size-mtime");
+        let path = root.join("src/cli.py");
+        let old = SystemTime::now() - Duration::from_hours(24);
+        write_keeping_mtime(&path, "import requests\n", old);
+        let first = SourceFingerprint::from_absolute_stat_at(&root, &path, settled_now())
+            .expect("first fingerprint");
+
+        // In place, as `cp -p` does: same inode, new ctime.
+        write_keeping_mtime(&path, "import flask   \n", old);
+        let in_place = SourceFingerprint::from_absolute_stat_at(&root, &path, settled_now())
+            .expect("in-place fingerprint");
+
+        // Through a new file renamed over the old one, as `rsync -a` does.
+        let staged = root.join("src/.cli.py.tmp");
+        write_keeping_mtime(&staged, "import yaml     \n", old);
+        std::fs::rename(&staged, &path).expect("rename over source");
+        let replaced = SourceFingerprint::from_absolute_stat_at(&root, &path, settled_now())
+            .expect("replaced fingerprint");
+
+        assert_eq!(first.size, in_place.size);
+        assert_eq!(first.modified_ns, in_place.modified_ns);
+        assert_eq!(first.content_hash, "");
+        assert_ne!(first, in_place, "ctime must tell the rewrite apart");
+        assert_ne!(
+            first.file_id, replaced.file_id,
+            "inode must tell the replacement apart"
+        );
+        assert_ne!(in_place, replaced);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -931,6 +1114,8 @@ mod tests {
                 path: path.to_owned(),
                 size: 1,
                 modified_ns: Some(1),
+                file_id: None,
+                change_ns: None,
                 content_hash: String::new(),
             },
         }
@@ -1034,6 +1219,8 @@ mod tests {
                     path: "pyproject.toml".to_owned(),
                     size,
                     modified_ns: Some(1),
+                    file_id: None,
+                    change_ns: None,
                     content_hash: String::new(),
                 }],
                 manifest: Vec::new(),
@@ -1179,6 +1366,8 @@ mod tests {
                     path: "pyproject.toml".to_owned(),
                     size: 1,
                     modified_ns: Some(1),
+                    file_id: None,
+                    change_ns: None,
                     content_hash: "hash".to_owned(),
                 }],
                 manifest: Vec::new(),
@@ -1193,7 +1382,7 @@ mod tests {
             path,
             Path::new("/repo")
                 .join(".chokkin/cache/scan/scan-v1")
-                .join("256794da36bcfcbe.json")
+                .join("19453958162af8b6.json")
         );
     }
 
