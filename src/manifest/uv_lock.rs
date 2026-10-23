@@ -519,6 +519,39 @@ mod tests {
         }
     }
 
+    /// The scanner's shape checks: a line uv would not write is refused, so
+    /// `toml` reads the file instead.
+    #[test]
+    fn scanner_refuses_lines_uv_would_not_write() {
+        let table_name = |item: &str| match scan_array_item(item) {
+            Some(UvDependency::Table { name }) => Some(name),
+            _ => None,
+        };
+        assert_eq!(table_name("{ name = \"idna\" }").as_deref(), Some("idna"));
+        assert_eq!(
+            table_name("{ name = \"idna\", marker = \"x\" }").as_deref(),
+            Some("idna")
+        );
+        assert!(scan_array_item("{ name = \"idna\"x }").is_none());
+
+        assert_eq!(skip_array("    { a },\n]\nrest"), Some("rest"));
+        assert_eq!(skip_array("    \"a\",\n]\nrest"), Some("rest"));
+        for unclosed in ["{ a", "a }", "\"a", "a\""] {
+            assert_eq!(
+                skip_array(&format!("    {unclosed},\n]\nrest")),
+                None,
+                "{unclosed}"
+            );
+        }
+
+        for plain in ["\"x\"", "{ a = 1 }", "[1]", "true", "false", "12"] {
+            assert!(is_plain_value(plain), "{plain}");
+        }
+        for other in ["bare", "", "12a", "{ a", "a }", "[1", "1]"] {
+            assert!(!is_plain_value(other), "{other}");
+        }
+    }
+
     #[test]
     fn scanner_reads_uv_layout_like_toml() {
         let scanned = scan_uv_layout(UV_LAYOUT).map(lock_graph);
