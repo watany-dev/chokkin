@@ -61,13 +61,37 @@ pub(super) fn file_id_for_trace(
 }
 
 /// `path` relative to `root`, `/`-joined as graph paths are, or `None` when it
-/// is not under `root`. Both sides are canonicalized when they exist so that
-/// symlinked spellings (macOS `/tmp`, Windows `\\?\` prefixes) agree; a path
-/// that does not exist is normalized lexically instead.
+/// is not under `root`. Several spellings of each side are tried so that a
+/// symlinked prefix (macOS `/tmp`, Windows `\\?\` prefixes) still matches:
+/// the lexical one, the canonical one, and for `path` its canonical parent
+/// joined with its file name, which covers a file that does not exist and a
+/// discovered file that is itself a symlink out of the root.
 fn root_relative(root: &Path, path: &Path) -> Option<String> {
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| lexical_normalize(root));
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| lexical_normalize(path));
-    let rest = path.strip_prefix(&root).ok()?;
+    let roots = [
+        Some(lexical_normalize(root)),
+        std::fs::canonicalize(root).ok(),
+    ];
+    let lexical = lexical_normalize(path);
+    let via_parent = lexical
+        .parent()
+        .zip(lexical.file_name())
+        .and_then(|(parent, name)| Some(std::fs::canonicalize(parent).ok()?.join(name)));
+    let paths = [
+        Some(lexical.clone()),
+        via_parent,
+        std::fs::canonicalize(&lexical).ok(),
+    ];
+    paths.iter().flatten().find_map(|path| {
+        roots
+            .iter()
+            .flatten()
+            .find_map(|root| relative_parts(root, path))
+    })
+}
+
+/// The `/`-joined components of `path` below `root`, if all are plain names.
+fn relative_parts(root: &Path, path: &Path) -> Option<String> {
+    let rest = path.strip_prefix(root).ok()?;
     let mut parts = Vec::new();
     for component in rest.components() {
         match component {
@@ -338,6 +362,29 @@ mod tests {
         );
         assert_eq!(root_relative(root, &root.join("../other/x.py")), None);
         assert_eq!(root_relative(root, Path::new("/elsewhere/x.py")), None);
+    }
+
+    /// A root reached through a symlinked directory still matches, for an
+    /// existing file and for a missing one (macOS `/tmp` is such a link).
+    #[cfg(unix)]
+    #[test]
+    fn root_relative_sees_through_a_symlinked_prefix() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let real = std::fs::canonicalize(temp.path())
+            .expect("canonical")
+            .join("real");
+        std::fs::create_dir_all(real.join("src")).expect("mkdir");
+        std::fs::write(real.join("src/a.py"), "").expect("write");
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+        assert_eq!(
+            root_relative(&real, &link.join("src/a.py")).as_deref(),
+            Some("src/a.py")
+        );
+        assert_eq!(
+            root_relative(&real, &link.join("src/missing.py")).as_deref(),
+            Some("src/missing.py")
+        );
     }
 
     #[test]
