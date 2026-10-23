@@ -251,7 +251,12 @@ fn run_analysis_core(
     crate::entry::add_script_roots(&mut entry, &probe.scripts, sources, production);
     crate::entry::add_build_backend_roots(&mut entry, &parse, &sources.files);
     crate::entry::add_main_block_roots(&mut entry, &parse, &sources.files, production);
-    let entry_warnings = entry_warnings(&entry, &probe.sources);
+    let mut entry_warnings = entry_warnings(&entry, &probe.sources);
+    // A library's public modules stand in for roots; an app has none (#1138).
+    let no_entry_root = entry.mode != ProjectMode::Library && entry.roots.is_empty();
+    if no_entry_root {
+        entry_warnings.push(ProbeWarning::Entry(EntryWarning::NoEntryRoot));
+    }
     let skipped_entries: Vec<String> = entry_warnings
         .iter()
         .filter_map(|warning| match warning {
@@ -420,6 +425,7 @@ fn run_analysis_core(
         &probe.scripts,
         &plugins,
         &skipped_entries,
+        no_entry_root,
         &probe.unread_path_sources,
         &probe.effective_config.dependencies,
         stdlib,
