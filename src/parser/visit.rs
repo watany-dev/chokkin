@@ -6,8 +6,8 @@ use rustc_hash::FxHashSet;
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
-    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
-    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
+    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
+    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -18,7 +18,7 @@ use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
-    LiteralTarget, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
+    LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
     module_prefix, module_ref_literal, named_load, pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
@@ -127,6 +127,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// returned (`module = import_module("pkg." + name)`), with that call's
     /// index in `dynamic_import_prefixes` (#728).
     prefix_modules: HashMap<String, usize>,
+    /// Names the current scope binds to the module a literal
+    /// `import_module("pkg.m")` returned, with that module's name (#1144).
+    literal_modules: HashMap<String, String>,
     command_words: BTreeSet<String>,
     sys_path: SysPathHints,
     /// Each distinct dotted-name literal at its first line (#1026).
@@ -139,6 +142,10 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// The receiver, name and line of every `getattr(x, "attr")` and kin,
     /// read like `x.attr` (#1143).
     literal_getattr_sites: Vec<(&'ast Expr, &'ast str, u32)>,
+    /// The `x.attr` sites inside string annotations, which are parsed into
+    /// trees that do not outlive the walk: receiver, name and the offset of
+    /// the outermost string (#1144).
+    string_attribute_sites: Vec<StringAttributeSite>,
     parsed: ParsedModule,
 }
 
@@ -180,12 +187,14 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             loader_names: LoaderNames::default(),
             server_names: ServerNames::default(),
             prefix_modules: HashMap::new(),
+            literal_modules: HashMap::new(),
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
             module_refs: BTreeMap::new(),
             loaded_names: FxHashSet::default(),
             attribute_sites: Vec::new(),
             literal_getattr_sites: Vec::new(),
+            string_attribute_sites: Vec::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -255,6 +264,15 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             )
         });
         let mut receiver = String::new();
+        let strings = self
+            .string_attribute_sites
+            .iter()
+            .filter(|site| receivers.contains(site.receiver.as_str()))
+            .map(|site| AttributeAccess {
+                receiver: site.receiver.clone(),
+                name: site.name.clone(),
+                line: self.lines.line(site.at),
+            });
         attribute_sites
             .chain(self.literal_getattr_sites.iter().copied())
             .filter_map(|(value, name, line)| {
@@ -266,6 +284,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                         line,
                     })
             })
+            .chain(strings)
             .collect()
     }
 
@@ -469,6 +488,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let saved_function_depth = self.function_depth;
         let saved_checked_at = self.availability_checked_at;
         let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
+        let saved_literal_modules = std::mem::take(&mut self.literal_modules);
         let saved_caught_depth = self.caught_depth;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
@@ -494,6 +514,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.function_depth = saved_function_depth;
         self.availability_checked_at = saved_checked_at;
         self.prefix_modules = saved_prefix_modules;
+        self.literal_modules = saved_literal_modules;
         self.caught_depth = saved_caught_depth;
     }
 
@@ -513,6 +534,57 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             self.prefix_modules.insert(name.id.to_string(), index);
         } else {
             self.prefix_modules.remove(name.id.as_str());
+        }
+        match self.loaded_module(value) {
+            Some(module) => {
+                self.literal_modules.insert(name.id.to_string(), module);
+            },
+            None => {
+                self.literal_modules.remove(name.id.as_str());
+            },
+        }
+    }
+
+    /// The module `expr` evaluates to when it is a literal
+    /// `importlib.import_module("pkg.m")`, or a name the current scope bound
+    /// to one. `__import__("pkg.m")` returns `pkg`, so it is left out.
+    fn loaded_module(&self, expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Call(call) => match self.loader_names.loader(&call.func)? {
+                Loader::ImportModule => match literal_target(call, Loader::ImportModule, || {
+                    module_package(self.path, self.layout)
+                })? {
+                    LiteralTarget::Module(module) => Some(module),
+                    LiteralTarget::Opaque | LiteralTarget::Nothing => None,
+                },
+                Loader::DunderImport => None,
+            },
+            Expr::Name(name) => self.literal_modules.get(name.id.as_str()).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The names in the arguments typing reads as type expressions. Kept out
+    /// of [`Self::visit_expr`], whose frame every nesting level pays for.
+    fn visit_type_expression_arguments(&mut self, call: &ExprCall) {
+        for argument in type_expression_arguments(call, &self.typing_aliases) {
+            AnnotationNames::new(&mut self.loaded_names, &mut self.string_attribute_sites)
+                .visit_expr(argument);
+        }
+    }
+
+    /// Keep the site for [`Self::import_attribute_accesses`]; and
+    /// `import_module("pkg.m").f` reads `f` from `pkg.m` (#1144). Kept out of
+    /// [`Self::visit_expr`], whose frame every nesting level pays for.
+    fn record_attribute(&mut self, attribute: &'ast ExprAttribute) {
+        self.attribute_sites.push(attribute);
+        if let Some(module) = self.loaded_module(&attribute.value) {
+            let line = self.line_number(attribute);
+            self.parsed.loaded_module_accesses.push(AttributeAccess {
+                receiver: module,
+                name: attribute.attr.to_string(),
+                line,
+            });
         }
     }
 
@@ -543,12 +615,22 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     }
 
     /// Keep `getattr(x, "attr")` and its kin for [`Self::into_parsed`],
-    /// which reads them like `x.attr`. A method of its own so its locals
-    /// stay out of the frame [`Self::visit_expr`] recurses with (#1045).
+    /// which reads them like `x.attr`, and like [`Self::record_attribute`]
+    /// on a module `import_module("pkg.m")` returned. A method of its own so
+    /// its locals stay out of the frame [`Self::visit_expr`] recurses with
+    /// (#1045).
     fn record_literal_getattr(&mut self, call: &'ast ExprCall) {
-        if let Some((receiver, name)) = literal_getattr(call) {
-            let line = self.line_number(call);
-            self.literal_getattr_sites.push((receiver, name, line));
+        let Some((receiver, name)) = literal_getattr(call) else {
+            return;
+        };
+        let line = self.line_number(call);
+        self.literal_getattr_sites.push((receiver, name, line));
+        if let Some(module) = self.loaded_module(receiver) {
+            self.parsed.loaded_module_accesses.push(AttributeAccess {
+                receiver: module,
+                name: name.to_owned(),
+                line,
+            });
         }
     }
 
@@ -963,7 +1045,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 self.visit_annotation(&ann_assign.annotation);
                 if let Some(value) = &ann_assign.value {
                     if subscript_name(&ann_assign.annotation) == Some("TypeAlias") {
-                        AnnotationNames(&mut self.loaded_names).visit_expr(value);
+                        AnnotationNames::new(
+                            &mut self.loaded_names,
+                            &mut self.string_attribute_sites,
+                        )
+                        .visit_expr(value);
                     }
                     let index = self.parsed.dynamic_import_prefixes.len();
                     self.visit_expr(value);
@@ -1106,7 +1192,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
 
     /// Quoted forward references (`x: "list[T]"`) read the names inside them.
     fn visit_annotation(&mut self, expr: &'ast Expr) {
-        AnnotationNames(&mut self.loaded_names).visit_expr(expr);
+        AnnotationNames::new(&mut self.loaded_names, &mut self.string_attribute_sites)
+            .visit_expr(expr);
         walk_annotation(self, expr);
     }
 
@@ -1120,11 +1207,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
         }
         match expr {
             Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
-            Expr::Attribute(attribute) => self.attribute_sites.push(attribute),
+            Expr::Attribute(attribute) => self.record_attribute(attribute),
             Expr::Call(call) => {
-                for argument in type_expression_arguments(call, &self.typing_aliases) {
-                    AnnotationNames(&mut self.loaded_names).visit_expr(argument);
-                }
+                self.visit_type_expression_arguments(call);
                 self.record_computed_getattr(call);
                 self.record_literal_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
@@ -1199,22 +1284,71 @@ fn insert_name(names: &mut FxHashSet<String>, name: &str) {
     }
 }
 
+/// An `x.attr` inside a string annotation (`"m.Foo"`).
+struct StringAttributeSite {
+    receiver: String,
+    name: String,
+    /// Start of the outermost string literal in the module source.
+    at: TextSize,
+}
+
 /// Every name is collected, the ones outside strings included, because
 /// a parsed string annotation is a fresh tree the module walk never reaches.
-struct AnnotationNames<'n>(&'n mut FxHashSet<String>);
+/// For the same reason the attribute sites inside a string are collected
+/// here; the ones outside are the module walk's.
+struct AnnotationNames<'n> {
+    names: &'n mut FxHashSet<String>,
+    attributes: &'n mut Vec<StringAttributeSite>,
+    /// The outermost string literal being walked, if any.
+    string_at: Option<TextSize>,
+}
+
+impl<'n> AnnotationNames<'n> {
+    fn new(names: &'n mut FxHashSet<String>, attributes: &'n mut Vec<StringAttributeSite>) -> Self {
+        Self {
+            names,
+            attributes,
+            string_at: None,
+        }
+    }
+
+    /// An `x.attr` inside a string; the module walk keeps the ones outside.
+    /// This and [`Self::visit_string`] stay out of `visit_expr`, whose frame
+    /// every nesting level pays for.
+    fn record_attribute(&mut self, attribute: &ExprAttribute) {
+        if let Some(at) = self.string_at {
+            let mut receiver = String::new();
+            if write_receiver(&attribute.value, &mut receiver) {
+                self.attributes.push(StringAttributeSite {
+                    receiver,
+                    name: attribute.attr.to_string(),
+                    at,
+                });
+            }
+        }
+    }
+
+    fn visit_string(&mut self, string: &ExprStringLiteral) {
+        // One nested past the walk limit (#1045) reads like one
+        // that does not parse: its names are not collected.
+        if let Some(parsed) = super::depth::parse_walkable_expression(string.value.to_str()) {
+            let outer = self.string_at;
+            self.string_at = Some(outer.unwrap_or_else(|| string.start()));
+            self.visit_expr(&parsed);
+            self.string_at = outer;
+        }
+    }
+}
 
 impl<'a> Visitor<'a> for AnnotationNames<'_> {
     fn visit_expr(&mut self, expr: &'a Expr) {
         match expr {
-            Expr::Name(name) => insert_name(self.0, &name.id),
-            Expr::StringLiteral(string) => {
-                // One nested past the walk limit (#1045) reads like one
-                // that does not parse: its names are not collected.
-                if let Some(parsed) = super::depth::parse_walkable_expression(string.value.to_str())
-                {
-                    self.visit_expr(&parsed);
-                }
+            Expr::Name(name) => insert_name(self.names, &name.id),
+            Expr::Attribute(attribute) => {
+                self.record_attribute(attribute);
+                walk_expr(self, expr);
             },
+            Expr::StringLiteral(string) => self.visit_string(string),
             // `Literal["fast"]` and the metadata of `Annotated[T, Field(alias="x")]`
             // hold values, not names.
             Expr::Subscript(subscript) => match subscript_name(&subscript.value) {
@@ -1595,6 +1729,19 @@ mod tests {
     }
 
     #[test]
+    fn reads_literal_getattr_on_an_import_module_result() {
+        let parsed = visit_source(
+            "import importlib\nmod = importlib.import_module(\"acme.m\")\ngetattr(mod, \"a\")\nhasattr(importlib.import_module(\"acme.n\"), \"b\")\ngetattr(mod, name)\n",
+        );
+        let accesses: Vec<(&str, &str, u32)> = parsed
+            .loaded_module_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str(), access.line))
+            .collect();
+        assert_eq!(accesses, [("acme.m", "a", 3), ("acme.n", "b", 4)]);
+    }
+
+    #[test]
     fn source_mentions_rule_out_scans_only_on_ascii_sources() {
         let scan = |source: &str| {
             let mentions = SourceMentions::scan(source);
@@ -1608,6 +1755,69 @@ mod tests {
         assert_eq!(scan("if find_spec('x'): pass\n"), (false, true));
         assert_eq!(scan("if is_torch_available(): pass\n"), (false, true));
         assert_eq!(scan("# caf\u{e9}\n"), (true, true));
+    }
+
+    #[test]
+    fn collects_attribute_accesses_inside_string_annotations() {
+        let parsed = visit_source(
+            "\
+from typing import cast
+from acme import m
+import acme.n
+
+def f(v, y: \"m.Param\" = None) -> \"list['acme.n.Ret']\":
+    cast(\"m.Cast\", v)
+    z: \"Literal['m.Value']\" = v
+    return \"m.NotAType\"
+",
+        );
+        let accesses: Vec<(&str, &str, u32)> = parsed
+            .attribute_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str(), access.line))
+            .collect();
+        assert_eq!(
+            accesses,
+            [("m", "Param", 5), ("acme.n", "Ret", 5), ("m", "Cast", 6)]
+        );
+    }
+
+    #[test]
+    fn collects_attribute_accesses_on_literally_loaded_modules() {
+        let parsed = visit_source(
+            "\
+import importlib
+from importlib import import_module as im
+importlib.import_module(\"acme.a\").direct
+bound = im(\"acme.b\")
+bound.through_name
+alias = bound
+alias.through_alias
+__import__(\"acme.c\").not_c
+rebound = importlib.import_module(\"acme.d\")
+rebound = other
+rebound.not_d
+
+def scoped():
+    bound.outer_scope
+    inner = importlib.import_module(\"acme.e\")
+    inner.inside
+",
+        );
+        let accesses: Vec<(&str, &str, u32)> = parsed
+            .loaded_module_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str(), access.line))
+            .collect();
+        assert_eq!(
+            accesses,
+            [
+                ("acme.a", "direct", 3),
+                ("acme.b", "through_name", 5),
+                ("acme.b", "through_alias", 7),
+                ("acme.e", "inside", 16),
+            ]
+        );
     }
 
     #[test]

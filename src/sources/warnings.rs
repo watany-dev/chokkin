@@ -58,6 +58,14 @@ pub enum SourcesWarning {
         /// Why it was not followed.
         reason: String,
     },
+    /// A source file whose path is not valid UTF-8 was left out (#1146):
+    /// Python cannot import a module by that name, and its path cannot be
+    /// spelled to read it back.
+    #[error("sources: skipped `{path}`: its path is not valid UTF-8")]
+    NonUtf8Path {
+        /// Root-relative path, with the invalid bytes replaced.
+        path: String,
+    },
     /// The only undeclared package directory is not named after the project.
     #[error(
         "sources: no package directory matches project `{project}`; guessed `{chosen}` \
@@ -79,7 +87,8 @@ impl SourcesWarning {
             Self::MissingEntryPath { path }
             | Self::EntryPathIsDirectory { path }
             | Self::GitignoreUnreadable { path }
-            | Self::SymlinkSkipped { path, .. } => *path = join_rel(base, path),
+            | Self::SymlinkSkipped { path, .. }
+            | Self::NonUtf8Path { path } => *path = join_rel(base, path),
             Self::AmbiguousFlatLayout { candidates, chosen } => {
                 for candidate in candidates {
                     *candidate = join_rel(base, candidate);

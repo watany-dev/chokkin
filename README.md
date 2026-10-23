@@ -278,7 +278,7 @@ can be moved, a SHA cannot, and Dependabot still bumps both.
 | `baseline` | — | Baseline file; only new findings fail the job |
 | `reporter` | `github` | Reporter for the gating run |
 | `sarif-file` | — | Also write SARIF here (written even when the gating run fails) |
-| `args` | — | Extra CLI arguments, e.g. `--production --confidence likely` |
+| `args` | — | Extra CLI arguments, e.g. `--production --confidence likely`; a `--reporter`, `--baseline` or `--no-cache` here replaces the input, and the SARIF run ignores `--reporter` and `--no-exit-code` |
 | `cache` | `false` | `true` reads and writes the `.chokkin/` cache; off so cache files in a PR cannot change the result |
 
 Without the action, pin the version with `uvx`:
@@ -322,7 +322,9 @@ CHK006 = "info"
 ## Configuration
 
 Zero config is the default. When you need precision, add `[tool.chokkin]` to
-`pyproject.toml` (a standalone `chokkin.toml` or `.chokkin.toml` also works).
+`pyproject.toml` (a standalone `chokkin.toml` or `.chokkin.toml` also works;
+there, drop the `tool.chokkin` prefix: write `entry = [...]` at the top level
+and `[severity]` instead of `[tool.chokkin.severity]`).
 `chokkin --init` writes a starter section for you. Everything below is
 optional:
 
