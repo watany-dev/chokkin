@@ -658,8 +658,8 @@ mod tests {
         let error = add_file(&mut builder, &path).expect("error");
         let message = error.to_string();
         assert!(message.contains("line 2"), "{message}");
-        assert!(message.contains("{[z-a]}"), "{message}");
-        assert!(!message.contains('\\'), "{message}");
+        // The escaped line would read `\{[z-a]\}`.
+        assert!(message.contains("'{[z-a]}'"), "{message}");
         let gitignore = builder.build().expect("build");
         assert!(gitignore.matched("ok", false).is_ignore());
     }
