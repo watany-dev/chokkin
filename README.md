@@ -379,9 +379,9 @@ The root `.chokkin/` directory holds analyzer data and is always excluded.
 - **app** when there is a clear entry: `gui_scripts`, a `console_scripts`
   entry that points outside the project's own package, or a runtime
   `manage.py`, `asgi.py`, `wsgi.py`, or `app.py` outside the package. Unused
-  files are reported aggressively. A console script that points into the own
-  package (`acme = "acme.cli:main"`) is a library's CLI and does not make it an
-  app, except in a workspace member. Set `mode = "app"` or declare `entry` to
+  files are reported aggressively. A console script that points into the
+  project's own package (`acme = "acme.cli:main"`) is a library's CLI and does
+  not make it an app, except in a workspace member. Set `mode = "app"` or declare `entry` to
   get strict unused-file reports for a library that ships a CLI.
 - **library** when there is a `[project] name` with a package and no clear
   entry. Public modules may be imported by users you cannot see, so unused
