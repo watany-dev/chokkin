@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
+use crate::ExitStatus;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};
 use crate::cache::CacheOptions;
 use crate::config::{ProjectMode, RuntimeOverrides};
@@ -27,8 +28,9 @@ use crate::resolver::{
     resolve_imports_for_analysis,
 };
 use crate::rules::deps::local_source_member;
+use crate::rules::emit::compute_exit_status;
 use crate::rules::{
-    DependencyRuleContext, Gap, GapKind, IssueReport, MemberManifest, RuleContext,
+    DependencyRuleContext, Gap, GapKind, Issue, IssueReport, MemberManifest, RuleContext,
     WorkspaceDependencyBoundary, collect_gaps, emit_issues,
 };
 use crate::sources::{
@@ -132,13 +134,17 @@ pub fn analyze_project(
                 manifest: &input.manifest,
             })
             .collect::<Vec<_>>();
-        Some(apply_fixes_with_workspace(
+        let fix = apply_fixes_with_workspace(
             &core.issues,
             &probe.root,
             &probe.manifest,
             &workspace_manifests,
             options.fix,
-        ))
+        );
+        if !options.update_baseline {
+            core.issues.exit_status = exit_status_after_fix(&core.issues, &fix, overrides);
+        }
+        Some(fix)
     } else {
         None
     };
@@ -165,9 +171,31 @@ fn apply_baseline_options(
         return Ok(None);
     };
     if options.update_baseline {
-        return Ok(Some(write_baseline(issues, root, path)?));
+        let written = write_baseline(issues, root, path)?;
+        // Recording the current findings is the point of the run, so it is
+        // not a failure; the next `--baseline` run judges them (spec §2).
+        issues.exit_status = ExitStatus::Success;
+        return Ok(Some(written));
     }
     Ok(Some(apply_baseline(issues, root, path, overrides)?))
+}
+
+/// Exit status over the findings `--fix` left standing: an applied edit no
+/// longer counts, while `--dry-run` previews and skipped fixes still do (spec §13).
+fn exit_status_after_fix(
+    issues: &IssueReport,
+    fix: &FixReport,
+    overrides: &RuntimeOverrides,
+) -> ExitStatus {
+    let resolved: BTreeSet<usize> = fix.resolved_issues.iter().copied().collect();
+    let remaining: Vec<Issue> = issues
+        .issues
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !resolved.contains(index))
+        .map(|(_, issue)| issue.clone())
+        .collect();
+    compute_exit_status(&remaining, overrides, overrides.strict.unwrap_or(false))
 }
 
 struct AnalysisCore {
@@ -373,9 +401,7 @@ fn run_analysis_core(
         parse: &parse,
         surface: surface.as_ref(),
     };
-    let production_tests = if production
-        && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
-    {
+    let production_tests = if reads_production_tests(production, &entry) {
         Some(parse_production_tests(probe, &target)?)
     } else {
         None
@@ -726,6 +752,12 @@ fn shipped_surface(input: &WorkspaceMemberInputs) -> PublicSurface {
 /// the evidence that a public module's name is called from outside (#588).
 /// The root walk kept them aside, and what it could not read is already among
 /// the probe's warnings (#899, #844).
+/// Only a `--production` run holds tests back, and only a public surface
+/// (a library or its members) has names for them to vouch for.
+fn reads_production_tests(production: bool, entry: &EntryPlan) -> bool {
+    production && (entry.mode == ProjectMode::Library || !entry.library_members.is_empty())
+}
+
 fn parse_production_tests(
     probe: &ProbeReport,
     target: &crate::config::TargetVersion,
@@ -801,7 +833,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::ExitStatus;
     use crate::parser::ParseDiagnostic;
     use crate::rules::IssueSubject;
     use crate::rules::RuleId;
