@@ -7,7 +7,7 @@ use rustc_hash::FxHashSet;
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
-    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom,
+    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -813,6 +813,21 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn line_number<R: Ranged>(&self, node: &R) -> u32 {
         self.lines.line(node.start())
     }
+
+    /// Kept out of `visit_stmt` so its frame, paid once per nesting level,
+    /// does not grow (#1173).
+    fn visit_match(&mut self, match_stmt: &'ast StmtMatch) {
+        self.visit_expr(&match_stmt.subject);
+        for case in &match_stmt.cases {
+            // `case m.CONST:` and `case Point(x=0):` read the names in their
+            // value and class patterns (#1141).
+            self.visit_pattern(&case.pattern);
+            if let Some(guard) = &case.guard {
+                self.visit_expr(guard);
+            }
+            self.visit_body(&case.body);
+        }
+    }
 }
 
 impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
@@ -1024,18 +1039,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     self.caught_depth = self.caught_depth.saturating_sub(1);
                 }
             },
-            Stmt::Match(match_stmt) => {
-                self.visit_expr(&match_stmt.subject);
-                for case in &match_stmt.cases {
-                    // `case m.CONST:` and `case Point(x=0):` read the names
-                    // in their value and class patterns (#1141).
-                    self.visit_pattern(&case.pattern);
-                    if let Some(guard) = &case.guard {
-                        self.visit_expr(guard);
-                    }
-                    self.visit_body(&case.body);
-                }
-            },
+            Stmt::Match(match_stmt) => self.visit_match(match_stmt),
             Stmt::For(for_stmt) => {
                 self.visit_expr(&for_stmt.iter);
                 self.visit_body(&for_stmt.body);
