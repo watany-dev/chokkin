@@ -7,6 +7,7 @@ use crate::config::Confidence;
 use crate::manifest::{
     DeclaredDependency, LoadedManifest, canonical_version_specifiers, is_valid_marker,
 };
+use crate::rules::deps::member_indexes;
 use crate::rules::{Issue, IssueReport, IssueSubject, RuleId};
 
 use super::types::{FixOptions, SkippedFix, SkippedReason, WorkspaceFixManifest};
@@ -75,24 +76,28 @@ impl FixAction {
 }
 
 /// Build fix actions from an issue report.
+///
+/// `strict` is the analysis' `--strict`: it decides which manifest governs a
+/// workspace member's CHK005, so the move edits the one the rule read.
 pub(super) fn plan_fixes(
     report: &IssueReport,
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
+    strict: bool,
     options: FixOptions,
 ) -> (Vec<FixAction>, Vec<SkippedFix>) {
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
 
     for issue in &report.issues {
-        match plan_issue_fix(issue, manifest, workspace_manifests, options) {
-            Ok(Some(action)) => {
-                if is_duplicate_add_missing(&actions, &action) {
-                    continue;
-                }
-                actions.push(action);
-            },
+        match plan_issue_fix(issue, manifest, workspace_manifests, strict, options) {
+            // Findings decided by one entry (a root dev group imported from
+            // the root and a member) plan one edit or skip; a second edit
+            // would find the entry already moved.
+            Ok(Some(action)) if actions.contains(&action) => {},
+            Ok(Some(action)) => actions.push(action),
             Ok(None) => {},
+            Err(skip) if skipped.contains(&skip) => {},
             Err(skip) => skipped.push(skip),
         }
     }
@@ -100,25 +105,11 @@ pub(super) fn plan_fixes(
     (actions, skipped)
 }
 
-fn is_duplicate_add_missing(actions: &[FixAction], action: &FixAction) -> bool {
-    let FixAction::AddMissingDependency { name, file } = action else {
-        return false;
-    };
-    actions.iter().any(|existing| {
-        matches!(
-            existing,
-            FixAction::AddMissingDependency {
-                name: existing_name,
-                file: existing_file,
-            } if existing_name == name && existing_file == file
-        )
-    })
-}
-
 fn plan_issue_fix(
     issue: &Issue,
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
+    strict: bool,
     options: FixOptions,
 ) -> Result<Option<FixAction>, SkippedFix> {
     if matches!(issue.subject, IssueSubject::ScriptDistribution { .. }) {
@@ -131,7 +122,7 @@ fn plan_issue_fix(
             plan_remove_duplicate(issue, manifest)
         },
         RuleId::Chk005 if issue.confidence == Confidence::Certain => {
-            plan_move_to_runtime(issue, manifest)
+            plan_move_to_runtime(issue, manifest, workspace_manifests, strict)
         },
         RuleId::Chk003 if options.add_missing && issue.confidence == Confidence::Certain => {
             plan_add_missing_dependency(issue, manifest, workspace_manifests)
@@ -178,21 +169,33 @@ fn plan_add_missing_workspace_dependency(
     member: &str,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
 ) -> Result<Option<FixAction>, SkippedFix> {
-    let Some(workspace) = workspace_manifests
+    let workspace = inventoried_member(issue, member, workspace_manifests)?;
+    plan_add_missing_to_manifest(issue, workspace.manifest, member_pyproject(workspace))
+}
+
+fn inventoried_member<'w, 'a>(
+    issue: &Issue,
+    member: &str,
+    workspace_manifests: &'w [WorkspaceFixManifest<'a>],
+) -> Result<&'w WorkspaceFixManifest<'a>, SkippedFix> {
+    workspace_manifests
         .iter()
         .find(|workspace| workspace.id == member)
-    else {
-        return Err(skipped(
-            issue,
-            SkippedReason::UnsupportedTarget,
-            &format!("workspace member `{member}` was not inventoried"),
-        ));
-    };
-    let file = workspace.pyproject_toml.map_or_else(
+        .ok_or_else(|| {
+            skipped(
+                issue,
+                SkippedReason::UnsupportedTarget,
+                &format!("workspace member `{member}` was not inventoried"),
+            )
+        })
+}
+
+/// Root-relative path of the member's `pyproject.toml`.
+fn member_pyproject(workspace: &WorkspaceFixManifest<'_>) -> String {
+    workspace.pyproject_toml.map_or_else(
         || format!("{}/pyproject.toml", workspace.path),
         ToOwned::to_owned,
-    );
-    plan_add_missing_to_manifest(issue, workspace.manifest, file)
+    )
 }
 
 fn plan_add_missing_to_manifest(
@@ -328,17 +331,39 @@ fn plan_remove_duplicate(
     }))
 }
 
-fn plan_move_to_runtime(
+/// The manifest whose entries decided a CHK005, as
+/// `ImportDeclarations::governing` picks it: under `--strict` a workspace
+/// member that indexes the distribution, otherwise the root. The member's
+/// root-relative `pyproject.toml` comes with it, since its entries' origins
+/// are member-relative.
+fn governing_manifest<'a>(
     issue: &Issue,
-    manifest: &LoadedManifest,
-) -> Result<Option<FixAction>, SkippedFix> {
-    let IssueSubject::Distribution { name } = &issue.subject else {
-        return Ok(None);
+    name: &str,
+    root: &'a LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'a>],
+    strict: bool,
+) -> Result<(&'a LoadedManifest, Option<String>), SkippedFix> {
+    let Some(member) = issue.workspace_member.as_deref().filter(|_| strict) else {
+        return Ok((root, None));
     };
+    let workspace = inventoried_member(issue, member, workspace_manifests)?;
+    if !member_indexes(root, workspace.manifest, name) {
+        return Ok((root, None));
+    }
+    Ok((workspace.manifest, Some(member_pyproject(workspace))))
+}
+
+/// The one dev-group entry of `name` that a CHK005 move takes out of
+/// `manifest`; a runtime entry or several group entries make it ambiguous.
+fn single_group_declaration<'a>(
+    issue: &Issue,
+    name: &str,
+    manifest: &'a LoadedManifest,
+) -> Result<&'a DeclaredDependency, SkippedFix> {
     let declarations: Vec<&DeclaredDependency> = manifest
         .dependencies
         .iter()
-        .filter(|dep| dep.name == *name && !dep.opaque)
+        .filter(|dep| dep.name == name && !dep.opaque)
         .collect();
 
     let has_runtime = declarations.iter().any(|dep| {
@@ -357,18 +382,47 @@ fn plan_move_to_runtime(
     }
 
     let dev_only: Vec<_> = declarations
-        .iter()
+        .into_iter()
         .filter(|dep| matches!(dep.context, crate::manifest::DependencyContext::Group(_)))
         .collect();
-    if dev_only.len() != 1 {
+    let [source] = dev_only[..] else {
         return Err(skipped(
             issue,
             SkippedReason::Ambiguous,
             "only a single dev-group declaration can be moved automatically",
         ));
-    }
+    };
+    Ok(source)
+}
 
-    let source = dev_only[0];
+fn plan_move_to_runtime(
+    issue: &Issue,
+    root: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
+    strict: bool,
+) -> Result<Option<FixAction>, SkippedFix> {
+    let IssueSubject::Distribution { name } = &issue.subject else {
+        return Ok(None);
+    };
+    let (manifest, member_file) =
+        governing_manifest(issue, name, root, workspace_manifests, strict)?;
+    // Name the member's manifest, or its skip reads as the root's.
+    plan_move_out_of(issue, name, manifest, member_file.as_deref()).map_err(|mut skip| {
+        if let Some(file) = &member_file {
+            skip.detail = format!("{} (in `{file}`)", skip.detail);
+        }
+        skip
+    })
+}
+
+/// `member_file` is the root-relative path of a member `manifest`.
+fn plan_move_out_of(
+    issue: &Issue,
+    name: &str,
+    manifest: &LoadedManifest,
+    member_file: Option<&str>,
+) -> Result<Option<FixAction>, SkippedFix> {
+    let source = single_group_declaration(issue, name, manifest)?;
     // The move rewrites TOML; a dev requirements file is line-based.
     if Path::new(&source.origin.file).file_name() != Some(OsStr::new("pyproject.toml")) {
         return Err(skipped(
@@ -390,7 +444,7 @@ fn plan_move_to_runtime(
             &format!("`{key}` has no PEP 508 requirement form"),
         ));
     }
-    let mut dep = (*source).clone();
+    let mut dep = source.clone();
     // A Poetry-only constraint (`^1.2`) is not a PEP 440 specifier.
     if dep.origin.label.starts_with("tool.poetry.")
         && dep
@@ -416,8 +470,8 @@ fn plan_move_to_runtime(
     let raw = rebuild_requirement_string(&dep);
 
     Ok(Some(FixAction::MoveToRuntime {
-        name: name.clone(),
-        file: source.origin.file.clone(),
+        name: name.to_owned(),
+        file: member_file.map_or_else(|| source.origin.file.clone(), ToOwned::to_owned),
         from_label: source.origin.label.clone(),
         raw,
     }))
@@ -524,7 +578,7 @@ mod tests {
             summary: IssueSummary::default(),
             exit_status: crate::ExitStatus::IssuesFound,
         };
-        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let (actions, _) = plan_fixes(&report, &manifest, &[], false, FixOptions::default());
         assert_eq!(
             actions,
             vec![FixAction::RemoveDependency {
@@ -613,6 +667,7 @@ mod tests {
                 &report_for(rule, Confidence::Likely),
                 &manifest,
                 &[],
+                false,
                 options,
             );
             assert!(actions.is_empty(), "{rule:?}: {actions:?}");
@@ -626,6 +681,7 @@ mod tests {
             &report_for(RuleId::Chk003, Confidence::Certain),
             &manifest,
             &[],
+            false,
             FixOptions::default(),
         );
         assert!(actions.is_empty(), "{actions:?}");
@@ -672,7 +728,7 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let (actions, skipped) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], false, FixOptions::default());
         assert_eq!(actions, []);
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
@@ -693,13 +749,13 @@ mod tests {
             })
             .collect(),
         );
-        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let (actions, _) = plan_fixes(&report, &manifest, &[], false, FixOptions::default());
         let [FixAction::RemoveDependency { label, .. }] = actions.as_slice() else {
             panic!("expected one removal: {actions:?}");
         };
         assert_eq!(label, "project.dependencies[1]");
         manifest.dependencies.reverse();
-        let (actions, _) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let (actions, _) = plan_fixes(&report, &manifest, &[], false, FixOptions::default());
         let [FixAction::RemoveDependency { label, .. }] = actions.as_slice() else {
             panic!("expected one removal: {actions:?}");
         };
@@ -757,7 +813,7 @@ mod tests {
             summary: IssueSummary::default(),
             exit_status: crate::ExitStatus::IssuesFound,
         };
-        plan_fixes(&report, &manifest, &[], FixOptions::default())
+        plan_fixes(&report, &manifest, &[], false, FixOptions::default())
     }
 
     #[test]
@@ -846,6 +902,198 @@ mod tests {
         }
     }
 
+    fn dev_dep(name: &str, extras: &[&str]) -> DeclaredDependency {
+        DeclaredDependency {
+            name: name.to_owned(),
+            extras: extras.iter().map(|extra| (*extra).to_owned()).collect(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Group("dev".to_owned()),
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: None,
+                label: "dependency-groups.dev".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+            unportable_key: None,
+        }
+    }
+
+    fn movable_manifest(deps: Vec<DeclaredDependency>) -> LoadedManifest {
+        let mut manifest = manifest_with(deps);
+        manifest.sources.pyproject_project_table = true;
+        manifest
+    }
+
+    fn chk005_report(members: &[Option<&str>]) -> IssueReport {
+        let issues = members
+            .iter()
+            .map(|member| Issue {
+                rule: RuleId::Chk005,
+                severity: Severity::Error,
+                confidence: Confidence::Certain,
+                message: "dev only".to_owned(),
+                workspace_member: member.map(str::to_owned),
+                location: IssueLocation {
+                    file: None,
+                    line: None,
+                    manifest: None,
+                },
+                subject: IssueSubject::Distribution {
+                    name: "pytest".to_owned(),
+                },
+                explain: None,
+            })
+            .collect();
+        IssueReport {
+            issues,
+            suppressed: Vec::new(),
+            summary: IssueSummary::default(),
+            exit_status: crate::ExitStatus::IssuesFound,
+        }
+    }
+
+    fn api_member(manifest: &LoadedManifest) -> WorkspaceFixManifest<'_> {
+        WorkspaceFixManifest {
+            id: "api",
+            path: "services/api",
+            pyproject_toml: Some("services/api/pyproject.toml"),
+            manifest,
+        }
+    }
+
+    fn moved_file(actions: &[FixAction]) -> Vec<&str> {
+        actions
+            .iter()
+            .filter_map(|action| match action {
+                FixAction::MoveToRuntime { file, .. } => Some(file.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Under `--strict` a member's own entry decides its CHK005, so the move
+    /// edits the member; without it the root's entry does.
+    #[test]
+    fn chk005_move_edits_the_manifest_that_governs_the_member() {
+        let root = movable_manifest(vec![dev_dep("pytest", &[])]);
+        let member = movable_manifest(vec![dev_dep("pytest", &[])]);
+        let workspace = [api_member(&member)];
+        let report = chk005_report(&[Some("api")]);
+        for (strict, file) in [
+            (true, "services/api/pyproject.toml"),
+            (false, "pyproject.toml"),
+        ] {
+            let (actions, skipped) =
+                plan_fixes(&report, &root, &workspace, strict, FixOptions::default());
+            assert_eq!(skipped, [], "strict={strict}");
+            assert_eq!(moved_file(&actions), [file], "strict={strict}");
+        }
+    }
+
+    /// A strict member that indexes nothing for the distribution falls back
+    /// to the root, as `ImportDeclarations::governing` does.
+    #[test]
+    fn chk005_strict_move_falls_back_to_the_root_for_an_undeclaring_member() {
+        let root = movable_manifest(vec![dev_dep("pytest", &[])]);
+        let member = movable_manifest(Vec::new());
+        let workspace = [api_member(&member)];
+        let (actions, skipped) = plan_fixes(
+            &chk005_report(&[Some("api")]),
+            &root,
+            &workspace,
+            true,
+            FixOptions::default(),
+        );
+        assert_eq!(skipped, []);
+        assert_eq!(moved_file(&actions), ["pyproject.toml"]);
+    }
+
+    /// A lockfile extra (`tools[test]` pulling in pytest) puts the member's
+    /// entry in its index, so the member governs; it has no entry of pytest
+    /// itself to move, and moving the root's would leave the finding.
+    #[test]
+    fn chk005_strict_move_skips_a_member_indexed_only_through_an_extra() {
+        let mut root = movable_manifest(vec![dev_dep("pytest", &[])]);
+        root.lockfile.extras.insert(
+            "tools".to_owned(),
+            [("test".to_owned(), vec!["pytest".to_owned()])].into(),
+        );
+        let member = movable_manifest(vec![dev_dep("tools", &["test"])]);
+        let workspace = [api_member(&member)];
+        let (actions, skipped) = plan_fixes(
+            &chk005_report(&[Some("api")]),
+            &root,
+            &workspace,
+            true,
+            FixOptions::default(),
+        );
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::Ambiguous);
+    }
+
+    #[test]
+    fn chk005_strict_move_skips_a_member_not_inventoried() {
+        let root = movable_manifest(vec![dev_dep("pytest", &[])]);
+        let (actions, skipped) = plan_fixes(
+            &chk005_report(&[Some("api")]),
+            &root,
+            &[],
+            true,
+            FixOptions::default(),
+        );
+        assert_eq!(actions, []);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
+        assert!(skipped[0].detail.contains("not inventoried"));
+    }
+
+    /// One root entry decides the root's finding and the member's; a second
+    /// move of it would fail to find the entry it already removed.
+    #[test]
+    fn chk005_moves_a_shared_entry_once() {
+        let root = movable_manifest(vec![dev_dep("pytest", &[])]);
+        let member = movable_manifest(Vec::new());
+        let workspace = [api_member(&member)];
+        let (actions, skipped) = plan_fixes(
+            &chk005_report(&[None, Some("api")]),
+            &root,
+            &workspace,
+            false,
+            FixOptions::default(),
+        );
+        assert_eq!(skipped, []);
+        assert_eq!(moved_file(&actions), ["pyproject.toml"]);
+    }
+
+    /// A shared root entry is skipped once; a strict member's skip names the
+    /// member's manifest, so it stays apart from the root's.
+    #[test]
+    fn chk005_skip_names_the_manifest_it_read() {
+        let ambiguous = || movable_manifest(vec![dev_dep("pytest", &[]), dev_dep("pytest", &[])]);
+        let (root, member) = (ambiguous(), ambiguous());
+        let workspace = [api_member(&member)];
+        let report = chk005_report(&[None, Some("api")]);
+        let plan = |strict| plan_fixes(&report, &root, &workspace, strict, FixOptions::default());
+        assert_eq!(
+            plan(false).1.len(),
+            1,
+            "a shared root entry is skipped once"
+        );
+        let (_, skipped) = plan(true);
+        let [root_skip, member_skip] = skipped.as_slice() else {
+            panic!("expected a root and a member skip: {skipped:?}");
+        };
+        assert!(!root_skip.detail.contains("services/api"));
+        assert!(
+            member_skip
+                .detail
+                .ends_with("(in `services/api/pyproject.toml`)")
+        );
+    }
+
     #[test]
     #[expect(
         clippy::too_many_lines,
@@ -888,6 +1136,7 @@ mod tests {
             &report,
             &manifest,
             &[],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -909,6 +1158,7 @@ mod tests {
             &report,
             &manifest,
             &[],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -926,11 +1176,11 @@ mod tests {
             ..FixOptions::default()
         };
         manifest.metadata.dynamic = vec!["version".to_owned()];
-        let (actions, skipped) = plan_fixes(&report, &manifest, &[], add_missing);
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], false, add_missing);
         assert_eq!(skipped, []);
         assert_eq!(actions.len(), 1);
         manifest.metadata.dynamic = vec!["dependencies".to_owned()];
-        let (actions, skipped) = plan_fixes(&report, &manifest, &[], add_missing);
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], false, add_missing);
         assert_eq!(actions, []);
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0].detail, "project.dependencies is dynamic");
@@ -944,6 +1194,7 @@ mod tests {
             &report,
             &manifest,
             &[],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -993,6 +1244,7 @@ mod tests {
             &report,
             &manifest,
             &[],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -1040,6 +1292,7 @@ mod tests {
             &report,
             &manifest,
             &[],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -1097,6 +1350,7 @@ mod tests {
             &report(RuleId::Chk002),
             &manifest,
             &[],
+            false,
             FixOptions::default(),
         );
         assert_eq!(actions, []);
@@ -1107,7 +1361,8 @@ mod tests {
             add_missing: true,
             ..FixOptions::default()
         };
-        let (actions, skipped) = plan_fixes(&report(RuleId::Chk003), &manifest, &[], add_missing);
+        let (actions, skipped) =
+            plan_fixes(&report(RuleId::Chk003), &manifest, &[], false, add_missing);
         assert_eq!(actions, []);
         assert_eq!(skipped[0].reason, SkippedReason::UnsupportedTarget);
 
@@ -1115,6 +1370,7 @@ mod tests {
             &report(RuleId::Chk003),
             &manifest,
             &[],
+            false,
             FixOptions::default(),
         );
         assert_eq!(skipped, []);
@@ -1178,7 +1434,7 @@ mod tests {
             exit_status: crate::ExitStatus::IssuesFound,
         };
 
-        let (actions, skipped) = plan_fixes(&report, &manifest, &[], FixOptions::default());
+        let (actions, skipped) = plan_fixes(&report, &manifest, &[], false, FixOptions::default());
 
         assert_eq!(actions.len(), 1);
         assert_eq!(skipped.len(), 1);

@@ -12,6 +12,7 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | `deps_rules_z3.py` | `rules/deps/{missing,misplaced,context}.rs` (§10、workspace member と `--strict` を含む) | Z3 (SMT) | S1 CHK004 は governing な宣言に無いときのみ、S2 dev/type-only の runtime 使用は CHK005 のみ、W1 CHK003/004/005 は排他、W2 strict で member 未宣言なら root に fallback して CHK005、W3 strict で member が runtime 宣言なら何も出ない |
 | `exit_status_z3.py` | `rules/emit.rs`, `baseline/store.rs`, `rules/filter.rs` | Z3 (SMT) | E1 baseline 適用後の exit status が emit と同じ意味論 / E2 baseline が exit 0 を exit 1 に変えない |
 | `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob（CHK008 は binary 名も可）で、pattern の綴り揺れに依らない、I1b distribution 未解決なら ignore しない、I2 集約 finding (CHK010 の行、CHK005 の import site) は全 site が抑制されるときだけ抑制し、CHK005 は抑制されない site のうち最強のものに立つ |
+| `fix_plan_model.py` | `fix/plan.rs` (`plan_move_to_runtime`、`governing_manifest`)、`fix/pyproject.rs` (`move_group_to_runtime`)、`rules/deps/{misplaced,missing,reconcile,used}.rs` (§10 CHK005 と §13、workspace member・`--strict`・lockfile extra 経由の index を含む) | 有限領域の全数探索 (root・member 各 3 件までの宣言 × static 有無 × `--strict` × import site) | F1 適用した move の finding は再解析で消える、F2 move は finding を決めた manifest を書き換える、F3 governing な manifest に pyproject の dev 宣言が 1 件だけで runtime 宣言が無く static なら move する、F4 計画した move はすべて適用できる (同じ entry を 2 度動かさない) |
 
 ## 実装に対する検証 (kani / proptest)
 

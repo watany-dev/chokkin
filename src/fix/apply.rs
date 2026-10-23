@@ -18,14 +18,21 @@ use super::types::{
 };
 
 /// Apply safe automatic fixes with workspace member manifest context.
+///
+/// `strict` must be the `--strict` the report was analyzed with.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "`strict` is analysis state, not a `FixOptions` flag the CLI sets"
+)]
 pub(crate) fn apply_fixes_with_workspace(
     report: &IssueReport,
     root: &ProjectRoot,
     manifest: &LoadedManifest,
     workspace_manifests: &[WorkspaceFixManifest<'_>],
+    strict: bool,
     options: FixOptions,
 ) -> FixReport {
-    let (actions, skipped) = plan_fixes(report, manifest, workspace_manifests, options);
+    let (actions, skipped) = plan_fixes(report, manifest, workspace_manifests, strict, options);
     let mut report_out = FixReport {
         dry_run: options.dry_run,
         skipped,
@@ -396,8 +403,14 @@ mod tests {
         let mut report = issue_report(at("boto3", 0));
         report.issues.push(at("click", 1));
 
-        let fix_report =
-            apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
+        let fix_report = apply_fixes_with_workspace(
+            &report,
+            &root,
+            &manifest,
+            &[],
+            false,
+            FixOptions::default(),
+        );
 
         let names: Vec<_> = fix_report
             .applied
@@ -491,6 +504,7 @@ mod tests {
             &root,
             &manifest,
             &[],
+            false,
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
@@ -517,8 +531,14 @@ mod tests {
         let manifest = empty_manifest(&root);
         let report = issue_report(unused_file_issue("src/legacy.py"));
 
-        let fix_report =
-            apply_fixes_with_workspace(&report, &root, &manifest, &[], FixOptions::default());
+        let fix_report = apply_fixes_with_workspace(
+            &report,
+            &root,
+            &manifest,
+            &[],
+            false,
+            FixOptions::default(),
+        );
 
         assert!(dir.path().join("src/legacy.py").exists());
         assert_eq!(fix_report.applied, []);
@@ -544,6 +564,7 @@ mod tests {
             &root,
             &manifest,
             &[],
+            false,
             FixOptions {
                 dry_run: true,
                 allow_remove_files: true,
@@ -576,6 +597,7 @@ mod tests {
             &root,
             &manifest,
             &[],
+            false,
             FixOptions {
                 allow_remove_files: true,
                 ..FixOptions::default()
@@ -623,6 +645,7 @@ mod tests {
             &root,
             &manifest,
             &[],
+            false,
             FixOptions {
                 dry_run: true,
                 ..FixOptions::default()
@@ -681,6 +704,7 @@ mod tests {
             &root,
             &manifest,
             &[],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()
@@ -724,6 +748,7 @@ mod tests {
             &root,
             &root_manifest,
             &[workspace_manifest],
+            false,
             FixOptions {
                 add_missing: true,
                 ..FixOptions::default()

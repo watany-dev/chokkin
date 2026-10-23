@@ -426,6 +426,118 @@ fn fix_removes_only_the_same_context_repeat() {
     );
 }
 
+/// A workspace whose member `api` imports pytest at runtime, with pytest in a
+/// dev group of both the root and the member.
+fn workspace_with_dev_pytest_on_both_sides() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().expect("tempdir");
+    copy_dir_recursive(&fixture("workspace_member_misplaced"), temp.path()).expect("copy fixture");
+    let pyproject = temp.path().join("pyproject.toml");
+    let before = std::fs::read_to_string(&pyproject).expect("read pyproject");
+    std::fs::write(
+        &pyproject,
+        format!("{before}\n[dependency-groups]\ndev = [\"pytest\"]\n"),
+    )
+    .expect("write pyproject");
+    temp
+}
+
+/// The files the fix edited, how many fixes it skipped, and how many CHK005
+/// the re-run still reports.
+fn fix_and_recheck(root: &Path, strict: bool) -> (Vec<String>, usize, usize) {
+    let overrides = RuntimeOverrides {
+        strict: Some(strict),
+        ..RuntimeOverrides::default()
+    };
+    let report = analyze_project(
+        root,
+        None,
+        &overrides,
+        AnalyzeOptions {
+            fix_enabled: true,
+            ..AnalyzeOptions::default()
+        },
+    )
+    .expect("analyze with fix");
+    let rerun =
+        analyze_project(root, None, &overrides, AnalyzeOptions::default()).expect("re-analyze");
+    let misplaced = rerun
+        .issues
+        .issues
+        .iter()
+        .filter(|issue| issue.rule == RuleId::Chk005)
+        .count();
+    let fix_report = report.fix.expect("fix report");
+    let files = fix_report.applied.into_iter().map(|fix| fix.file).collect();
+    (files, fix_report.skipped.len(), misplaced)
+}
+
+/// Under `--strict` the member's own entry governs its imports, so the move
+/// edits the member's manifest and leaves the root's runtime list alone.
+#[test]
+fn strict_fix_moves_the_governing_member_entry() {
+    let temp = workspace_with_dev_pytest_on_both_sides();
+    let root_before = std::fs::read_to_string(temp.path().join("pyproject.toml")).expect("read");
+
+    let (files, skipped, misplaced) = fix_and_recheck(temp.path(), true);
+
+    assert_eq!(
+        (files, skipped),
+        (vec!["services/api/pyproject.toml".to_owned()], 0)
+    );
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("pyproject.toml")).expect("read"),
+        root_before
+    );
+    let member = std::fs::read_to_string(temp.path().join("services/api/pyproject.toml"))
+        .expect("read member");
+    assert!(member.contains(r#"dependencies = ["pytest"]"#), "{member}");
+    assert!(member.contains("dev = []"), "{member}");
+    assert_eq!(misplaced, 0);
+}
+
+/// Without `--strict` the root governs, so its entry moves.
+#[test]
+fn fix_moves_the_root_entry_that_governs_a_member() {
+    let temp = workspace_with_dev_pytest_on_both_sides();
+
+    let (files, skipped, misplaced) = fix_and_recheck(temp.path(), false);
+
+    assert_eq!((files, skipped), (vec!["pyproject.toml".to_owned()], 0));
+    assert_eq!(misplaced, 0);
+}
+
+/// Two members governed by one root entry move it once, with no stale
+/// "could not remove" skip for the second.
+#[test]
+fn fix_moves_a_shared_root_entry_once() {
+    let temp = workspace_with_dev_pytest_on_both_sides();
+    let api = temp.path().join("services/api");
+    let web = temp.path().join("services/web");
+    copy_dir_recursive(&api, &web).expect("copy member");
+    std::fs::rename(web.join("src/api"), web.join("src/web")).expect("rename package");
+    let member = std::fs::read_to_string(web.join("pyproject.toml")).expect("read member");
+    std::fs::write(
+        web.join("pyproject.toml"),
+        member.replace("\"api\"", "\"web\""),
+    )
+    .expect("write member");
+    let pyproject = temp.path().join("pyproject.toml");
+    let root = std::fs::read_to_string(&pyproject).expect("read pyproject");
+    std::fs::write(
+        &pyproject,
+        root.replace(
+            "api-cli = \"api.main:main\"",
+            "api-cli = \"api.main:main\"\nweb-cli = \"web.main:main\"",
+        ),
+    )
+    .expect("write pyproject");
+
+    let (files, skipped, misplaced) = fix_and_recheck(temp.path(), false);
+
+    assert_eq!((files, skipped), (vec!["pyproject.toml".to_owned()], 0));
+    assert_eq!(misplaced, 0);
+}
+
 fn copy_dir_recursive(source: &Path, dest: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(source)? {
