@@ -18,8 +18,10 @@ const MANDATORY_EXCLUDES: &[&str] = &[
 /// globset reads `\` as a separator on Windows and as an escape elsewhere, so
 /// `legacy\**` would match only on Windows. `\` is always a separator here,
 /// as in workspace member paths; a literal metacharacter is spelled `[*]`.
+/// A leading `./` is dropped too: candidates are root-relative paths without
+/// one, so `./legacy/**` would otherwise match nothing, silently (#1168).
 pub(crate) fn path_glob(pattern: &str) -> Result<Glob, globset::Error> {
-    GlobBuilder::new(&pattern.replace('\\', "/"))
+    GlobBuilder::new(strip_dot_slash(&pattern.replace('\\', "/")))
         .backslash_escape(false)
         .build()
 }
@@ -40,6 +42,16 @@ pub(crate) fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesErro
         pattern: compiled.join(", "),
         reason: error.to_string(),
     })
+}
+
+/// Drop every leading `./` from a root-relative glob or path.
+#[must_use]
+fn strip_dot_slash(pattern: &str) -> &str {
+    let mut rest = pattern;
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped.trim_start_matches('/');
+    }
+    rest
 }
 
 /// Merge config excludes with mandatory safety patterns.
@@ -75,6 +87,23 @@ mod tests {
         assert!(set.is_match("legacy/old.py"));
         assert!(set.is_match("src/pkg/mod.py"));
         assert!(!set.is_match("legacy*"));
+    }
+
+    #[test]
+    fn leading_dot_slash_matches_like_plain_pattern() {
+        let patterns = vec![
+            "./legacy/**".to_owned(),
+            "././src/*.py".to_owned(),
+            ".\\docs\\**".to_owned(),
+        ];
+        let set = build_glob_set(&patterns).expect("valid glob");
+        assert!(set.is_match("legacy/old.py"));
+        assert!(set.is_match("src/app.py"));
+        assert!(set.is_match("docs/conf.py"));
+        assert_eq!(strip_dot_slash(".//a/b"), "a/b");
+        assert_eq!(strip_dot_slash("./"), "");
+        assert_eq!(strip_dot_slash(".hidden/**"), ".hidden/**");
+        assert_eq!(strip_dot_slash("../x"), "../x");
     }
 
     #[test]

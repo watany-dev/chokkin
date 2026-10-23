@@ -14,7 +14,7 @@ use crate::config::ConfigSources;
 use crate::fix::atomic_write;
 use crate::manifest::{ManifestSources, extra_requirements_candidates, lockfile_candidates};
 use crate::parser::ParsedModule;
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 /// Default cache directory name below the project root.
 pub(crate) const DEFAULT_CACHE_DIR: &str = ".chokkin/cache";
@@ -486,9 +486,8 @@ fn config_input_fingerprints(
     if let Some(path) = &sources.chokkin_toml {
         paths.push(path.clone());
     }
-    let pyproject = root.join("pyproject.toml");
-    if pyproject.is_file() {
-        paths.push(pyproject);
+    if is_file_named(root, "pyproject.toml") {
+        paths.push(root.join("pyproject.toml"));
     }
     fingerprint_paths(root, paths)
 }
@@ -530,9 +529,8 @@ fn manifest_input_fingerprints(
 fn manifest_candidate_fingerprints(root: &Path) -> io::Result<Vec<SourceFingerprint>> {
     let mut paths = Vec::new();
     for filename in ["pyproject.toml", "setup.cfg", "setup.py"] {
-        let path = root.join(filename);
-        if path.is_file() {
-            paths.push(path);
+        if is_file_named(root, filename) {
+            paths.push(root.join(filename));
         }
     }
     // Every present lockfile, not just the one read, so a new higher-priority
@@ -1082,6 +1080,39 @@ mod tests {
             !fingerprint.content_hash.is_empty(),
             "a file stamped at the filesystem's `now` must be hashed"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mtime_exactly_one_window_old_is_settled() {
+        let now = UNIX_EPOCH + Duration::from_mins(10);
+        let now_ns = Duration::from_mins(10).as_nanos();
+        let window_ns = RACY_MTIME_WINDOW.as_nanos();
+        assert!(is_racy_mtime(now_ns - window_ns + 1, now));
+        assert!(!is_racy_mtime(now_ns - window_ns, now));
+    }
+
+    #[test]
+    fn absent_fingerprint_keeps_the_path_and_a_non_hex_hash() {
+        let root = Path::new("/repo");
+        let fingerprint = SourceFingerprint::absent(root, &root.join("requirements/dev.txt"));
+        assert_eq!(fingerprint.path, "requirements/dev.txt");
+        assert_eq!(fingerprint.size, 0);
+        assert_eq!(fingerprint.modified_ns, None);
+        assert_eq!(fingerprint.content_hash, "absent");
+    }
+
+    #[test]
+    fn reading_a_missing_cache_is_none_but_other_errors_surface() {
+        let root = temp_cache_test_dir("read-bytes");
+        assert!(matches!(
+            read_cache_bytes(&root.join("missing.json")),
+            Ok(None)
+        ));
+        // A directory where the cache file should be is not "no cache yet".
+        let error =
+            read_cache_bytes(&root.join("src")).expect_err("a directory is not a cache file");
+        assert_ne!(error.kind(), io::ErrorKind::NotFound);
         let _ = std::fs::remove_dir_all(root);
     }
 

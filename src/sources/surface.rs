@@ -227,6 +227,24 @@ mod tests {
     }
 
     #[test]
+    fn is_under_takes_the_prefix_itself_and_its_descendants() {
+        assert!(is_under("src/acme", ""));
+        assert!(is_under("src/acme", "src/acme"));
+        assert!(is_under("src/acme/a.py", "src/acme"));
+        assert!(!is_under("src/acme_tools/a.py", "src/acme"));
+        assert!(!is_under("src", "src/acme"));
+    }
+
+    #[test]
+    fn parent_dirs_lists_ancestors_nearest_first() {
+        assert_eq!(
+            parent_dirs("src/acme/sub/a.py").collect::<Vec<_>>(),
+            ["src/acme/sub", "src/acme", "src"]
+        );
+        assert_eq!(parent_dirs("a.py").count(), 0);
+    }
+
+    #[test]
     fn prefix_respects_directory_boundaries() {
         let surface = surface(
             &path_targets(&["src/acme"]),

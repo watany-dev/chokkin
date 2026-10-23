@@ -9,7 +9,7 @@ use crate::manifest::{infer_target_version_from_requires_python, requires_python
 static STDLIB_MODULES: OnceLock<HashMap<&'static str, Shipped>> = OnceLock::new();
 
 const OLDEST_BUNDLED_MINOR: u32 = 8;
-const NEWEST_BUNDLED_MINOR: u32 = 14;
+const NEWEST_BUNDLED_MINOR: u32 = 15;
 
 /// Stdlib roots that a given interpreter may still lack: platform-only
 /// modules and those built on an optional library or split out by distros.
@@ -202,7 +202,9 @@ mod tests {
 
     #[test]
     fn platform_and_private_modules_are_stdlib_for_every_target() {
-        for version in ["py308", "py310", "py311", "py312", "py313", "py314"] {
+        for version in [
+            "py308", "py310", "py311", "py312", "py313", "py314", "py315",
+        ] {
             for module in ["unicodedata", "msvcrt", "winreg", "_thread"] {
                 assert!(exact(version).contains(module), "{module} on {version}");
             }
@@ -253,8 +255,17 @@ mod tests {
     }
 
     #[test]
+    fn profiling_is_stdlib_only_from_py315() {
+        // PEP 799 added `profiling`; 3.15 dropped the `sre_*` shims.
+        assert!(!exact("py314").contains("profiling"));
+        assert!(exact("py315").contains("profiling"));
+        assert!(exact("py314").contains("sre_parse"));
+        assert!(!exact("py315").contains("sre_parse"));
+    }
+
+    #[test]
     fn main_module_is_stdlib_for_every_target() {
-        for version in ["py310", "py311", "py312", "py313", "py314"] {
+        for version in ["py310", "py311", "py312", "py313", "py314", "py315"] {
             assert!(exact(version).contains("__main__"), "{version}");
         }
     }
@@ -311,8 +322,8 @@ mod tests {
         let table = parse_modules("# comment\n\nos\ntomllib 11-\nasynchat 10-11\n");
         let shipped = |name| (table[name].first, table[name].last);
         assert_eq!(table.len(), 3);
-        assert_eq!(shipped("os"), (8, 14));
-        assert_eq!(shipped("tomllib"), (11, 14));
+        assert_eq!(shipped("os"), (8, NEWEST_BUNDLED_MINOR));
+        assert_eq!(shipped("tomllib"), (11, NEWEST_BUNDLED_MINOR));
         assert_eq!(shipped("asynchat"), (10, 11));
     }
 

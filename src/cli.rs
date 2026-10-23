@@ -45,11 +45,11 @@ pub struct CliArgs {
     pub no_exit_code: bool,
 
     /// Only emit issues for these rule codes (comma-separated `CHK00x`).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', value_parser = parse_rule_code)]
     pub include: Option<Vec<String>>,
 
     /// Suppress issues for these rule codes (comma-separated `CHK00x`).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', value_parser = parse_rule_code)]
     pub exclude: Option<Vec<String>>,
 
     /// Output reporter (`default`, `compact`, `json`, `markdown`, `github`, `sarif`).
@@ -184,6 +184,18 @@ fn parse_reporter(value: &str) -> Result<ReporterId, String> {
     ReporterId::parse(value).ok_or_else(|| format!("unknown reporter `{value}`"))
 }
 
+/// A code no issue carries would make `--include` hide every issue and exit 0,
+/// so reject it like `[tool.chokkin.ignore]` does: exact upper-case `CHK00x`
+/// only, and no empty element from a stray comma (#1126).
+fn parse_rule_code(value: &str) -> Result<String, String> {
+    match RuleId::parse_code(value) {
+        Some(rule) if rule.as_code() == value => Ok(value.to_owned()),
+        _ => Err(format!(
+            "unknown rule code `{value}` (expected one of CHK001..CHK010)"
+        )),
+    }
+}
+
 fn parse_confidence(value: &str) -> Result<Confidence, String> {
     Confidence::parse(value).ok_or_else(|| format!("unknown confidence `{value}`"))
 }
@@ -224,6 +236,33 @@ mod tests {
         for selector in ["CHK999:boto3", ":boto3"] {
             let error = parse(selector).expect_err(selector);
             assert!(error.contains("unknown rule code"), "{selector}: {error}");
+        }
+    }
+
+    #[test]
+    fn accepts_known_rule_codes() {
+        let args = parse_cli_args(vec![
+            "--include".to_owned(),
+            "CHK002,CHK010".to_owned(),
+            "--exclude".to_owned(),
+            "CHK006".to_owned(),
+        ])
+        .expect("parse");
+        assert_eq!(
+            args.include,
+            Some(vec!["CHK002".to_owned(), "CHK010".to_owned()])
+        );
+        assert_eq!(args.exclude, Some(vec!["CHK006".to_owned()]));
+    }
+
+    #[test]
+    fn rejects_unknown_empty_and_lowercase_rule_codes() {
+        for flag in ["--include", "--exclude"] {
+            for value in ["CHK02", "CHK999", ",", "CHK002,", "chk002", ""] {
+                let err = parse_cli_args(vec![flag.to_owned(), value.to_owned()])
+                    .expect_err(&format!("{flag} {value:?} should be rejected"));
+                assert!(err.contains("unknown rule code"), "{flag} {value:?}: {err}");
+            }
         }
     }
 

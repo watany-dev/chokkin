@@ -199,9 +199,9 @@ impl ProbeWarning {
             Self::Resolve(warning) => match warning {
                 ResolveWarning::UnresolvedImport { file, line, .. } => (Some(file), *line),
                 ResolveWarning::VenvDistributionIgnored { path, .. } => (Some(path), None),
-                ResolveWarning::AmbiguousImport { .. } | ResolveWarning::VenvUnreadable { .. } => {
-                    (None, None)
-                },
+                ResolveWarning::AmbiguousImport { .. }
+                | ResolveWarning::VenvSitePackagesAmbiguous { .. }
+                | ResolveWarning::VenvUnreadable { .. } => (None, None),
             },
             Self::AutoWorkspace { .. } | Self::NestedProjectsSkipped { .. } => (None, None),
             Self::SkippedSource { path, reason } => {
@@ -422,6 +422,15 @@ fn write_resolve_warning(
         ResolveWarning::VenvDistributionIgnored { path, name } => write!(
             formatter,
             "resolve: ignored `{path}`: `{name}` is not a PEP 508 distribution name"
+        ),
+        ResolveWarning::VenvSitePackagesAmbiguous {
+            path,
+            chosen,
+            candidates,
+        } => write!(
+            formatter,
+            "resolve: virtualenv `{path}` has several interpreters ({}) and `pyvenv.cfg` does not pick one; reading `{chosen}`",
+            candidates.join(", ")
         ),
         ResolveWarning::VenvUnreadable { path, reason } => write!(
             formatter,

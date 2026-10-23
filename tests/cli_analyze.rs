@@ -286,6 +286,31 @@ fn binary_dry_run_without_fix_errors() {
     );
 }
 
+/// A typo in `--include` used to hide every issue and exit 0, so a CI step
+/// stayed green; it is a usage error now (#1126).
+#[test]
+fn binary_unknown_rule_code_is_a_usage_error() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    for args in [
+        ["--include", "CHK02"],
+        ["--exclude", "chk002"],
+        ["--include", ","],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(args)
+            .arg(&root)
+            .output()
+            .expect("run chokkin");
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::UsageError.code().into()),
+            "{args:?}"
+        );
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains("unknown rule code"), "{args:?}: {stderr}");
+    }
+}
+
 #[test]
 fn binary_fix_reports_skipped_detail() {
     let root = fixture_path(&["reachability", "chain_import"]);
@@ -5144,6 +5169,34 @@ fn binary_member_build_script_outside_its_tree_is_not_a_skipped_entry() {
     );
 }
 
+/// Config paths and globs written with a leading `./` or `\\` separators
+/// match the discovered root-relative paths, like `--trace` targets (#1168).
+#[test]
+fn binary_dot_slash_and_backslash_config_paths_match_discovered_files() {
+    for (entry, exclude) in [
+        ("./src/app.py", "./legacy/**"),
+        (r"src\app.py", "legacy/**"),
+    ] {
+        let pyproject = format!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = ['{entry}']\nexclude = ['{exclude}']\n"
+        );
+        let project = write_project(&[
+            ("pyproject.toml", pyproject.as_str()),
+            ("src/app.py", "import helper\n"),
+            ("src/helper.py", "# helper\n"),
+            ("legacy/old.py", "# old\n"),
+        ]);
+        assert_eq!(issue_levels(project.path()), [], "{entry} / {exclude}");
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!stderr.contains("skipped entry"), "{stderr}");
+    }
+}
+
 /// A member's manifest entry the root excludes is skipped like a root one:
 /// its imports are unknown, so what it may use falls to likely (#934).
 #[test]
@@ -7800,7 +7853,7 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
             "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
              [tool.uv.workspace]\nmembers = [\"packages/*\"]\n",
         ),
-        (".gitignore", "bad{glob\n"),
+        (".gitignore", "bad[z-a]{glob\n"),
         ("acme/__init__.py", ""),
         (
             "packages/core/pyproject.toml",
@@ -7825,7 +7878,7 @@ fn binary_unparsable_root_gitignore_warns_once_in_a_workspace() {
         .expect("canonical root")
         .join(".gitignore");
     let expected = format!(
-        "sources: could not read `{}`: line 1: error parsing glob 'bad{{glob'",
+        "sources: could not read `{}`: line 1: error parsing glob 'bad[z-a]{{glob'",
         gitignore.display()
     );
     assert_eq!(sources.len(), 1, "{stderr}");
@@ -9152,4 +9205,30 @@ fn binary_unreadable_entry_point_is_reported() {
         ),
         "{stderr}"
     );
+}
+
+/// `helper.PY` is collected and named like `helper.py`, as Python on
+/// Windows and macOS lowercases extensions when it looks a module up: the
+/// import resolves and the file's own imports are read (#1170).
+#[test]
+fn binary_resolves_module_with_uppercase_extension() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"x\"\ndependencies = []\n\n[tool.chokkin]\nentry = [\"app.py\"]\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("app.py"), "import helper\n").expect("write app");
+    fs::write(root.join("helper.PY"), "import requests\n").expect("write helper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(!stdout.contains("Unresolved imports"), "{stdout}");
+    assert!(!stdout.contains("Unused files"), "{stdout}");
+    assert!(stdout.contains("helper.PY:1 requests"), "{stdout}");
 }
