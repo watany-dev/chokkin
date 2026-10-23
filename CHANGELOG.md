@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- The GitHub Action no longer fails with a usage error when `args` repeats a
+  flag the action adds itself: the SARIF run drops `--no-exit-code` and
+  `--reporter` from `args`, and a `--reporter`, `--baseline` or `--no-cache`
+  in `args` replaces the one from the inputs (#1147).
 - A notebook cell with a help escape after unbalanced brackets
   (`y = (1,` then `b]` then `?obj.attr`) no longer aborts the run with a
   panic in the parser: the cell is lexed, not parsed, to find where its
