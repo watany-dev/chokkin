@@ -122,10 +122,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// ```text
 /// 0: no reportable issues
-/// 1: issues found
+/// 1: reportable issues found
 /// 2: CLI/config error
 /// 3: internal error
 /// ```
+///
+/// "Reportable" means severity `error` and confidence `likely` or higher;
+/// `--strict` widens it to severity `warning` and confidence `maybe`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ExitStatus {
