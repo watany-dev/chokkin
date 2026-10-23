@@ -136,8 +136,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// the ones read through an import binding, which only the whole
     /// module's imports tell.
     attribute_sites: Vec<&'ast ExprAttribute>,
-    /// Every `getattr(x, "attr")` and kin, read like `x.attr` (#1143).
-    literal_getattr_sites: Vec<&'ast ExprCall>,
+    /// The receiver, name and line of every `getattr(x, "attr")` and kin,
+    /// read like `x.attr` (#1143).
+    literal_getattr_sites: Vec<(&'ast Expr, &'ast str, u32)>,
     parsed: ParsedModule,
 }
 
@@ -253,13 +254,9 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 self.line_number(*attribute),
             )
         });
-        let getattr_sites = self.literal_getattr_sites.iter().filter_map(|call| {
-            let (receiver, name) = literal_getattr(call)?;
-            Some((receiver, name, self.line_number(*call)))
-        });
         let mut receiver = String::new();
         attribute_sites
-            .chain(getattr_sites)
+            .chain(self.literal_getattr_sites.iter().copied())
             .filter_map(|(value, name, line)| {
                 receiver.clear();
                 (write_receiver(value, &mut receiver) && receivers.contains(receiver.as_str()))
@@ -549,8 +546,9 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// which reads them like `x.attr`. A method of its own so its locals
     /// stay out of the frame [`Self::visit_expr`] recurses with (#1045).
     fn record_literal_getattr(&mut self, call: &'ast ExprCall) {
-        if literal_getattr(call).is_some() {
-            self.literal_getattr_sites.push(call);
+        if let Some((receiver, name)) = literal_getattr(call) {
+            let line = self.line_number(call);
+            self.literal_getattr_sites.push((receiver, name, line));
         }
     }
 
