@@ -10,7 +10,7 @@ use ignore::overrides::Override;
 use ignore::{DirEntry, WalkBuilder};
 
 use crate::config::EntrySpec;
-use crate::path_util::normalize_rel_path;
+use crate::path_util::{lowercase_extension, normalize_rel_path};
 
 use super::cache::{Ancestors, DirIgnore, RootLoad, SourcesCache, gitignore_skips};
 use super::context::assign_file_context;
@@ -310,6 +310,30 @@ impl SkippedSymlinks {
     }
 }
 
+/// Source files whose paths are not UTF-8 (#1146).
+#[derive(Default)]
+struct NonUtf8Paths(Vec<SourcesWarning>);
+
+impl NonUtf8Paths {
+    /// Record `rel` if it is not UTF-8. Its lossy `rel_str` names no file on
+    /// disk, and Python cannot import the module, so it is skipped out loud.
+    fn skips(&mut self, rel: &Path, rel_str: &str) -> bool {
+        if rel.to_str().is_some() {
+            return false;
+        }
+        self.0.push(SourcesWarning::NonUtf8Path {
+            path: rel_str.to_owned(),
+        });
+        true
+    }
+
+    /// Append the paths in path order, not the walk's directory order.
+    fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
+        self.0.sort_by_cached_key(ToString::to_string);
+        warnings.append(&mut self.0);
+    }
+}
+
 /// Why the walk did not follow the symlink at `entry`, or `None` when the
 /// skip needs no word (#986). The walk follows no link: one inside the root
 /// is read at its target's own path, so it stays silent. One that leaves the
@@ -414,6 +438,16 @@ fn nested_dockerfile(
     (!exclude_matcher.is_match(&rel_str) && !gitignored(rel, false)).then_some(rel_str)
 }
 
+/// Whether `matcher` takes the source file at `rel_str`, also under its
+/// extension in lowercase: `source_kind` collects `helper.PY` as Python, and
+/// the default `**/*.py` globs must not drop it again (#1170).
+pub(super) fn matches_source(matcher: &GlobSet, rel_str: &str) -> bool {
+    matcher.is_match(rel_str) || {
+        let lower = lowercase_extension(rel_str);
+        lower != rel_str && matcher.is_match(lower.as_ref())
+    }
+}
+
 /// The source kind `path`'s extension names, or `None` for a file the
 /// walk does not collect.
 fn source_kind(path: &Path) -> Option<FileKind> {
@@ -462,6 +496,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let mut dockerfiles = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
+    let mut non_utf8 = NonUtf8Paths::default();
     let gitignored =
         |rel: &Path, is_dir| gitignore.is_some_and(|ignore| ignore.gitignore_ignores(rel, is_dir));
 
@@ -497,15 +532,15 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
         };
         let rel_str = normalize_rel_path(rel);
 
-        if !project_matcher.is_match(&rel_str) || exclude_matcher.is_match(&rel_str) {
+        if !matches_source(project_matcher, &rel_str) || matches_source(exclude_matcher, &rel_str) {
             continue;
         }
 
-        if gitignored(rel, false) {
+        if gitignored(rel, false) || non_utf8.skips(rel, &rel_str) {
             continue;
         }
 
-        let context = if test_matcher.is_match(&rel_str) {
+        let context = if matches_source(test_matcher, &rel_str) {
             FileContext::Test
         } else {
             assign_file_context(&rel_str)
@@ -527,6 +562,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     files.sort_by(|left, right| left.path.cmp(&right.path));
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
     dockerfiles.sort();
+    non_utf8.finish(&mut warnings);
     symlinks.finish(&mut warnings);
     Ok(Collected {
         files,
@@ -887,6 +923,18 @@ mod tests {
         ];
         assert_eq!(warnings("/repo", &unparsable), expected);
         assert_eq!(warnings("/repo/packages/core", &unparsable), expected);
+    }
+
+    /// The sampled property below rarely lands on the threshold itself.
+    #[test]
+    fn large_project_warning_starts_above_the_threshold() {
+        assert_eq!(large_project_warning(LARGE_PROJECT_THRESHOLD), None);
+        assert_eq!(
+            large_project_warning(LARGE_PROJECT_THRESHOLD + 1),
+            Some(SourcesWarning::LargeProject {
+                file_count: LARGE_PROJECT_THRESHOLD + 1,
+            })
+        );
     }
 
     mod props {

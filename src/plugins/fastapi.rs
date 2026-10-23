@@ -1,6 +1,7 @@
 //! `FastAPI` / uvicorn plugin extractor.
 
 use crate::config::PluginId;
+use crate::path_util::is_file_named;
 use crate::sources::FileContext;
 
 use super::context::PluginContext;
@@ -30,7 +31,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let root = ctx.root.path.as_path();
     let pyproject_path = root.join("pyproject.toml");
 
-    if pyproject_path.is_file() {
+    if is_file_named(root, "pyproject.toml") {
         match read_pyproject_table(&pyproject_path) {
             Ok(table) => {
                 if let Some(uvicorn) = uvicorn_tool_from_pyproject(&table) {

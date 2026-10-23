@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 use super::error::ManifestError;
 use super::pdm_lock::extract_pdm_lock;
@@ -26,15 +26,15 @@ const MAX_LOCKFILE_PACKAGES: usize = 20_000;
 /// (`uv.lock` > `pylock.toml` > `pylock.<name>.toml` > `poetry.lock` > `pdm.lock`).
 pub(crate) fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
     let mut found = Vec::new();
-    push_if_file(&mut found, LockfileKind::Uv, root.join("uv.lock"));
-    push_if_file(&mut found, LockfileKind::Pylock, root.join("pylock.toml"));
+    push_if_file(&mut found, LockfileKind::Uv, root, "uv.lock");
+    push_if_file(&mut found, LockfileKind::Pylock, root, "pylock.toml");
     found.extend(
         named_pylock_files(root)
             .into_iter()
             .map(|path| (LockfileKind::Pylock, path)),
     );
-    push_if_file(&mut found, LockfileKind::Poetry, root.join("poetry.lock"));
-    push_if_file(&mut found, LockfileKind::Pdm, root.join("pdm.lock"));
+    push_if_file(&mut found, LockfileKind::Poetry, root, "poetry.lock");
+    push_if_file(&mut found, LockfileKind::Pdm, root, "pdm.lock");
     found
 }
 
@@ -117,9 +117,14 @@ fn over_limit(bytes: u64, packages: Option<usize>) -> Option<String> {
         })
 }
 
-fn push_if_file(found: &mut Vec<(LockfileKind, PathBuf)>, kind: LockfileKind, path: PathBuf) {
-    if path.is_file() {
-        found.push((kind, path));
+fn push_if_file(
+    found: &mut Vec<(LockfileKind, PathBuf)>,
+    kind: LockfileKind,
+    root: &Path,
+    name: &str,
+) {
+    if is_file_named(root, name) {
+        found.push((kind, root.join(name)));
     }
 }
 
@@ -371,5 +376,140 @@ mod tests {
                     .to_owned(),
             }]
         );
+    }
+
+    mod props {
+        use std::collections::{BTreeMap, BTreeSet};
+        use std::fmt::Write as _;
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// Spellings of a few distributions, so the formats see the same
+        /// graph under names that only normalize alike.
+        const SPELLINGS: &[&[&str]] = &[
+            &["zz-alpha", "ZZ_Alpha", "zz.alpha"],
+            &["zz-bravo", "Zz--Bravo", "zz_bravo"],
+            &["zzcharlie", "ZZCharlie"],
+            &["zz-delta", "zz.Delta"],
+            &["zz-echo"],
+        ];
+
+        type Spelled = (usize, usize);
+
+        fn spelled() -> impl Strategy<Value = Spelled> {
+            (0..SPELLINGS.len(), 0usize..3)
+        }
+
+        fn spell((name, variant): Spelled) -> &'static str {
+            let spellings = SPELLINGS[name];
+            spellings[variant % spellings.len()]
+        }
+
+        /// `[[package]]` entries in order; one name may repeat, as a lock
+        /// lists each locked version (or marker fork) on its own. A lock
+        /// without packages is skipped as a placeholder.
+        fn packages() -> impl Strategy<Value = Vec<(Spelled, Vec<Spelled>)>> {
+            prop::collection::vec((spelled(), prop::collection::vec(spelled(), 0..4)), 1..7)
+        }
+
+        fn lock(
+            kind: LockfileKind,
+            packages: &[(Spelled, Vec<Spelled>)],
+        ) -> (&'static str, String) {
+            let mut text = String::new();
+            match kind {
+                LockfileKind::Uv => text.push_str("version = 1\nrequires-python = \">=3.10\"\n"),
+                LockfileKind::Pylock => {
+                    text.push_str("lock-version = \"1.0\"\ncreated-by = \"x\"\n");
+                },
+                LockfileKind::Poetry | LockfileKind::Pdm => {},
+            }
+            for (version, (name, deps)) in packages.iter().enumerate() {
+                let table = if kind == LockfileKind::Pylock {
+                    "packages"
+                } else {
+                    "package"
+                };
+                write!(
+                    text,
+                    "\n[[{table}]]\nname = \"{}\"\nversion = \"{version}.0\"\n",
+                    spell(*name)
+                )
+                .expect("write");
+                match kind {
+                    LockfileKind::Uv | LockfileKind::Pylock => {
+                        text.push_str("dependencies = [\n");
+                        for dep in deps {
+                            writeln!(text, "    {{ name = \"{}\" }},", spell(*dep)).expect("write");
+                        }
+                        text.push_str("]\n");
+                    },
+                    LockfileKind::Pdm => {
+                        text.push_str("dependencies = [\n");
+                        for dep in deps {
+                            writeln!(text, "    \"{}>=1\",", spell(*dep)).expect("write");
+                        }
+                        text.push_str("]\n");
+                    },
+                    LockfileKind::Poetry => {
+                        // Keys are unique within a table.
+                        let keys: BTreeSet<&str> = deps.iter().map(|dep| spell(*dep)).collect();
+                        if !keys.is_empty() {
+                            text.push_str("\n[package.dependencies]\n");
+                        }
+                        for key in keys {
+                            writeln!(text, "\"{key}\" = \">=1\"").expect("write");
+                        }
+                    },
+                }
+            }
+            let file = match kind {
+                LockfileKind::Uv => "uv.lock",
+                LockfileKind::Pylock => "pylock.toml",
+                LockfileKind::Poetry => "poetry.lock",
+                LockfileKind::Pdm => "pdm.lock",
+            };
+            (file, text)
+        }
+
+        fn edge_sets(graph: &LockfileGraph) -> BTreeMap<String, BTreeSet<String>> {
+            graph
+                .edges
+                .iter()
+                .map(|(name, deps)| (name.clone(), deps.iter().cloned().collect()))
+                .collect()
+        }
+
+        proptest! {
+            /// Every format reads the same graph into the same edges: each
+            /// locked name, normalized, to the union of what its entries
+            /// depend on.
+            #[test]
+            fn lock_formats_read_the_same_edges(packages in packages()) {
+                let mut expected: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for (name, deps) in &packages {
+                    expected
+                        .entry(SPELLINGS[name.0][0].to_owned())
+                        .or_default()
+                        .extend(deps.iter().map(|dep| SPELLINGS[dep.0][0].to_owned()));
+                }
+                for kind in [LockfileKind::Uv, LockfileKind::Pylock, LockfileKind::Poetry, LockfileKind::Pdm] {
+                    let (file, text) = lock(kind, &packages);
+                    let temp = tempfile::tempdir().expect("tempdir");
+                    std::fs::write(temp.path().join(file), &text).expect("write lock");
+                    let (source, graph) = extract_lockfile(temp.path(), &mut Vec::new())
+                        .expect("valid lock")
+                        .expect("lock present");
+                    prop_assert_eq!(source.kind, kind);
+                    prop_assert_eq!(edge_sets(&graph), expected.clone(), "{}", text);
+                    for deps in graph.edges.values() {
+                        let unique: BTreeSet<&String> = deps.iter().collect();
+                        prop_assert_eq!(unique.len(), deps.len(), "{}: {:?}", file, deps);
+                    }
+                }
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 //! Cross-module path normalization helpers.
 
+use std::borrow::Cow;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -32,6 +33,41 @@ pub(crate) fn rel_to_root(root: &Path, path: &Path) -> String {
     normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
+/// Whether `dir` holds a file named exactly `name`. `dir.join(name).is_file()`
+/// alone also finds `Requirements.txt` for `requirements.txt` on a
+/// case-insensitive file system (macOS, Windows), where the tools that read
+/// the file on Linux would not (#1163); the listing keeps each entry's own
+/// spelling.
+#[must_use]
+pub(crate) fn is_file_named(dir: &Path, name: &str) -> bool {
+    dir.join(name).is_file() && has_entry_named(dir, name)
+}
+
+/// `dir.join(name)` must exist. Where the name with its ASCII case swapped
+/// does not, the file system tells cases apart here, so the hit was spelled
+/// `name` and the listing (slower than a stat) is skipped.
+#[must_use]
+pub(crate) fn has_entry_named(dir: &Path, name: &str) -> bool {
+    let swapped: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect();
+    if fs::symlink_metadata(dir.join(swapped)).is_err() {
+        return true;
+    }
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| entry.file_name().as_os_str() == name)
+    })
+}
+
 /// Whether a directory above the module at root-relative `path` holds an
 /// `__init__.py` that `is_init` accepts: importing that package does not by
 /// itself load `path` (#802).
@@ -45,6 +81,40 @@ pub(crate) fn is_submodule(path: &str, is_init: impl Fn(&str) -> bool) -> bool {
         dir = parent;
     }
     false
+}
+
+/// `path` without a `.py` suffix of any case, as `source_kind` collects
+/// `helper.PY` too: Python on Windows and macOS lowercases extensions when
+/// it lists a directory, so `import helper` finds that file (#1170).
+#[must_use]
+pub(crate) fn strip_py_suffix(path: &str) -> Option<&str> {
+    strip_suffix_ignore_case(path, ".py")
+}
+
+/// `path` without a `.py` or `.pyi` suffix of any case (#1170).
+#[must_use]
+pub(crate) fn strip_source_suffix(path: &str) -> Option<&str> {
+    strip_py_suffix(path).or_else(|| strip_suffix_ignore_case(path, ".pyi"))
+}
+
+/// `path` with its extension in lowercase (`helper.PY` → `helper.py`), the
+/// spelling Python looks a module up by on Windows and macOS (#1170).
+#[must_use]
+pub(crate) fn lowercase_extension(path: &str) -> Cow<'_, str> {
+    match path.rsplit_once('.') {
+        Some((stem, ext))
+            if !ext.contains('/') && ext.bytes().any(|byte| byte.is_ascii_uppercase()) =>
+        {
+            Cow::Owned(format!("{stem}.{}", ext.to_ascii_lowercase()))
+        },
+        _ => Cow::Borrowed(path),
+    }
+}
+
+fn strip_suffix_ignore_case<'a>(path: &'a str, suffix: &str) -> Option<&'a str> {
+    let split = path.len().checked_sub(suffix.len())?;
+    let (stem, tail) = (path.get(..split)?, &path[split..]);
+    tail.eq_ignore_ascii_case(suffix).then_some(stem)
 }
 
 /// Join root-relative `/`-separated paths, where `""` is the root.
@@ -98,6 +168,39 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn is_file_named_matches_the_spelling_on_disk() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("Requirements.txt"), "").expect("write");
+        fs::create_dir(temp.path().join("setup.py")).expect("create dir");
+        assert!(is_file_named(temp.path(), "Requirements.txt"));
+        assert!(!is_file_named(temp.path(), "requirements.txt"));
+        // A directory under the name is no file.
+        assert!(!is_file_named(temp.path(), "setup.py"));
+        assert!(!is_file_named(&temp.path().join("missing"), "setup.py"));
+    }
+
+    /// Both spellings present on a case-sensitive file system: the listing
+    /// decides, not the swapped-case probe.
+    #[test]
+    fn has_entry_named_lists_when_the_swapped_case_resolves() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("uv.lock"), "").expect("write");
+        fs::write(temp.path().join("UV.LOCK"), "").expect("write");
+        if fs::read_dir(temp.path()).expect("list").count() < 2 {
+            return; // one file under both names: a case-insensitive file system
+        }
+        assert!(has_entry_named(temp.path(), "uv.lock"));
+        assert!(has_entry_named(temp.path(), "UV.LOCK"));
+    }
+
+    #[test]
+    fn has_entry_named_rejects_an_entry_spelled_in_another_case() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("UV.LOCK"), "").expect("write");
+        assert!(!has_entry_named(temp.path(), "uv.lock"));
+    }
+
+    #[test]
     fn display_path_strips_windows_verbatim_disk_prefix() {
         assert_eq!(
             display_path(Path::new(r"\\?\C:\work\demo")),
@@ -128,6 +231,31 @@ mod tests {
     fn rel_to_root_falls_back_to_full_path_outside_root() {
         let root = Path::new("/proj");
         assert_eq!(rel_to_root(root, Path::new("/other/x.txt")), "/other/x.txt");
+    }
+
+    #[test]
+    fn source_suffixes_strip_in_any_case() {
+        assert_eq!(strip_py_suffix("pkg/helper.PY"), Some("pkg/helper"));
+        assert_eq!(strip_py_suffix("pkg/helper.Py"), Some("pkg/helper"));
+        assert_eq!(strip_py_suffix("pkg/helper.pyi"), None);
+        assert_eq!(strip_source_suffix("pkg/stub.PYI"), Some("pkg/stub"));
+        assert_eq!(strip_source_suffix("pkg/helper.py"), Some("pkg/helper"));
+        assert_eq!(strip_source_suffix("py"), None);
+        assert_eq!(strip_source_suffix("é.txt"), None);
+    }
+
+    #[test]
+    fn lowercase_extension_touches_only_the_extension() {
+        assert_eq!(lowercase_extension("Pkg/Helper.PY"), "Pkg/Helper.py");
+        assert!(matches!(
+            lowercase_extension("pkg/helper.py"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            lowercase_extension("Pkg.D/README"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(lowercase_extension("Makefile"), Cow::Borrowed(_)));
     }
 
     fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
