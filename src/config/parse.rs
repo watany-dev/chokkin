@@ -56,8 +56,24 @@ impl UvMembers {
 }
 
 /// Read and parse a standalone `.chokkin.toml` or `chokkin.toml` file.
+///
+/// These files hold the `[tool.chokkin]` table's contents at the top level; a
+/// `[tool.chokkin]` header copied from `pyproject.toml` is rejected with a hint
+/// naming the standalone form.
 pub(super) fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError> {
-    let partial = parse_toml::<PartialConfig>(path)?;
+    let partial = parse_toml::<PartialConfig>(path).map_err(|error| match error {
+        ConfigError::InvalidToml { path, message } if has_top_level_tool(&path) => {
+            ConfigError::InvalidToml {
+                message: format!(
+                    "{message}\nhint: standalone config files take the `[tool.chokkin]` \
+                     keys at the top level; write `[severity]` instead of \
+                     `[tool.chokkin.severity]` and `entry = [...]` without a header"
+                ),
+                path,
+            }
+        },
+        error => error,
+    })?;
     validate(path, &partial)?;
     Ok(partial)
 }
@@ -110,6 +126,14 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
         uv_workspace,
         uv_path_sources,
     })
+}
+
+/// Whether `path` parses as TOML with a top-level `tool` key.
+fn has_top_level_tool(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| contents.parse::<toml::Table>().ok())
+        .is_some_and(|table| table.contains_key("tool"))
 }
 
 fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
@@ -314,6 +338,28 @@ mod tests {
                 "My_Lib".to_owned(),
                 vec!["lib".to_owned(), "lib-win".to_owned()]
             )])
+        );
+    }
+
+    #[test]
+    fn standalone_tool_header_hints_top_level_form() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("chokkin.toml");
+        fs::write(&path, "[tool.chokkin.severity]\nCHK001 = \"error\"\n").expect("write");
+        let err = parse_standalone_config(&path).expect_err("tool header");
+        assert!(
+            matches!(err, ConfigError::InvalidToml { ref message, .. } if message.contains("hint: standalone")),
+            "{err}"
+        );
+
+        fs::write(&path, "[severity]\nCHK001 = \"error\"\n").expect("write");
+        parse_standalone_config(&path).expect("top-level form");
+
+        fs::write(&path, "bogus = 1\n").expect("write");
+        let err = parse_standalone_config(&path).expect_err("unknown key");
+        assert!(
+            matches!(err, ConfigError::InvalidToml { ref message, .. } if !message.contains("hint:")),
+            "{err}"
         );
     }
 
