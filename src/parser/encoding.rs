@@ -57,9 +57,9 @@ enum Codec {
     /// reads cp949), and maps them to the same characters but for a few
     /// symbols (`〜` U+301C is `～` U+FF5E, for example), which only change
     /// strings and comments; GB2312's `0xA1A4` middle dot is the one that can
-    /// sit in a name, as `·` instead of `・`. Bytes WHATWG does not map, such as cp932's
-    /// `0xA0`, make the file `None`. The JIS X 0213 and ISO-2022 codecs map
-    /// bytes differently, so they stay unsupported.
+    /// sit in a name, as `·` instead of `・`. Bytes WHATWG does not map, such
+    /// as cp932's `0xA0`, make the file `None`. The JIS X 0213 and ISO-2022
+    /// codecs map bytes differently, so they stay unsupported.
     Multibyte(&'static encoding_rs::Encoding),
     /// Python's `big5` and `cp950` put the ETEN kana at `0xC6A1..=0xC7FC`,
     /// where WHATWG (HKSCS) has other characters, letters among them: a

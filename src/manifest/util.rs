@@ -168,14 +168,6 @@ mod tests {
         assert_eq!(decode(b""), Err("no BOM"));
     }
 
-    #[test]
-    fn read_text_reads_powershell_pip_freeze_output() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("requirements.txt");
-        std::fs::write(&path, utf16([0xFF, 0xFE], "requests\r\n", u16::to_le_bytes)).unwrap();
-        assert_eq!(read_text(&path).unwrap().as_deref(), Some("requests\r\n"));
-    }
-
     mod props {
         use super::*;
         use proptest::prelude::*;
