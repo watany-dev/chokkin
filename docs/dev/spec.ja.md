@@ -84,8 +84,8 @@ uvx chokkin --production
 uvx chokkin --strict
 uvx chokkin --fix
 uvx chokkin --fix --allow-remove-files
-uvx chokkin --include dependencies,files
-uvx chokkin --exclude exports
+uvx chokkin --include CHK002,CHK003
+uvx chokkin --exclude CHK006
 uvx chokkin --reporter json
 uvx chokkin --reporter github
 uvx chokkin --reporter sarif
