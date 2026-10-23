@@ -5091,6 +5091,34 @@ fn binary_member_build_script_outside_its_tree_is_not_a_skipped_entry() {
     );
 }
 
+/// Config paths and globs written with a leading `./` or `\\` separators
+/// match the discovered root-relative paths, like `--trace` targets (#1168).
+#[test]
+fn binary_dot_slash_and_backslash_config_paths_match_discovered_files() {
+    for (entry, exclude) in [
+        ("./src/app.py", "./legacy/**"),
+        (r"src\app.py", "legacy/**"),
+    ] {
+        let pyproject = format!(
+            "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = ['{entry}']\nexclude = ['{exclude}']\n"
+        );
+        let project = write_project(&[
+            ("pyproject.toml", pyproject.as_str()),
+            ("src/app.py", "import helper\n"),
+            ("src/helper.py", "# helper\n"),
+            ("legacy/old.py", "# old\n"),
+        ]);
+        assert_eq!(issue_levels(project.path()), [], "{entry} / {exclude}");
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--no-cache")
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(!stderr.contains("skipped entry"), "{stderr}");
+    }
+}
+
 /// A member's manifest entry the root excludes is skipped like a root one:
 /// its imports are unknown, so what it may use falls to likely (#934).
 #[test]
