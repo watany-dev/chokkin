@@ -115,6 +115,52 @@ fn binary_wheel_smoke_fixture_matches_expected_report() {
         .expect("expected report matches the published schema");
 }
 
+/// The sample report in README.md, README.ja.md and spec §2 is this
+/// fixture's output, so the docs cannot drift from the binary (#1161). The
+/// READMEs also name the current version; the spec's version line is left
+/// alone.
+#[test]
+fn binary_readme_example_matches_docs() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let project = temp.path().join("acme-api");
+    copy_dir_recursive(&fixture_path(&["readme_example"]), &project).expect("copy fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "."])
+        .current_dir(&project)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let report = String::from_utf8(output.stdout).expect("utf8");
+    let (version_line, body) = report.split_once('\n').expect("version line");
+    assert_eq!(version_line, concat!("chokkin ", env!("CARGO_PKG_VERSION")));
+
+    for (doc, heading, check_version) in [
+        ("README.md", "## What you get", true),
+        ("README.ja.md", "## 何が出るか", true),
+        ("docs/dev/spec.ja.md", "出力例。", false),
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(doc);
+        let text = fs::read_to_string(&path).expect("read doc");
+        let after_heading = text.split_once(heading).expect("heading").1;
+        let block = after_heading
+            .split_once("```text\n")
+            .and_then(|(_, rest)| rest.split_once("```\n"))
+            .expect("text block")
+            .0;
+        let (doc_version_line, doc_body) = block.split_once('\n').expect("doc version line");
+        if check_version {
+            assert_eq!(doc_version_line, version_line, "version line in {doc}");
+        }
+        assert_eq!(
+            doc_body, body,
+            "update the sample report in {doc} to this output:\n{report}"
+        );
+    }
+}
+
 #[test]
 fn binary_github_reporter_outputs_annotations() {
     let root = fixture_path(&["deps", "unused_boto3"]);
