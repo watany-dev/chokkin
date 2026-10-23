@@ -165,6 +165,14 @@ uvx chokkin --explain CHK002:boto3        # why is boto3 unused? which imports w
 uvx chokkin --trace src/acme/legacy.py    # how (or why not) is this file reached?
 ```
 
+A selector is `CODE:KEY`. The key is a distribution name (compared after
+PEP 503 normalization, so `Boto3` and `python_dotenv` work), a file path, a
+`module:symbol` or symbol name, or an import's module; `CHK003` and `CHK004`
+also take the distribution name their message shows (`CHK003:pyyaml` as well
+as `CHK003:yaml`). A malformed selector or unknown rule code exits 2; a
+selector that matches no reported issue prints a note on stderr and leaves the
+exit code to the findings.
+
 `--trace` prints the import chain from an entry root for reachable files, and
 the reason, entry roots, and incoming imports for unreachable ones. This is
 the intended path for reporting false positives.

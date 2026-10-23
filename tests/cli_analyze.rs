@@ -172,6 +172,59 @@ fn binary_explain_prints_to_stderr() {
     assert!(stderr.contains("boto3"));
 }
 
+/// Distribution keys are PEP 503-normalized, and CHK003 is selected by the
+/// distribution its message names (#1159).
+#[test]
+fn binary_explain_normalizes_distribution_selectors() {
+    for (fixture, selector, needle) in [
+        ("unused_boto3", "CHK002:Boto3", "boto3"),
+        ("missing_yaml", "CHK003:yaml", "pyyaml"),
+        ("missing_yaml", "CHK003:PyYAML", "pyyaml"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", selector])
+            .arg(fixture_path(&["deps", fixture]))
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains(needle) && !stderr.contains("no matching issue"),
+            "{selector}: {stderr}"
+        );
+    }
+}
+
+/// A malformed selector is a usage error; a well-formed one that matches
+/// nothing leaves the exit code to the findings (#1159).
+#[test]
+fn binary_explain_exit_codes() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    let run = |selector: &str| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", selector])
+            .arg(&root)
+            .output()
+            .expect("run chokkin")
+    };
+    for selector in ["boto3", "CHK999:boto3", "CHK002:"] {
+        assert_eq!(
+            run(selector).status.code(),
+            Some(ExitStatus::UsageError.code().into()),
+            "{selector}"
+        );
+    }
+    let output = run("CHK002:missing");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("no matching issue for `CHK002:missing`"),
+        "{stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+}
+
 #[test]
 fn binary_dry_run_without_fix_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
