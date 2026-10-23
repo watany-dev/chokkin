@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Python 3.15's standard library (`profiling` from PEP 799, ...) is in the
+  stdlib table, so `import profiling` is no longer CHK010; `sre_compile` /
+  `sre_constants` / `sre_parse`, which 3.15 removed, count as stdlib only up
+  to 3.14 (#1156).
 - The module a loader API names in its first string argument is a dynamic
   import: `import_string`, `symbol_by_name`, `import_from_string`,
   `load_object`, and cyclopts `command("pkg.mod:app")`, plus the functions
