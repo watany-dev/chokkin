@@ -348,7 +348,6 @@ fn literal_braces(line: &str) -> Cow<'_, str> {
     }
     let mut out = String::with_capacity(line.len() + 2);
     let mut chars = line.chars();
-    let mut unclosed_class = false;
     while let Some(c) = chars.next() {
         match c {
             '\\' => {
@@ -359,16 +358,13 @@ fn literal_braces(line: &str) -> Cow<'_, str> {
                 out.push('\\');
                 out.push(c);
             },
-            '[' if !unclosed_class => {
+            '[' => {
                 out.push(c);
-                match class_len(chars.as_str()) {
-                    Some(len) => {
-                        out.push_str(&chars.as_str()[..len]);
-                        chars = chars.as_str()[len..].chars();
-                    },
-                    // `ignore` allows unclosed classes: this `[` and every
-                    // later one is a literal.
-                    None => unclosed_class = true,
+                // `ignore` allows unclosed classes: that `[` is a literal,
+                // and so is every later one, as no `]` follows them either.
+                if let Some(close) = class_close(chars.as_str()) {
+                    out.push_str(&chars.as_str()[..close]);
+                    chars = chars.as_str()[close..].chars();
                 }
             },
             c => out.push(c),
@@ -377,15 +373,15 @@ fn literal_braces(line: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-/// Byte length of a character class body after its `[`, through the closing
-/// `]`, as `globset`'s `parse_class` reads it: an optional `!` or `^`, a
-/// leading `]` taken literally, no escapes. `None` when it never closes.
-fn class_len(rest: &str) -> Option<usize> {
-    let body = rest.strip_prefix(['!', '^']).unwrap_or(rest);
-    let skipped = rest.len() - body.len();
+/// Byte offset in `rest`, the text after a class's `[`, of the `]` that
+/// closes it, as `globset`'s `parse_class` reads it: an optional `!` or `^`,
+/// a leading `]` taken literally, no escapes. `None` when it never closes.
+fn class_close(rest: &str) -> Option<usize> {
+    let skipped = usize::from(rest.starts_with(['!', '^']));
+    let body = &rest[skipped..];
     let first = body.strip_prefix(']').map_or(0, |_| 1);
     let close = body[first..].find(']')?;
-    Some(skipped + first + close + 1)
+    Some(skipped + first + close)
 }
 
 /// `GitignoreBuilder::add` for `path`, with each line through
@@ -635,10 +631,33 @@ mod tests {
             ("[]{]}", "[]{]\\}"),
             ("[{x", "[\\{x"),
             ("[{x[}]", "[{x[}]"),
+            ("[!]{]x}", "[!]{]x\\}"),
+            ("[!{]}", "[!{]\\}"),
+            ("[x{", "[x\\{"),
             ("{\\", "\\{\\"),
         ] {
             assert_eq!(literal_braces(line), expected, "line {line}");
         }
+    }
+
+    /// `add_file` is `GitignoreBuilder::add`: no error for a clean file, a
+    /// single error unwrapped, the BOM stripped from the first line only.
+    #[test]
+    fn add_file_matches_gitignore_builder_add() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join(".gitignore");
+        fs::write(&path, "\u{feff}a\n\u{feff}b\n{c}\n").expect("write");
+        let mut builder = GitignoreBuilder::new(temp.path());
+        assert!(add_file(&mut builder, &path).is_none());
+        let gitignore = builder.build().expect("build");
+        assert!(gitignore.matched("a", false).is_ignore());
+        assert!(gitignore.matched("\u{feff}b", false).is_ignore());
+        assert!(gitignore.matched("{c}", false).is_ignore());
+        assert!(gitignore.matched("b", false).is_none());
+
+        fs::write(&path, "x\\\n").expect("write");
+        let error = add_file(&mut GitignoreBuilder::new(temp.path()), &path).expect("error");
+        assert!(matches!(error, ignore::Error::WithPath { .. }), "{error:?}");
     }
 
     /// Escaped braces leave no alternation for `globset` to recurse into.
