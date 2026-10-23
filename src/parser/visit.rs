@@ -7,7 +7,7 @@ use rustc_hash::FxHashSet;
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
-    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom,
+    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -813,6 +813,21 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn line_number<R: Ranged>(&self, node: &R) -> u32 {
         self.lines.line(node.start())
     }
+
+    /// Kept out of `visit_stmt` so its frame, paid once per nesting level,
+    /// does not grow (#1173).
+    fn visit_match(&mut self, match_stmt: &'ast StmtMatch) {
+        self.visit_expr(&match_stmt.subject);
+        for case in &match_stmt.cases {
+            // `case m.CONST:` and `case Point(x=0):` read the names in their
+            // value and class patterns (#1141).
+            self.visit_pattern(&case.pattern);
+            if let Some(guard) = &case.guard {
+                self.visit_expr(guard);
+            }
+            self.visit_body(&case.body);
+        }
+    }
 }
 
 impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
@@ -1024,15 +1039,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     self.caught_depth = self.caught_depth.saturating_sub(1);
                 }
             },
-            Stmt::Match(match_stmt) => {
-                self.visit_expr(&match_stmt.subject);
-                for case in &match_stmt.cases {
-                    if let Some(guard) = &case.guard {
-                        self.visit_expr(guard);
-                    }
-                    self.visit_body(&case.body);
-                }
-            },
+            Stmt::Match(match_stmt) => self.visit_match(match_stmt),
             Stmt::For(for_stmt) => {
                 self.visit_expr(&for_stmt.iter);
                 self.visit_body(&for_stmt.body);
@@ -1599,6 +1606,21 @@ def later():
     }
 
     #[test]
+    fn marks_symbols_read_in_match_patterns() {
+        // Capture names (`rest`, `y`) bind; only value and class patterns read (#1141).
+        let parsed = visit_source(
+            "class Point:\n    pass\n\nColor = 1\nrest = 1\ny = 1\n\ndef f(v):\n    match v:\n        case Point(x=0):\n            pass\n        case [*rest]:\n            pass\n        case Color.RED as y:\n            pass\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.used_in_module)
+            .map(|symbol| symbol.name.as_str())
+            .collect();
+        assert_eq!(used, ["Point", "Color"]);
+    }
+
+    #[test]
     fn marks_symbols_read_in_string_annotations() {
         let parsed = visit_source(
             "T = TypeVar(\"T\")\nP = 1\nSelf = 1\nfast = 1\n\ndef f(x: \"list[T]\") -> list[\"P\"]:\n    y: \"'Self'\" = 1\n\nz: Literal[\"fast\"]\nv: typing.Literal[\"fast\"]\nw: Annotated[\"T\", Field(alias=\"model\")]\nmodel = 1\n",
@@ -1975,6 +1997,13 @@ raise utils.H from utils.I
 assert utils.J, utils.K
 del utils.L
 value: utils.M = 1
+match value:
+    case utils.N | [utils.O]:
+        pass
+    case {utils.P: _}:
+        pass
+    case utils.Q(x=utils.R):
+        pass
 ";
         let parsed = visit_source(source);
         for (name, line) in [
@@ -1991,6 +2020,11 @@ value: utils.M = 1
             ("K", 18),
             ("L", 19),
             ("M", 20),
+            ("N", 22),
+            ("O", 22),
+            ("P", 24),
+            ("Q", 26),
+            ("R", 26),
         ] {
             assert_eq!(
                 attribute_lines(&parsed, name),
