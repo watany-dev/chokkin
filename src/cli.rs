@@ -100,7 +100,14 @@ pub struct CliArgs {
     pub no_auto_workspace: bool,
 
     /// Run probe mode (pipeline steps 1–4 only).
-    #[arg(long)]
+    ///
+    /// Probe stops before issues exist, so flags that filter, report, fix, or
+    /// baseline issues would be ignored; reject them instead (#1128).
+    #[arg(long, conflicts_with_all = [
+        "fix", "dry_run", "allow_remove_files", "add_missing", "strict", "no_exit_code",
+        "include", "exclude", "reporter", "confidence", "baseline", "update_baseline",
+        "explain", "trace",
+    ])]
     pub probe: bool,
 
     /// Append a starter `[tool.chokkin]` config to pyproject.toml.
@@ -239,6 +246,53 @@ mod tests {
         let err = parse_cli_args(vec!["--init".to_owned(), "--probe".to_owned()])
             .expect_err("invalid combination");
         assert!(err.contains("--init"));
+    }
+
+    #[test]
+    fn rejects_probe_with_issue_flags() {
+        let cases: &[&[&str]] = &[
+            &["--fix"],
+            &["--fix", "--dry-run"],
+            &["--fix", "--allow-remove-files"],
+            &["--fix", "--add-missing"],
+            &["--strict"],
+            &["--no-exit-code"],
+            &["--include", "CHK001"],
+            &["--exclude", "CHK001"],
+            &["--reporter", "json"],
+            &["--confidence", "certain"],
+            &["--baseline", "b.json"],
+            &["--baseline", "b.json", "--update-baseline"],
+            &["--explain", "CHK002:boto3"],
+            &["--trace", "src/a.py"],
+        ];
+        for flags in cases {
+            let args = std::iter::once("--probe")
+                .chain(flags.iter().copied())
+                .map(str::to_owned)
+                .collect();
+            let err = parse_cli_args(args).expect_err("invalid combination");
+            assert!(err.contains("--probe"), "{flags:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn accepts_probe_with_discovery_flags() {
+        let args = parse_cli_args(
+            [
+                "--probe",
+                "--production",
+                "--no-cache",
+                "--no-auto-workspace",
+                "--project-root",
+                "root",
+                "sub",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
+        )
+        .expect("parse");
+        assert!(args.probe && args.production && args.no_auto_workspace);
     }
 
     #[test]
