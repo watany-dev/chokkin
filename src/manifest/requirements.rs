@@ -161,7 +161,7 @@ fn parse_requirements_file_path(
     };
     ctx.include_stack.push(canonical);
 
-    for line in join_continued_lines(contents.lines()) {
+    for line in join_continued_lines(split_lines_inclusive(&contents).map(strip_line_break)) {
         parse_requirements_line(&mut ctx, &rel, &line.text, line.first)?;
     }
 
@@ -470,6 +470,55 @@ pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
     }
     let (requirement, _) = split_pip_marker(requirement)?;
     requirement_name(requirement)
+}
+
+/// pip splits a requirements file with `str.splitlines()` (#1154): every
+/// Python line boundary ends a line, a lone `\r` among them. Each line keeps
+/// its terminator, so the pieces concatenate back to `contents`.
+pub(crate) fn split_lines_inclusive(contents: &str) -> impl Iterator<Item = &str> {
+    let mut rest = contents;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest
+            .char_indices()
+            .find(|&(_, c)| is_line_boundary(c))
+            .map_or(rest.len(), |(index, c)| {
+                let after = index + c.len_utf8();
+                if c == '\r' && rest[after..].starts_with('\n') {
+                    after + 1
+                } else {
+                    after
+                }
+            });
+        let (line, tail) = rest.split_at(end);
+        rest = tail;
+        Some(line)
+    })
+}
+
+/// A line from [`split_lines_inclusive`] without its terminator.
+pub(crate) fn strip_line_break(line: &str) -> &str {
+    line.strip_suffix("\r\n")
+        .or_else(|| line.strip_suffix(is_line_boundary))
+        .unwrap_or(line)
+}
+
+/// The characters Python's `str.splitlines()` splits on.
+const fn is_line_boundary(c: char) -> bool {
+    matches!(
+        c,
+        '\n' | '\r'
+            | '\u{b}'
+            | '\u{c}'
+            | '\u{1c}'
+            | '\u{1d}'
+            | '\u{1e}'
+            | '\u{85}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
 }
 
 /// One line of a requirements file after pip's `join_lines`.
@@ -871,6 +920,29 @@ mod tests {
             requirements_line_distribution("git+https://h/r.git#egg=acme\u{1f}").as_deref(),
             Some("acme")
         );
+    }
+
+    #[test]
+    fn split_lines_inclusive_matches_python_splitlines() {
+        let contents = "a\rb\r\nc\nd\u{b}e\u{2028}f\r\rg";
+        let lines: Vec<&str> = split_lines_inclusive(contents).collect();
+        assert_eq!(
+            lines,
+            [
+                "a\r",
+                "b\r\n",
+                "c\n",
+                "d\u{b}",
+                "e\u{2028}",
+                "f\r",
+                "\r",
+                "g"
+            ]
+        );
+        assert_eq!(lines.concat(), contents);
+        let stripped: Vec<&str> = lines.into_iter().map(strip_line_break).collect();
+        assert_eq!(stripped, ["a", "b", "c", "d", "e", "f", "", "g"]);
+        assert_eq!(split_lines_inclusive("").count(), 0);
     }
 
     #[test]
