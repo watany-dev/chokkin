@@ -44,9 +44,9 @@ Unused files  2
   src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
 Unused dependencies  3
-  boto3                    pyproject.toml         declared in project.dependencies[1], no reachable import, config, or binary usage found
-  python-dotenv            pyproject.toml         declared in project.dependencies[3], no reachable import, config, or binary usage found
-  rich                     pyproject.toml         declared in project.dependencies[2], no reachable import, config, or binary usage found
+  boto3                    pyproject.toml:6       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
+  python-dotenv            pyproject.toml:8       python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
+  rich                     pyproject.toml:7       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
 
 Missing dependencies  1
   src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
@@ -206,7 +206,12 @@ and reports anything it skipped on stderr.
 - `--no-auto-workspace` stops nested `pyproject.toml` files from becoming
   workspace members or being skipped as separate projects.
 - `--init` appends a starter `[tool.chokkin]` reflecting what auto-discovery
-  found.
+  found. It only appends to an existing `pyproject.toml` in the project root
+  and never creates one, so a project without `pyproject.toml` (for example
+  one with only `requirements.txt`) exits 2. It also exits 2 without writing
+  when config already exists (`[tool.chokkin]`, `chokkin.toml`, or
+  `.chokkin.toml`), or when `pyproject.toml` is a symlink that resolves
+  outside the project root.
 
 Exit codes are fixed for CI:
 
@@ -376,8 +381,13 @@ The root `.chokkin/` directory holds analyzer data and is always excluded.
 
 `mode = "auto"` picks one of:
 
-- **app** when there is a clear entry (`console_scripts`, `manage.py`,
-  `asgi.py`, `wsgi.py`, `app.py`). Unused files are reported aggressively.
+- **app** when there is a clear entry: `gui_scripts`, a `console_scripts`
+  entry that points outside the project's own package, or a runtime
+  `manage.py`, `asgi.py`, `wsgi.py`, or `app.py` outside the package. Unused
+  files are reported aggressively. A console script that points into the
+  project's own package (`acme = "acme.cli:main"`) is a library's CLI and does
+  not make it an app, except in a workspace member. Set `mode = "app"` or declare `entry` to
+  get strict unused-file reports for a library that ships a CLI.
 - **library** when there is a `[project] name` with a package and no clear
   entry. Public modules may be imported by users you cannot see, so unused
   files and exports are reported at low confidence or as info. Declare
