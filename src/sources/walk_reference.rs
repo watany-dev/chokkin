@@ -12,10 +12,9 @@ use crate::path_util::normalize_rel_path;
 
 use super::context::assign_file_context;
 use super::error::SourcesError;
-use super::types::{DiscoveredFile, FileContext};
+use super::types::{DiscoveredFile, FileContext, FileKind};
 use super::walk::{
-    NonUtf8Paths, SkippedSymlinks, nested_gitignore_unreadable, push_walk_error, should_prune_dir,
-    source_kind,
+    SkippedSymlinks, nested_gitignore_unreadable, push_walk_error, should_prune_dir,
 };
 use super::warnings::SourcesWarning;
 
@@ -121,6 +120,8 @@ fn configure_walker(
 }
 
 /// Collect Python-related files under `root` with `ignore`'s own walker.
+/// It does not skip non-UTF-8 paths as `collect_files` does (#1146): the
+/// trees it is compared on have ASCII names.
 pub(super) fn collect_files_reference(
     options: &ReferenceOptions<'_>,
 ) -> Result<(Vec<DiscoveredFile>, Vec<SourcesWarning>), SourcesError> {
@@ -141,7 +142,6 @@ pub(super) fn collect_files_reference(
     let mut files = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
-    let mut non_utf8 = NonUtf8Paths::default();
     let gitignored = |rel: &Path, is_dir| {
         gitignore.is_some_and(|ignore| ignore.matched_path_or_any_parents(rel, is_dir).is_ignore())
     };
@@ -177,8 +177,11 @@ pub(super) fn collect_files_reference(
             continue;
         }
 
-        let Some(kind) = source_kind(path) else {
-            continue;
+        let kind = match path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) if ext.eq_ignore_ascii_case("py") => FileKind::Python,
+            Some(ext) if ext.eq_ignore_ascii_case("pyi") => FileKind::Stub,
+            Some(ext) if ext.eq_ignore_ascii_case("ipynb") => FileKind::Notebook,
+            _ => continue,
         };
 
         let Ok(rel) = path.strip_prefix(&root) else {
@@ -190,7 +193,7 @@ pub(super) fn collect_files_reference(
             continue;
         }
 
-        if gitignored(rel, false) || non_utf8.skips(rel, &rel_str) {
+        if gitignored(rel, false) {
             continue;
         }
 
@@ -211,7 +214,6 @@ pub(super) fn collect_files_reference(
     }
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    non_utf8.finish(&mut warnings);
     symlinks.finish(&mut warnings);
     Ok((files, warnings))
 }

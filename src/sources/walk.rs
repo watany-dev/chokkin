@@ -312,12 +312,12 @@ impl SkippedSymlinks {
 
 /// Source files whose paths are not UTF-8 (#1146).
 #[derive(Default)]
-pub(super) struct NonUtf8Paths(Vec<SourcesWarning>);
+struct NonUtf8Paths(Vec<SourcesWarning>);
 
 impl NonUtf8Paths {
     /// Record `rel` if it is not UTF-8. Its lossy `rel_str` names no file on
     /// disk, and Python cannot import the module, so it is skipped out loud.
-    pub(super) fn skips(&mut self, rel: &Path, rel_str: &str) -> bool {
+    fn skips(&mut self, rel: &Path, rel_str: &str) -> bool {
         if rel.to_str().is_some() {
             return false;
         }
@@ -328,7 +328,7 @@ impl NonUtf8Paths {
     }
 
     /// Append the paths in path order, not the walk's directory order.
-    pub(super) fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
+    fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
         self.0.sort_by_cached_key(ToString::to_string);
         warnings.append(&mut self.0);
     }
@@ -440,7 +440,7 @@ fn nested_dockerfile(
 
 /// The source kind `path`'s extension names, or `None` for a file the
 /// walk does not collect.
-pub(super) fn source_kind(path: &Path) -> Option<FileKind> {
+fn source_kind(path: &Path) -> Option<FileKind> {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("py") => Some(FileKind::Python),
         Some(ext) if ext.eq_ignore_ascii_case("pyi") => Some(FileKind::Stub),
