@@ -13,6 +13,12 @@
       ]
     },
     {
+      "distribution": "pillow-simd",
+      "imports": [
+        "PIL"
+      ]
+    },
+    {
       "distribution": "python-dotenv",
       "imports": [
         "dotenv"
@@ -32,6 +38,24 @@
     },
     {
       "distribution": "opencv-python",
+      "imports": [
+        "cv2"
+      ]
+    },
+    {
+      "distribution": "opencv-python-headless",
+      "imports": [
+        "cv2"
+      ]
+    },
+    {
+      "distribution": "opencv-contrib-python",
+      "imports": [
+        "cv2"
+      ]
+    },
+    {
+      "distribution": "opencv-contrib-python-headless",
       "imports": [
         "cv2"
       ]
@@ -78,6 +102,12 @@
       ]
     },
     {
+      "distribution": "msgpack-python",
+      "imports": [
+        "msgpack"
+      ]
+    },
+    {
       "distribution": "mysqlclient",
       "imports": [
         "MySQLdb"
@@ -85,6 +115,12 @@
     },
     {
       "distribution": "psycopg2-binary",
+      "imports": [
+        "psycopg2"
+      ]
+    },
+    {
+      "distribution": "psycopg2",
       "imports": [
         "psycopg2"
       ]

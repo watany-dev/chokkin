@@ -81,6 +81,17 @@ fn parse_python_source(
     target: &TargetVersion,
 ) -> ParsedModule {
     let lines = LineIndex::new(source);
+    // The decoder already dropped the BOM; the parser would skip a second one
+    // as a BOM too, while Python rejects it (#1160).
+    if source.starts_with('\u{feff}') {
+        let mut parsed = skipped_module(path);
+        parsed.diagnostics.push(ParseDiagnostic {
+            line: 1,
+            message: "invalid non-printable character U+FEFF".to_owned(),
+            severity: ParseSeverity::Error,
+        });
+        return parsed;
+    }
     let mut parsed = match parse_walkable_module(source) {
         Ok(module) => {
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &lines);
@@ -560,7 +571,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v48".to_owned(),
+        unit_version: "parse-v51".to_owned(),
     }
 }
 
@@ -772,6 +783,32 @@ mod tests {
             .map(|diagnostic| diagnostic.line)
             .collect();
         assert_eq!(errors, [2]);
+    }
+
+    /// Python reads only one BOM; a second is an invalid character (#1160).
+    #[test]
+    fn second_bom_is_a_syntax_error() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(temp.path(), "app.py", "\u{feff}\u{feff}import os\n");
+        let parsed = parse_file(
+            &root,
+            "app.py",
+            &empty_layout(),
+            FileContext::Runtime,
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+
+        assert!(parsed.skipped);
+        assert!(parsed.imports.is_empty());
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .map(|diagnostic| (diagnostic.line, diagnostic.severity))
+                .collect::<Vec<_>>(),
+            [(1, ParseSeverity::Error)]
+        );
     }
 
     #[test]

@@ -43,7 +43,20 @@ where
     I: Fn() -> S + Sync,
     F: Fn(&mut S, &T) -> R + Sync,
 {
-    let batches = fold_per_worker(
+    map_on(worker_count(items.len()), items, init, work)
+}
+
+/// [`map_in_order_with`] over `workers` threads.
+fn map_on<T, S, R, I, F>(workers: usize, items: &[T], init: I, work: F) -> Vec<R>
+where
+    T: Sync,
+    S: Send,
+    R: Send,
+    I: Fn() -> S + Sync,
+    F: Fn(&mut S, &T) -> R + Sync,
+{
+    let batches = fold_on(
+        workers,
         items,
         || (init(), Vec::new()),
         |(state, done), index, item| done.push((index, work(state, item))),
@@ -66,8 +79,17 @@ where
     I: Fn() -> S + Sync,
     F: Fn(&mut S, usize, &T) + Sync,
 {
-    let workers = worker_count(items.len());
+    fold_on(worker_count(items.len()), items, init, work)
+}
 
+/// [`fold_per_worker`] over `workers` threads, the calling one included.
+fn fold_on<T, S, I, F>(workers: usize, items: &[T], init: I, work: F) -> Vec<S>
+where
+    T: Sync,
+    S: Send,
+    I: Fn() -> S + Sync,
+    F: Fn(&mut S, usize, &T) + Sync,
+{
     // A shared cursor rather than fixed chunks: file sizes vary by an order of
     // magnitude, so static splits leave workers idle behind one large file.
     let cursor = AtomicUsize::new(0);
@@ -187,5 +209,66 @@ mod tests {
         let mut seen: Vec<usize> = states.into_iter().flatten().collect();
         seen.sort_unstable();
         assert_eq!(seen, items);
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Lengths around `MIN_ITEMS_PER_WORKER` and its multiples, where
+        /// the worker count changes.
+        fn length() -> impl Strategy<Value = usize> {
+            prop_oneof![0usize..8, 28usize..37, 60usize..69, 92usize..101]
+        }
+
+        proptest! {
+            /// The order-keeping map equals the sequential one on any number
+            /// of workers, even when each worker keeps a cache that changes
+            /// nothing but how a result is reached.
+            #[test]
+            fn map_matches_the_sequential_map(len in length(), workers in 1usize..9, salt in any::<u64>()) {
+                let items: Vec<u64> = (0..len as u64).map(|item| item ^ salt).collect();
+                let work = |item: &u64| item.wrapping_mul(31).rotate_left(7);
+                let sequential: Vec<u64> = items.iter().map(work).collect();
+                prop_assert_eq!(map_on(workers, &items, || (), |(), item| work(item)), sequential.as_slice());
+                let cached = map_on(
+                    workers,
+                    &items,
+                    std::collections::HashMap::new,
+                    |cache: &mut std::collections::HashMap<u64, u64>, item| {
+                        *cache.entry(*item).or_insert_with(|| work(item))
+                    },
+                );
+                prop_assert_eq!(cached, sequential);
+            }
+
+            /// Every item is folded exactly once, by one worker, in index
+            /// order within that worker.
+            #[test]
+            fn fold_visits_each_item_once_in_order(len in length(), workers in 1usize..9) {
+                let items: Vec<usize> = (0..len).collect();
+                let states = fold_on(workers, &items, Vec::new, |seen: &mut Vec<usize>, index, &item| {
+                    assert_eq!(index, item);
+                    seen.push(item);
+                });
+                prop_assert!(states.len() <= workers.max(1));
+                for seen in &states {
+                    prop_assert!(seen.windows(2).all(|pair| pair[0] < pair[1]), "{:?}", seen);
+                }
+                let mut all: Vec<usize> = states.into_iter().flatten().collect();
+                all.sort_unstable();
+                prop_assert_eq!(all, items);
+            }
+
+            /// One worker up to `MIN_ITEMS_PER_WORKER` items, then one more
+            /// per such batch, up to the CPUs, never fewer for more items.
+            #[test]
+            fn worker_count_grows_with_the_batches(len in 0usize..10_000) {
+                let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+                let workers = worker_count(len);
+                prop_assert_eq!(workers, available.min(len.div_ceil(32)).max(1));
+                prop_assert!(worker_count(len + 1) >= workers);
+            }
+        }
     }
 }

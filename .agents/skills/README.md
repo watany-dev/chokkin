@@ -37,3 +37,12 @@ when you want an audit. This skill shares the upstream audit instructions throug
 `.agents/skills/security-audit -> ../../.claude/skills/security-audit`.
 See the [installation notes](../../.claude/skills/security-audit/INSTALLATION.ja.md)
 for the pinned source commit, requirements, validation, and update instructions.
+
+## Formal spec extraction
+
+Invoke `$formal-spec-extraction` in Codex or `/formal-spec-extraction` in Claude
+Code to extract the de-facto spec from implementation code and hunt bugs with
+Z3 / TLA+. The skill is an English translation of
+[mizchi's playbook](https://gist.github.com/mizchi/db7817e6fc077d567c41cd9d41bb1c53)
+and is shared through
+`.agents/skills/formal-spec-extraction -> ../../.claude/skills/formal-spec-extraction`.

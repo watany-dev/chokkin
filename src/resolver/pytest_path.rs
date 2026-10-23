@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::parser::ParseSummary;
+use crate::path_util::{lowercase_extension, strip_source_suffix};
 use crate::plugins::{
     PytestImportSettings, SysPathImport, SysPathImporter, pytest_import_settings,
 };
@@ -34,7 +35,9 @@ use super::types::import_root;
 /// Extra import directories that apply to test-context files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PytestImportPaths {
-    files: HashSet<String>,
+    /// Each Python or stub file by its path with the extension in lowercase,
+    /// as Python on Windows finds `helper.PY` for `import helper` (#1170).
+    files: HashMap<String, String>,
     /// Non-test files run as scripts, with their own directory on `sys.path`.
     scripts: HashSet<String>,
     /// Every directory holding a discovered file, at any depth.
@@ -109,7 +112,7 @@ impl PytestImportPaths {
         settings: &PytestImportSettings,
         members: &[(String, PytestImportSettings)],
     ) -> Self {
-        let mut files = HashSet::new();
+        let mut files = HashMap::new();
         let mut dirs = HashSet::new();
         for file in &sources.files {
             if !matches!(file.kind, FileKind::Python | FileKind::Stub) {
@@ -119,7 +122,10 @@ impl PytestImportPaths {
             while !dir.is_empty() && dirs.insert(dir.to_owned()) {
                 dir = parent_dir(dir);
             }
-            files.insert(file.path.clone());
+            files.insert(
+                lowercase_extension(&file.path).into_owned(),
+                file.path.clone(),
+            );
         }
 
         let scopes: Vec<(&str, bool, Vec<String>)> = std::iter::once(("", settings))
@@ -343,7 +349,7 @@ impl PytestImportPaths {
             .keys()
             .map(|dir| (dir.as_str(), Vec::new()))
             .collect();
-        let modules = self.files.iter().filter_map(|file| {
+        let modules = self.files.keys().filter_map(|file| {
             file.strip_suffix(".py")
                 .or_else(|| file.strip_suffix(".pyi"))
         });
@@ -395,7 +401,7 @@ impl PytestImportPaths {
         if hinted_roots.is_empty() {
             return hinted_roots;
         }
-        for file in &self.files {
+        for file in self.files.keys() {
             let mut dir = parent_dir(file);
             loop {
                 if let Some(roots) = hinted_roots.get_mut(dir) {
@@ -434,10 +440,7 @@ impl PytestImportPaths {
                 } else {
                     self.root_namespaces.insert(name);
                 }
-            } else if let Some(stem) = name
-                .strip_suffix(".py")
-                .or_else(|| name.strip_suffix(".pyi"))
-            {
+            } else if let Some(stem) = strip_source_suffix(&name) {
                 self.root_modules.insert(stem.to_owned());
             }
         }
@@ -554,7 +557,7 @@ impl PytestImportPaths {
         [".py", ".pyi"].into_iter().any(|suffix| {
             path.truncate(base);
             path.push_str(suffix);
-            self.files.contains(&path)
+            self.files.contains_key(&path)
         })
     }
 
@@ -593,7 +596,7 @@ impl PytestImportPaths {
 
 /// The directory pytest's prepend mode inserts for `path`: its directory, or
 /// the parent of the outermost package that directory belongs to.
-fn basedir(path: &str, files: &HashSet<String>) -> String {
+fn basedir(path: &str, files: &HashMap<String, String>) -> String {
     // One buffer for every level: this runs for each lookup that misses
     // from a test or script.
     let mut init = String::with_capacity(path.len() + "/__init__.py".len());
@@ -602,7 +605,7 @@ fn basedir(path: &str, files: &HashSet<String>) -> String {
         init.clear();
         init.push_str(dir);
         init.push_str("/__init__.py");
-        if !files.contains(&init) {
+        if !files.contains_key(&init) {
             break;
         }
         dir = parent_dir(dir);
@@ -696,9 +699,7 @@ fn module_names(dir: &Path) -> HashSet<String> {
             if entry.path().is_dir() {
                 return Some(name);
             }
-            name.strip_suffix(".py")
-                .or_else(|| name.strip_suffix(".pyi"))
-                .map(str::to_owned)
+            strip_source_suffix(&name).map(str::to_owned)
         })
         .collect()
 }
@@ -1664,8 +1665,8 @@ mod tests {
                     || self.dirs(file).any(|dir| {
                         let base = join(dir, root);
                         built.base.dirs.contains(&base)
-                            || built.base.files.contains(&format!("{base}.py"))
-                            || built.base.files.contains(&format!("{base}.pyi"))
+                            || built.base.files.contains_key(&format!("{base}.py"))
+                            || built.base.files.contains_key(&format!("{base}.pyi"))
                             || self
                                 .on_disk
                                 .get(dir)
@@ -1684,7 +1685,7 @@ mod tests {
                             let base = join(dir, &module.replace('.', "/"));
                             [format!("{base}.py"), format!("{base}/__init__.py")]
                                 .into_iter()
-                                .find(|path| built.base.files.contains(path))
+                                .find(|path| built.base.files.contains_key(path))
                         })
                     })
             }
