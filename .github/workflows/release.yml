@@ -353,6 +353,8 @@ jobs:
           version: ${{ steps.fixture.outputs.wheel }}
           working-directory: ${{ runner.temp }}/demo
           sarif-file: out/chokkin.sarif
+          # Flags the action also adds itself must not reach chokkin twice.
+          args: --no-exit-code --reporter compact
       - name: Check action SARIF output
         env:
           SARIF: ${{ steps.chokkin.outputs.sarif-file }}
