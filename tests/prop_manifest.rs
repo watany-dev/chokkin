@@ -90,6 +90,19 @@ proptest! {
         // Arbitrary content may be an include error or parse fine; it must not panic.
         if let Ok(manifest) = extract_manifest(&root, &config) {
             let line_count = u32::try_from(lines.len()).expect("line count fits u32");
+            // pip's `str.splitlines()` also ends a line at the other Python
+            // line boundaries `\PC` can generate inside one entry (#1154).
+            let inner_breaks = lines
+                .iter()
+                .flat_map(|line| line.chars())
+                .filter(|c| {
+                    matches!(
+                        c,
+                        '\r' | '\u{b}' | '\u{c}' | '\u{1c}'..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+                    )
+                })
+                .count();
+            let line_count = line_count + u32::try_from(inner_breaks).expect("line count fits u32");
             for dep in &manifest.dependencies {
                 prop_assert_eq!(normalized(&dep.name), dep.name.clone());
                 prop_assert_eq!(dep.origin.file.as_str(), "requirements.txt");
