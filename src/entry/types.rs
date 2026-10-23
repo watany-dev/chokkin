@@ -154,6 +154,9 @@ pub enum EntryWarning {
         /// Where in `file` the target is declared.
         label: String,
     },
+    /// An app-mode project has no entry root (#1138): nothing is known to
+    /// run, so no file or distribution is known to be unused.
+    NoEntryRoot,
 }
 
 impl fmt::Display for EntryWarning {
@@ -170,6 +173,9 @@ impl fmt::Display for EntryWarning {
             } => write!(
                 formatter,
                 "entry: could not map `{module}` to a source file (`{label}` in `{file}`)"
+            ),
+            Self::NoEntryRoot => formatter.write_str(
+                "entry: no entry root was found; unused files and dependencies are reported below certain (set `entry` in [tool.chokkin])"
             ),
         }
     }
