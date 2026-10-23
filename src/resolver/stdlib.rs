@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::config::TargetVersion;
-use crate::manifest::{infer_target_version_from_requires_python, requires_python_max_minor};
+use crate::manifest::{
+    infer_target_version_from_requires_python, requires_python_is_readable,
+    requires_python_max_minor,
+};
 
 static STDLIB_MODULES: OnceLock<HashMap<&'static str, Shipped>> = OnceLock::new();
 
@@ -94,6 +97,34 @@ impl StdlibRange {
             .and_then(infer_target_version_from_requires_python)
             .map(|version| version.minor());
         Self { min, max, floor }
+    }
+
+    /// The project's range: from `target_version` when set, else from the
+    /// `requires-python` lower bound. With neither, the py311 default is only
+    /// a guess at the oldest interpreter, so every bundled minor up to the
+    /// upper bound counts and `formatter` stays stdlib (#1172). An unreadable
+    /// `requires-python` keeps py311 and its gaps instead (#924).
+    #[must_use]
+    pub fn for_project(target: Option<&TargetVersion>, requires_python: Option<&str>) -> Self {
+        if let Some(target) = target {
+            return Self::new(target, requires_python);
+        }
+        if let Some(inferred) = requires_python.and_then(infer_target_version_from_requires_python)
+        {
+            return Self::new(&inferred, requires_python);
+        }
+        if !requires_python.is_none_or(requires_python_is_readable) {
+            return Self::new(&TargetVersion::default_py311(), requires_python);
+        }
+        let max = requires_python
+            .and_then(requires_python_max_minor)
+            .unwrap_or(u32::MAX)
+            .max(OLDEST_BUNDLED_MINOR);
+        Self {
+            min: OLDEST_BUNDLED_MINOR,
+            max,
+            floor: None,
+        }
     }
 
     /// Returns whether `import_root` is a stdlib module for any minor in range.
@@ -245,6 +276,35 @@ mod tests {
         assert!(assumed.ships_only_outside("formatter"));
         assert!(assumed.ships_only_outside("dummy_threading"));
         assert!(!assumed.ships_only_outside("os"));
+    }
+
+    #[test]
+    fn project_range_without_a_lower_bound_reaches_the_oldest_minor() {
+        // #1172: no `target_version` and no lower bound in `requires-python`.
+        for requires in [None, Some("<3.13"), Some("!=3.9.*")] {
+            let range = StdlibRange::for_project(None, requires);
+            assert!(range.contains("formatter"), "{requires:?}");
+            assert!(range.contains("binhex"), "{requires:?}");
+            assert!(range.contains("tomllib"), "{requires:?}");
+            assert!(!range.always_contains("threading"), "{requires:?}");
+        }
+        let capped = StdlibRange::for_project(None, Some("<3.10"));
+        assert!(capped.contains("formatter"));
+        assert!(!capped.contains("tomllib"));
+    }
+
+    #[test]
+    fn project_range_keeps_a_known_lower_bound() {
+        let py311 = TargetVersion::default_py311();
+        let explicit = StdlibRange::for_project(Some(&py311), None);
+        assert_eq!(explicit, StdlibRange::new(&py311, None));
+        assert!(!explicit.contains("formatter"));
+        let inferred = StdlibRange::for_project(None, Some(">=3.10"));
+        let py310 = TargetVersion::parse("py310").expect("py310");
+        assert_eq!(inferred, StdlibRange::new(&py310, Some(">=3.10")));
+        // An unreadable specifier keeps the assumed py311 and its gaps (#924).
+        let unreadable = StdlibRange::for_project(None, Some("3.10+"));
+        assert_eq!(unreadable, StdlibRange::new(&py311, Some("3.10+")));
     }
 
     #[test]

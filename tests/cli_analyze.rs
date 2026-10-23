@@ -1129,6 +1129,31 @@ fn binary_module_removed_in_py310_is_stdlib_for_a_py38_project() {
 }
 
 #[test]
+fn binary_module_only_older_minors_ship_is_stdlib_without_a_lower_bound() {
+    // #1172: with neither `requires-python` nor `target_version`, py311 is
+    // only a guess, so modules gone before 3.11 still count as stdlib; an
+    // explicit `target_version` is the lower bound.
+    for (tool, unresolved) in [("", false), ("target_version = \"py311\"\n", true)] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let pyproject = format!(
+            "[project]\nname = \"legacy\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nlegacy = \"legacy:main\"\n\n[tool.chokkin]\n{tool}"
+        );
+        fs::write(temp.path().join("pyproject.toml"), pyproject).expect("write fixture");
+        fs::write(
+            temp.path().join("legacy.py"),
+            "import binhex\nimport formatter\nimport symbol\n\n\ndef main() -> None:\n    pass\n",
+        )
+        .expect("write fixture");
+        let keys = issue_keys(&json_issues(temp.path(), &[]));
+        assert_eq!(
+            keys.len(),
+            if unresolved { 3 } else { 0 },
+            "{tool}: {keys:?}"
+        );
+    }
+}
+
+#[test]
 fn binary_declared_backport_of_a_removed_stdlib_module_is_used() {
     // #939: PEP 594 backports provide the module on every target, whether
     // the target's stdlib still ships it or not.
