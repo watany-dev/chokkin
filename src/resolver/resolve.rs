@@ -649,6 +649,14 @@ fn resolve_import_root(
 
     if let Some((distributions, confidence)) = root_candidates(root_name, venv_imports, import_map)
     {
+        // A declared candidate settles which variant provides the root, so
+        // `opencv-python` beside `opencv-python-headless` is no ambiguity (#1139).
+        let mut settled = Vec::new();
+        let warnings = if distributions.iter().any(|name| declared.declares(name)) {
+            &mut settled
+        } else {
+            warnings
+        };
         return root_resolution_from_candidates(root_name, &distributions, confidence, warnings);
     }
 

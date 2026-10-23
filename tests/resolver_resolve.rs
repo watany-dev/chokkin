@@ -425,6 +425,15 @@ fn declared_variant_distributions_own_their_shared_import() {
             "{module}"
         );
     }
+    // The declared variant settles each root, so none is ambiguous.
+    assert!(
+        !index.warnings.iter().any(|warning| matches!(
+            warning,
+            chokkin::internals::ResolveWarning::AmbiguousImport { .. }
+        )),
+        "{:?}",
+        index.warnings
+    );
 }
 
 #[test]
