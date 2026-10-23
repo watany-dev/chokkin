@@ -233,6 +233,31 @@ fn binary_dry_run_without_fix_errors() {
     );
 }
 
+/// A typo in `--include` used to hide every issue and exit 0, so a CI step
+/// stayed green; it is a usage error now (#1126).
+#[test]
+fn binary_unknown_rule_code_is_a_usage_error() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    for args in [
+        ["--include", "CHK02"],
+        ["--exclude", "chk002"],
+        ["--include", ","],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(args)
+            .arg(&root)
+            .output()
+            .expect("run chokkin");
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::UsageError.code().into()),
+            "{args:?}"
+        );
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(stderr.contains("unknown rule code"), "{args:?}: {stderr}");
+    }
+}
+
 #[test]
 fn binary_fix_reports_skipped_detail() {
     let root = fixture_path(&["reachability", "chain_import"]);
