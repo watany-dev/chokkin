@@ -206,7 +206,12 @@ and reports anything it skipped on stderr.
 - `--no-auto-workspace` stops nested `pyproject.toml` files from becoming
   workspace members or being skipped as separate projects.
 - `--init` appends a starter `[tool.chokkin]` reflecting what auto-discovery
-  found.
+  found. It only appends to an existing `pyproject.toml` in the project root
+  and never creates one, so a project without `pyproject.toml` (for example
+  one with only `requirements.txt`) exits 2. It also exits 2 without writing
+  when config already exists (`[tool.chokkin]`, `chokkin.toml`, or
+  `.chokkin.toml`), or when `pyproject.toml` is a symlink that resolves
+  outside the project root.
 
 Exit codes are fixed for CI:
 
