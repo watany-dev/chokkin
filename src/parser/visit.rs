@@ -944,6 +944,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 {
                     self.record_pytest_plugins(name.id.as_str(), &aug_assign.value);
                 }
+                // `x += 1` reads `x` before it writes it, though the target
+                // is in store context (#1142).
+                if let Expr::Name(name) = &*aug_assign.target {
+                    insert_name(&mut self.loaded_names, &name.id);
+                }
+                self.visit_expr(&aug_assign.target);
                 self.visit_expr(&aug_assign.value);
             },
             Stmt::Return(return_stmt) => {
@@ -1596,6 +1602,35 @@ def later():
             used,
             [("T", true), ("Res", true), ("C", false), ("unused", false)]
         );
+    }
+
+    /// An augmented assignment reads its target: the name, the subscripted
+    /// container and the attribute site all count (#1142).
+    #[test]
+    fn augmented_assignment_targets_are_reads() {
+        let parsed = visit_source(
+            "import m\nTOTAL = 0\nCACHE = {}\nSPARE = 0\n\ndef bump():\n    global TOTAL\n    TOTAL += 1\n    CACHE[\"a\"] += 1\n    m.counter += 1\n    m.REGISTRY[\"k\"] += 1\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.name.as_str(), symbol.used_in_module))
+            .collect();
+        assert_eq!(
+            used,
+            [
+                ("TOTAL", true),
+                ("CACHE", true),
+                ("SPARE", false),
+                ("bump", false)
+            ]
+        );
+        let accesses: Vec<(&str, &str)> = parsed
+            .attribute_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str()))
+            .collect();
+        assert_eq!(accesses, [("m", "counter"), ("m", "REGISTRY")]);
     }
 
     #[test]
