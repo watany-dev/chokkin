@@ -7806,9 +7806,65 @@ fn binary_trace_prints_path_to_reachable_file() {
 
 #[test]
 fn binary_trace_reports_undiscovered_file() {
+    let root = std::fs::canonicalize(fixture_path(&["reachability", "trace_origins"]))
+        .expect("canonical fixture");
     assert_eq!(
         trace_stderr("src/acme/missing.py"),
-        "trace: file `src/acme/missing.py` was not discovered in this project\n\n"
+        format!(
+            "trace: file `src/acme/missing.py` was not discovered in this project\n  \
+             (paths are relative to the project root `{}`, \
+             or absolute / relative to the current directory)\n\n",
+            root.display()
+        )
+    );
+}
+
+/// stderr of `--trace <target>` on the `trace_origins` fixture, run from `cwd`.
+fn trace_stderr_from(cwd: &Path, target: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .current_dir(cwd)
+        .args(["--no-exit-code", "--trace", target])
+        .arg(fixture_path(&["reachability", "trace_origins"]))
+        .output()
+        .expect("run chokkin");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stderr).expect("utf8")
+}
+
+/// Absolute and cwd-relative spellings name the same file as the root-relative
+/// one; before #1157 they were reported as not discovered.
+#[test]
+fn binary_trace_accepts_absolute_and_cwd_relative_paths() {
+    let root = fixture_path(&["reachability", "trace_origins"]);
+    let expected = trace_stderr("src/acme/util.py");
+    let absolute = root.join("src").join("acme").join("util.py");
+    assert_eq!(
+        trace_stderr(absolute.to_str().expect("utf8 path")),
+        expected
+    );
+    let acme = root.join("src").join("acme");
+    assert_eq!(trace_stderr_from(&acme, "util.py"), expected);
+    let parent = root.parent().expect("fixture parent");
+    assert_eq!(
+        trace_stderr_from(parent, "trace_origins/src/acme/util.py"),
+        expected
+    );
+    assert_eq!(trace_stderr_from(&acme, "../acme/util.py"), expected);
+}
+
+#[test]
+fn binary_trace_reports_path_outside_root() {
+    let root = std::fs::canonicalize(fixture_path(&["reachability", "trace_origins"]))
+        .expect("canonical fixture");
+    let outside = root.parent().expect("fixture parent").join("elsewhere.py");
+    let target = outside.to_str().expect("utf8 path");
+    assert_eq!(
+        trace_stderr(target),
+        format!(
+            "trace: `{target}` is outside the project root `{}`; \
+             pass a path inside it, relative to the root\n\n",
+            root.display()
+        )
     );
 }
 

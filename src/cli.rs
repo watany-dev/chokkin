@@ -64,7 +64,8 @@ pub struct CliArgs {
     #[arg(long, value_name = "SELECTOR", value_parser = parse_explain_selector)]
     pub explain: Option<String>,
 
-    /// Show reachability trace to a file path.
+    /// Show reachability trace to a file path (relative to the project root
+    /// or the current directory, or absolute).
     #[arg(long, value_name = "PATH")]
     pub trace: Option<String>,
 

@@ -120,6 +120,9 @@ exit codeはCI向けに固定する。
                  evidence（top-level modules、reachable/unreachable import）を出す。
 --trace        : 到達可能な file には entry からの positive trace、未到達 file には
                  negative trace（未到達理由、entry roots、incoming import 連鎖）を出す。
+                 path は project root 相対で照合し、見つからなければ絶対 path /
+                 cwd 相対 path として root 相対に直して照合する。root の外を
+                 指す path はその旨を、見つからない path は基準の root を示す。
 --probe        : pipeline の step 1〜4 (root・config・manifest・source の発見) だけを
                  実行し、text で表示する。issue を作らないので、issue を絞る・出力する・
                  直す・baseline に書く flag (`--strict` `--include` `--exclude`
