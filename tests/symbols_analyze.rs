@@ -1861,3 +1861,63 @@ fn repeated_unresolved_import_emits_one_chk010_per_file() {
     assert_eq!(types.len(), 1, "{types:?}");
     assert_eq!(types[0].severity, Severity::Info);
 }
+
+/// `getattr(m, "name")` and its kin read `m.name` (#1143).
+#[test]
+fn literal_getattr_on_a_module_counts_as_a_reference() {
+    // Generated at test time for the same reason as the star-import fixture.
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    std::fs::create_dir_all(temp.path().join("src/acme")).expect("package dir");
+    for (file, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"literal-getattr\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"src/acme/main.py\"]\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        (
+            "src/acme/main.py",
+            "import acme.dotted\nfrom acme import m\n\ndef main(name):\n    getattr(m, \"via_getattr\")()\n    hasattr(m, \"via_hasattr\")\n    setattr(m, \"via_setattr\", 2)\n    delattr(m, \"via_delattr\")\n    getattr(acme.dotted, \"via_dotted\", None)\n    getattr(m, name)\n",
+        ),
+        (
+            "src/acme/m.py",
+            "def via_getattr():\n    pass\n\nvia_hasattr = 1\nvia_setattr = 1\nvia_delattr = 1\n\ndef dead_api():\n    pass\n",
+        ),
+        ("src/acme/dotted.py", "via_dotted = 1\n"),
+    ] {
+        std::fs::write(temp.path().join(file), text).expect("write fixture");
+    }
+    let inputs = load_symbols(temp.path(), false);
+    let report = analyze_with_context(
+        &RuleContext {
+            resolution: &inputs.resolution,
+            reachability: &inputs.reachability,
+            graph: &inputs.graph,
+            sources: &inputs.sources,
+            parse: &inputs.parse,
+            surface: inputs.surface.as_ref(),
+        },
+        &inputs.entry,
+        &inputs.plugins,
+        &inputs.manifest,
+        &[],
+        None,
+    );
+    for name in ["via_getattr", "via_hasattr", "via_setattr", "via_delattr"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "acme.m", name),
+            "{name}"
+        );
+    }
+    assert!(!has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.dotted",
+        "via_dotted"
+    ));
+    assert!(has_symbol_rule(
+        &report,
+        RuleId::Chk006,
+        "acme.m",
+        "dead_api"
+    ));
+}
