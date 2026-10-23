@@ -113,7 +113,7 @@ exit codeはCI向けに固定する。
 --strict       : (1) transitive依存の直接importを常にerror
                  (2) workspace memberごとに直接依存宣言を要求
                  (3) environment marker付き依存のunusedもerror扱い
-                 (4) confidence maybe のissueも表示
+                 (4) confidence maybe のissueも表示（明示した --confidence があればそちらを優先）
 --no-exit-code : issueがあってもexit codeを0にする。config/CLI errorの2、
                  internal errorの3はこのflagでも維持する。
 --explain      : `CHK002:<distribution>` など selector に対し、宣言箇所と到達性
@@ -966,7 +966,7 @@ maybe:
 
 module top-level（関数の外）で `warnings.warn` を呼び、第2位置引数か `category=` が `*Deprecat*` / `Removed*Warning` に当たる名前の module は、import 時に自身の非推奨を告げる互換 shim とみなす (`src/parser/deprecation.rs`、#778)。airflow の `stats.py` (`DeprecatedImportWarning`) や `security/permissions.py` (`RemovedInAirflow4Warning`) のように外部の利用者のために残しているので、この file の CHK001 と、この file で定義された symbol の CHK006 は info にする。category は AST 上の名前（`exc.RemovedInAirflow4Warning` なら末尾）だけで判定し、class は解決しない。`warn` は module top-level の `import warnings`（別名を含む）か `from warnings import warn` で束縛したものに限る。関数内の `warn` はその関数の非推奨なので対象外で、`if` などの block 内の `warn` も条件付きの非推奨なので数えない。
 
-confidenceとseverityは独立した2軸として扱う。severityはissue種別の重み(error / warning / info)、confidenceは解析の確からしさ(certain / likely / maybe)。表示filterは `confidence >= 設定値`、exit code 1の対象はdefaultで `severity >= error` かつ `confidence >= likely` にする。`--strict` ではwarning以上かつmaybe以上まで広げる。
+confidenceとseverityは独立した2軸として扱う。severityはissue種別の重み(error / warning / info)、confidenceは解析の確からしさ(certain / likely / maybe)。表示filterは `confidence >= 設定値`、exit code 1の対象はdefaultで `severity >= error` かつ `confidence >= likely` にする。`--strict` ではwarning以上かつmaybe以上まで広げる。CLI で明示した `--confidence` は `--strict` より優先する: `--strict` が下げるのは設定値（default `likely`）の表示filterだけで、`--strict --confidence certain` は certain だけを表示し、exit code もその表示された issue だけで決める (#1134)。
 
 読めなかった入力による降格は 1 か所 (`src/rules/gaps.rs`、ADR 0005 の降格段) にまとめる。gap は「どの file の何が読めなかったか」を表す値 (`Gap { file, kind, member, site, target }`) で、pipeline が parse・reachability・manifest・plugin から集め (`collect_gaps`)、emit が ignore・severity・confidence filter の前に finding へ当てる。gap の種類ごとに、どの finding を下げるかを 1 つの表で決める。
 

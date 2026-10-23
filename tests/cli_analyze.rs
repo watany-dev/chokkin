@@ -9462,3 +9462,50 @@ fn binary_resolves_module_with_uppercase_extension() {
     assert!(!stdout.contains("Unused files"), "{stdout}");
     assert!(stdout.contains("helper.PY:1 requests"), "{stdout}");
 }
+
+/// An explicit `--confidence` wins over `--strict`, which only lowers the
+/// default floor and widens the exit gate (#1134).
+#[test]
+fn binary_explicit_confidence_wins_over_strict() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = []\n",
+        ),
+        (
+            "main.py",
+            "try:\n    import yaml\nexcept ImportError:\n    yaml = None\n",
+        ),
+    ]);
+    let run = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .args(extra)
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let issues: Vec<(String, String)> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .map(|issue| {
+                (
+                    issue["code"].as_str().unwrap_or_default().to_owned(),
+                    issue["target"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        (issues, output.status.code())
+    };
+    let yaml = vec![("CHK003".to_owned(), "main.py:yaml".to_owned())];
+
+    let (issues, _) = run(&["--strict"]);
+    assert_eq!(issues, yaml);
+    let (issues, code) = run(&["--confidence", "certain"]);
+    assert_eq!(issues, Vec::<(String, String)>::new());
+    assert_eq!(code, Some(0));
+    let (issues, code) = run(&["--strict", "--confidence", "certain"]);
+    assert_eq!(issues, Vec::<(String, String)>::new());
+    assert_eq!(code, Some(0));
+}
