@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::entry::resolve_module_to_path;
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 use super::commands::{SourceHits, is_dotted_identifier};
 use super::config_text::{
@@ -46,8 +46,8 @@ pub(super) fn input_paths(root: &Path) -> Vec<PathBuf> {
         "pyrightconfig.json",
     ]
     .into_iter()
+    .filter(|name| is_file_named(root, name))
     .map(|name| root.join(name))
-    .filter(|path| path.is_file())
     .collect()
 }
 
@@ -70,7 +70,7 @@ pub(super) fn scan(root: &Path, pyproject: Option<&PyprojectDoc>) -> SourceHits 
         }
     }
     for (name, distributions) in TYPE_CHECKER_FILES {
-        if root.join(name).is_file() {
+        if is_file_named(root, name) {
             hits.distributions
                 .extend(distributions.iter().copied().map(str::to_owned));
         }
@@ -290,6 +290,19 @@ mod tests {
 
     fn modules(hits: &SourceHits) -> Vec<&str> {
         hits.module_refs.iter().map(|m| m.module.as_str()).collect()
+    }
+
+    #[test]
+    fn input_paths_lists_the_files_present_under_their_own_spelling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        for name in ["pytest.ini", "ty.toml", "MYPY.INI"] {
+            std::fs::write(temp.path().join(name), "").expect("write");
+        }
+        let paths: Vec<_> = input_paths(temp.path())
+            .iter()
+            .map(|path| rel_to_root(temp.path(), path))
+            .collect();
+        assert_eq!(paths, ["pytest.ini", "ty.toml"]);
     }
 
     #[test]

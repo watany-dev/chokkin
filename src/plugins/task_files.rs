@@ -74,17 +74,10 @@ pub(super) fn scan(
 }
 
 /// The first of `names` present under its own spelling: on a case-insensitive
-/// file system `makefile` would open `Makefile` and label it with the wrong name.
+/// file system `makefile` would open `Makefile` and label it with the wrong
+/// name, which `read_root_file` rules out.
 fn read_first(root: &Path, names: &[&str]) -> Option<(String, String)> {
-    let present: Vec<_> = std::fs::read_dir(root)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.file_name())
-        .collect();
-    names
-        .iter()
-        .filter(|name| present.iter().any(|entry| entry.as_os_str() == **name))
-        .find_map(|name| read_root_file(root, name))
+    names.iter().find_map(|name| read_root_file(root, name))
 }
 
 /// Root-level Dockerfiles, sorted so first-seen origins are stable.
