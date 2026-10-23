@@ -213,7 +213,8 @@ pub(crate) enum IniLine<'a> {
     /// (`continuation == false`) or an indented line after it.
     Value {
         section: &'a str,
-        /// Lowercased.
+        /// Lowercased, except in `[options.entry_points]`: setuptools reads
+        /// with `optionxform = str`, and a group name is case-sensitive.
         key: String,
         /// Trimmed.
         value: &'a str,
@@ -247,7 +248,11 @@ pub(crate) fn ini_lines(contents: &str) -> impl Iterator<Item = (&str, IniLine<'
                 None => IniLine::Skipped,
             }
         } else if let Some((key, value)) = trimmed.split_once(['=', ':']) {
-            let key = key.trim().to_ascii_lowercase();
+            let key = if current == "options.entry_points" {
+                key.trim().to_owned()
+            } else {
+                key.trim().to_ascii_lowercase()
+            };
             last_key = Some(key.clone());
             IniLine::Value {
                 section: current,
@@ -324,6 +329,15 @@ mod tests {
             .into_iter()
             .map(|item| item.text)
             .collect()
+    }
+
+    #[test]
+    fn entry_point_groups_keep_their_case() {
+        let sections = parse_ini_sections(
+            "[Options]\nInstall_Requires = x\n\n[options.entry_points]\nMyPlugins =\n    a = b:c\n",
+        );
+        assert!(sections["Options"].contains_key("install_requires"));
+        assert!(sections["options.entry_points"].contains_key("MyPlugins"));
     }
 
     #[test]
