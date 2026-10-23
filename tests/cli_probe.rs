@@ -86,6 +86,24 @@ fn binary_probe_non_utf8_pyproject_names_the_reason() {
 }
 
 #[test]
+fn binary_probe_rejects_issue_flags() {
+    // Probe output is text only; a JSON consumer must get exit 2, not text (#1128).
+    let root = fixture_path("sources/src_layout");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--probe", "--reporter", "json"])
+        .arg(&root)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into())
+    );
+    assert_eq!(output.stdout, b"");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("--probe"), "{stderr}");
+}
+
+#[test]
 fn probe_report_contains_expected_sections() {
     let root = fixture_path("sources/src_layout");
     let report = probe_project(&root, None, &RuntimeOverrides::default()).expect("probe");
