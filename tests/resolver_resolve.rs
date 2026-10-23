@@ -838,3 +838,76 @@ fn pytest_plugin_sites_take_part_in_warning_order_across_many_files() {
         .collect();
     assert_eq!(actual, expected);
 }
+
+/// §7 steps 0 and 1 against a table (#1109): a declared backport is the
+/// import's distribution on every `requires-python`, the other backports of
+/// the module included; otherwise a root any minor of the window ships is
+/// stdlib, and one only other minors ship resolves to its backports like a
+/// third-party import, or to nothing without one.
+#[test]
+fn removed_stdlib_modules_follow_the_backport_table() {
+    // (root, minors that ship it, backports in the bundled map)
+    let roots: [(&str, (u32, u32), &[&str]); 4] = [
+        ("cgi", (8, 12), &["legacy-cgi", "standard-cgi"]),
+        ("asynchat", (8, 11), &["standard-asynchat"]),
+        ("tomllib", (11, 14), &[]),
+        ("os", (8, 14), &[]),
+    ];
+    // (requires-python, the minors it puts in the window); the probe sets
+    // `target_version` from its lower bound.
+    let ranges = [
+        (">=3.8,<3.11", (8, 10)),
+        (">=3.11,<3.12", (11, 11)),
+        (">=3.12,<3.13", (12, 12)),
+        (">=3.13", (13, 14)),
+        (">=3.9", (9, 14)),
+    ];
+    let declarations = [
+        None,
+        Some("legacy-cgi"),
+        Some("standard-cgi"),
+        Some("standard-asynchat"),
+        Some("zz-other"),
+    ];
+    for (root, ships, backports) in roots {
+        for (requires, window) in ranges {
+            for declared in declarations {
+                let deps = declared.map_or_else(String::new, |name| format!("\"{name}\""));
+                let temp = temp_project(&[
+                    (
+                        "pyproject.toml",
+                        &format!(
+                            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\nrequires-python = \"{requires}\"\ndependencies = [{deps}]\n\n[tool.chokkin]\ntarget_version = \"py3{:02}\"\n",
+                            window.0
+                        ),
+                    ),
+                    ("main.py", &format!("import {root}\n")),
+                ]);
+                let index = resolve_path(temp.path());
+                let import = index
+                    .imports
+                    .iter()
+                    .find(|import| import.import_root == root)
+                    .expect("the import resolves");
+                let case = format!("{root} with {requires} declaring {declared:?}");
+                let stdlib = ships.0 <= window.1 && window.0 <= ships.1;
+                match declared.filter(|name| backports.contains(name)) {
+                    Some(backport) => {
+                        assert_eq!(import.origin, ModuleOrigin::ThirdParty, "{case}");
+                        assert_eq!(import.distribution.as_deref(), Some(backport), "{case}");
+                        assert_eq!(import.confidence, ResolveConfidence::Certain, "{case}");
+                    },
+                    None if stdlib => assert_eq!(import.origin, ModuleOrigin::Stdlib, "{case}"),
+                    None if backports.is_empty() => {
+                        assert_eq!(import.origin, ModuleOrigin::Unknown, "{case}");
+                    },
+                    None => {
+                        assert_eq!(import.origin, ModuleOrigin::ThirdParty, "{case}");
+                        // Several backports warn and name the first.
+                        assert_eq!(import.distribution.as_deref(), Some(backports[0]), "{case}");
+                    },
+                }
+            }
+        }
+    }
+}

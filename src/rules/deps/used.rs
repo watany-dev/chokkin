@@ -120,9 +120,7 @@ pub(super) fn collect_used_distributions(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        // Plugin refs read from config files (pytest `-p`, mypy plugins) name a
-        // file outside the graph; those count even though no BFS reaches them.
-        if !reachable.contains(import.file.as_str()) && graph.file_id(&import.file).is_some() {
+        if !counts_as_use(import.file.as_str(), reachable, graph) {
             continue;
         }
         used.insert(distribution.clone());
@@ -135,6 +133,13 @@ pub(super) fn collect_used_distributions(
     }
 
     used
+}
+
+/// Whether an import in `file` is a use: the file is reachable, or it is a
+/// config file outside the graph whose plugin refs (pytest `-p`, mypy
+/// plugins) name modules no BFS reaches.
+fn counts_as_use(file: &str, reachable: &HashSet<&str>, graph: &ProjectGraph) -> bool {
+    reachable.contains(file) || graph.file_id(file).is_none()
 }
 
 /// `workspace = true` dependencies, and `path` sources that hold the project's
@@ -164,7 +169,8 @@ pub(super) fn mark_workspace_source_distributions(
         .imports
         .iter()
         .filter(|import| {
-            import.origin == ModuleOrigin::FirstParty && reachable.contains(import.file.as_str())
+            import.origin == ModuleOrigin::FirstParty
+                && counts_as_use(import.file.as_str(), reachable, context.graph)
         })
         .map(|import| import.full_module.as_str())
         .collect();
@@ -660,6 +666,24 @@ mod tests {
         }
     }
 
+    /// A graph holding every importing file, so none reads as a config file.
+    fn graph_of(manifest: &LoadedManifest, resolution: &ResolutionIndex) -> ProjectGraph {
+        let mut graph = ProjectGraph::new(manifest.root.clone());
+        for import in &resolution.imports {
+            if graph.file_id(&import.file).is_some() {
+                continue;
+            }
+            graph
+                .intern_file(FileNode {
+                    path: import.file.clone(),
+                    context: crate::sources::FileContext::Runtime,
+                    kind: crate::sources::FileKind::Python,
+                })
+                .expect("file id");
+        }
+        graph
+    }
+
     fn resolved(file: &str, module: &str, origin: ModuleOrigin) -> ResolvedImport {
         ResolvedImport {
             import_root: import_root(module).to_owned(),
@@ -840,7 +864,7 @@ mod tests {
                 .collect(),
             warnings: Vec::new(),
         };
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let graph = graph_of(&manifest, &resolution);
         let used = mark(
             &manifest,
             &RuleContext {
@@ -899,7 +923,7 @@ mod tests {
                 .collect(),
             warnings: Vec::new(),
         };
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let graph = graph_of(&manifest, &resolution);
         let used = mark(
             &manifest,
             &RuleContext {
@@ -957,7 +981,7 @@ mod tests {
             files: Vec::new(),
             warnings: Vec::new(),
         };
-        let graph = ProjectGraph::new(manifest.root.clone());
+        let graph = graph_of(&manifest, &resolution);
         let used = mark(
             &manifest,
             &RuleContext {

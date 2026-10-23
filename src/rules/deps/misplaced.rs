@@ -6,7 +6,8 @@ use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::LoadedManifest;
 use crate::parser::{ParseSummary, SymbolKind, guarded_roots, predicate_name_module};
-use crate::resolver::ResolvedImport;
+use crate::resolver::{ResolutionIndex, ResolvedImport};
+use crate::rules::ignore::IgnoreMatcher;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity};
 use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::{DiscoveredSources, FileContext, LayoutInfo, path_to_module};
@@ -49,7 +50,9 @@ pub(super) fn detect_misplaced_dependencies(
     let eager = file_paths(graph, &reachability.eager);
     let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
-    let mut candidates: Vec<(IssueCandidate, Weight)> = Vec::new();
+    let matcher = IgnoreMatcher::build(config, context.parse, &ResolutionIndex::default());
+    // The bool: every site so far is ignored inline, file-level or vendored.
+    let mut candidates: Vec<(IssueCandidate, Weight, bool)> = Vec::new();
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
     for import in &resolution.imports {
@@ -127,11 +130,24 @@ pub(super) fn detect_misplaced_dependencies(
             workspace_member.unwrap_or_default().to_owned(),
             distribution.clone(),
         );
+        // An ignored site drops out before the sites are weighed, so it neither
+        // hides the others nor lends them its strength; only when every site
+        // is ignored does the finding stand on them, to be suppressed (#1107).
+        let ignored = matcher.ignores_site(RuleId::Chk005, &import.file, import.line);
         if let Some(&index) = reported.get(&report_key) {
-            if let Some((candidate, current)) = candidates.get_mut(index)
-                && current.absorb(weight)
-            {
-                candidate.origins = vec![import_origin(import)];
+            if let Some((candidate, current, all_ignored)) = candidates.get_mut(index) {
+                let replace = match (ignored, *all_ignored) {
+                    (true, false) => false,
+                    (false, true) => {
+                        *current = weight;
+                        *all_ignored = false;
+                        true
+                    },
+                    _ => current.absorb(weight),
+                };
+                if replace {
+                    candidate.origins = vec![import_origin(import)];
+                }
             }
             continue;
         }
@@ -167,12 +183,13 @@ pub(super) fn detect_misplaced_dependencies(
                 },
             },
             weight,
+            ignored,
         ));
     }
 
     candidates
         .into_iter()
-        .map(|(candidate, weight)| weight.settle().apply(candidate))
+        .map(|(candidate, weight, _)| weight.settle().apply(candidate))
         .collect()
 }
 

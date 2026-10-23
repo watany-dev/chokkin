@@ -876,6 +876,39 @@ mod tests {
     }
 
     #[test]
+    fn static_import_of_another_module_on_the_line_keeps_it_dynamic() {
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        // `import acme.a; importlib.import_module("acme.b")` on one line.
+        let modules = vec![parsed(
+            "src/acme/main.py",
+            &[("acme.a", 1)],
+            &[("acme.b", 1)],
+        )];
+        let graph = graph_with_imports(root.clone(), &modules);
+        let parse = ParseSummary { modules };
+
+        let b_id = graph.file_id("src/acme/b.py").expect("b");
+        let module_index = ModuleIndex::build(&graph, &sources(&root));
+        let outcome = run_reachability_bfs(
+            &graph,
+            &entry_plan(),
+            &no_plugins(),
+            &parse,
+            &module_index,
+            Vec::new(),
+        );
+
+        let step = &outcome.predecessors.get(&b_id).expect("predecessor").step;
+        assert!(
+            matches!(step, TraceStep::DynamicImport { line: 1, .. }),
+            "expected a dynamic import step, got {step:?}"
+        );
+    }
+
+    #[test]
     fn from_package_import_submodule_reaches_the_submodule() {
         let root = ProjectRoot {
             path: std::env::temp_dir(),
