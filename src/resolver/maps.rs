@@ -478,4 +478,101 @@ mod tests {
             ))
         );
     }
+
+    /// Distribution spellings (#1105): the bundled maps hold PEP 503 names,
+    /// and a user map naming the same distribution as `Foo_Bar`, `foo-bar`
+    /// or `foo.bar` resolves to the bundled candidate.
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        const SEPARATORS: [&str; 6] = ["-", "_", ".", "--", "_.", "-_-"];
+
+        /// `name` with each separator run and each letter's case redrawn.
+        fn respelled(name: &'static str) -> impl Strategy<Value = String> {
+            let words: Vec<&str> = name.split(['-', '_', '.']).collect();
+            (
+                prop::collection::vec(prop::sample::select(SEPARATORS.to_vec()), words.len()),
+                prop::collection::vec(any::<bool>(), name.len()),
+            )
+                .prop_map(move |(separators, upper)| {
+                    let joined: String = words
+                        .iter()
+                        .zip(&separators)
+                        .enumerate()
+                        .flat_map(|(index, (word, sep))| [if index == 0 { "" } else { sep }, word])
+                        .collect();
+                    joined
+                        .chars()
+                        .zip(upper.iter().cycle())
+                        .map(
+                            |(ch, upper)| {
+                                if *upper { ch.to_ascii_uppercase() } else { ch }
+                            },
+                        )
+                        .collect()
+                })
+        }
+
+        fn bundled_package() -> impl Strategy<Value = (&'static str, &'static [&'static str])> {
+            prop::sample::select(PACKAGE_TO_IMPORTS.to_vec())
+        }
+
+        #[test]
+        fn bundled_candidates_are_normalized() {
+            for candidates in BUNDLED_IMPORTS.values() {
+                for candidate in candidates {
+                    assert_eq!(&normalize_distribution_name(candidate), candidate);
+                }
+            }
+            for distribution in BUNDLED_BINARIES.values() {
+                assert_eq!(&normalize_distribution_name(distribution), distribution);
+            }
+        }
+
+        proptest! {
+            /// A user map entry under any spelling of a bundled distribution
+            /// names the same candidate the bundled map holds.
+            #[test]
+            fn user_map_spelling_resolves_to_the_bundled_candidate(
+                (distribution, spelling) in bundled_package()
+                    .prop_flat_map(|(distribution, imports)| {
+                        (Just((distribution, imports)), respelled(distribution))
+                    }),
+            ) {
+                let (canonical, imports) = distribution;
+                let Some(import) = imports.first() else {
+                    return Ok(());
+                };
+                let mut config = default_config();
+                config
+                    .package_module_map
+                    .insert(spelling.clone(), vec![(*import).to_owned()]);
+                let user = ImportMap::build(&config).candidates(import).map(|(d, _)| d);
+                let bundled = ImportMap::build(&default_config())
+                    .candidates(import)
+                    .map(|(d, _)| d)
+                    .unwrap_or_default();
+                let name = normalize_distribution_name(canonical);
+                prop_assert_eq!(user, Some(vec![name.clone()]), "{}", spelling);
+                prop_assert!(bundled.contains(&name), "{bundled:?}");
+            }
+
+            /// A binary map entry under any spelling of the distribution a
+            /// bundled binary belongs to resolves to the bundled name.
+            #[test]
+            fn binary_map_spelling_resolves_to_the_bundled_name(
+                (binary, spelling) in prop::sample::select(
+                    crate::resolver::bundled::binaries::BINARY_TO_DISTRIBUTION.to_vec(),
+                )
+                .prop_flat_map(|(binary, distribution)| (Just(binary), respelled(distribution))),
+            ) {
+                let venv = crate::resolver::venv::VenvIndex::default();
+                let bundled = build_binary_map(&default_config(), &venv)[binary].clone();
+                let mut config = default_config();
+                config.binary_map.insert(binary.to_owned(), spelling.clone());
+                prop_assert_eq!(&build_binary_map(&config, &venv)[binary], &bundled, "{}", spelling);
+            }
+        }
+    }
 }

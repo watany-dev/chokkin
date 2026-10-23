@@ -646,4 +646,233 @@ mod tests {
         );
         assert!(parse("[tool.setuptools]\npackages = [\"acme\"]\n", Some("custom")).is_some());
     }
+
+    /// Wheel target tables (#1105): a generated backend table reads back as
+    /// the package paths it names, and any TOML reads without a panic.
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A root-relative path of identifier segments, e.g. `src/acme`.
+        fn package_path() -> impl Strategy<Value = Vec<String>> {
+            prop::collection::vec("[a-z_][a-z0-9_]{0,5}", 1..4)
+        }
+
+        /// `path` as a user might write it: `./` or `/` in front, `/` behind,
+        /// `\` between segments.
+        fn written(segments: &[String], lead: &str, sep: &str, trail: &str) -> String {
+            format!("{lead}{}{trail}", segments.join(sep))
+        }
+
+        fn noise() -> impl Strategy<Value = (&'static str, &'static str, &'static str)> {
+            (
+                prop::sample::select(vec!["", "./", "/", "././"]),
+                prop::sample::select(vec!["/", "\\"]),
+                prop::sample::select(vec!["", "/"]),
+            )
+        }
+
+        fn toml_array(items: &[String]) -> String {
+            let quoted: Vec<String> = items.iter().map(|item| format!("{item:?}")).collect();
+            format!("[{}]", quoted.join(", "))
+        }
+
+        fn read(contents: &str, backend: &str) -> Option<WheelTargets> {
+            let table: toml::Table = toml::from_str(contents).expect("valid toml");
+            parse_wheel_targets(&table, Some(backend), Some("acme-lib"))
+        }
+
+        /// TOML keys the parsers look up, so arbitrary tables reach them.
+        const KEYS: [&str; 30] = [
+            "tool",
+            "build-system",
+            "build-backend",
+            "backend-path",
+            "hatch",
+            "build",
+            "targets",
+            "wheel",
+            "custom",
+            "hooks",
+            "metadata",
+            "vcs",
+            "version-file",
+            "packages",
+            "include",
+            "only-include",
+            "bypass-selection",
+            "setuptools",
+            "package-dir",
+            "py-modules",
+            "find",
+            "where",
+            "exclude",
+            "namespaces",
+            "pdm",
+            "includes",
+            "flit",
+            "module",
+            "name",
+            "maturin",
+        ];
+        const MORE_KEYS: [&str; 8] = [
+            "python-source",
+            "module-name",
+            "poetry",
+            "from",
+            "path",
+            "setuptools_scm",
+            "write_to",
+            "version",
+        ];
+
+        fn toml_value() -> impl Strategy<Value = Value> {
+            let leaf = prop_oneof![
+                "[a-z./\\\\:_-]{0,8}".prop_map(Value::String),
+                any::<bool>().prop_map(Value::Boolean),
+                any::<i64>().prop_map(Value::Integer),
+                Just(Value::String(String::new())),
+                Just(Value::String("..".to_owned())),
+            ];
+            leaf.prop_recursive(5, 48, 4, |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Array),
+                    prop::collection::vec((key(), inner), 0..4)
+                        .prop_map(|entries| Value::Table(entries.into_iter().collect())),
+                ]
+            })
+        }
+
+        fn key() -> impl Strategy<Value = String> {
+            let keys: Vec<&str> = KEYS.iter().chain(&MORE_KEYS).copied().collect();
+            prop_oneof![
+                4 => prop::sample::select(keys).prop_map(str::to_owned),
+                1 => "[a-z_]{0,4}",
+            ]
+        }
+
+        proptest! {
+            /// hatch `packages`, pdm `includes` and poetry `include` / `from`
+            /// read back as the normalized paths they were written as.
+            #[test]
+            fn path_tables_read_back_as_written(
+                paths in prop::collection::vec((package_path(), noise()), 1..4),
+            ) {
+                let normal: Vec<String> = paths.iter().map(|(path, _)| path.join("/")).collect();
+                let raw: Vec<String> = paths
+                    .iter()
+                    .map(|(path, (lead, sep, trail))| written(path, lead, sep, trail))
+                    .collect();
+                let array = toml_array(&raw);
+
+                let hatch = read(
+                    &format!("[tool.hatch.build.targets.wheel]\npackages = {array}\n"),
+                    "hatchling.build",
+                )
+                .expect("hatch targets");
+                prop_assert_eq!(&hatch.paths, &normal);
+
+                let pdm = read(&format!("[tool.pdm.build]\nincludes = {array}\n"), "pdm.backend")
+                    .expect("pdm targets");
+                prop_assert_eq!(&pdm.paths, &normal);
+
+                let poetry_items: Vec<String> = paths
+                    .iter()
+                    .map(|(path, (lead, sep, trail))| {
+                        let (last, from) = path.split_last().expect("one segment");
+                        if from.is_empty() {
+                            format!("{{ include = {:?} }}", format!("{lead}{last}{trail}"))
+                        } else {
+                            format!(
+                                "{{ include = {last:?}, from = {:?} }}",
+                                written(from, lead, sep, trail)
+                            )
+                        }
+                    })
+                    .collect();
+                let poetry = read(
+                    &format!("[tool.poetry]\npackages = [{}]\n", poetry_items.join(", ")),
+                    "poetry.core.masonry.api",
+                )
+                .expect("poetry targets");
+                prop_assert_eq!(&poetry.paths, &normal);
+            }
+
+            /// setuptools dotted `packages` land under the `""` package-dir,
+            /// and a dotted flit or maturin module names its package directory.
+            #[test]
+            fn module_tables_read_back_as_package_paths(
+                base in package_path(),
+                packages in prop::collection::vec(package_path(), 1..4),
+                (lead, sep, trail) in noise(),
+            ) {
+                let base_dir = base.join("/");
+                let dotted: Vec<String> = packages.iter().map(|path| path.join(".")).collect();
+                let setuptools = read(
+                    &format!(
+                        "[tool.setuptools]\npackages = {}\n[tool.setuptools.package-dir]\n\"\" = {:?}\n",
+                        toml_array(&dotted),
+                        written(&base, lead, sep, trail),
+                    ),
+                    "setuptools.build_meta",
+                )
+                .expect("setuptools targets");
+                let expected: Vec<String> = packages
+                    .iter()
+                    .map(|path| format!("{base_dir}/{}", path.join("/")))
+                    .collect();
+                prop_assert_eq!(setuptools.paths, expected);
+
+                let module = &packages[0];
+                let flit = read(
+                    &format!("[tool.flit.module]\nname = {:?}\n", module.join(".")),
+                    "flit_core.buildapi",
+                )
+                .expect("flit targets");
+                let module_dir = module.join("/");
+                prop_assert!(flit.paths.contains(&module_dir));
+                let src_dir = format!("src/{module_dir}");
+                prop_assert!(flit.paths.contains(&src_dir));
+
+                let maturin = read(
+                    &format!(
+                        "[tool.maturin]\npython-source = {:?}\nmodule-name = {:?}\n",
+                        written(&base, lead, sep, trail),
+                        module.join("."),
+                    ),
+                    "maturin",
+                )
+                .expect("maturin targets");
+                prop_assert_eq!(
+                    maturin.paths,
+                    vec![
+                        format!("{base_dir}/{}", module[0]),
+                        format!("{base_dir}/{}.py", module[0]),
+                    ]
+                );
+            }
+
+            /// Any table, any `build-backend`: every reader returns without a
+            /// panic, and reads the same table the same way twice.
+            #[test]
+            fn any_toml_reads_without_panic(
+                entries in prop::collection::vec((key(), toml_value()), 0..5),
+                backend in proptest::option::of(prop_oneof![
+                    prop::sample::select(BACKENDS.to_vec()).prop_map(str::to_owned),
+                    "[a-z_.:]{0,10}",
+                ]),
+            ) {
+                let table: toml::Table = entries.into_iter().collect();
+                let read_all = || {
+                    (
+                        parse_wheel_targets(&table, backend.as_deref(), Some("acme-lib")),
+                        parse_in_tree_backend(&table),
+                        parse_hatch_build_scripts(&table),
+                        parse_version_files(&table),
+                    )
+                };
+                prop_assert_eq!(read_all(), read_all());
+            }
+        }
+    }
 }

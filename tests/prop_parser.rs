@@ -365,6 +365,27 @@ mod source_bytes_props {
             }
         }
 
+        /// Nesting at `parser::depth::MAX_AST_DEPTH` (1,000 levels) is walked
+        /// whole, imports included; one level more makes the file unreadable
+        /// rather than overflowing the walks' stack (#1105).
+        #[test]
+        fn nesting_past_the_depth_limit_is_skipped_not_aborted(
+            lists in 990usize..1010,
+            eol in eol(),
+        ) {
+            let source = format!(
+                "import zzdeep{eol}x = {}{}{eol}",
+                "[".repeat(lists),
+                "]".repeat(lists),
+            );
+            let parsed = parse_bytes(source.as_bytes());
+            // The assignment is one level, each list another.
+            let too_deep = lists + 1 > 1_000;
+            prop_assert_eq!(parsed.skipped, too_deep);
+            let imports: Vec<_> = parsed.imports.iter().map(|import| import.module.as_str()).collect();
+            prop_assert_eq!(imports, if too_deep { vec![] } else { vec!["zzdeep"] });
+        }
+
         /// A header comment block, then imports with inline ignores: the
         /// file-level directive is found however long the header is, and an
         /// inline directive carries the line of the import it sits on, for

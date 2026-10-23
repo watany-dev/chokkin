@@ -16,6 +16,8 @@ on:
       # relative_import_model.py
       - "src/parser/relative.rs"
       - "src/sources/layout.rs"
+      # import_precedence_model.py
+      - "src/resolver/resolve.rs"
       # deps_rules_z3.py
       - "src/rules/deps/context.rs"
       - "src/rules/deps/missing.rs"
@@ -76,6 +78,7 @@ jobs:
             done
           done <<'EOF'
           relative_import_model src/parser/relative.rs src/sources/layout.rs
+          import_precedence_model src/resolver/resolve.rs
           deps_rules_z3 src/rules/deps/context.rs src/rules/deps/missing.rs src/rules/deps/misplaced.rs
           exit_status_z3 src/rules/emit.rs src/rules/filter.rs src/baseline/store.rs
           ignore_model src/rules/ignore.rs
