@@ -303,6 +303,8 @@ CHK002 = "error"
 
 `module_loaders` は §11 の loader API に足す関数の名前で、呼び出しの関数名 (`x.LazyFeature(...)` なら属性名) と一致させる。identifier でない名前 (`pkg.LazyFeature`) はどの呼び出しにも一致しないので、設定の検証エラー（exit 2）にする。既定は空で、layer をまたいでは置き換える。
 
+`.gitignore` と `.git/info/exclude` は git と同じ意味で読む。git の pattern に brace 展開は無いので、`{` `}` はリテラルとして扱う（`*.{py,pyc}` はその名前の file だけ、`{}` は何にも一致しない）。`ignore` crate は alternation として読むため、行を渡す前に `{` `}` をエスケープする（character class の中と既にエスケープ済みのものはそのまま）。workspace member の自動検出の走査も同じ規則で読む (#1149)。
+
 `respect_gitignore = true` のとき、走査が出会った `.gitignore` を読めなかった場合（root でも配下の directory でも、UTF-8 でない・読み取り権限がない・リンク先のない symlink）は、そのファイルごとに `sources: could not read <path>; its ignore rules may be missing` を 1 回出す。workspace member の走査が同じファイルに出会っても重ねて出さない (#915)。読めなかった ignore 規則は除外を減らす方向にしか働かず、finding を誤って消さないので gap にはしない。
 
 ソース走査は symlink を辿らない（root 自体が symlink の場合だけは、その先を root として走査する）。root 内を指す symlink は、実体を実体の path で 1 回だけ数えるので無言で飛ばす（同じファイルを 2 つの module 名で数えない）。root の外を指すもの・ループするもの・リンク先がないものは、ユーザーが解析させるつもりで置いた可能性があるので、リンクごとに `sources: did not follow symlink <path>: <reason>` を出す（reason は `it points outside the project root` / `it forms a loop` / `it points to nothing`。それ以外の読めなかった理由は OS の文言をそのまま出す）。対象は、ソースの拡張子（`.py` / `.pyi` / `.ipynb`）を持つ名前、ディレクトリを指すもの、リンク先が分からず拡張子も先頭の `.` もない名前に限る。ほかの名前（`LICENSE.txt`・`.gitignore` など）はもとから走査しないので、辿っても読まない。exclude と `.gitignore` で除かれる path は出さない。workspace member の走査が出したものは root の走査が同じリンクを見るので落とす（member 間のリンクは root 内なので出さない）。多いときは他の warning と同じく `… and N more like the above` にまとめる (#986)。root の外を辿らないのは解析対象の外を読まないための既定で、変えない。root の外のコードは project の外なので、その import を依存の使用に数えないのが既定どおりで、gap にはしない（ループとリンク先のないものには読む中身がない）。

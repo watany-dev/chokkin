@@ -10,7 +10,7 @@ use ignore::{WalkBuilder, WalkState};
 
 use crate::discovery::ProjectRoot;
 use crate::manifest::builds_distribution;
-use crate::sources::build_glob_set;
+use crate::sources::{SourcesCache, build_glob_set};
 
 use super::error::ConfigError;
 use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
@@ -300,14 +300,22 @@ fn find_pyprojects(root: &Path, scan: &PyprojectScan) -> Result<Vec<PathBuf>, Co
     let exclude = scan.exclude.clone();
     let skip_dir = scan.skip_dir;
     let require_project = scan.require_project;
+    // `.gitignore` rules as `git_ignore(true).require_git(false)` would apply
+    // them, read through the sources cache so braces stay literal (#1149).
+    let gitignore = scan.respect_gitignore.then(SourcesCache::default);
     let walker = WalkBuilder::new(root)
         .standard_filters(false)
-        .git_ignore(scan.respect_gitignore)
-        .require_git(false)
         .max_depth(scan.max_depth.map(|depth| depth + 1))
         .filter_entry(move |entry| {
             if entry.depth() == 0 {
                 return true;
+            }
+            let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
+            if gitignore
+                .as_ref()
+                .is_some_and(|cache| cache.gitignore_only_skips(&scan_root, entry.path(), is_dir))
+            {
+                return false;
             }
             let skipped_name = entry.file_name().to_str().is_some_and(skip_dir);
             let excluded = !exclude.is_empty()
@@ -698,6 +706,64 @@ mod tests {
                 ("llms/openai".to_owned(), "llms/openai".to_owned()),
                 ("openai".to_owned(), "openai".to_owned()),
             ]
+        );
+    }
+
+    /// Auto-detection reads `.gitignore` files as `ignore`'s
+    /// `git_ignore(true).require_git(false)` walk would, except that braces
+    /// are literal as in git (#1149).
+    #[test]
+    fn nested_members_read_gitignore_like_git() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        write(temp.path(), ".gitignore", "hidden/\n/top/\n!keep\n");
+        write(temp.path(), "sub/.gitignore", "drop/\nkeep/\n");
+        // `require_git(false)` sees no repository: outer rules still apply.
+        fs::create_dir_all(temp.path().join("repo/.git")).expect("git dir");
+        for dir in [
+            "app",
+            "hidden/a",
+            "top",
+            "x/top",
+            "sub/drop",
+            "sub/keep",
+            "sub/ok",
+            "repo/hidden",
+        ] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), project);
+        }
+        let mut expected = Vec::new();
+        for entry in WalkBuilder::new(temp.path())
+            .standard_filters(false)
+            .git_ignore(true)
+            .require_git(false)
+            .build()
+        {
+            let entry = entry.expect("entry");
+            if entry.depth() >= 2 && entry.file_name() == "pyproject.toml" {
+                let dir = entry.path().parent().expect("parent");
+                expected.push(relative_path(temp.path(), dir).expect("relative"));
+            }
+        }
+        expected.sort();
+        let mut detected: Vec<String> = detect(temp.path(), &[])
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect();
+        detected.sort();
+        assert_eq!(detected, expected);
+        assert_eq!(detected, ["app", "sub/ok", "x/top"]);
+
+        // `ignore` would read these as alternations and drop every member.
+        write(temp.path(), ".gitignore", "{}\n*.{toml,cfg}\n{app,x}/\n");
+        let mut detected: Vec<String> = detect(temp.path(), &[])
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect();
+        detected.sort();
+        assert_eq!(
+            detected,
+            ["app", "hidden/a", "repo/hidden", "sub/ok", "top", "x/top"]
         );
     }
 

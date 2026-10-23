@@ -915,6 +915,18 @@ mod tests {
         assert_eq!(warnings("/repo/packages/core", &unparsable), expected);
     }
 
+    /// The sampled property below rarely lands on the threshold itself.
+    #[test]
+    fn large_project_warning_starts_above_the_threshold() {
+        assert_eq!(large_project_warning(LARGE_PROJECT_THRESHOLD), None);
+        assert_eq!(
+            large_project_warning(LARGE_PROJECT_THRESHOLD + 1),
+            Some(SourcesWarning::LargeProject {
+                file_count: LARGE_PROJECT_THRESHOLD + 1,
+            })
+        );
+    }
+
     mod props {
         use super::*;
         use proptest::prelude::*;

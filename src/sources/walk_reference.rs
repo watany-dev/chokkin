@@ -426,11 +426,11 @@ mod tests {
     fn invalid_ignore_lines_warn_like_the_ignore_walker() {
         let temp = tempdir().expect("tempdir");
         let outer = temp.path().join("outer");
-        write_file(&outer.join(".gitignore"), "bad{glob\n");
+        write_file(&outer.join(".gitignore"), "bad[z-a]glob\n");
         let root = outer.join("repo");
-        write_file(&root.join(".git/info/exclude"), "ex{clude\n");
-        write_file(&root.join(".gitignore"), "foo{bar\n*.pyi\n");
-        write_file(&root.join("pkg/.gitignore"), "baz{qux\n");
+        write_file(&root.join(".git/info/exclude"), "ex[z-a]clude\n");
+        write_file(&root.join(".gitignore"), "foo[z-a]bar\n*.pyi\n");
+        write_file(&root.join("pkg/.gitignore"), "baz[z-a]qux\n");
         write_file(&root.join("pkg/app.py"), "");
         write_file(&root.join("pkg/types.pyi"), "");
         // A directory named `.gitignore` is no ignore file.
@@ -566,7 +566,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let real = temp.path().join("real");
         write_file(&real.join(".git/HEAD"), "");
-        write_file(&real.join(".gitignore"), "foo{bar\nskipped.py\n");
+        write_file(&real.join(".gitignore"), "foo[z-a]bar\nskipped.py\n");
         write_file(&real.join("app.py"), "");
         write_file(&real.join("skipped.py"), "");
         let link = temp.path().join("link");
@@ -582,7 +582,7 @@ mod tests {
     fn nested_directory_symlinks_stay_unread_like_the_ignore_walker() {
         let temp = tempdir().expect("tempdir");
         let other = temp.path().join("other");
-        write_file(&other.join(".gitignore"), "foo{bar\n");
+        write_file(&other.join(".gitignore"), "foo[z-a]bar\n");
         write_file(&other.join("lib.py"), "");
         let root = temp.path().join("repo");
         write_file(&root.join(".git/HEAD"), "");
