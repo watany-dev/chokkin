@@ -189,6 +189,10 @@ impl ReferenceIndex {
                 },
             }
         }
+        // `import_module("pkg.m").f` reads `f` from `pkg.m` (#1144).
+        for access in &module.loaded_module_accesses {
+            record(access.receiver.as_str(), access.name.as_str());
+        }
         // `import_string("pkg.mod.Cls")` fetches `mod` from `pkg` and `Cls`
         // from `pkg.mod` (#493).
         for dynamic in module

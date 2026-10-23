@@ -62,9 +62,9 @@ Unused files  2
   src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
 Unused dependencies  3
-  boto3                    pyproject.toml:8       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
-  python-dotenv            pyproject.toml:10      python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
-  rich                     pyproject.toml:9       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
+  boto3                    pyproject.toml:6       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
+  python-dotenv            pyproject.toml:8       python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
+  rich                     pyproject.toml:7       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
 
 Missing dependencies  1
   src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
@@ -120,6 +120,13 @@ exit codeはCI向けに固定する。
                  evidence（top-level modules、reachable/unreachable import）を出す。
 --trace        : 到達可能な file には entry からの positive trace、未到達 file には
                  negative trace（未到達理由、entry roots、incoming import 連鎖）を出す。
+--probe        : pipeline の step 1〜4 (root・config・manifest・source の発見) だけを
+                 実行し、text で表示する。issue を作らないので、issue を絞る・出力する・
+                 直す・baseline に書く flag (`--strict` `--include` `--exclude`
+                 `--confidence` `--reporter` `--no-exit-code` `--explain` `--trace`
+                 `--fix` 系 `--baseline` `--update-baseline`) との併用は exit 2 で拒否する
+                 (黙って無視しない、#1128)。`--production` `--no-auto-workspace`
+                 `--no-cache` `--project-root` は発見の結果を変えるので併用できる。
 ```
 
 `--no-exit-code` は導入初期やGitHub Actions summary用に必須。reporterはv0.1でdefault(human)/compact/JSON/Markdownを持ち、v0.2でSARIF/GitHub reporterを追加する(§16)。`--explain` と `--trace` は誤検知報告の導線としてv0.1から提供する(§20)。
@@ -286,17 +293,25 @@ CHK006 = "info"
 CHK002 = "error"
 ```
 
-`entry` / `project` / `exclude` / `vendored` と `workspaces.<id>` の `path` / `entry` / `project` は root 相対で書く。絶対パスに加え、`..` を字面で畳んで root の外に出る path（`../shared/**`）も設定の検証エラー（exit 2）にする (#981)。root の外は走査しないので、黙って何にも一致しない設定になるのを防ぐ。
+`entry` / `project` / `exclude` / `vendored` と `workspaces.<id>` の `path` / `entry` / `project` は root 相対で書く。絶対パスに加え、`..` を字面で畳んで root の外に出る path（`../shared/**`）も設定の検証エラー（exit 2）にする (#981)。root の外は走査しないので、黙って何にも一致しない設定になるのを防ぐ。`entry` は `\` を `/` に揃えて先頭の `./` を落とし、下の path glob も先頭の `./` を落としてから照合する (#1168)。走査が見つけるパスは `./` を持たないので、`./src/app.py` を skipped entry に、`./legacy/**` を黙って何にも一致しない設定にしないため。`--trace` や workspace の `path` と同じ扱いにそろえる。
+
+設定の path glob（`project` / `exclude` / `vendored`、`[tool.chokkin.ignore]` の path pattern、pytest の `testpaths`、wheel target の path）の `\` は OS によらずパス区切りとして読み、`/` と同じに扱う (#1165)。globset の既定では Windows で区切り、それ以外でエスケープになり、Windows で書いた `legacy\**` が Linux の CI で黙って何にも一致しなくなるため。workspace member の path と揃える。glob 記号そのものに一致させたいときは `[*]` のように文字クラスで書く。
+
+設定の path glob（`project` / `exclude` / `vendored`、`[tool.chokkin.ignore]` の path pattern、pytest の `testpaths`、wheel target の path）の `\` は OS によらずパス区切りとして読み、`/` と同じに扱う (#1165)。globset の既定では Windows で区切り、それ以外でエスケープになり、Windows で書いた `legacy\**` が Linux の CI で黙って何にも一致しなくなるため。workspace member の path と揃える。glob 記号そのものに一致させたいときは `[*]` のように文字クラスで書く。
 
 `vendored` は `exclude` と違い走査から外さない。vendored code 経由の import や symbol 参照は到達性と参照元に数え、そこで見つかった issue だけを報告しない（`SuppressReason::Vendored`。baseline 件数には含めない）。layer をまたいでは置き換えで、`vendored = []` で無効にできる。
 
 `module_loaders` は §11 の loader API に足す関数の名前で、呼び出しの関数名 (`x.LazyFeature(...)` なら属性名) と一致させる。identifier でない名前 (`pkg.LazyFeature`) はどの呼び出しにも一致しないので、設定の検証エラー（exit 2）にする。既定は空で、layer をまたいでは置き換える。
+
+`.gitignore` と `.git/info/exclude` は git と同じ意味で読む。git の pattern に brace 展開は無いので、`{` `}` はリテラルとして扱う（`*.{py,pyc}` はその名前の file だけ、`{}` は何にも一致しない）。`ignore` crate は alternation として読むため、行を渡す前に `{` `}` をエスケープする（character class の中と既にエスケープ済みのものはそのまま）。workspace member の自動検出の走査も同じ規則で読む (#1149)。
 
 `respect_gitignore = true` のとき、走査が出会った `.gitignore` を読めなかった場合（root でも配下の directory でも、UTF-8 でない・読み取り権限がない・リンク先のない symlink）は、そのファイルごとに `sources: could not read <path>; its ignore rules may be missing` を 1 回出す。workspace member の走査が同じファイルに出会っても重ねて出さない (#915)。読めなかった ignore 規則は除外を減らす方向にしか働かず、finding を誤って消さないので gap にはしない。
 
 ソース走査は symlink を辿らない（root 自体が symlink の場合だけは、その先を root として走査する）。root 内を指す symlink は、実体を実体の path で 1 回だけ数えるので無言で飛ばす（同じファイルを 2 つの module 名で数えない）。root の外を指すもの・ループするもの・リンク先がないものは、ユーザーが解析させるつもりで置いた可能性があるので、リンクごとに `sources: did not follow symlink <path>: <reason>` を出す（reason は `it points outside the project root` / `it forms a loop` / `it points to nothing`。それ以外の読めなかった理由は OS の文言をそのまま出す）。対象は、ソースの拡張子（`.py` / `.pyi` / `.ipynb`）を持つ名前、ディレクトリを指すもの、リンク先が分からず拡張子も先頭の `.` もない名前に限る。ほかの名前（`LICENSE.txt`・`.gitignore` など）はもとから走査しないので、辿っても読まない。exclude と `.gitignore` で除かれる path は出さない。workspace member の走査が出したものは root の走査が同じリンクを見るので落とす（member 間のリンクは root 内なので出さない）。多いときは他の warning と同じく `… and N more like the above` にまとめる (#986)。root の外を辿らないのは解析対象の外を読まないための既定で、変えない。root の外のコードは project の外なので、その import を依存の使用に数えないのが既定どおりで、gap にはしない（ループとリンク先のないものには読む中身がない）。
 
 ソースの拡張子（`.py` / `.pyi` / `.ipynb`）は OS によらず大文字小文字を区別しない。`helper.PY` も走査し、`include` / `exclude` / test の glob は拡張子を小文字にした path（`helper.py`）でも照合し、module 名・pytest や script の `sys.path` での探索も `helper.py` と同じに扱う。Windows と macOS の CPython は directory を読むときに拡張子を小文字にするので `import helper` がこの file を読み、そこで CHK010 を出して中の import を読まないのは誤検知になるため。Linux の CPython はこの file を import できないが、見落とし（CHK010 を出さない・file を到達扱いにする）の側に倒す (#1170)。
+
+path (ディレクトリ名かファイル名) が UTF-8 でないソースファイル (`.py` / `.pyi` / `.ipynb`) は inventory に入れず、ファイルごとに `sources: skipped <path>: its path is not valid UTF-8` を出す (path は不正な byte を `U+FFFD` に置き換えて表示する)。Python はその名前の module を import できず、置き換えた path では読み戻せないため、解析全体を止めずに飛ばす。exclude と `.gitignore` で除かれる path、ソースでないファイルは出さない。workspace member の走査が出したものは root の走査が同じファイルを見るので落とす。import できないので gap にはしない (#1146)。
 
 ルートの `.chokkin/` は解析データ専用とし、分析対象のソースは置かない。default / mandatory exclude の `.chokkin/**` を既存の walker filter_entry で枝刈りし、cache JSON 数に比例する探索を避ける。
 
@@ -420,7 +435,7 @@ PEP 723 script の CHK002/CHK003 は script block に対して判定する。scr
 
 `azure` のように root 自体を提供する distribution が無い namespace は dotted key(`azure.identity` など)だけを bundled map に載せ、未登録の sub-package を任意の 1 distribution に誤って寄せない。同じ import 名を別の distribution も提供する場合(`paddle` の `paddlepaddle` / `paddlepaddle-gpu`、`haystack` の `haystack-ai` / `farm-haystack`)は両方を載せる。片方だけだと、もう片方を宣言した project では step 8 の宣言名照合より先に map の候補で決まり、宣言は未使用・import は未宣言に見えてしまう。候補が複数あれば import site ごとに宣言されている方を選ぶ(#732, #748)。map に無い namespace portion は、root が step 8 の宣言名照合で `Unknown` のままなら、先頭 2 segment を `-` で繋いだ名前(`sphinxcontrib.log_cabinet` → `sphinxcontrib-log-cabinet`、`sphinxext.opengraph` → `sphinxext-opengraph`)を同じく宣言依存・lock 名と照合する(confidence `Likely`)。共有 root だけでは distribution を決めない(#809)。root が map・venv・lock 名で third-party に決まっても、map の dotted key に一致しない import では、同じく先頭 2 segment を `-` で繋いだ名前を file の script block・member manifest・root が宣言していればそちらを選ぶ(confidence `Likely`)。`optimum-intel` は `optimum.intel` を配り、`optimum` 自体はその推移依存として lock にあるだけなので、root の lock 名で決めると宣言は未使用・import は推移依存に見える(#1022)。宣言されている portion を推移依存の root より優先するのは #732 / #748 と同じ考え方。lock にあるだけの portion では上書きしない(root の distribution 自身の subpackage かもしれないため)。bundled map は `data/package-map.seed.json` から `scripts/generate-package-map.py` で生成し、`--verify-wheels`(ネットワーク必須、CI 対象外)で各 entry の import 名を PyPI 最新 wheel の `top_level.txt` / RECORD と照合する。
 
-resolver の warning は pipeline warning として報告する(#888)。venv・map で 1 つの import root に distribution 候補が複数あるときは `resolve: import `<root>` maps to several distributions (<候補>)`、`.venv` / `venv` はあるが site-packages や metadata を読めないときは `resolve: could not read virtualenv `<root からの相対 path>`: <理由>` を出す。venv を読めなくても解析は venv なしの経路で続け、finding の confidence は変えない。未解決の import は warning ではなく CHK010 として報告する。
+resolver の warning は pipeline warning として報告する(#888)。venv・map で 1 つの import root に distribution 候補が複数あるときは `resolve: import `<root>` maps to several distributions (<候補>)`、`.venv` / `venv` はあるが site-packages や metadata を読めないときは `resolve: could not read virtualenv `<root からの相対 path>`: <理由>` を出す。POSIX の venv は `--upgrade` で作り直すと古い `lib/pythonX.Y/site-packages` が残るので、`lib/` に複数あれば `pyvenv.cfg` の `version_info`(uv)/ `version`(`python -m venv`)と同じ `X.Y` のものを読む。`read_dir` の並びはファイルシステムごとに違い、先に見つかった方を読むとマシンごとに `VenvIndex` が変わるため。1 つに決まらないとき(cfg が無い・一致しない・`python3.13` と `python3.13t` の両方が一致する)は version、次に名前の順で最後のもの(`python3.10` は `python3.9` より後)を読み、`resolve: virtualenv `<lib の相対 path>` has several interpreters (<候補>) and `pyvenv.cfg` does not pick one; reading `<選んだもの>`` を出す (#1169)。venv を読めなくても解析は venv なしの経路で続け、finding の confidence は変えない。未解決の import は warning ではなく CHK010 として報告する。
 
 同一 import root は resolver 内で1回だけ分類し、グラフへの `module_origin` 書き込みは `Unknown` から解決済みへの単調マージとする(複数 import site で矛盾してもダウングレードしない)。
 
@@ -1767,7 +1782,7 @@ large monorepo     < 10s cold
 large monorepo     < 2s warm cache
 ```
 
-cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` が一意ならcontent hashを空のままにする。mtimeが取得できない場合と、mtimeが直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。parse cache はdisk bundleだけで、in-memory storeは持たない（1 runで各sourceを1回しかparseしないため）。disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。bundleから読んだ `ParsedModule` はcloneせずmoveで取り出し、書き戻しは借用のまま（`ParseCacheBundleRef`）直列化するので、disk warm runでは `ParsedModule` のcloneが発生しない。bundleを書いた時点で `parse/` 内の他の `*.json`（別contextのbundleや旧形式）を削除する。削除はbest-effortで、失敗しても解析は失敗させない。拡張子のない一時fileは並行runのatomic write中のものなので残す。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
+cache は project root 配下の固定 directory `.chokkin/cache`（`DEFAULT_CACHE_DIR`）に置き、project root 外へ書き出さない。`--no-cache` は cache read/write を両方無効化し、stale疑いのcache unitが解析結果を変えないようにする。v0.2初期は `CacheOptions` のpolicyを先に通し、その上に parse / manifest extraction / generic config scanの各unitを保守的に追加した。parse cache のkeyは `CacheKeyContext` と `SourceFingerprint` を組み合わせる。`SourceFingerprint` は既定で `stat` のみを読み、`(size, mtime)` に利用者が戻せない stamp (Unix は inode と ctime、Windows は creation time。std に安定した file index / change time が無いため) を加えた組が一意ならcontent hashを空のままにする。`cp -p` / `rsync -a` / `tar` 展開のように mtime を保ったまま同じサイズの別の版に差し替えても、inode か ctime が変わるので古い parse 結果を返さない (#1158)。mtimeが取得できない場合と、mtime か Unix の ctime が直近2秒以内（coarse mtime粒度でのfalse hitを避ける racy window）の場合だけfile bytesを読んでstable content hashを計算する。ctime も見るのは、mtime を過去に戻した直後の書き換えを settled と誤判定しないため。「直近」の基準はローカルの時計ではなくfilesystemの時計で、run開始時に `.chokkin/cache/clock` へprobeを書いてそのmtimeを使う（`CacheOptions::filesystem_now`）。NFS/SMBのようにfilesystemの時計が遅れていても、書いた直後のsourceをsettledと誤判定しないため。probeを書けない場合（read-only等）はローカルの時計に戻る。これによりwarm runで全sourceを読み直さずにkeyを組み立てられる。`--no-cache` ではkey自体を作らないので、stat・hashも行わない。parse cache はdisk bundleだけで、in-memory storeは持たない（1 runで各sourceを1回しかparseしないため）。disk永続化は `.chokkin/cache/parse/bundle-<context hash>.json` に `CacheKeyContext` 単位の `ParseCacheBundle`（`ParseCacheKey::entry_id()` をkeyにした `ParsedModule` のmap）をまとめて保存する。bundle は run開始時に1回読み、run終了時に1回だけatomic writeするため、cold runのfile I/Oはfile数に比例しない。書き戻すのはそのrunで実際に触れたentryだけなので、変更・削除されたsourceのparse結果はbundleから落ちる。書き戻しはparseが発生したか、entry idの集合がbundleと異なる場合に限る。entry idは64 bit hashなので、bundleから返す前に `ParsedModule::path` とkeyのpathを照合し、不一致（衝突）はmiss扱いにする。bundleから読んだ `ParsedModule` はcloneせずmoveで取り出し、書き戻しは借用のまま（`ParseCacheBundleRef`）直列化するので、disk warm runでは `ParsedModule` のcloneが発生しない。bundleを書いた時点で `parse/` 内の他の `*.json`（別contextのbundleや旧形式）を削除する。削除はbest-effortで、失敗しても解析は失敗させない。拡張子のない一時fileは並行runのatomic write中のものなので残す。corrupt JSON はmiss扱いにしてsourceを再parseする。並列parseで読めないsourceが複数あるときは、discovery順で最初のもののエラーを返す。
 
 parse cache keyは以下を使う（`CacheKeyContext` + `SourceFingerprint`）。
 
@@ -1780,6 +1795,7 @@ unit version        # parse-v11。ParsedModule の形や key 規則を変えた�
 file path
 file size
 file mtime
+file inode / ctime (Windows は creation time)
 file content hash   # mtime 不明か racy window 内のときだけ。それ以外は空
 ```
 

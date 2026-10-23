@@ -7,6 +7,7 @@ use globset::{Glob, GlobMatcher};
 use crate::manifest::{PackageFind, WheelTargets};
 use crate::path_util::join_rel;
 
+use super::glob::path_glob;
 use super::types::{DiscoveredFile, LayoutInfo};
 
 /// Discovered files a wheel ships, resolved from `WheelTargets`.
@@ -99,7 +100,7 @@ impl PathTarget {
     fn new(path: &str) -> Option<Self> {
         if path.contains(['*', '?', '[', '{']) {
             // An invalid pattern ships nothing we can resolve, so it is ignored.
-            return Glob::new(path)
+            return path_glob(path)
                 .ok()
                 .map(|glob| Self::Glob(glob.compile_matcher()));
         }
@@ -223,6 +224,24 @@ mod tests {
             paths: paths.iter().map(|path| (*path).to_owned()).collect(),
             find: Vec::new(),
         }
+    }
+
+    #[test]
+    fn is_under_takes_the_prefix_itself_and_its_descendants() {
+        assert!(is_under("src/acme", ""));
+        assert!(is_under("src/acme", "src/acme"));
+        assert!(is_under("src/acme/a.py", "src/acme"));
+        assert!(!is_under("src/acme_tools/a.py", "src/acme"));
+        assert!(!is_under("src", "src/acme"));
+    }
+
+    #[test]
+    fn parent_dirs_lists_ancestors_nearest_first() {
+        assert_eq!(
+            parent_dirs("src/acme/sub/a.py").collect::<Vec<_>>(),
+            ["src/acme/sub", "src/acme", "src"]
+        );
+        assert_eq!(parent_dirs("a.py").count(), 0);
     }
 
     #[test]

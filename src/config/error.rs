@@ -25,11 +25,12 @@ pub enum ConfigError {
     },
 
     /// Semantic validation failed for a config value.
-    #[error("invalid config at {path}.{field}: {message}")]
+    #[error("invalid config at {path}: {field}: {message}")]
     Validation {
         /// Config file path.
         path: PathBuf,
-        /// Dotted field path, e.g. `entry[0]`.
+        /// Dotted key path from the file's root, e.g. `entry[0]` in
+        /// `chokkin.toml` or `tool.chokkin.entry[0]` in `pyproject.toml`.
         field: String,
         /// Human-readable validation error.
         message: String,
