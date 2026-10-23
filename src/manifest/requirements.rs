@@ -161,7 +161,7 @@ fn parse_requirements_file_path(
     };
     ctx.include_stack.push(canonical);
 
-    for line in join_continued_lines(contents.lines()) {
+    for line in join_continued_lines(split_lines_inclusive(&contents).map(strip_line_break)) {
         parse_requirements_line(&mut ctx, &rel, &line.text, line.first)?;
     }
 
@@ -436,12 +436,7 @@ fn push_editable_dependency(
         (String::new(), true)
     } else {
         (
-            normalize_distribution_name(
-                Path::new(path_spec)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(path_spec),
-            ),
+            normalize_distribution_name(editable_path_basename(path_spec)),
             true,
         )
     };
@@ -459,6 +454,21 @@ fn push_editable_dependency(
     });
 }
 
+/// Last component of an `-e` path, split on both `/` and `\` so the guess
+/// does not depend on the host OS (#1171): `Path::file_name` splits on `\`
+/// only on Windows, so `-e "libs\foo"` was `foo` there and `libs-foo`
+/// elsewhere. A trailing separator is skipped, as `Path::file_name` does; a
+/// last component of `.` or `..` names nothing, so the whole spec is kept.
+fn editable_path_basename(spec: &str) -> &str {
+    match spec
+        .split(['/', '\\'])
+        .rfind(|component| !component.is_empty())
+    {
+        Some("." | "..") | None => spec,
+        Some(component) => component,
+    }
+}
+
 /// Distribution a requirements-file line declares, read the way [`extract_requirements_file`]
 /// reads it; `None` for blank, option, and opaque (nameless) lines.
 pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
@@ -470,6 +480,47 @@ pub(crate) fn requirements_line_distribution(line: &str) -> Option<String> {
     }
     let (requirement, _) = split_pip_marker(requirement)?;
     requirement_name(requirement)
+}
+
+/// pip splits a requirements file with `str.splitlines()` (#1154): every
+/// Python line boundary ends a line, a lone `\r` among them. Each line keeps
+/// its terminator, so the pieces concatenate back to `contents`.
+pub(crate) fn split_lines_inclusive(contents: &str) -> impl Iterator<Item = &str> {
+    let mut rest = contents;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let end = rest
+            .char_indices()
+            .find(|&(_, c)| is_line_boundary(c))
+            .map_or(rest.len(), |(index, c)| {
+                let after = index + c.len_utf8();
+                if c == '\r' && rest[after..].starts_with('\n') {
+                    after + 1
+                } else {
+                    after
+                }
+            });
+        let (line, tail) = rest.split_at(end);
+        rest = tail;
+        Some(line)
+    })
+}
+
+/// A line from [`split_lines_inclusive`] without its terminator.
+pub(crate) fn strip_line_break(line: &str) -> &str {
+    line.strip_suffix("\r\n")
+        .or_else(|| line.strip_suffix(is_line_boundary))
+        .unwrap_or(line)
+}
+
+/// The characters Python's `str.splitlines()` splits on.
+const fn is_line_boundary(c: char) -> bool {
+    matches!(
+        c,
+        '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}'..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
 }
 
 /// One line of a requirements file after pip's `join_lines`.
@@ -874,6 +925,29 @@ mod tests {
     }
 
     #[test]
+    fn split_lines_inclusive_matches_python_splitlines() {
+        let contents = "a\rb\r\nc\nd\u{b}e\u{2028}f\r\rg";
+        let lines: Vec<&str> = split_lines_inclusive(contents).collect();
+        assert_eq!(
+            lines,
+            [
+                "a\r",
+                "b\r\n",
+                "c\n",
+                "d\u{b}",
+                "e\u{2028}",
+                "f\r",
+                "\r",
+                "g"
+            ]
+        );
+        assert_eq!(lines.concat(), contents);
+        let stripped: Vec<&str> = lines.into_iter().map(strip_line_break).collect();
+        assert_eq!(stripped, ["a", "b", "c", "d", "e", "f", "", "g"]);
+        assert_eq!(split_lines_inclusive("").count(), 0);
+    }
+
+    #[test]
     fn origin_rel_folds_only_parents_of_named_directories() {
         // A leading `..` of a relative root has nothing to fold into.
         let root = Path::new("../proj");
@@ -926,6 +1000,30 @@ mod tests {
         ] {
             assert_eq!(pip_line_options(options), None, "{options:?}");
         }
+    }
+
+    #[test]
+    fn editable_path_name_does_not_depend_on_the_host_separator() {
+        // #1171: `Path::file_name` split `libs\foo` only on Windows. The
+        // value is quoted because pip's `shlex.split` drops an unquoted `\`.
+        let result = parse_requirements_text(
+            "-e \"libs\\foo\"\n\
+             -e libs/bar\n\
+             -e libs/baz/\n\
+             -e 'C:\\work\\Qux_Pkg'\n\
+             -e libs\\quux\n",
+        );
+        assert_eq!(
+            declared(&result),
+            [
+                ("foo", Some(1)),
+                ("bar", Some(2)),
+                ("baz", Some(3)),
+                ("qux-pkg", Some(4)),
+                ("libsquux", Some(5)),
+            ]
+        );
+        assert!(result.dependencies.iter().all(|dep| dep.opaque));
     }
 
     #[test]
