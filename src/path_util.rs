@@ -32,6 +32,41 @@ pub(crate) fn rel_to_root(root: &Path, path: &Path) -> String {
     normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
+/// Whether `dir` holds a file named exactly `name`. `dir.join(name).is_file()`
+/// alone also finds `Requirements.txt` for `requirements.txt` on a
+/// case-insensitive file system (macOS, Windows), where the tools that read
+/// the file on Linux would not (#1163); the listing keeps each entry's own
+/// spelling.
+#[must_use]
+pub(crate) fn is_file_named(dir: &Path, name: &str) -> bool {
+    dir.join(name).is_file() && has_entry_named(dir, name)
+}
+
+/// `dir.join(name)` must exist. Where the name with its ASCII case swapped
+/// does not, the file system tells cases apart here, so the hit was spelled
+/// `name` and the listing (slower than a stat) is skipped.
+#[must_use]
+pub(crate) fn has_entry_named(dir: &Path, name: &str) -> bool {
+    let swapped: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect();
+    if fs::symlink_metadata(dir.join(swapped)).is_err() {
+        return true;
+    }
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| entry.file_name().as_os_str() == name)
+    })
+}
+
 /// Whether a directory above the module at root-relative `path` holds an
 /// `__init__.py` that `is_init` accepts: importing that package does not by
 /// itself load `path` (#802).
@@ -96,6 +131,39 @@ pub(crate) fn resolve_under_root(
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn is_file_named_matches_the_spelling_on_disk() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("Requirements.txt"), "").expect("write");
+        fs::create_dir(temp.path().join("setup.py")).expect("create dir");
+        assert!(is_file_named(temp.path(), "Requirements.txt"));
+        assert!(!is_file_named(temp.path(), "requirements.txt"));
+        // A directory under the name is no file.
+        assert!(!is_file_named(temp.path(), "setup.py"));
+        assert!(!is_file_named(&temp.path().join("missing"), "setup.py"));
+    }
+
+    /// Both spellings present on a case-sensitive file system: the listing
+    /// decides, not the swapped-case probe.
+    #[test]
+    fn has_entry_named_lists_when_the_swapped_case_resolves() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("uv.lock"), "").expect("write");
+        fs::write(temp.path().join("UV.LOCK"), "").expect("write");
+        if fs::read_dir(temp.path()).expect("list").count() < 2 {
+            return; // one file under both names: a case-insensitive file system
+        }
+        assert!(has_entry_named(temp.path(), "uv.lock"));
+        assert!(has_entry_named(temp.path(), "UV.LOCK"));
+    }
+
+    #[test]
+    fn has_entry_named_rejects_an_entry_spelled_in_another_case() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("UV.LOCK"), "").expect("write");
+        assert!(!has_entry_named(temp.path(), "uv.lock"));
+    }
 
     #[test]
     fn display_path_strips_windows_verbatim_disk_prefix() {
