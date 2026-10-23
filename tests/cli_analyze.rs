@@ -9003,3 +9003,29 @@ fn binary_unreadable_entry_point_is_reported() {
         "{stderr}"
     );
 }
+
+/// `helper.PY` is collected and named like `helper.py`, as Python on
+/// Windows and macOS lowercases extensions when it looks a module up: the
+/// import resolves and the file's own imports are read (#1170).
+#[test]
+fn binary_resolves_module_with_uppercase_extension() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"x\"\ndependencies = []\n\n[tool.chokkin]\nentry = [\"app.py\"]\n",
+    )
+    .expect("write pyproject");
+    fs::write(root.join("app.py"), "import helper\n").expect("write app");
+    fs::write(root.join("helper.PY"), "import requests\n").expect("write helper");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    assert!(!stdout.contains("Unresolved imports"), "{stdout}");
+    assert!(!stdout.contains("Unused files"), "{stdout}");
+    assert!(stdout.contains("helper.PY:1 requests"), "{stdout}");
+}

@@ -14,7 +14,7 @@ use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
 use super::walk::{
-    SkippedSymlinks, nested_gitignore_unreadable, push_walk_error, should_prune_dir,
+    SkippedSymlinks, matches_source, nested_gitignore_unreadable, push_walk_error, should_prune_dir,
 };
 use super::warnings::SourcesWarning;
 
@@ -187,7 +187,7 @@ pub(super) fn collect_files_reference(
         };
         let rel_str = normalize_rel_path(rel);
 
-        if !project_matcher.is_match(&rel_str) || exclude_matcher.is_match(&rel_str) {
+        if !matches_source(project_matcher, &rel_str) || matches_source(exclude_matcher, &rel_str) {
             continue;
         }
 
@@ -195,7 +195,7 @@ pub(super) fn collect_files_reference(
             continue;
         }
 
-        let context = if test_matcher.is_match(&rel_str) {
+        let context = if matches_source(test_matcher, &rel_str) {
             FileContext::Test
         } else {
             assign_file_context(&rel_str)

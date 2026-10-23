@@ -10,7 +10,7 @@ use ignore::overrides::Override;
 use ignore::{DirEntry, WalkBuilder};
 
 use crate::config::EntrySpec;
-use crate::path_util::normalize_rel_path;
+use crate::path_util::{lowercase_extension, normalize_rel_path};
 
 use super::cache::{Ancestors, DirIgnore, RootLoad, SourcesCache, gitignore_skips};
 use super::context::assign_file_context;
@@ -414,6 +414,16 @@ fn nested_dockerfile(
     (!exclude_matcher.is_match(&rel_str) && !gitignored(rel, false)).then_some(rel_str)
 }
 
+/// Whether `matcher` takes the source file at `rel_str`, also under its
+/// extension in lowercase: `source_kind` collects `helper.PY` as Python, and
+/// the default `**/*.py` globs must not drop it again (#1170).
+pub(super) fn matches_source(matcher: &GlobSet, rel_str: &str) -> bool {
+    matcher.is_match(rel_str) || {
+        let lower = lowercase_extension(rel_str);
+        lower != rel_str && matcher.is_match(lower.as_ref())
+    }
+}
+
 /// The source kind `path`'s extension names, or `None` for a file the
 /// walk does not collect.
 fn source_kind(path: &Path) -> Option<FileKind> {
@@ -497,7 +507,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
         };
         let rel_str = normalize_rel_path(rel);
 
-        if !project_matcher.is_match(&rel_str) || exclude_matcher.is_match(&rel_str) {
+        if !matches_source(project_matcher, &rel_str) || matches_source(exclude_matcher, &rel_str) {
             continue;
         }
 
@@ -505,7 +515,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        let context = if test_matcher.is_match(&rel_str) {
+        let context = if matches_source(test_matcher, &rel_str) {
             FileContext::Test
         } else {
             assign_file_context(&rel_str)
