@@ -1,0 +1,13 @@
+[project]
+name = "acme-api"
+version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "boto3",
+    "rich",
+    "python-dotenv",
+]
+
+[tool.chokkin]
+mode = "app"
+entry = ["src/acme/main.py"]
