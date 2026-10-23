@@ -8,7 +8,7 @@ use crate::config::ChokkinConfig;
 use crate::parser::{IgnoreDirective, ParseSummary};
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, SuppressReason};
-use crate::sources::{build_glob_set, path_glob};
+use crate::sources::{build_glob_set, check_braces, path_glob};
 
 /// Compiled ignore matchers for config and source directives.
 #[derive(Debug)]
@@ -304,10 +304,8 @@ fn normalize_script_pattern(pattern: &str) -> String {
 }
 
 fn glob_match(pattern: &str, value: &str) -> bool {
-    path_glob(pattern)
-        .ok()
-        .and_then(|glob| glob.compile_matcher().is_match(value).then_some(()))
-        .is_some()
+    check_braces(pattern).is_ok()
+        && path_glob(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(value))
 }
 
 #[cfg(test)]

@@ -134,12 +134,12 @@ uvx chokkin --fix --add-missing           # certain な missing dependency も�
 uvx chokkin --fix --allow-remove-files    # certain な未到達ファイルも削除
 ```
 
-`--fix` は設計上保守的です。`certain` な finding だけを対象にし、行番号が合わなくなった manifest は編集を拒否し、改行コードを保ち、skip したものは stderr に理由付きで報告します。
+`--fix` は設計上保守的です。`certain` な finding だけを対象にし、行番号が合わなくなった manifest は編集を拒否し、改行コードを保ち、skip したものは stderr に理由付きで報告します。レポートには編集前の finding がそのまま出ますが、exit code は修正後に残った finding だけで決まります。全件を直した run は 0 で終わり、`--dry-run` や skip された fix の finding は引き続き数えます。
 
 **主要な flag:**
 
 - `--production` は dev/test/docs/lint/type context を外し、runtime code だけで到達性を判定します。dev 専用のファイル・依存は消え、「production で未使用」が厳密に出ます。
-- `--strict` は transitive 依存の直接 import を error にし、workspace member ごとの依存宣言を要求し、未宣言の type/test/docs/dev import も `CHK003` にし、environment marker 付き依存の unused も error にし、`maybe` の finding も表示します。さらに `warning` や `maybe` の finding でも exit 1 にします。
+- `--strict` は transitive 依存の直接 import を error にし、workspace member ごとの依存宣言を要求し、未宣言の type/test/docs/dev import も `CHK003` にし、environment marker 付き依存の unused も error にし、`maybe` の finding も表示します(明示した `--confidence` があればそちらが優先されます)。さらに `warning` や `maybe` の finding でも exit 1 にします。
 - `--reporter default|compact|json|markdown|github|sarif` で出力を選びます。`github` は workflow annotation、`sarif` は code scanning 用の SARIF 2.1.0 subset です。読めなかった入力についての warning は常に stderr に出ます。`json`・`markdown`・`github`・`sarif` は warning を 1 件ずつ載せ、`default` と `compact` は最後に `Warnings: N (see stderr)` と件数を出します。同じ種類の warning が 5 件を超えると、stderr・`markdown`・`github` は最初の 5 件だけを出して残りは件数にまとめます。`json` と `sarif` は全件を残します。
 - `--no-exit-code` は finding があっても 0 を返します。導入期間や summary 用です。
 - `--no-cache` は `.chokkin/` 配下の parse cache を無効化します。cache は file stat をキーにし、stale や破損は miss として扱います。
@@ -165,6 +165,8 @@ reportable issue は severity が `error` かつ confidence が `likely` 以上�
 uvx chokkin --baseline chokkin-baseline.json --update-baseline
 git add chokkin-baseline.json
 ```
+
+`--update-baseline` は書き込みに成功すれば exit 0 で終わるので、`set -e` のスクリプトでも止まりません。
 
 その後、同梱の GitHub Action で pull request を gate します。annotation を出し、code scanning 用に SARIF を書き、baseline にない finding だけで失敗します。
 

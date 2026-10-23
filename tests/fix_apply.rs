@@ -37,7 +37,9 @@ fn fix_removes_certain_unused_dependency_from_pyproject() {
         },
     )
     .expect("analyze with fix");
-    assert_eq!(report.issues.exit_status, ExitStatus::IssuesFound);
+    // The only finding was fixed, so it no longer fails the run (#1164).
+    assert_eq!(report.issues.issues.len(), 1);
+    assert_eq!(report.issues.exit_status, ExitStatus::Success);
 
     let fix_report = report.fix.expect("fix report");
     assert_eq!(fix_report.applied.len(), 1);

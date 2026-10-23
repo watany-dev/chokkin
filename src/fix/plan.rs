@@ -76,9 +76,7 @@ impl FixAction {
 }
 
 /// Build fix actions from an issue report.
-///
-/// `strict` is the analysis' `--strict`: it decides which manifest governs a
-/// workspace member's CHK005, so the move edits the one the rule read.
+#[cfg(test)]
 pub(super) fn plan_fixes(
     report: &IssueReport,
     manifest: &LoadedManifest,
@@ -86,23 +84,59 @@ pub(super) fn plan_fixes(
     strict: bool,
     options: FixOptions,
 ) -> (Vec<FixAction>, Vec<SkippedFix>) {
-    let mut actions = Vec::new();
+    let (planned, skipped) =
+        plan_fixes_with_sources(report, manifest, workspace_manifests, strict, options);
+    (
+        planned.into_iter().map(|plan| plan.action).collect(),
+        skipped,
+    )
+}
+
+/// A fix action and the indices into `IssueReport::issues` it resolves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PlannedFix {
+    pub action: FixAction,
+    /// More than one issue when one edit decides several: imports needing the
+    /// same missing dependency, or a root dev entry imported from the root
+    /// and a member.
+    pub issues: Vec<usize>,
+}
+
+/// Build fix actions from an issue report, keeping which issues each resolves.
+///
+/// `strict` is the analysis' `--strict`: it decides which manifest governs a
+/// workspace member's CHK005, so the move edits the one the rule read.
+pub(super) fn plan_fixes_with_sources(
+    report: &IssueReport,
+    manifest: &LoadedManifest,
+    workspace_manifests: &[WorkspaceFixManifest<'_>],
+    strict: bool,
+    options: FixOptions,
+) -> (Vec<PlannedFix>, Vec<SkippedFix>) {
+    let mut planned: Vec<PlannedFix> = Vec::new();
     let mut skipped = Vec::new();
 
-    for issue in &report.issues {
+    for (index, issue) in report.issues.iter().enumerate() {
         match plan_issue_fix(issue, manifest, workspace_manifests, strict, options) {
-            // Findings decided by one entry (a root dev group imported from
-            // the root and a member) plan one edit or skip; a second edit
-            // would find the entry already moved.
-            Ok(Some(action)) if actions.contains(&action) => {},
-            Ok(Some(action)) => actions.push(action),
+            // A second identical edit would find the entry already changed;
+            // the first one resolves both findings.
+            Ok(Some(action)) => {
+                if let Some(existing) = planned.iter_mut().find(|plan| plan.action == action) {
+                    existing.issues.push(index);
+                    continue;
+                }
+                planned.push(PlannedFix {
+                    action,
+                    issues: vec![index],
+                });
+            },
             Ok(None) => {},
             Err(skip) if skipped.contains(&skip) => {},
             Err(skip) => skipped.push(skip),
         }
     }
 
-    (actions, skipped)
+    (planned, skipped)
 }
 
 fn plan_issue_fix(

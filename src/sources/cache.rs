@@ -24,7 +24,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder, Glob};
 use ignore::overrides::{Override, OverrideBuilder};
 
 use super::error::SourcesError;
-use super::glob::build_glob_set;
+use super::glob::{build_glob_set, check_braces};
 
 /// Parsed ignore state shared by every [`super::discover_sources_cached`] call
 /// that gets a clone of it.
@@ -99,12 +99,14 @@ impl SourcesCache {
         }
         let mut builder = OverrideBuilder::new(".");
         for pattern in patterns {
+            let invalid = |reason| SourcesError::InvalidGlob {
+                pattern: pattern.clone(),
+                reason,
+            };
+            check_braces(pattern).map_err(invalid)?;
             builder
                 .add(&format!("!{pattern}"))
-                .map_err(|error| SourcesError::InvalidGlob {
-                    pattern: pattern.clone(),
-                    reason: error.to_string(),
-                })?;
+                .map_err(|error| invalid(error.to_string()))?;
         }
         let overrides = Arc::new(builder.build().map_err(|error| SourcesError::InvalidGlob {
             pattern: String::new(),

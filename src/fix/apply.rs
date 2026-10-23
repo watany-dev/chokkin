@@ -9,7 +9,7 @@ use crate::rules::IssueReport;
 
 use super::containment::resolve_contained_path;
 use super::error::FixError;
-use super::plan::{FixAction, plan_fixes};
+use super::plan::{FixAction, plan_fixes_with_sources};
 use super::pyproject::{add_runtime_dependency, move_group_to_runtime, remove_by_label};
 use super::requirements::remove_dependency_line;
 use super::setup_cfg::remove_dependency as remove_setup_cfg_dependency;
@@ -32,7 +32,12 @@ pub(crate) fn apply_fixes_with_workspace(
     strict: bool,
     options: FixOptions,
 ) -> FixReport {
-    let (actions, skipped) = plan_fixes(report, manifest, workspace_manifests, strict, options);
+    let (planned, skipped) =
+        plan_fixes_with_sources(report, manifest, workspace_manifests, strict, options);
+    let (actions, sources): (Vec<_>, Vec<_>) = planned
+        .into_iter()
+        .map(|plan| (plan.action, plan.issues))
+        .unzip();
     let mut report_out = FixReport {
         dry_run: options.dry_run,
         skipped,
@@ -48,9 +53,16 @@ pub(crate) fn apply_fixes_with_workspace(
         .collect();
     // Report in plan (diagnostic) order, not the bottom-up order the edits needed.
     outcomes.sort_by_key(|(plan_index, ..)| *plan_index);
-    for (_, action, outcome) in outcomes {
+    for (plan_index, action, outcome) in outcomes {
         match outcome {
-            Ok(applied) => report_out.applied.push(applied),
+            Ok(applied) => {
+                if !options.dry_run {
+                    report_out
+                        .resolved_issues
+                        .extend_from_slice(&sources[plan_index]);
+                }
+                report_out.applied.push(applied);
+            },
             Err(error) => {
                 let (rule, subject) = action.rule_subject();
                 report_out.skipped.push(SkippedFix {

@@ -4,16 +4,20 @@ use crate::config::{ChokkinConfig, Confidence, RuntimeOverrides};
 use crate::rules::types::{Issue, RuleId};
 
 /// Effective confidence floor after config and overrides.
+///
+/// An explicit `--confidence` wins over `--strict`, which only lowers the
+/// default (config) floor to `maybe` (#1134).
 #[must_use]
 pub(super) fn effective_confidence_floor(
     config: &ChokkinConfig,
     overrides: &RuntimeOverrides,
     strict: bool,
 ) -> Confidence {
-    if strict {
-        return Confidence::Maybe;
-    }
-    overrides.confidence_floor.unwrap_or(config.confidence)
+    overrides.confidence_floor.unwrap_or(if strict {
+        Confidence::Maybe
+    } else {
+        config.confidence
+    })
 }
 
 /// Returns true when an issue should be shown after confidence filtering.
@@ -86,6 +90,24 @@ mod tests {
     fn likely_issue_hidden_when_floor_is_certain() {
         let issue = sample_issue(RuleId::Chk002, Confidence::Likely, Severity::Error);
         assert!(!passes_confidence_filter(&issue, Confidence::Certain));
+    }
+
+    #[test]
+    fn explicit_confidence_wins_over_strict() {
+        let config = crate::config::default_config();
+        let floor = |confidence_floor, strict| {
+            let overrides = RuntimeOverrides {
+                confidence_floor,
+                ..RuntimeOverrides::default()
+            };
+            effective_confidence_floor(&config, &overrides, strict)
+        };
+        assert_eq!(floor(None, false), config.confidence);
+        assert_eq!(floor(None, true), Confidence::Maybe);
+        for explicit in [Confidence::Certain, Confidence::Likely, Confidence::Maybe] {
+            assert_eq!(floor(Some(explicit), false), explicit);
+            assert_eq!(floor(Some(explicit), true), explicit);
+        }
     }
 
     #[test]

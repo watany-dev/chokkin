@@ -1104,7 +1104,7 @@ mod tests {
 
     #[test]
     fn reading_a_missing_cache_is_none_but_other_errors_surface() {
-        let root = temp_cache_test_dir("read-bytes");
+        let root = temp_cache_test_dir("read-missing");
         assert!(matches!(
             read_cache_bytes(&root.join("missing.json")),
             Ok(None)

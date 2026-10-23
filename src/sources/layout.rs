@@ -13,11 +13,23 @@ use crate::path_util::{join_rel, strip_py_suffix};
 use crate::plugins::pytest_import_settings;
 
 use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
+use super::glob::check_braces;
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
 
 /// Source directory tried after `src/` and the repository root (#487).
 const LIB_DIR: &str = "lib";
+
+/// §8's single-name entries. At the root they run outside any package
+/// (`python main.py`, `uvicorn asgi:app`), so every layout reads them (#1137).
+pub(crate) const ROOT_ENTRY_NAMES: [&str; 6] = [
+    "main.py",
+    "app.py",
+    "manage.py",
+    "asgi.py",
+    "wsgi.py",
+    "noxfile.py",
+];
 
 /// Infer project layout and default `project` globs (§3.1), plus a warning
 /// when the package directory was guessed rather than declared.
@@ -44,6 +56,10 @@ pub(crate) fn infer_layout(
         },
         |layout| (layout, None),
     );
+    // The unknown layout's globs already read the whole tree.
+    if layout.layout != ProjectLayout::Unknown {
+        layout.inferred_globs.extend(root_main_block_scripts(root));
+    }
     layout.local_packages = local_package_dirs()
         .filter(|name| root.join(name).join("__init__.py").is_file())
         .map(str::to_owned)
@@ -186,7 +202,8 @@ fn top_level_package(root: &Path, path: &str) -> Option<(String, String)> {
 fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
     let matches = |patterns: &[String], name: &str| {
         patterns.iter().any(|pattern| {
-            Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
+            check_braces(pattern).is_ok()
+                && Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
         })
     };
     find.where_dirs
@@ -419,7 +436,55 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     globs.push("conftest.py".to_owned());
     // setuptools runs this at build time, outside the distributed package.
     globs.push("setup.py".to_owned());
+    if layout != ProjectLayout::Unknown {
+        globs.extend(ROOT_ENTRY_NAMES.map(str::to_owned));
+    }
     globs
+}
+
+/// Root `.py` files, as escaped globs, with a plain module-level
+/// `if __name__ == "__main__":` line (§8 `main-block`, #1137): the layout
+/// globs stop at the package. Only a guard the parser surely recognizes
+/// counts, so a root module this pulls in never becomes a new orphan.
+fn root_main_block_scripts(root: &Path) -> Vec<String> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut scripts: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let path = entry.path();
+            let is_py = Path::new(&name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+            if !is_py || ROOT_ENTRY_NAMES.contains(&name.as_str()) || !path.is_file() {
+                return None;
+            }
+            let source = fs::read_to_string(&path).ok()?;
+            source
+                .lines()
+                .any(is_main_guard_line)
+                .then(|| globset::escape(&name))
+        })
+        .collect();
+    scripts.sort();
+    scripts
+}
+
+/// Whether `line` opens an unindented `if __name__ == "__main__":`, in
+/// either operand order and quote.
+fn is_main_guard_line(line: &str) -> bool {
+    let compact: String = line.chars().filter(|ch| !ch.is_whitespace()).collect();
+    line.starts_with("if")
+        && [
+            r#"if__name__=="__main__":"#,
+            "if__name__=='__main__':",
+            r#"if"__main__"==__name__:"#,
+            "if'__main__'==__name__:",
+        ]
+        .iter()
+        .any(|guard| compact.starts_with(guard))
 }
 
 /// Root-relative pytest `testpaths` from the root config and, for a package
@@ -855,6 +920,44 @@ mod tests {
     }
 
     #[test]
+    fn main_guard_lines_are_unindented_plain_comparisons() {
+        for line in [
+            "if __name__ == \"__main__\":",
+            "if __name__=='__main__':  # run",
+            "if '__main__' == __name__:",
+            "if __name__ == \"__main__\": main()",
+        ] {
+            assert!(is_main_guard_line(line), "{line}");
+        }
+        for line in [
+            "    if __name__ == \"__main__\":",
+            "if __name__ == \"__main__\" and not TYPE_CHECKING:",
+            "if __name__ in (\"__main__\",):",
+            "# if __name__ == \"__main__\":",
+            "iff __name__ == \"__main__\":",
+        ] {
+            assert!(!is_main_guard_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn root_main_block_scripts_are_root_files_with_a_guard() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        let guard = "if __name__ == \"__main__\":\n    pass\n";
+        fs::write(root.join("tool[1].py"), guard).expect("write");
+        fs::write(root.join("main.py"), guard).expect("write");
+        fs::write(root.join("util.py"), "x = 1\n").expect("write");
+        fs::write(root.join("notes.txt"), guard).expect("write");
+        fs::write(root.join("latin.py"), b"\xff\nif __name__ == '__main__':\n").expect("write");
+        fs::create_dir_all(root.join("pkg")).expect("create dir");
+        fs::write(root.join("pkg/run.py"), guard).expect("write");
+        fs::create_dir_all(root.join("dir.py")).expect("create dir");
+
+        assert_eq!(root_main_block_scripts(root), ["tool[[]1[]].py"]);
+    }
+
+    #[test]
     fn default_globs_for_src_layout() {
         let globs = default_globs(ProjectLayout::Src, "src", &["acme".to_owned()]);
         assert_eq!(
@@ -869,6 +972,12 @@ mod tests {
                 "**/*.ipynb".to_owned(),
                 "conftest.py".to_owned(),
                 "setup.py".to_owned(),
+                "main.py".to_owned(),
+                "app.py".to_owned(),
+                "manage.py".to_owned(),
+                "asgi.py".to_owned(),
+                "wsgi.py".to_owned(),
+                "noxfile.py".to_owned(),
             ]
         );
     }
