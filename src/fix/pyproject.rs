@@ -5,13 +5,14 @@ use toml_edit::{DocumentMut, Item, Value};
 use crate::manifest::{normalize_distribution_name, pep508_distribution_name};
 
 use super::error::FixError;
-use super::write::{read_manifest, write_manifest};
+use super::write::{ManifestText, read_manifest, write_manifest};
 
 /// A parsed manifest and the line ending it is written back with.
 struct LoadedDoc<'a> {
     rel: &'a str,
     doc: DocumentMut,
     crlf: bool,
+    bom: bool,
 }
 
 impl LoadedDoc<'_> {
@@ -28,7 +29,7 @@ impl LoadedDoc<'_> {
 }
 
 fn load_doc(path: &std::path::Path) -> Result<LoadedDoc<'_>, FixError> {
-    let (rel, contents) = read_manifest(path, "pyproject.toml")?;
+    let ManifestText { rel, contents, bom } = read_manifest(path, "pyproject.toml")?;
     let doc = contents
         .parse::<DocumentMut>()
         .map_err(|error| FixError::InvalidToml {
@@ -36,7 +37,12 @@ fn load_doc(path: &std::path::Path) -> Result<LoadedDoc<'_>, FixError> {
             detail: error.to_string(),
         })?;
     let crlf = contents.contains("\r\n") && !contents.replace("\r\n", "").contains('\n');
-    Ok(LoadedDoc { rel, doc, crlf })
+    Ok(LoadedDoc {
+        rel,
+        doc,
+        crlf,
+        bom,
+    })
 }
 
 /// Remove the entry for `distribution` at a manifest label.
@@ -55,7 +61,7 @@ pub(super) fn remove_by_label(
         });
     }
 
-    write_manifest(path, rel, loaded.render().as_bytes())?;
+    write_manifest(path, rel, loaded.bom, &loaded.render())?;
     Ok(format!("removed `{label}` from {rel}"))
 }
 
@@ -78,7 +84,7 @@ pub(super) fn move_group_to_runtime(
 
     let _ = push_runtime_dependency(doc, raw)?;
 
-    write_manifest(path, rel, loaded.render().as_bytes())?;
+    write_manifest(path, rel, loaded.bom, &loaded.render())?;
     Ok(format!("moved dependency to project.dependencies in {rel}"))
 }
 
@@ -96,7 +102,7 @@ pub(super) fn add_runtime_dependency(
         ));
     }
 
-    write_manifest(path, rel, loaded.render().as_bytes())?;
+    write_manifest(path, rel, loaded.bom, &loaded.render())?;
     Ok(format!("added `{raw}` to project.dependencies in {rel}"))
 }
 
@@ -738,6 +744,23 @@ clip = ["pyperclip>=1.9", "httpx"]
         let updated = std::fs::read_to_string(&path).expect("read");
         assert!(!updated.contains("rich") && !updated.contains("pyperclip"));
         assert!(updated.contains("x-core") && updated.contains("httpx"));
+    }
+
+    #[test]
+    fn bom_manifest_keeps_its_bom() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pyproject.toml");
+        std::fs::write(
+            &path,
+            "\u{feff}[project]\nname = \"demo\"\ndependencies = [\"flask\", \"requests\"]\n",
+        )
+        .expect("write");
+
+        remove_by_label(&path, "project.dependencies[0]", "flask").expect("remove");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "\u{feff}[project]\nname = \"demo\"\ndependencies = [\"requests\"]\n"
+        );
     }
 
     #[test]

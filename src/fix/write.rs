@@ -14,22 +14,48 @@ fn manifest_name<'a>(path: &'a Path, fallback: &'static str) -> &'a str {
         .unwrap_or(fallback)
 }
 
+const BOM: &str = "\u{feff}";
+
+/// A manifest read for editing: its display name, its text without a leading
+/// UTF-8 BOM (analysis drops it too, so the first line still matches), and
+/// whether that BOM is written back.
+pub(super) struct ManifestText<'a> {
+    pub(super) rel: &'a str,
+    pub(super) contents: String,
+    pub(super) bom: bool,
+}
+
 /// Read a manifest, returning its display name alongside the contents.
 pub(super) fn read_manifest<'a>(
     path: &'a Path,
     fallback: &'static str,
-) -> Result<(&'a str, String), FixError> {
+) -> Result<ManifestText<'a>, FixError> {
     let rel = manifest_name(path, fallback);
-    let contents = fs::read_to_string(path).map_err(|source| FixError::Io {
+    let mut contents = fs::read_to_string(path).map_err(|source| FixError::Io {
         path: rel.to_owned(),
         source,
     })?;
-    Ok((rel, contents))
+    let bom = contents.starts_with(BOM);
+    if bom {
+        contents.drain(..BOM.len());
+    }
+    Ok(ManifestText { rel, contents, bom })
 }
 
-/// Atomically write a manifest, reporting failures under its display name `rel`.
-pub(super) fn write_manifest(path: &Path, rel: &str, bytes: &[u8]) -> Result<(), FixError> {
-    atomic_write(path, bytes, true).map_err(|source| FixError::Io {
+/// Atomically write a manifest, reporting failures under its display name `rel`
+/// and restoring the BOM `read_manifest` took off.
+pub(super) fn write_manifest(
+    path: &Path,
+    rel: &str,
+    bom: bool,
+    text: &str,
+) -> Result<(), FixError> {
+    let mut bytes = Vec::with_capacity(BOM.len() + text.len());
+    if bom {
+        bytes.extend_from_slice(BOM.as_bytes());
+    }
+    bytes.extend_from_slice(text.as_bytes());
+    atomic_write(path, &bytes, true).map_err(|source| FixError::Io {
         path: rel.to_owned(),
         source,
     })

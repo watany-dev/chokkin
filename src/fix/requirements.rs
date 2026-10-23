@@ -6,7 +6,7 @@ use crate::manifest::{
 };
 
 use super::error::FixError;
-use super::write::{read_manifest, write_manifest};
+use super::write::{ManifestText, read_manifest, write_manifest};
 
 /// Remove the dependency line at `line` if it names `distribution`, or every line naming it
 /// when no line number is known.
@@ -15,7 +15,7 @@ pub(super) fn remove_dependency_line(
     distribution: &str,
     line: Option<u32>,
 ) -> Result<String, FixError> {
-    let (rel, contents) = read_manifest(path, "requirements.txt")?;
+    let ManifestText { rel, contents, bom } = read_manifest(path, "requirements.txt")?;
 
     // A line pip continues with `\` is one requirement over several physical
     // lines (#927): it is matched as a whole and removed as a whole.
@@ -61,7 +61,7 @@ pub(super) fn remove_dependency_line(
         }
     }
 
-    write_manifest(path, rel, updated.as_bytes())?;
+    write_manifest(path, rel, bom, &updated)?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 
@@ -93,6 +93,25 @@ mod tests {
         remove_dependency_line(&path, "requests", None).expect("remove");
         let updated = std::fs::read_to_string(&path).expect("read");
         assert_eq!(updated, "boto3");
+    }
+
+    #[test]
+    fn bom_first_line_is_matched_and_the_bom_kept() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("requirements.txt");
+        for (contents, line, expected) in [
+            ("\u{feff}flask\nrequests\n", Some(1), "\u{feff}requests\n"),
+            (
+                "\u{feff}flask\r\nrequests\r\n",
+                None,
+                "\u{feff}requests\r\n",
+            ),
+            ("\u{feff}requests\nflask\n", Some(2), "\u{feff}requests\n"),
+        ] {
+            std::fs::write(&path, contents).expect("write");
+            remove_dependency_line(&path, "flask", line).expect("remove");
+            assert_eq!(std::fs::read_to_string(&path).expect("read"), expected);
+        }
     }
 
     #[test]
