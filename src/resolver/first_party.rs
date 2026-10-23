@@ -1,6 +1,7 @@
 //! First-party and workspace import classification.
 
 use crate::manifest::{ProjectMetadata, normalize_distribution_name};
+use crate::path_util::strip_py_suffix;
 use crate::sources::LayoutInfo;
 
 /// Returns `true` when `import_root` matches a first-party package.
@@ -43,7 +44,7 @@ pub(crate) fn is_first_party_import(
 /// Import root of a generated version file, taken below the layout's package
 /// root or `src/` (`src/_black_version.py` → `_black_version`).
 fn version_file_root<'a>(path: &'a str, layout: &LayoutInfo) -> Option<&'a str> {
-    let module = path.strip_suffix(".py")?;
+    let module = strip_py_suffix(path)?;
     let module = [layout.package_root.as_str(), "src"]
         .into_iter()
         .find_map(|dir| module.strip_prefix(dir)?.strip_prefix('/'))

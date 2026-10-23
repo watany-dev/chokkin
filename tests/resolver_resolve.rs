@@ -392,6 +392,51 @@ fn declared_distributions_with_differing_import_names_resolve() {
 }
 
 #[test]
+fn declared_variant_distributions_own_their_shared_import() {
+    // Without the environment, a variant the map lacked resolved to the
+    // map's one distribution: CHK002 on the declaration, CHK003 on the
+    // import, and `--fix --add-missing` swapped them (#1139).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"opencv-python-headless\", \"msgpack-python\", \"psycopg2\", \"pillow-simd\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "import cv2\nimport msgpack\nimport psycopg2\nfrom PIL import Image\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    for (module, expected) in [
+        ("cv2", "opencv-python-headless"),
+        ("msgpack", "msgpack-python"),
+        ("psycopg2", "psycopg2"),
+        ("PIL", "pillow-simd"),
+    ] {
+        let resolved = index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == module)
+            .expect("import");
+        assert_eq!(
+            (resolved.origin, resolved.distribution.as_deref()),
+            (ModuleOrigin::ThirdParty, Some(expected)),
+            "{module}"
+        );
+    }
+    // The declared variant settles each root, so none is ambiguous.
+    assert!(
+        !index.warnings.iter().any(|warning| matches!(
+            warning,
+            chokkin::internals::ResolveWarning::AmbiguousImport { .. }
+        )),
+        "{:?}",
+        index.warnings
+    );
+}
+
+#[test]
 fn ambiguous_namespace_import_warns_once() {
     let temp = temp_project(&[
         (

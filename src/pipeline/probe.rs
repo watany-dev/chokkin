@@ -15,8 +15,9 @@ use crate::config::{
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
     DeclaredDependency, InlineScript, LoadedManifest, ManifestWarning, UvSourceKind,
-    discover_inline_scripts, extract_manifest_with_cache, lockfile_candidates,
-    normalize_distribution_name, resolve_target_version,
+    discover_inline_scripts, extract_manifest_with_cache,
+    infer_target_version_from_requires_python, lockfile_candidates, normalize_distribution_name,
+    resolve_target_version,
 };
 use crate::path_util::{join_rel, rel_to_root, resolve_under_root};
 use crate::plugins::{
@@ -43,7 +44,8 @@ pub struct ProbeReport {
     pub root: ProjectRoot,
     /// Which configuration files contributed.
     pub config_sources: ConfigSources,
-    /// Effective configuration after overrides and target resolution.
+    /// Effective configuration after overrides and target resolution;
+    /// `target_version` is `None` when only the py311 default applies.
     pub effective_config: ChokkinConfig,
     /// Extracted manifest metadata and dependencies.
     pub manifest: LoadedManifest,
@@ -199,8 +201,14 @@ pub(super) fn probe_project_with_cache(
     apply_overrides(&mut loaded.effective, overrides);
 
     let manifest = extract_manifest_with_cache(&root, &loaded, cache)?;
-    let target_version = resolve_target_version(&loaded.effective, &manifest);
-    loaded.effective.target_version = Some(target_version);
+    // Left unset when only the py311 default applies: the stdlib range then
+    // reaches back to the oldest bundled minor (#1172).
+    if let Some(requires_python) = &manifest.metadata.requires_python
+        && loaded.effective.target_version.is_none()
+    {
+        loaded.effective.target_version =
+            infer_target_version_from_requires_python(requires_python);
+    }
 
     let (discovery, mut workspace_inputs) =
         discover_root_and_members(&root, &loaded, &manifest, overrides, cache)?;
@@ -385,11 +393,14 @@ fn member_sources_warnings(workspace_inputs: &[WorkspaceMemberInputs]) -> Vec<Pr
                 .iter()
                 // The root walk covers every member tree, so the root's count
                 // already includes these files, and a link from one member
-                // into another is inside the root (#986).
+                // into another is inside the root (#986). The root walk meets
+                // a member's non-UTF-8 paths too (#1146).
                 .filter(|warning| {
                     !matches!(
                         warning,
-                        SourcesWarning::LargeProject { .. } | SourcesWarning::SymlinkSkipped { .. }
+                        SourcesWarning::LargeProject { .. }
+                            | SourcesWarning::SymlinkSkipped { .. }
+                            | SourcesWarning::NonUtf8Path { .. }
                     )
                 })
                 .map(|warning| {

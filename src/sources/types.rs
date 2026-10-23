@@ -208,6 +208,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn in_local_package_needs_a_path_inside_the_package() {
+        let layout = LayoutInfo {
+            local_packages: vec!["tests".to_owned()],
+            ..LayoutInfo::default()
+        };
+        assert!(layout.in_local_package("tests/test_a.py"));
+        assert!(!layout.in_local_package("tests_extra/a.py"));
+        assert!(!layout.in_local_package("tests"));
+        assert!(!layout.in_local_package("src/tests/a.py"));
+    }
+
+    #[test]
     fn cache_key_hash_tells_package_dirs_apart() {
         let base = LayoutInfo::default();
         let with_dirs = LayoutInfo {

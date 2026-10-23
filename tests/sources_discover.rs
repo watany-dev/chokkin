@@ -76,6 +76,12 @@ fn infers_src_layout() {
             "**/*.ipynb".to_owned(),
             "conftest.py".to_owned(),
             "setup.py".to_owned(),
+            "main.py".to_owned(),
+            "app.py".to_owned(),
+            "manage.py".to_owned(),
+            "asgi.py".to_owned(),
+            "wsgi.py".to_owned(),
+            "noxfile.py".to_owned(),
         ]
     );
 
@@ -135,6 +141,31 @@ fn respects_gitignore() {
     let discovered = paths(&sources);
     assert!(discovered.contains(&"src/acme/visible.py"));
     assert!(!discovered.contains(&"src/acme/local/hidden.py"));
+}
+
+#[test]
+fn gitignore_braces_are_literal_like_git() {
+    // git has no brace expansion: `{}` and `*.{py,pyc}` ignore nothing here,
+    // and `c[{l]i.py` is a class holding `{` and `l` (#1149).
+    let sources = discover_tree(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        (".git/info/exclude", "{build,dist}/\n"),
+        (
+            ".gitignore",
+            "{}\n*.{py,pyc}\nsrc/acme/c[{l]i.py\nsrc/acme/\\{x}.py\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("src/acme/cli.py", ""),
+        ("src/acme/{x}.py", ""),
+        ("src/acme/build/out.py", ""),
+    ]);
+    assert_eq!(
+        paths(&sources),
+        ["src/acme/__init__.py", "src/acme/build/out.py"]
+    );
 }
 
 #[test]

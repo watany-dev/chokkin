@@ -14,7 +14,7 @@ use super::layout::{ENTRY_TREE_GLOBS, infer_layout, pytest_testpaths};
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
     CollectOptions, Collected, collect_files, large_project_warning, load_gitignore,
-    validate_entries,
+    matches_source, validate_entries,
 };
 
 /// Discover Python source files under `root` using config and manifest hints.
@@ -198,8 +198,8 @@ fn drop_member_entry_trees(
         .collect();
     let own_matcher = cache.glob_set(&own_globs)?;
     let keep = |file: &DiscoveredFile| {
-        own_matcher.is_match(&file.path)
-            || test_matcher.is_match(&file.path)
+        matches_source(&own_matcher, &file.path)
+            || matches_source(test_matcher, &file.path)
             || !members
                 .iter()
                 .any(|member| Path::new(&file.path).starts_with(member))

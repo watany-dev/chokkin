@@ -5,3 +5,7 @@ dependencies = []
 
 [project.scripts]
 acme-cli = "acme.main:main"
+
+# py311 keeps `dummy_threading` (3.8 only) out of the stdlib range (#1172).
+[tool.chokkin]
+target_version = "py311"
