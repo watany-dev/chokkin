@@ -23,9 +23,34 @@ env:
   RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
+  # A PR that only edits prose skips the build and test jobs, as in ci.yml
+  # (see the comment on its `changes` job). The matrix jobs skip their steps
+  # instead, so `Wheel (<target>)` and `Test wheel (<target>)` still report.
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # HEAD is the PR merge commit; HEAD^1 is the base it was merged onto.
+          fetch-depth: 2
+      - id: diff
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD | python3 scripts/ci-changes.py >>"$GITHUB_OUTPUT"
+          else
+            echo code=true >>"$GITHUB_OUTPUT"
+          fi
+
   # ── Build wheels ──────────────────────────────────────────────────────────────
   build-wheels:
     name: Wheel (${{ matrix.platform.target }})
+    needs: changes
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 60
     strategy:
@@ -79,9 +104,11 @@ jobs:
             manylinux: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code != 'false'
         with:
           persist-credentials: false
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        if: needs.changes.outputs.code != 'false'
         env:
           # psm (via ruff_python_parser -> stacker) assembles `lay`, which the
           # manylinux2014 s390x cross gcc rejects at its default -march.
@@ -99,6 +126,7 @@ jobs:
           # to influence release artifacts (zizmor cache-poisoning, High).
           sccache: "false"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: needs.changes.outputs.code != 'false'
         with:
           name: wheel-${{ matrix.platform.target }}
           path: dist/*.whl
@@ -107,6 +135,8 @@ jobs:
   # ── Build sdist ───────────────────────────────────────────────────────────────
   build-sdist:
     name: sdist
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -129,7 +159,8 @@ jobs:
   # whose wheels fail them publishes nothing.
   test-wheels:
     name: Test wheel (${{ matrix.target }})
-    needs: [build-wheels]
+    needs: [changes, build-wheels]
+    if: ${{ !cancelled() && needs.build-wheels.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
@@ -194,25 +225,27 @@ jobs:
             qemu: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.changes.outputs.code != 'false'
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.changes.outputs.code != 'false'
         with:
           name: wheel-${{ matrix.target }}
           path: dist
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: matrix.image == ''
+        if: needs.changes.outputs.code != 'false' && matrix.image == ''
         with:
           python-version: "3.13"
           architecture: ${{ matrix.python-arch }}
       - name: Smoke-test the wheel
-        if: matrix.image == ''
+        if: needs.changes.outputs.code != 'false' && matrix.image == ''
         shell: bash
         run: python scripts/wheel-smoke.py dist/*.whl
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        if: matrix.qemu
+        if: needs.changes.outputs.code != 'false' && matrix.qemu
       - name: Smoke-test the wheel in a container
-        if: matrix.image != ''
+        if: needs.changes.outputs.code != 'false' && matrix.image != ''
         env:
           PLATFORM: ${{ matrix.platform }}
           IMAGE: ${{ matrix.image }}
@@ -226,7 +259,8 @@ jobs:
   # and runs (#846).
   test-sdist:
     name: Test sdist (source build, MSRV)
-    needs: [build-sdist]
+    needs: [changes, build-sdist]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.build-sdist.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -252,6 +286,8 @@ jobs:
   # the integration tests then run; the in-process unit tests still unwind.
   test-dist:
     name: Test (dist profile, RUST_TOOLCHAIN)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -266,7 +302,8 @@ jobs:
   # change to action.yml is tested against the binary it will ship with.
   test-action:
     name: Test action (HEAD wheel)
-    needs: [build-wheels]
+    needs: [changes, build-wheels]
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' && needs.build-wheels.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

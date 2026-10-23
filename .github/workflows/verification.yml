@@ -202,7 +202,8 @@ jobs:
         run: |
           # Changes to the gate itself run it too, as an A/A check of the job.
           if git diff --quiet HEAD^1 HEAD -- src benches Cargo.toml Cargo.lock \
-            scripts/bench-gate.py .github/workflows/verification.yml; then
+            scripts/bench-gate.py scripts/bench-baseline-key.sh \
+            .github/workflows/verification.yml .github/workflows/bench-baseline.yml; then
             echo "No change that can move a benchmark; skipped." >>"$GITHUB_STEP_SUMMARY"
             echo "run=false" >>"$GITHUB_OUTPUT"
           else
@@ -215,15 +216,30 @@ jobs:
           rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.changes.outputs.run == 'true'
-      - name: Benchmark base
-        # Base and head run back to back on the same runner, so runner-to-runner
-        # differences do not show up as a change. CRITERION_HOME puts the base
-        # baseline where the head comparison looks for it. The target directory
-        # must stay separate: both checkouts have the same package version, and
-        # cargo would reuse the base build for head (release-validation.ja.md §1).
+      # bench-baseline.yml saves main's baseline after each push that can move
+      # a benchmark, which saves the PR about 9 minutes. That baseline comes
+      # from another runner, so runner-to-runner differences can show up as a
+      # change; `--confirm 3` and the non-blocking gate absorb some of it.
+      - name: Look up the base baseline
+        id: base
         if: steps.changes.outputs.run == 'true'
         run: |
           rm -rf target/criterion
+          echo "key=$(scripts/bench-baseline-key.sh HEAD^1)" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: cache
+        if: steps.changes.outputs.run == 'true'
+        with:
+          path: target/criterion
+          key: ${{ steps.base.outputs.key }}
+      - name: Benchmark base
+        # Without a saved baseline, base and head run back to back on this
+        # runner. CRITERION_HOME puts the base baseline where the head
+        # comparison looks for it. The target directory must stay separate:
+        # both checkouts have the same package version, and cargo would reuse
+        # the base build for head (release-validation.ja.md §1).
+        if: steps.changes.outputs.run == 'true' && steps.cache.outputs.cache-hit != 'true'
+        run: |
           git worktree add "$RUNNER_TEMP/base" HEAD^1
           CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" CRITERION_HOME="$PWD/target/criterion" \
             make -C "$RUNNER_TEMP/base" bench-save BASELINE=base
