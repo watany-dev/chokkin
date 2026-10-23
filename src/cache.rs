@@ -292,8 +292,9 @@ pub struct SourceFingerprint {
     #[serde(default)]
     pub file_id: Option<u64>,
     /// Change stamp the user cannot set back, set only on stat-only
-    /// fingerprints: ctime in nanoseconds on Unix, creation time on Windows
-    /// (std exposes no stable change time or file index there).
+    /// fingerprints: ctime in nanoseconds on Unix, creation time in 100 ns
+    /// ticks on Windows (std exposes no stable change time or file index
+    /// there).
     #[serde(default)]
     pub change_ns: Option<u128>,
     /// Stable hash of file bytes, empty when `(size, modified_ns, file_id,
@@ -430,36 +431,42 @@ impl SourceFingerprint {
 }
 
 /// `(file_id, change_ns)` for [`SourceFingerprint::from_absolute_stat_at`].
-#[cfg(unix)]
+/// One function for every platform, so mutation tests on Unix reach its
+/// signature.
 fn file_change_stamp(metadata: &std::fs::Metadata) -> (Option<u64>, Option<u128>) {
-    use std::os::unix::fs::MetadataExt;
-    (Some(metadata.ino()), unix_ctime_ns(metadata))
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (Some(metadata.ino()), unix_ctime_ns(metadata))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // 100 ns ticks since 1601: only compared for equality.
+        (None, Some(u128::from(metadata.creation_time())))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = metadata;
+        (None, None)
+    }
 }
 
-#[cfg(windows)]
-fn file_change_stamp(metadata: &std::fs::Metadata) -> (Option<u64>, Option<u128>) {
-    use std::os::windows::fs::MetadataExt;
-    // 100 ns ticks since 1601; only equality matters, but keep the unit.
-    (None, Some(u128::from(metadata.creation_time()) * 100))
-}
-
-#[cfg(not(any(unix, windows)))]
-fn file_change_stamp(_metadata: &std::fs::Metadata) -> (Option<u64>, Option<u128>) {
-    (None, None)
-}
-
-/// Unix ctime in nanoseconds since the epoch; `None` elsewhere or before 1970.
-#[cfg(unix)]
+/// Unix ctime in nanoseconds since the epoch; `None` on other platforms or
+/// before 1970.
 fn unix_ctime_ns(metadata: &std::fs::Metadata) -> Option<u128> {
-    use std::os::unix::fs::MetadataExt;
-    let seconds = u128::try_from(metadata.ctime()).ok()?;
-    let nanos = u128::try_from(metadata.ctime_nsec()).ok()?;
-    Some(seconds * 1_000_000_000 + nanos)
-}
-
-#[cfg(not(unix))]
-fn unix_ctime_ns(_metadata: &std::fs::Metadata) -> Option<u128> {
-    None
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let seconds = u128::try_from(metadata.ctime()).ok()?;
+        let nanos = u128::try_from(metadata.ctime_nsec()).ok()?;
+        Some(seconds * 1_000_000_000 + nanos)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
 }
 
 fn is_racy_mtime(modified_ns: u128, now: SystemTime) -> bool {
@@ -929,6 +936,57 @@ mod tests {
         assert_eq!(stat.size, full.size);
         assert_eq!(stat.modified_ns, full.modified_ns);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_fingerprint_records_ctime_in_nanoseconds() {
+        let root = temp_cache_test_dir("stat-ctime-unit");
+        let path = root.join("src/app.py");
+        // A write stamps mtime and ctime from the same clock reading.
+        std::fs::write(&path, "import requests\n").expect("write source");
+
+        let fingerprint = SourceFingerprint::from_absolute_stat_at(&root, &path, settled_now())
+            .expect("stat fingerprint");
+
+        assert!(fingerprint.file_id.is_some());
+        assert_eq!(fingerprint.change_ns, fingerprint.modified_ns);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn absent_fingerprint_names_the_probe_and_matches_no_file() {
+        let root = Path::new("/repo");
+        let absent = SourceFingerprint::absent(root, &root.join("src/missing.py"));
+
+        assert_eq!(absent.path, "src/missing.py");
+        assert_ne!(absent, SourceFingerprint::default());
+        assert_ne!(absent.content_hash, stable_hex_hash(b""));
+    }
+
+    #[test]
+    fn read_cache_bytes_reports_errors_other_than_not_found() {
+        let root = temp_cache_test_dir("read-bytes");
+
+        assert!(
+            read_cache_bytes(&root.join("missing.json"))
+                .expect("missing")
+                .is_none()
+        );
+        assert!(
+            read_cache_bytes(&root.join("src")).is_err(),
+            "a directory is not a miss"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn racy_window_excludes_its_far_end() {
+        let now = UNIX_EPOCH + Duration::from_secs(100);
+        let edge = Duration::from_secs(100).as_nanos() - RACY_MTIME_WINDOW.as_nanos();
+
+        assert!(!is_racy_mtime(edge, now));
+        assert!(is_racy_mtime(edge + 1, now));
     }
 
     #[cfg(unix)]
