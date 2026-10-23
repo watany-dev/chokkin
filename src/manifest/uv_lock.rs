@@ -172,8 +172,10 @@ fn scan_uv_layout(contents: &str) -> Option<UvLock> {
         if !is_graph_key(table, key)? {
             if value == "[" {
                 // `wheels` arrays are most of a lock's bytes.
-                rest = skip_array(rest)?;
-            } else if !is_plain_value(value) {
+                rest = skip_array(rest, false)?;
+            } else if value == "[[" {
+                rest = skip_array(rest, true)?;
+            } else if !is_plain_value(without_comment(value)) {
                 return None;
             }
             continue;
@@ -272,14 +274,20 @@ fn scan_array_item(item: &str) -> Option<UvDependency> {
     (!inner.contains("name =")).then_some(UvDependency::Other(IgnoredAny))
 }
 
-/// The text after the `]` line closing a multi-line array. `None` unless every
-/// item is one `    {...},` or `    "...",` line, since an array closed on its
-/// last item would otherwise run on to a later array's `]`.
-fn skip_array(mut rest: &str) -> Option<&str> {
+/// The text after the `]` line closing a multi-line array, or the `]]` line
+/// closing an array of arrays such as `conflicts`, whose inner arrays uv
+/// splits with `], [` lines. `None` unless every item is one `    {...},` or
+/// `    "...",` line, since an array closed on its last item would otherwise
+/// run on to a later array's `]`.
+fn skip_array(mut rest: &str, nested: bool) -> Option<&str> {
+    let close = if nested { "]]" } else { "]" };
     loop {
         let line = next_line(&mut rest);
-        if line == "]" {
+        if line == close {
             return Some(rest);
+        }
+        if nested && line == "], [" {
+            continue;
         }
         let item = line.strip_prefix("    ")?.strip_suffix(',')?;
         let closed = (item.starts_with('{') && item.ends_with('}'))
@@ -294,6 +302,20 @@ fn skip_array(mut rest: &str) -> Option<&str> {
 fn quoted(value: &str) -> Option<&str> {
     let inner = value.strip_prefix('"')?.strip_suffix('"')?;
     (!inner.contains('"')).then_some(inner)
+}
+
+/// A quoted value without the ` # ...` comment uv writes after a few of them,
+/// such as `exclude-newer` when the lock pins a relative `exclude-newer-span`.
+fn without_comment(value: &str) -> &str {
+    let end = value
+        .strip_prefix('"')
+        .and_then(|inner| inner.find('"'))
+        .map_or(0, |end| end + 2);
+    if value[end..].starts_with(" # ") {
+        &value[..end]
+    } else {
+        value
+    }
 }
 
 /// A one-line value of a key the graph ignores.
@@ -539,11 +561,11 @@ mod tests {
         ));
         assert!(scan_array_item("{ marker = \"x\", name = \"idna\" }").is_none());
 
-        assert_eq!(skip_array("    { a },\n]\nrest"), Some("rest"));
-        assert_eq!(skip_array("    \"a\",\n]\nrest"), Some("rest"));
+        assert_eq!(skip_array("    { a },\n]\nrest", false), Some("rest"));
+        assert_eq!(skip_array("    \"a\",\n]\nrest", false), Some("rest"));
         for unclosed in ["{ a", "a }", "\"a", "a\""] {
             assert_eq!(
-                skip_array(&format!("    {unclosed},\n]\nrest")),
+                skip_array(&format!("    {unclosed},\n]\nrest"), false),
                 None,
                 "{unclosed}"
             );
@@ -578,6 +600,39 @@ mod tests {
             scan_uv_layout(&UV_LAYOUT.replace('\n', "\r\n")).map(lock_graph),
             Some(graph)
         );
+    }
+
+    /// uv writes a comment after `exclude-newer` when the lock pins a relative
+    /// `exclude-newer-span`, and `conflicts` as an array of arrays; 9 of the
+    /// corpus's 643 locks (airflow, mlflow, openai-python, ...) have one.
+    #[test]
+    fn scanner_reads_relative_exclude_newer_and_conflicts() {
+        let conflicts = "requires-python = \">=3.10\"\n\
+            conflicts = [[\n    { package = \"acme\", group = \"v1\" },\n    { package = \"acme\", group = \"v2\" },\n], [\n    { package = \"acme\", extra = \"a\" },\n    { package = \"acme\", extra = \"b\" },\n]]\n";
+        let contents = UV_LAYOUT
+            .replacen("requires-python = \">=3.10\"\n", conflicts, 1)
+            .replacen(
+                "exclude-newer = \"2025-01-01T00:00:00Z\"\n",
+                "exclude-newer = \"0001-01-01T00:00:00Z\" # This has no effect.\nexclude-newer-span = \"P7D\"\n",
+                1,
+            )
+            .replacen("version = \"0.1.0\"", "version = \"0.1.0\" # x-release-please-version", 1);
+        assert_ne!(contents, UV_LAYOUT);
+
+        assert_eq!(
+            scan_uv_layout(&contents).map(lock_graph),
+            Some(toml_graph(&contents))
+        );
+        for refused in [
+            "x = \"a\" #comment\n",
+            "x = \"a\"# comment\n",
+            "x = \"a\" # \"\"\"\n",
+            "x = [[\n    { a },\n]\n",
+            "x = [[\n    { a }]]\n",
+            "x = [[\n    { a },\n],[\n]]\n",
+        ] {
+            assert!(scan_uv_layout(refused).is_none(), "{refused}");
+        }
     }
 
     #[test]
