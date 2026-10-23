@@ -36,7 +36,7 @@ pub use pipeline::{
     write_probe_report, write_probe_warnings,
 };
 pub use reporters::{
-    RenderContext, config_label_from_sources, escape_control, escape_control_lines,
+    RenderContext, config_label_from_sources, error_chain, escape_control, escape_control_lines,
     render_baseline_report, render_fix_report, render_issues,
 };
 pub use rules::explain_issue;
@@ -122,10 +122,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// ```text
 /// 0: no reportable issues
-/// 1: issues found
+/// 1: reportable issues found
 /// 2: CLI/config error
 /// 3: internal error
 /// ```
+///
+/// "Reportable" means severity `error` and confidence `likely` or higher;
+/// `--strict` widens it to severity `warning` and confidence `maybe`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ExitStatus {
