@@ -115,6 +115,55 @@ fn binary_wheel_smoke_fixture_matches_expected_report() {
         .expect("expected report matches the published schema");
 }
 
+/// The sample report in README.md, README.ja.md and spec §2 is this
+/// fixture's output, so the docs cannot drift from the binary (#1161). The
+/// READMEs also name the current version; the spec's version line is left
+/// alone.
+#[test]
+fn binary_readme_example_matches_docs() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let project = temp.path().join("acme-api");
+    copy_dir_recursive(&fixture_path(&["readme_example"]), &project).expect("copy fixture");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "."])
+        .current_dir(&project)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    let report = String::from_utf8(output.stdout).expect("utf8");
+    let (version_line, body) = report.split_once('\n').expect("version line");
+    assert_eq!(version_line, concat!("chokkin ", env!("CARGO_PKG_VERSION")));
+
+    for (doc, heading, check_version) in [
+        ("README.md", "## What you get", true),
+        ("README.ja.md", "## 何が出るか", true),
+        ("docs/dev/spec.ja.md", "出力例。", false),
+    ] {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(doc);
+        // Windows checkouts may convert the docs to CRLF.
+        let text = fs::read_to_string(&path)
+            .expect("read doc")
+            .replace("\r\n", "\n");
+        let after_heading = text.split_once(heading).expect("heading").1;
+        let block = after_heading
+            .split_once("```text\n")
+            .and_then(|(_, rest)| rest.split_once("```\n"))
+            .expect("text block")
+            .0;
+        let (doc_version_line, doc_body) = block.split_once('\n').expect("doc version line");
+        if check_version {
+            assert_eq!(doc_version_line, version_line, "version line in {doc}");
+        }
+        assert_eq!(
+            doc_body, body,
+            "update the sample report in {doc} to this output:\n{report}"
+        );
+    }
+}
+
 #[test]
 fn binary_github_reporter_outputs_annotations() {
     let root = fixture_path(&["deps", "unused_boto3"]);
@@ -411,6 +460,54 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
         );
     }
     assert_eq!(skipped.len(), 5, "{stderr}");
+}
+
+/// A source file whose path is not UTF-8 is skipped with a warning, not
+/// read back under its lossy name, which fails the whole run (#1146). Linux
+/// only: macOS and Windows file systems refuse such names.
+#[cfg(target_os = "linux")]
+#[test]
+fn binary_non_utf8_source_paths_are_skipped_with_a_warning() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    let package = root.join("src/demo");
+    fs::create_dir_all(&package).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo\"\nversion = \"0\"\ndependencies = []\n\
+         [project.scripts]\ndemo = \"demo.cli:main\"\n",
+    )
+    .expect("write pyproject");
+    fs::write(package.join("__init__.py"), "").expect("write package");
+    fs::write(package.join("cli.py"), "def main():\n    pass\n").expect("write module");
+    let bad_dir = package.join(OsStr::from_bytes(b"b\xffd"));
+    fs::create_dir(&bad_dir).expect("mkdir");
+    fs::write(bad_dir.join("m.py"), "X = 1\n").expect("write module");
+    fs::write(package.join(OsStr::from_bytes(b"bad\xff.py")), "Y = 1\n").expect("write module");
+    fs::write(package.join(OsStr::from_bytes(b"data\xff.txt")), "").expect("write data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    let skipped: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("is not valid UTF-8"))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            "sources: skipped `src/demo/bad\u{fffd}.py`: its path is not valid UTF-8",
+            "sources: skipped `src/demo/b\u{fffd}d/m.py`: its path is not valid UTF-8",
+        ],
+        "{stderr}"
+    );
 }
 
 /// A link that is neither dangling nor a loop is named with the OS error,

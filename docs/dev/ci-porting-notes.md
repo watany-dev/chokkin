@@ -49,10 +49,26 @@ them when a maintainer, workflow, or job name changes.
   Also worth requiring: `MSRV (1.96) + chokkin baseline`,
   `Repo checks (actionlint, generated maps)`, and from the Release workflow
   `Test (dist profile, RUST_TOOLCHAIN)`, `Test action (HEAD wheel)`, each
-  `Test wheel (<target>)`, and the `Wheel (<target>)` and `sdist` builds they
-  need (a job skipped because a job it needs failed counts as passing). A
+  `Test wheel (<target>)` of a native target, and the `Wheel (<target>)` and
+  `sdist` builds they need (a job skipped because a job it needs failed counts as passing). A
   renamed job drops out of the required list silently, so update the ruleset
   in the same PR.
+
+  A PR that only edits prose (`scripts/ci-changes.py`: Markdown under `docs/`
+  or at the root, except the READMEs and `docs/dev/spec.ja.md` that tests
+  read) skips these jobs, and a skipped job's check passes. The `Test`,
+  `Wheel` and `Test wheel` matrices skip their steps instead: a matrix job
+  skipped as a whole reports under its unexpanded name and leaves the required
+  checks pending. Do not require `Changes`.
+
+  The six cross-compiled wheels (i686, armv7, ppc64le, s390x; the
+  `build-wheels-cross` and `test-wheels-cross` jobs in `release.yml`, tested
+  under QEMU or a 32-bit container) run on a PR only when it changes one of
+  their build inputs (`CROSS_INPUTS` in `scripts/ci-changes.py`). Otherwise
+  the jobs are skipped as a whole and their per-target checks never report,
+  so do not require them. The Release run on each push to `main` builds and
+  tests every target, so a regression on one of them shows up there before a
+  tag.
 
 **`pypi-chokkin` environment** (Settings → Environments):
 
