@@ -123,6 +123,18 @@ mod tests {
     }
 
     #[test]
+    fn drops_codes_that_are_not_chk_and_three_digits() {
+        let source = "import os  # chokkin: ignore[FOO,ABC123,CHK0001,CHK03,CHK003]\n";
+        let directives = extract_ignores(source);
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].codes, vec!["CHK003".to_owned()]);
+        assert_eq!(
+            extract_ignores("import os  # chokkin: ignore[ABC123]\n"),
+            []
+        );
+    }
+
+    #[test]
     fn parses_file_ignore_before_code() {
         let source = "# chokkin: file-ignore[CHK001,CHK006]\nimport os\n";
         let directives = extract_ignores(source);
