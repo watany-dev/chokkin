@@ -57,16 +57,13 @@ pub(super) fn remove_dependency_line(
     }
 
     // Dropping an unterminated last line must not leave the new last line terminated.
-    let unterminated = |text: &str| {
+    let terminator_len = |text: &str| {
         split_lines_inclusive(text)
             .last()
-            .is_some_and(|line| strip_line_break(line) == line)
+            .map_or(0, |line| line.len() - strip_line_break(line).len())
     };
-    if unterminated(&contents) && !unterminated(&updated) {
-        let kept = split_lines_inclusive(&updated).last().map_or(0, |line| {
-            updated.len() - line.len() + strip_line_break(line).len()
-        });
-        updated.truncate(kept);
+    if terminator_len(&contents) == 0 {
+        updated.truncate(updated.len() - terminator_len(&updated));
     }
 
     write_manifest(path, rel, updated.as_bytes())?;

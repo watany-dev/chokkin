@@ -509,15 +509,7 @@ pub(crate) fn strip_line_break(line: &str) -> &str {
 const fn is_line_boundary(c: char) -> bool {
     matches!(
         c,
-        '\n' | '\r'
-            | '\u{b}'
-            | '\u{c}'
-            | '\u{1c}'
-            | '\u{1d}'
-            | '\u{1e}'
-            | '\u{85}'
-            | '\u{2028}'
-            | '\u{2029}'
+        '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}'..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
     )
 }
 
