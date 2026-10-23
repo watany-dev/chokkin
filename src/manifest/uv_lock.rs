@@ -533,6 +533,11 @@ mod tests {
             Some("idna")
         );
         assert!(scan_array_item("{ name = \"idna\"x }").is_none());
+        assert!(matches!(
+            scan_array_item("{ marker = \"x\" }"),
+            Some(UvDependency::Other(_))
+        ));
+        assert!(scan_array_item("{ marker = \"x\", name = \"idna\" }").is_none());
 
         assert_eq!(skip_array("    { a },\n]\nrest"), Some("rest"));
         assert_eq!(skip_array("    \"a\",\n]\nrest"), Some("rest"));
