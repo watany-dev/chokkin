@@ -42,7 +42,6 @@ pub(crate) fn is_file_named(dir: &Path, name: &str) -> bool {
     dir.join(name).is_file() && has_entry_named(dir, name)
 }
 
-/// Whether the listing of `dir` holds an entry spelled exactly `name`.
 #[must_use]
 pub(crate) fn has_entry_named(dir: &Path, name: &str) -> bool {
     fs::read_dir(dir).is_ok_and(|entries| {
