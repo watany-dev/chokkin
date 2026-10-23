@@ -120,6 +120,8 @@ fn configure_walker(
 }
 
 /// Collect Python-related files under `root` with `ignore`'s own walker.
+/// It does not skip non-UTF-8 paths as `collect_files` does (#1146): the
+/// trees it is compared on have ASCII names.
 pub(super) fn collect_files_reference(
     options: &ReferenceOptions<'_>,
 ) -> Result<(Vec<DiscoveredFile>, Vec<SourcesWarning>), SourcesError> {
