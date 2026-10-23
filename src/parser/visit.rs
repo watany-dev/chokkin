@@ -7,7 +7,7 @@ use rustc_hash::FxHashSet;
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, Identifier, Operator,
-    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom,
+    Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -615,6 +615,16 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    /// `x += 1` reads `x` before it writes it, though a name target is in
+    /// store context (#1142). Kept out of `visit_stmt` so its frame, which
+    /// every nesting level pays for, does not grow.
+    fn visit_aug_assign_target(&mut self, target: &'ast Expr) {
+        if let Expr::Name(name) = target {
+            insert_name(&mut self.loaded_names, &name.id);
+        }
+        self.visit_expr(target);
+    }
+
     /// pytest imports the modules a module-level `pytest_plugins` names, in
     /// a conftest or in a module it loaded as a plugin.
     fn record_pytest_plugins(&mut self, target: &str, value: &Expr) {
@@ -813,6 +823,21 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn line_number<R: Ranged>(&self, node: &R) -> u32 {
         self.lines.line(node.start())
     }
+
+    /// Kept out of `visit_stmt` so its frame, paid once per nesting level,
+    /// does not grow (#1173).
+    fn visit_match(&mut self, match_stmt: &'ast StmtMatch) {
+        self.visit_expr(&match_stmt.subject);
+        for case in &match_stmt.cases {
+            // `case m.CONST:` and `case Point(x=0):` read the names in their
+            // value and class patterns (#1141).
+            self.visit_pattern(&case.pattern);
+            if let Some(guard) = &case.guard {
+                self.visit_expr(guard);
+            }
+            self.visit_body(&case.body);
+        }
+    }
 }
 
 impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
@@ -944,6 +969,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 {
                     self.record_pytest_plugins(name.id.as_str(), &aug_assign.value);
                 }
+                self.visit_aug_assign_target(&aug_assign.target);
                 self.visit_expr(&aug_assign.value);
             },
             Stmt::Return(return_stmt) => {
@@ -1024,15 +1050,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     self.caught_depth = self.caught_depth.saturating_sub(1);
                 }
             },
-            Stmt::Match(match_stmt) => {
-                self.visit_expr(&match_stmt.subject);
-                for case in &match_stmt.cases {
-                    if let Some(guard) = &case.guard {
-                        self.visit_expr(guard);
-                    }
-                    self.visit_body(&case.body);
-                }
-            },
+            Stmt::Match(match_stmt) => self.visit_match(match_stmt),
             Stmt::For(for_stmt) => {
                 self.visit_expr(&for_stmt.iter);
                 self.visit_body(&for_stmt.body);
@@ -1598,6 +1616,50 @@ def later():
         );
     }
 
+    /// An augmented assignment reads its target: the name, the subscripted
+    /// container and the attribute site all count (#1142).
+    #[test]
+    fn augmented_assignment_targets_are_reads() {
+        let parsed = visit_source(
+            "import m\nTOTAL = 0\nCACHE = {}\nSPARE = 0\n\ndef bump():\n    global TOTAL\n    TOTAL += 1\n    CACHE[\"a\"] += 1\n    m.counter += 1\n    m.REGISTRY[\"k\"] += 1\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .map(|symbol| (symbol.name.as_str(), symbol.used_in_module))
+            .collect();
+        assert_eq!(
+            used,
+            [
+                ("TOTAL", true),
+                ("CACHE", true),
+                ("SPARE", false),
+                ("bump", false)
+            ]
+        );
+        let accesses: Vec<(&str, &str)> = parsed
+            .attribute_accesses
+            .iter()
+            .map(|access| (access.receiver.as_str(), access.name.as_str()))
+            .collect();
+        assert_eq!(accesses, [("m", "counter"), ("m", "REGISTRY")]);
+    }
+
+    #[test]
+    fn marks_symbols_read_in_match_patterns() {
+        // Capture names (`rest`, `y`) bind; only value and class patterns read (#1141).
+        let parsed = visit_source(
+            "class Point:\n    pass\n\nColor = 1\nrest = 1\ny = 1\n\ndef f(v):\n    match v:\n        case Point(x=0):\n            pass\n        case [*rest]:\n            pass\n        case Color.RED as y:\n            pass\n",
+        );
+        let used: Vec<_> = parsed
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.used_in_module)
+            .map(|symbol| symbol.name.as_str())
+            .collect();
+        assert_eq!(used, ["Point", "Color"]);
+    }
+
     #[test]
     fn marks_symbols_read_in_string_annotations() {
         let parsed = visit_source(
@@ -1975,6 +2037,13 @@ raise utils.H from utils.I
 assert utils.J, utils.K
 del utils.L
 value: utils.M = 1
+match value:
+    case utils.N | [utils.O]:
+        pass
+    case {utils.P: _}:
+        pass
+    case utils.Q(x=utils.R):
+        pass
 ";
         let parsed = visit_source(source);
         for (name, line) in [
@@ -1991,6 +2060,11 @@ value: utils.M = 1
             ("K", 18),
             ("L", 19),
             ("M", 20),
+            ("N", 22),
+            ("O", 22),
+            ("P", 24),
+            ("Q", 26),
+            ("R", 26),
         ] {
             assert_eq!(
                 attribute_lines(&parsed, name),
