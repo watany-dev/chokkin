@@ -929,7 +929,9 @@ mod tests {
             Ok(None)
         ));
         // A directory where the cache file should be is not "no cache yet".
-        assert!(read_cache_bytes(&root.join("src")).is_err());
+        let error =
+            read_cache_bytes(&root.join("src")).expect_err("a directory is not a cache file");
+        assert_ne!(error.kind(), io::ErrorKind::NotFound);
         let _ = std::fs::remove_dir_all(root);
     }
 
