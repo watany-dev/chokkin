@@ -56,8 +56,24 @@ impl UvMembers {
 }
 
 /// Read and parse a standalone `.chokkin.toml` or `chokkin.toml` file.
+///
+/// These files hold the `[tool.chokkin]` table's contents at the top level; a
+/// `[tool.chokkin]` header copied from `pyproject.toml` is rejected with a hint
+/// naming the standalone form.
 pub(super) fn parse_standalone_config(path: &Path) -> Result<PartialConfig, ConfigError> {
-    let partial = parse_toml::<PartialConfig>(path)?;
+    let partial = parse_toml::<PartialConfig>(path).map_err(|error| match error {
+        ConfigError::InvalidToml { path, message } if has_top_level_tool(&path) => {
+            ConfigError::InvalidToml {
+                message: format!(
+                    "{message}\nhint: standalone config files take the `[tool.chokkin]` \
+                     keys at the top level; write `[severity]` instead of \
+                     `[tool.chokkin.severity]` and `entry = [...]` without a header"
+                ),
+                path,
+            }
+        },
+        error => error,
+    })?;
     validate(path, &partial)?;
     Ok(partial)
 }
@@ -78,7 +94,12 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
     } = parse_toml::<PyProject>(path)?;
 
     let partial = chokkin.unwrap_or_default();
-    validate(path, &partial)?;
+    validate(path, &partial).map_err(|mut error| {
+        if let ConfigError::Validation { field, .. } = &mut error {
+            field.insert_str(0, "tool.chokkin.");
+        }
+        error
+    })?;
 
     let (workspace, sources) = uv.map_or_else(Default::default, |uv| (uv.workspace, uv.sources));
     let mut uv_path_sources: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -105,6 +126,14 @@ pub(super) fn parse_pyproject_config(path: &Path) -> Result<PyProjectConfig, Con
         uv_workspace,
         uv_path_sources,
     })
+}
+
+/// Whether `path` parses as TOML with a top-level `tool` key.
+fn has_top_level_tool(path: &Path) -> bool {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| contents.parse::<toml::Table>().ok())
+        .is_some_and(|table| table.contains_key("tool"))
 }
 
 fn parse_toml<T: DeserializeOwned>(path: &Path) -> Result<T, ConfigError> {
@@ -313,6 +342,28 @@ mod tests {
     }
 
     #[test]
+    fn standalone_tool_header_hints_top_level_form() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("chokkin.toml");
+        fs::write(&path, "[tool.chokkin.severity]\nCHK001 = \"error\"\n").expect("write");
+        let err = parse_standalone_config(&path).expect_err("tool header");
+        assert!(
+            matches!(err, ConfigError::InvalidToml { ref message, .. } if message.contains("hint: standalone")),
+            "{err}"
+        );
+
+        fs::write(&path, "[severity]\nCHK001 = \"error\"\n").expect("write");
+        parse_standalone_config(&path).expect("top-level form");
+
+        fs::write(&path, "bogus = 1\n").expect("write");
+        let err = parse_standalone_config(&path).expect_err("unknown key");
+        assert!(
+            matches!(err, ConfigError::InvalidToml { ref message, .. } if !message.contains("hint:")),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn escapes_root_folds_parent_segments() {
         for inside in ["src/**/*.py", "a/../x", "./a/./b", "a\\..\\b", "**/.."] {
             assert!(!escapes_root(inside), "{inside}");
@@ -353,6 +404,38 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn pyproject_validation_error_names_file_and_full_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("pyproject.toml");
+        fs::write(&path, "[tool.chokkin.severity]\nCHK999 = \"off\"\n").expect("write");
+        let Err(err) = parse_pyproject_config(&path) else {
+            panic!("CHK999 is not a rule");
+        };
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "invalid config at {}: tool.chokkin.severity.CHK999: unknown rule code",
+                path.display()
+            )
+        );
+    }
+
+    #[test]
+    fn standalone_validation_error_names_file_and_key() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("chokkin.toml");
+        fs::write(&path, "[severity]\nCHK999 = \"off\"\n").expect("write");
+        let err = parse_standalone_config(&path).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "invalid config at {}: severity.CHK999: unknown rule code",
+                path.display()
+            )
+        );
     }
 
     #[test]

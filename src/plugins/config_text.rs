@@ -8,7 +8,7 @@ use std::path::Path;
 
 use toml::Value;
 
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 use super::types::ReferenceOrigin;
 
@@ -65,6 +65,9 @@ pub(super) fn toml_words(value: &Value) -> Option<String> {
 }
 
 pub(super) fn read_root_file(root: &Path, name: &str) -> Option<(String, String)> {
+    if !is_file_named(root, name) {
+        return None;
+    }
     let path = root.join(name);
     let contents = std::fs::read_to_string(&path).ok()?;
     Some((rel_to_root(root, &path), contents))

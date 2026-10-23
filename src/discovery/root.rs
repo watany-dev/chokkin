@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::error::DiscoveryError;
+use crate::path_util::has_entry_named;
 
 /// Marker that determined the project root (§4 priority order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,13 +111,16 @@ fn normalize_start(start: &Path) -> Result<PathBuf, DiscoveryError> {
 fn probe_markers(dir: &Path) -> Result<Option<RootMarker>, DiscoveryError> {
     for (name, marker) in FILE_MARKERS {
         let path = dir.join(name);
-        if is_file(&path)? {
+        // Spelled as listed: `Setup.py` is no marker on Linux (#1163).
+        if is_file(&path)? && has_entry_named(dir, name) {
             return Ok(Some(*marker));
         }
     }
 
     let git_path = dir.join(".git");
-    if metadata_for(&git_path)?.is_some_and(|metadata| metadata.is_file() || metadata.is_dir()) {
+    if metadata_for(&git_path)?.is_some_and(|metadata| metadata.is_file() || metadata.is_dir())
+        && has_entry_named(dir, ".git")
+    {
         return Ok(Some(RootMarker::Git));
     }
 

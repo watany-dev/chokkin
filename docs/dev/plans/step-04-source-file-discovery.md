@@ -287,6 +287,7 @@ glob 構築失敗と走査時の致命的 IO のみ。個別ファイルの読�
 | `GuessedPackageDir { project, chosen }` | project 名と一致しない唯一の候補を選んだ |
 | `GitignoreUnreadable { path }` | `.gitignore` 読み取り失敗 |
 | `LargeProject { file_count }` | 閾値超過（10_000） |
+| `NonUtf8Path { path }` | path が UTF-8 でないソースファイルをスキップした (#1146) |
 
 ## 6. 公開 API
 

@@ -349,6 +349,14 @@ mod tests {
             ("lingua", "lingua-language-detector"),
             ("progressbar", "progressbar"),
             ("progressbar", "progressbar2"),
+            // Variants and old names of one import (#1139).
+            ("cv2", "opencv-python"),
+            ("cv2", "opencv-python-headless"),
+            ("cv2", "opencv-contrib-python"),
+            ("cv2", "opencv-contrib-python-headless"),
+            ("msgpack", "msgpack-python"),
+            ("psycopg2", "psycopg2"),
+            ("PIL", "pillow-simd"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
