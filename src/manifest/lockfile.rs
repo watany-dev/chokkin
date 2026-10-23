@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 use super::error::ManifestError;
 use super::pdm_lock::extract_pdm_lock;
@@ -26,15 +26,15 @@ const MAX_LOCKFILE_PACKAGES: usize = 20_000;
 /// (`uv.lock` > `pylock.toml` > `pylock.<name>.toml` > `poetry.lock` > `pdm.lock`).
 pub(crate) fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
     let mut found = Vec::new();
-    push_if_file(&mut found, LockfileKind::Uv, root.join("uv.lock"));
-    push_if_file(&mut found, LockfileKind::Pylock, root.join("pylock.toml"));
+    push_if_file(&mut found, LockfileKind::Uv, root, "uv.lock");
+    push_if_file(&mut found, LockfileKind::Pylock, root, "pylock.toml");
     found.extend(
         named_pylock_files(root)
             .into_iter()
             .map(|path| (LockfileKind::Pylock, path)),
     );
-    push_if_file(&mut found, LockfileKind::Poetry, root.join("poetry.lock"));
-    push_if_file(&mut found, LockfileKind::Pdm, root.join("pdm.lock"));
+    push_if_file(&mut found, LockfileKind::Poetry, root, "poetry.lock");
+    push_if_file(&mut found, LockfileKind::Pdm, root, "pdm.lock");
     found
 }
 
@@ -117,9 +117,14 @@ fn over_limit(bytes: u64, packages: Option<usize>) -> Option<String> {
         })
 }
 
-fn push_if_file(found: &mut Vec<(LockfileKind, PathBuf)>, kind: LockfileKind, path: PathBuf) {
-    if path.is_file() {
-        found.push((kind, path));
+fn push_if_file(
+    found: &mut Vec<(LockfileKind, PathBuf)>,
+    kind: LockfileKind,
+    root: &Path,
+    name: &str,
+) {
+    if is_file_named(root, name) {
+        found.push((kind, root.join(name)));
     }
 }
 

@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use crate::path_util::rel_to_root;
+use crate::path_util::{is_file_named, rel_to_root};
 
 use super::error::ManifestError;
 use super::pep508::{is_python_whitespace, is_valid_marker, strip_python};
@@ -54,7 +54,7 @@ pub(super) fn extract_requirements_file(
     default_context: &DependencyContext,
 ) -> Result<RequirementsExtraction, ManifestError> {
     let path = root.join(filename);
-    if !path.is_file() {
+    if !is_file_named(root, filename) {
         return Ok(RequirementsExtraction::default());
     }
 

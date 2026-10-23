@@ -32,6 +32,26 @@ pub(crate) fn rel_to_root(root: &Path, path: &Path) -> String {
     normalize_rel_path(path.strip_prefix(root).unwrap_or(path))
 }
 
+/// Whether `dir` holds a file named exactly `name`. `dir.join(name).is_file()`
+/// alone also finds `Requirements.txt` for `requirements.txt` on a
+/// case-insensitive file system (macOS, Windows), where the tools that read
+/// the file on Linux would not (#1163); the listing keeps each entry's own
+/// spelling.
+#[must_use]
+pub(crate) fn is_file_named(dir: &Path, name: &str) -> bool {
+    dir.join(name).is_file() && has_entry_named(dir, name)
+}
+
+/// Whether the listing of `dir` holds an entry spelled exactly `name`.
+#[must_use]
+pub(crate) fn has_entry_named(dir: &Path, name: &str) -> bool {
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| entry.file_name().as_os_str() == name)
+    })
+}
+
 /// Whether a directory above the module at root-relative `path` holds an
 /// `__init__.py` that `is_init` accepts: importing that package does not by
 /// itself load `path` (#802).
@@ -96,6 +116,18 @@ pub(crate) fn resolve_under_root(
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn is_file_named_matches_the_spelling_on_disk() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        fs::write(temp.path().join("Requirements.txt"), "").expect("write");
+        fs::create_dir(temp.path().join("setup.py")).expect("create dir");
+        assert!(is_file_named(temp.path(), "Requirements.txt"));
+        assert!(!is_file_named(temp.path(), "requirements.txt"));
+        // A directory under the name is no file.
+        assert!(!is_file_named(temp.path(), "setup.py"));
+        assert!(!is_file_named(&temp.path().join("missing"), "setup.py"));
+    }
 
     #[test]
     fn display_path_strips_windows_verbatim_disk_prefix() {

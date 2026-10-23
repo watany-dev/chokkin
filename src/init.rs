@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{DependencyGroupsConfig, RuntimeOverrides, apply_overrides, load_config};
 use crate::discovery::{DiscoveryError, discover_project_root};
 use crate::manifest::{ManifestError, extract_manifest, resolve_target_version};
-use crate::path_util::resolve_under_root;
+use crate::path_util::{is_file_named, resolve_under_root};
 use crate::sources::{SourcesError, discover_sources};
 
 /// Result of writing a starter `[tool.chokkin]` table.
@@ -85,7 +85,7 @@ pub fn init_project(
     let manifest = extract_manifest(&root, &config)?;
     let sources = discover_sources(&root, &config, &manifest)?;
     let pyproject = root.path.join("pyproject.toml");
-    if !pyproject.is_file() {
+    if !is_file_named(&root.path, "pyproject.toml") {
         return Err(InitError::MissingPyproject { root: root.path });
     }
     // Same containment rule as `--fix` (`fix::containment`): never write
