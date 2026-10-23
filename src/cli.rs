@@ -192,11 +192,9 @@ fn parse_confidence(value: &str) -> Result<Confidence, String> {
 /// error rather than a selector that never matches (#1159).
 fn parse_explain_selector(value: &str) -> Result<String, String> {
     match value.split_once(':') {
-        Some((code, key)) if RuleId::parse_code(code).is_some() && !key.is_empty() => {
-            Ok(value.to_owned())
-        },
-        Some((code, _)) if RuleId::parse_code(code).is_none() => {
-            Err(format!("unknown rule code `{code}` in selector `{value}`"))
+        Some((code, key)) if !key.is_empty() => match RuleId::parse_code(code) {
+            Some(_) => Ok(value.to_owned()),
+            None => Err(format!("unknown rule code `{code}` in selector `{value}`")),
         },
         _ => Err(format!(
             "selector `{value}` is not `CODE:KEY` (e.g. `CHK002:boto3`)"
@@ -219,8 +217,13 @@ mod tests {
             parse("chk006:acme.utils:f"),
             Ok(Some("chk006:acme.utils:f".to_owned()))
         );
-        for selector in ["boto3", "CHK002:", "CHK999:boto3", ":boto3"] {
-            assert!(parse(selector).is_err(), "{selector}");
+        for selector in ["boto3", "CHK002:"] {
+            let error = parse(selector).expect_err(selector);
+            assert!(error.contains("is not `CODE:KEY`"), "{selector}: {error}");
+        }
+        for selector in ["CHK999:boto3", ":boto3"] {
+            let error = parse(selector).expect_err(selector);
+            assert!(error.contains("unknown rule code"), "{selector}: {error}");
         }
     }
 
