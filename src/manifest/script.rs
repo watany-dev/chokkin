@@ -257,17 +257,28 @@ fn declared_dependencies(
     warnings: &mut Vec<ManifestWarning>,
 ) -> Vec<DeclaredDependency> {
     let mut dependencies = Vec::new();
+    let content = block.content.join("\n");
+    // Byte offset after the previous entry: each entry is found past it, so
+    // a repeated entry or a name inside an earlier line (`s` is in
+    // `dependencies = [`) does not take an earlier line.
     let mut cursor = 0;
     for (index, raw) in raw_dependencies.iter().enumerate() {
-        if let Some(offset) = block
-            .content
+        let rest = &content[cursor..];
+        let found = [format!("\"{raw}\""), format!("'{raw}'")]
             .iter()
-            .skip(cursor)
-            .position(|line| line.contains(raw.as_str()))
-        {
-            cursor += offset;
-        }
-        let line = u32::try_from(block.first_content + cursor + 1).ok();
+            .filter_map(|quoted| rest.find(quoted.as_str()).map(|at| (at, quoted.len())))
+            .min()
+            .or_else(|| rest.find(raw.as_str()).map(|at| (at, raw.len())));
+        let start = match found {
+            Some((at, len)) => {
+                let start = cursor + at;
+                cursor = start + len;
+                start
+            },
+            None => cursor,
+        };
+        let line_offset = content[..start].matches('\n').count();
+        let line = u32::try_from(block.first_content + line_offset + 1).ok();
         let origin = DependencyOrigin {
             file: path.to_owned(),
             line,
@@ -315,6 +326,27 @@ mod tests {
         assert_eq!(
             script.dependencies[0].origin.label,
             "script.dependencies[0]"
+        );
+    }
+
+    #[test]
+    fn dependency_lines_skip_names_inside_earlier_lines() {
+        let (script, _) = parse(
+            "# /// script\n# requires-python = \">=3.11\"\n# dependencies = [\n#   \"s\",\n#   \"rich\",\n#   \"rich\",\n# ]\n# ///\n",
+        );
+        let lines: Vec<_> = script
+            .expect("script block")
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.clone(), dep.origin.line))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("s".to_owned(), Some(4)),
+                ("rich".to_owned(), Some(5)),
+                ("rich".to_owned(), Some(6))
+            ]
         );
     }
 
@@ -431,5 +463,131 @@ mod tests {
         let invalid =
             "# /// script\n# requires-python = \">=3.12\"\n# dependencies = \"rich\"\n# ///\n";
         assert!(inline_script_target(invalid).is_none());
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+        use std::fmt::Write as _;
+
+        /// The reference implementation's regex from PEP 723.
+        const PEP_723_REGEX: &str =
+            r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$";
+
+        /// `(kind, opening line, closing line)` of each block the PEP's
+        /// regex finds, scanning `text` the way `re.finditer` does.
+        fn reference_blocks(text: &str) -> Vec<(String, usize, usize)> {
+            let regex = regex::Regex::new(PEP_723_REGEX).expect("PEP 723 regex");
+            let line_of = |offset: usize| text[..offset].matches('\n').count();
+            regex
+                .captures_iter(text)
+                .map(|captures| {
+                    let whole = captures.get(0).expect("match");
+                    (
+                        captures["type"].to_owned(),
+                        line_of(whole.start()),
+                        line_of(whole.end()),
+                    )
+                })
+                .collect()
+        }
+
+        fn blocks(text: &str) -> Vec<(String, usize, usize)> {
+            let lines: Vec<&str> = text.lines().collect();
+            metadata_blocks(&lines)
+                .into_iter()
+                .map(|block| (block.kind.to_owned(), block.opening, block.closing))
+                .collect()
+        }
+
+        /// Lines that open, fill or close a block, or end its comment run.
+        const LINES: &[&str] = &[
+            "# /// script",
+            "# /// pyproject",
+            "# /// my-tool2",
+            "# /// ",
+            "# /// bad_kind",
+            "# ///",
+            "# ///  ",
+            "#",
+            "# dependencies = []",
+            "# x",
+            "#x",
+            " # ///",
+            "import os",
+            "",
+        ];
+
+        /// Normalized PEP 508 names: lowercase alphanumeric runs joined by `-`.
+        fn name() -> impl Strategy<Value = String> {
+            "[a-z][a-z0-9]{0,4}(-[a-z0-9]{1,3})?"
+        }
+
+        fn requirement() -> impl Strategy<Value = (String, String)> {
+            let tail =
+                prop::sample::select(vec!["", ">=1", "[cli]", "==2.0; python_version < '3.12'"]);
+            (name(), tail).prop_map(|(name, tail)| (name.clone(), format!("{name}{tail}")))
+        }
+
+        /// Bodies that do not parse as Python, or are no Python at all.
+        const BODIES: &[&str] = &[
+            "",
+            "import os\n",
+            "def broken(:\n",
+            "\"\"\"\n",
+            "if x\n  y)\n",
+        ];
+
+        proptest! {
+            /// The block lines found are those the PEP's regex finds.
+            #[test]
+            fn blocks_match_the_reference_regex(
+                lines in prop::collection::vec(prop::sample::select(LINES), 0..16),
+            ) {
+                let text: String = lines.iter().flat_map(|line| [*line, "\n"]).collect();
+                prop_assert_eq!(blocks(&text), reference_blocks(&text), "{:?}", text);
+            }
+
+            /// The `dependencies` a generated block lists are read back in
+            /// order, each on the line it is written on, whatever the body
+            /// below the block holds.
+            #[test]
+            fn script_dependencies_roundtrip(
+                requires in prop::option::of(prop::sample::select(vec![">=3.11", ">=3.9,<4"])),
+                requirements in prop::collection::vec(requirement(), 0..6),
+                before in 0usize..3,
+                body in prop::sample::select(BODIES),
+            ) {
+                let mut text = "# leading comment\n".repeat(before);
+                text.push_str("# /// script\n");
+                if let Some(requires) = requires {
+                    writeln!(text, "# requires-python = \"{requires}\"").expect("write");
+                }
+                text.push_str("# dependencies = [\n");
+                for (_, raw) in &requirements {
+                    writeln!(text, "#   \"{raw}\",").expect("write");
+                }
+                text.push_str("# ]\n# ///\n");
+                text.push_str(body);
+
+                let mut warnings = Vec::new();
+                let script = parse_inline_script("run.py", &text, &mut warnings)
+                    .expect("a valid script block");
+                prop_assert_eq!(warnings, []);
+                prop_assert_eq!(script.requires_python.as_deref(), requires);
+                let first = before + usize::from(requires.is_some()) + 3;
+                let expected: Vec<(String, Option<u32>)> = requirements
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (name, _))| (name.clone(), u32::try_from(first + index).ok()))
+                    .collect();
+                let got: Vec<(String, Option<u32>)> = script
+                    .dependencies
+                    .iter()
+                    .map(|dep| (dep.name.clone(), dep.origin.line))
+                    .collect();
+                prop_assert_eq!(got, expected, "{}", text);
+            }
+        }
     }
 }

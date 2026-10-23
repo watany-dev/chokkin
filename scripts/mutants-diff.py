@@ -57,6 +57,7 @@ TEST_TARGETS: dict[str, tuple[str, ...] | None] = {
     "prop_fix_converge": ("src/fix",),
     "prop_fix_tables": ("src/fix",),
     "prop_manifest": ("src/manifest",),
+    "prop_metamorphic": None,
     "prop_parser": ("src/parser",),
     "prop_plugins": ("src/plugins",),
     "prop_report": ("src/reporters",),
