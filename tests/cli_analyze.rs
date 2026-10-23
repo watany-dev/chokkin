@@ -143,7 +143,10 @@ fn binary_readme_example_matches_docs() {
         ("docs/dev/spec.ja.md", "出力例。", false),
     ] {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(doc);
-        let text = fs::read_to_string(&path).expect("read doc");
+        // Windows checkouts may convert the docs to CRLF.
+        let text = fs::read_to_string(&path)
+            .expect("read doc")
+            .replace("\r\n", "\n");
         let after_heading = text.split_once(heading).expect("heading").1;
         let block = after_heading
             .split_once("```text\n")
