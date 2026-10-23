@@ -1087,6 +1087,38 @@ mod tests {
         );
     }
 
+    /// `pip freeze > requirements.txt` in Windows PowerShell 5.1 (#1153).
+    #[test]
+    fn utf16le_with_bom_is_read_like_pip_does() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let bytes: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(
+                "requests==2.31.0\r\nurllib3\r\n"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes),
+            )
+            .collect();
+        std::fs::write(temp.path().join("requirements.txt"), bytes).expect("write");
+
+        let (result, outcome) = extract_requirements_path(
+            temp.path(),
+            &temp.path().join("requirements.txt"),
+            &DependencyContext::Runtime,
+        );
+        outcome.expect("read");
+        assert!(!result.skipped);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(
+            result
+                .dependencies
+                .iter()
+                .map(|dep| dep.name.as_str())
+                .collect::<Vec<_>>(),
+            ["requests", "urllib3"]
+        );
+    }
+
     fn parse_requirements_text(text: &str) -> RequirementsExtraction {
         let temp = tempfile::tempdir().expect("temp dir");
         let path = temp.path().join("requirements.txt");
