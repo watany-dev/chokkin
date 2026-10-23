@@ -61,10 +61,11 @@ pub struct CliArgs {
     pub confidence: Option<Confidence>,
 
     /// Explain a specific issue (e.g. `CHK002:boto3`).
-    #[arg(long, value_name = "SELECTOR")]
+    #[arg(long, value_name = "SELECTOR", value_parser = parse_explain_selector)]
     pub explain: Option<String>,
 
-    /// Show reachability trace to a file path.
+    /// Show reachability trace to a file path (relative to the project root
+    /// or the current directory, or absolute).
     #[arg(long, value_name = "PATH")]
     pub trace: Option<String>,
 
@@ -200,9 +201,44 @@ fn parse_confidence(value: &str) -> Result<Confidence, String> {
     Confidence::parse(value).ok_or_else(|| format!("unknown confidence `{value}`"))
 }
 
+/// A selector is `CODE:KEY` with a known rule code; anything else is a usage
+/// error rather than a selector that never matches (#1159).
+fn parse_explain_selector(value: &str) -> Result<String, String> {
+    match value.split_once(':') {
+        Some((code, key)) if !key.is_empty() => match RuleId::parse_code(code) {
+            Some(_) => Ok(value.to_owned()),
+            None => Err(format!("unknown rule code `{code}` in selector `{value}`")),
+        },
+        _ => Err(format!(
+            "selector `{value}` is not `CODE:KEY` (e.g. `CHK002:boto3`)"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_selector_needs_a_known_rule_code_and_a_key() {
+        let parse = |selector: &str| {
+            parse_cli_args(vec!["--explain".to_owned(), selector.to_owned()])
+                .map(|args| args.explain)
+        };
+        assert_eq!(parse("CHK002:boto3"), Ok(Some("CHK002:boto3".to_owned())));
+        assert_eq!(
+            parse("chk006:acme.utils:f"),
+            Ok(Some("chk006:acme.utils:f".to_owned()))
+        );
+        for selector in ["boto3", "CHK002:"] {
+            let error = parse(selector).expect_err(selector);
+            assert!(error.contains("is not `CODE:KEY`"), "{selector}: {error}");
+        }
+        for selector in ["CHK999:boto3", ":boto3"] {
+            let error = parse(selector).expect_err(selector);
+            assert!(error.contains("unknown rule code"), "{selector}: {error}");
+        }
+    }
 
     #[test]
     fn accepts_known_rule_codes() {

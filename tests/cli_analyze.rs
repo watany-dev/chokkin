@@ -221,6 +221,59 @@ fn binary_explain_prints_to_stderr() {
     assert!(stderr.contains("boto3"));
 }
 
+/// Distribution keys are PEP 503-normalized, and CHK003 is selected by the
+/// distribution its message names (#1159).
+#[test]
+fn binary_explain_normalizes_distribution_selectors() {
+    for (fixture, selector, needle) in [
+        ("unused_boto3", "CHK002:Boto3", "boto3"),
+        ("missing_yaml", "CHK003:yaml", "pyyaml"),
+        ("missing_yaml", "CHK003:PyYAML", "pyyaml"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", selector])
+            .arg(fixture_path(&["deps", fixture]))
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert!(
+            stderr.contains(needle) && !stderr.contains("no matching issue"),
+            "{selector}: {stderr}"
+        );
+    }
+}
+
+/// A malformed selector is a usage error; a well-formed one that matches
+/// nothing leaves the exit code to the findings (#1159).
+#[test]
+fn binary_explain_exit_codes() {
+    let root = fixture_path(&["deps", "unused_boto3"]);
+    let run = |selector: &str| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--explain", selector])
+            .arg(&root)
+            .output()
+            .expect("run chokkin")
+    };
+    for selector in ["boto3", "CHK999:boto3", "CHK002:"] {
+        assert_eq!(
+            run(selector).status.code(),
+            Some(ExitStatus::UsageError.code().into()),
+            "{selector}"
+        );
+    }
+    let output = run("CHK002:missing");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("no matching issue for `CHK002:missing`"),
+        "{stderr}"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+}
+
 #[test]
 fn binary_dry_run_without_fix_errors() {
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -7758,9 +7811,65 @@ fn binary_trace_prints_path_to_reachable_file() {
 
 #[test]
 fn binary_trace_reports_undiscovered_file() {
+    let root = std::fs::canonicalize(fixture_path(&["reachability", "trace_origins"]))
+        .expect("canonical fixture");
     assert_eq!(
         trace_stderr("src/acme/missing.py"),
-        "trace: file `src/acme/missing.py` was not discovered in this project\n\n"
+        format!(
+            "trace: file `src/acme/missing.py` was not discovered in this project\n  \
+             (paths are relative to the project root `{}`, \
+             or absolute / relative to the current directory)\n\n",
+            root.display()
+        )
+    );
+}
+
+/// stderr of `--trace <target>` on the `trace_origins` fixture, run from `cwd`.
+fn trace_stderr_from(cwd: &Path, target: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .current_dir(cwd)
+        .args(["--no-exit-code", "--trace", target])
+        .arg(fixture_path(&["reachability", "trace_origins"]))
+        .output()
+        .expect("run chokkin");
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stderr).expect("utf8")
+}
+
+/// Absolute and cwd-relative spellings name the same file as the root-relative
+/// one; before #1157 they were reported as not discovered.
+#[test]
+fn binary_trace_accepts_absolute_and_cwd_relative_paths() {
+    let root = fixture_path(&["reachability", "trace_origins"]);
+    let expected = trace_stderr("src/acme/util.py");
+    let absolute = root.join("src").join("acme").join("util.py");
+    assert_eq!(
+        trace_stderr(absolute.to_str().expect("utf8 path")),
+        expected
+    );
+    let acme = root.join("src").join("acme");
+    assert_eq!(trace_stderr_from(&acme, "util.py"), expected);
+    let parent = root.parent().expect("fixture parent");
+    assert_eq!(
+        trace_stderr_from(parent, "trace_origins/src/acme/util.py"),
+        expected
+    );
+    assert_eq!(trace_stderr_from(&acme, "../acme/util.py"), expected);
+}
+
+#[test]
+fn binary_trace_reports_path_outside_root() {
+    let root = std::fs::canonicalize(fixture_path(&["reachability", "trace_origins"]))
+        .expect("canonical fixture");
+    let outside = root.parent().expect("fixture parent").join("elsewhere.py");
+    let target = outside.to_str().expect("utf8 path");
+    assert_eq!(
+        trace_stderr(target),
+        format!(
+            "trace: `{target}` is outside the project root `{}`; \
+             pass a path inside it, relative to the root\n\n",
+            root.display()
+        )
     );
 }
 
@@ -9255,6 +9364,39 @@ fn binary_app_without_entry_roots_keeps_requirements_under_fix() {
     assert!(fix.status.code().is_some(), "{fix:?}");
     let after = fs::read_to_string(project.path().join("requirements.txt")).expect("read");
     assert_eq!(after, requirements);
+}
+
+/// Root `main.py` and root scripts with a `__main__` block are entries in
+/// flat and src layouts too, so what only they import is used (#1137). A
+/// root module that is neither stays outside the walk, as before.
+#[test]
+fn binary_root_entry_scripts_are_read_in_package_layouts() {
+    let pyproject = "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"requests\", \"rich\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    for package in ["app", "src/app"] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject),
+            (&format!("{package}/__init__.py"), ""),
+            ("main.py", "import requests\nimport app\n"),
+            (
+                "tool.py",
+                "import rich\n\nif __name__ == '__main__':  # run directly\n    pass\n",
+            ),
+            ("util.py", "x = 1\n"),
+        ]);
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(issue_keys(&issues), Vec::new(), "{package}: {issues:?}");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--trace", "main.py"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(
+            !stdout.contains("was not discovered"),
+            "{package}: {stdout}"
+        );
+    }
 }
 
 /// `helper.PY` is collected and named like `helper.py`, as Python on

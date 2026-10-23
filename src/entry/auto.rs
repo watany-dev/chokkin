@@ -1,18 +1,9 @@
 //! §8 automatic entry detection from discovered source files.
 
 use crate::config::EntrySpec;
-use crate::sources::{DiscoveredSources, FileContext, FileKind, ProjectLayout};
+use crate::sources::{DiscoveredSources, FileContext, FileKind, ProjectLayout, ROOT_ENTRY_NAMES};
 
 use super::types::{EntryCandidate, EntryOrigin};
-
-const SHALLOW_ENTRY_NAMES: &[&str] = &[
-    "main.py",
-    "app.py",
-    "manage.py",
-    "asgi.py",
-    "wsgi.py",
-    "noxfile.py",
-];
 
 const ALL_DEPTH_ENTRY_NAMES: &[&str] = &["__main__.py", "conftest.py"];
 
@@ -91,7 +82,7 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
 /// the app itself, whatever else runs it.
 pub(super) fn is_app_entry_file(path: &str, layout: &crate::sources::LayoutInfo) -> bool {
     let file_name = path.rsplit('/').next().unwrap_or(path);
-    SHALLOW_ENTRY_NAMES.contains(&file_name) && is_shallow_entry_path(path, file_name, layout)
+    ROOT_ENTRY_NAMES.contains(&file_name) && is_shallow_entry_path(path, file_name, layout)
 }
 
 fn candidate(path: &str, context: FileContext, rule: String) -> EntryCandidate {

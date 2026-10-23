@@ -1229,6 +1229,7 @@ mod tests {
         for gap in [
             gap("acme/latin.py", GapKind::UnreadModule),
             gap("manage.py", GapKind::SkippedEntry),
+            gap("", GapKind::NoEntryRoot),
             gap("manage.py", GapKind::UnreadDjangoSettings),
             gap("docs/conf.py", GapKind::UnreadSphinxExtensions),
         ] {
@@ -1251,6 +1252,17 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A gap of the whole project names no file in `--explain` (#1138).
+    #[test]
+    fn no_entry_root_explains_without_a_file() {
+        let mut candidates = vec![candidate(RuleId::Chk002, distribution("requests"))];
+        apply_gaps(&mut candidates, &[gap("", GapKind::NoEntryRoot)]);
+        assert_eq!(
+            candidates[0].explain.details,
+            ["no entry root was found, so no file is known to run"]
+        );
     }
 
     #[test]
