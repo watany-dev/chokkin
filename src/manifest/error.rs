@@ -47,7 +47,7 @@ pub enum ManifestError {
     },
 
     /// `uv.lock` could not be parsed.
-    #[error("invalid uv.lock in {path}")]
+    #[error("invalid uv.lock in {path}: {message}")]
     InvalidUvLock {
         /// Lockfile path.
         path: PathBuf,
@@ -56,7 +56,7 @@ pub enum ManifestError {
     },
 
     /// `pylock.toml`, `poetry.lock`, or `pdm.lock` could not be parsed.
-    #[error("invalid lockfile {path}")]
+    #[error("invalid lockfile {path}: {message}")]
     InvalidLockfile {
         /// Lockfile path.
         path: PathBuf,

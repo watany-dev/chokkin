@@ -62,9 +62,9 @@ Unused files  2
   src/acme/old_handlers.py src/acme/old_handlers.py file `src/acme/old_handlers.py` is not reachable from any entry root
 
 Unused dependencies  3
-  boto3                    pyproject.toml:8       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
-  python-dotenv            pyproject.toml:10      python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
-  rich                     pyproject.toml:9       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
+  boto3                    pyproject.toml:6       boto3 is declared in project.dependencies[1], but no reachable import, config, or binary usage was found
+  python-dotenv            pyproject.toml:8       python-dotenv is declared in project.dependencies[3], but no reachable import, config, or binary usage was found
+  rich                     pyproject.toml:7       rich is declared in project.dependencies[2], but no reachable import, config, or binary usage was found
 
 Missing dependencies  1
   src/acme/config.py:3 yaml src/acme/config.py:3   imported pyyaml in src/acme/config.py:3 (no lockfile — transitive check skipped) but not declared in matching dependency context
@@ -1799,7 +1799,7 @@ fixture 作成・cache 削除・graph clone は計測外。warm parse は CLI �
 cache 無効で解析し、member 数に比例する probe / resolution の退行を拾う（#513）。
 `uv.lock` は byte の大半を占める `sdist` / `wheels` 行を落としてから TOML parse する。全群は `make bench-save` / `make bench-cmp` の対象になる。
 
-warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm`（disk bundle からの warm parse、100 / 1k / 5k / 10k files）を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。PR では `verification.yml` の `bench-gate` job が、同じ runner で base commit の baseline を保存してから `scripts/bench-gate.py --confirm 3` で head と比べ、結果を step summary に出す（runner のノイズを見て `--threshold` を詰めるまでは non-blocking、#836）。base に無い bench は比較せずに走らせる。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした（当時の値は in-memory store 経由。in-memory store 削除後の disk warm は 10k で約 61 ms）。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
+warm cache の性能確認は `benches/cache.rs` の `parse_cache_warm`（disk bundle からの warm parse、100 / 1k / 5k / 10k files）を使う。`make bench` は Criterion の全bench（`manifest` / `sources` / `cache` / `resolver` / `pipeline`）を走らせ、baseline比較は `make bench-save BASELINE=main` → `make bench-cmp BASELINE=main` で確認する。PR では `verification.yml` の `bench-gate` job が、main への push 後に `bench-baseline.yml` が保存した base commit の baseline を cache から戻し（無ければ同じ runner で base commit の baseline を保存し）、`scripts/bench-gate.py --confirm 3` で head と比べ、結果を step summary に出す（runner のノイズを見て `--threshold` を詰めるまでは non-blocking、#836）。base に無い bench は比較せずに走らせる。2026-06-15 の v0.2 release validation 実測では 10k warm cache median が 186.85–204.21 ms で、large monorepo の <2s 目標を満たした（当時の値は in-memory store 経由。in-memory store 削除後の disk warm は 10k で約 61 ms）。baseline CI 導入事例は chokkin repo 自身の dogfood job (`.github/workflows/ci.yml` の `chokkin-baseline`) と checked-in `chokkin-baseline.json` で記録した (`docs/dev/v0.2-release-validation.md`)。
 
 tox/nox/pre-commit/GitHub Actions は v0.2 plugin 拡充の初期実装として `src/plugins/devtools.rs` に集約し、`tox.ini` / `noxfile.py` / `.pre-commit-config.yaml` / `.github/workflows/*.yml` または対応する `[tool.*]` から binary usage を出す。GitHub Actions は single-line `run:` と block scalar `run: |` / `run: >` を `src/plugins/commands.rs` の共通 command 解析に通す (`python -m <module>` は `<module>` が既知binaryなら利用として扱う)。
 

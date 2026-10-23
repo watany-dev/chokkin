@@ -290,3 +290,163 @@ proptest! {
         }
     }
 }
+
+/// One entry point: `(group, name, module, attr, extras, spaced)`.
+type Entry = (&'static str, String, String, Option<String>, bool, bool);
+
+fn entry() -> impl Strategy<Value = Entry> {
+    (
+        prop::sample::select(vec![
+            "console",
+            "gui",
+            "pytest11",
+            "flake8.extension",
+            "zz_plugins",
+            "Zz.Mixed",
+        ]),
+        "[A-Za-z][A-Za-z0-9_.-]{0,8}",
+        "[a-z][a-z0-9_]{0,5}(\\.[a-z][a-z0-9_]{0,5}){0,2}",
+        prop::option::of("[a-z_][a-z0-9_]{0,5}(\\.[a-z_][a-z0-9_]{0,5})?"),
+        any::<bool>(),
+        any::<bool>(),
+    )
+}
+
+/// Entry points under unique `(group, name)` keys.
+fn entries() -> impl Strategy<Value = Vec<Entry>> {
+    prop::collection::vec(entry(), 0..6).prop_map(|entries| {
+        let mut seen = std::collections::BTreeSet::new();
+        entries
+            .into_iter()
+            .filter(|(group, name, ..)| seen.insert((*group, name.clone())))
+            .collect()
+    })
+}
+
+/// The object reference as written: `module:attr`, maybe spaced around the
+/// colon, maybe with `[extras]`.
+fn written((_, _, module, attr, extras, spaced): &Entry) -> String {
+    let mut target = module.clone();
+    if let Some(attr) = attr {
+        target.push_str(if *spaced { " : " } else { ":" });
+        target.push_str(attr);
+    }
+    if *extras {
+        target.push_str(" [cli, fast]");
+    }
+    target
+}
+
+/// setuptools' name for a `[project]` group.
+fn setuptools_group(group: &str) -> &str {
+    match group {
+        "console" => "console_scripts",
+        "gui" => "gui_scripts",
+        other => other,
+    }
+}
+
+fn grouped(entries: &[Entry]) -> std::collections::BTreeMap<&'static str, Vec<&Entry>> {
+    let mut groups: std::collections::BTreeMap<&'static str, Vec<&Entry>> =
+        std::collections::BTreeMap::new();
+    for entry in entries {
+        groups.entry(entry.0).or_default().push(entry);
+    }
+    groups
+}
+
+fn pyproject_entry_points(entries: &[Entry]) -> String {
+    let mut text = "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\n".to_owned();
+    for (group, members) in grouped(entries) {
+        let header = match group {
+            "console" => "[project.scripts]".to_owned(),
+            "gui" => "[project.gui-scripts]".to_owned(),
+            other => format!("[project.entry-points.\"{other}\"]"),
+        };
+        writeln!(text, "\n{header}").expect("write");
+        for entry in members {
+            writeln!(text, "\"{}\" = \"{}\"", entry.1, written(entry)).expect("write");
+        }
+    }
+    text
+}
+
+fn poetry_entry_points(entries: &[Entry]) -> String {
+    let mut text = "[tool.poetry]\nname = \"pkg\"\nversion = \"0.1.0\"\n".to_owned();
+    for (group, members) in grouped(entries) {
+        let header = match group {
+            "console" => "[tool.poetry.scripts]".to_owned(),
+            other => format!("[tool.poetry.plugins.\"{}\"]", setuptools_group(other)),
+        };
+        writeln!(text, "\n{header}").expect("write");
+        for entry in members {
+            writeln!(text, "\"{}\" = \"{}\"", entry.1, written(entry)).expect("write");
+        }
+    }
+    text
+}
+
+fn setup_cfg_entry_points(entries: &[Entry]) -> String {
+    let mut text = "[metadata]\nname = pkg\n\n[options.entry_points]\n".to_owned();
+    for (group, members) in grouped(entries) {
+        writeln!(text, "{} =", setuptools_group(group)).expect("write");
+        for entry in members {
+            writeln!(text, "    {} = {}", entry.1, written(entry)).expect("write");
+        }
+    }
+    text
+}
+
+fn setup_py_entry_points(entries: &[Entry]) -> String {
+    let groups = grouped(entries)
+        .into_iter()
+        .map(|(group, members)| {
+            let items = members
+                .iter()
+                .map(|entry| format!("\"{} = {}\"", entry.1, written(entry)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("\"{}\": [{items}]", setuptools_group(group))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("from setuptools import setup\n\nsetup(name=\"pkg\", entry_points={{{groups}}})\n")
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(chokkin::internals::proptest_cases(64)))]
+
+    /// The same entry points read alike from `[project]`, Poetry, setup.cfg
+    /// and setup.py: setuptools' `console_scripts` / `gui_scripts` are the
+    /// `console` / `gui` groups, and the target drops spaces and `[extras]`.
+    #[test]
+    fn entry_points_read_alike_in_every_form(entries in entries()) {
+        let mut expected: Vec<(String, String, String)> = entries
+            .iter()
+            .map(|(group, name, module, attr, ..)| {
+                let target = attr.as_ref().map_or_else(|| module.clone(), |attr| format!("{module}:{attr}"));
+                ((*group).to_owned(), name.clone(), target)
+            })
+            .collect();
+        expected.sort();
+        for (file, contents) in [
+            ("pyproject.toml", pyproject_entry_points(&entries)),
+            ("pyproject.toml", poetry_entry_points(&entries)),
+            ("setup.cfg", setup_cfg_entry_points(&entries)),
+            ("setup.py", setup_py_entry_points(&entries)),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            write_file(&temp.path().join(file), &contents);
+            let root = project_root_at(temp.path());
+            let manifest = extract_manifest(&root, &default_loaded_config(&root))
+                .expect("valid manifest");
+            let mut got: Vec<(String, String, String)> = manifest
+                .entry_points
+                .iter()
+                .map(|entry| (entry.group.clone(), entry.name.clone(), entry.target.clone()))
+                .collect();
+            got.sort();
+            prop_assert_eq!(&got, &expected, "{}", contents);
+        }
+    }
+}
