@@ -6,7 +6,7 @@ use crate::manifest::{
 };
 
 use super::error::FixError;
-use super::write::{read_manifest, write_manifest};
+use super::write::{ManifestText, read_manifest, write_manifest};
 
 /// Remove the declaration at `label` (`options.install_requires[i]` or
 /// `options.extras_require.<extra>[i]`) from `setup.cfg`.
@@ -21,7 +21,7 @@ pub(super) fn remove_dependency(
     label: &str,
     distribution: &str,
 ) -> Result<String, FixError> {
-    let (rel, contents) = read_manifest(path, "setup.cfg")?;
+    let ManifestText { rel, contents, bom } = read_manifest(path, "setup.cfg")?;
     let (section, key, index) = parse_label(label).ok_or_else(|| FixError::Unsupported {
         detail: format!("unsupported setup.cfg label `{label}`"),
     })?;
@@ -71,7 +71,7 @@ pub(super) fn remove_dependency(
         });
     }
 
-    write_manifest(path, rel, output.as_bytes())?;
+    write_manifest(path, rel, bom, &output)?;
     Ok(format!("removed `{distribution}` from {rel}"))
 }
 
@@ -115,6 +115,15 @@ mod tests {
         assert_eq!(
             remove(contents, "options.install_requires[0]", "bar").as_deref(),
             Ok("[options]\ninstall_requires =\n    foobar>=2.0\n")
+        );
+    }
+
+    #[test]
+    fn bom_manifest_is_edited_and_keeps_its_bom() {
+        let contents = "\u{feff}[options]\ninstall_requires =\n    flask\n    requests\n";
+        assert_eq!(
+            remove(contents, "options.install_requires[0]", "flask").as_deref(),
+            Ok("\u{feff}[options]\ninstall_requires =\n    requests\n")
         );
     }
 

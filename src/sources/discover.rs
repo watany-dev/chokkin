@@ -9,7 +9,7 @@ use crate::manifest::LoadedManifest;
 
 use super::cache::SourcesCache;
 use super::error::SourcesError;
-use super::glob::effective_exclude;
+use super::glob::{build_glob_set, effective_exclude};
 use super::layout::{ENTRY_TREE_GLOBS, infer_layout, pytest_testpaths};
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
@@ -207,4 +207,40 @@ fn drop_member_entry_trees(
     collected.files.retain(keep);
     collected.held_tests.retain(keep);
     Ok(())
+}
+
+/// Whether the root's walk reaches `path` only through [`ENTRY_TREE_GLOBS`],
+/// so [`drop_member_entry_trees`] leaves it out on purpose when it sits in a
+/// workspace member (#1023). `effective_globs` are the root's inferred globs;
+/// with explicit `project` globs nothing is dropped and this does not apply.
+/// A member entry there is not one the root skipped (#1140).
+pub(crate) fn only_entry_trees_reach(effective_globs: &[String], path: &str) -> bool {
+    let (trees, own): (Vec<String>, Vec<String>) = effective_globs
+        .iter()
+        .cloned()
+        .partition(|glob| ENTRY_TREE_GLOBS.contains(&glob.as_str()));
+    // Discovery already compiled these globs; one that fails here reaches
+    // nothing, so the entry stays a skipped one.
+    let matches = |globs: &[String]| build_glob_set(globs).is_ok_and(|set| set.is_match(path));
+    matches(&trees) && !matches(&own)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_entry_trees_reach_needs_no_own_glob_to_match() {
+        let globs: Vec<String> = ["src/**/*.{py,pyi,ipynb}", "tests/**/*.{py,pyi,ipynb}"]
+            .into_iter()
+            .chain(ENTRY_TREE_GLOBS)
+            .map(str::to_owned)
+            .collect();
+        assert!(only_entry_trees_reach(&globs, "examples/demo/demo.py"));
+        assert!(only_entry_trees_reach(&globs, "pkgs/a/nb.ipynb"));
+        assert!(!only_entry_trees_reach(&globs, "src/lib/cli.py"));
+        assert!(!only_entry_trees_reach(&globs, "pkgs/a/cli.py"));
+        let flat = ["**/*.{py,pyi,ipynb}".to_owned()];
+        assert!(!only_entry_trees_reach(&flat, "examples/demo/demo.py"));
+    }
 }
