@@ -36,7 +36,7 @@ pub use pipeline::{
     write_probe_report, write_probe_warnings,
 };
 pub use reporters::{
-    RenderContext, config_label_from_sources, escape_control, escape_control_lines,
+    RenderContext, config_label_from_sources, error_chain, escape_control, escape_control_lines,
     render_baseline_report, render_fix_report, render_issues,
 };
 pub use rules::explain_issue;
