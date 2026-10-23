@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::ExitStatus;
 use crate::config::{ChokkinConfig, RuntimeOverrides};
+use crate::manifest::normalize_distribution_name;
 use crate::parser::ParseSummary;
 use crate::reachability::ReachabilityReport;
 use crate::reporters::escape_control;
@@ -133,22 +134,37 @@ pub fn explain_issue(report: &IssueReport, selector: &str) -> Option<String> {
     Some(format_explain(issue))
 }
 
+/// Distribution names compare after PEP 503 normalization, so `Boto3` and
+/// `python_dotenv` select what the report shows as `boto3` and
+/// `python-dotenv`; module, symbol, and path keys compare exactly (#1159).
 fn subject_key_matches(subject: &IssueSubject, key: &str) -> bool {
+    let same_name =
+        |a: &str, b: &str| normalize_distribution_name(a) == normalize_distribution_name(b);
+    let same_distribution = |name: &str| same_name(name, key);
     match subject {
         IssueSubject::File { path } => path == key,
-        IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name == key,
+        IssueSubject::Binary { name } => name == key,
+        IssueSubject::Distribution { name } => same_distribution(name),
         IssueSubject::Symbol { module, name } => format!("{module}:{name}") == key || name == key,
         // `file:module` is the fingerprint's target; a config reference
-        // without a position has no `file:line:module` form (#830).
+        // without a position has no `file:line:module` form (#830). A
+        // resolved import is also selected by the distribution its message
+        // names (CHK003 / CHK004).
         IssueSubject::Import {
-            module, file, line, ..
+            module,
+            file,
+            line,
+            distribution,
         } => {
             module == key
                 || format!("{file}:{module}") == key
                 || line.is_some_and(|line| format!("{file}:{line}:{module}") == key)
+                || distribution.as_deref().is_some_and(same_distribution)
         },
         IssueSubject::ScriptDistribution { script, name } => {
-            format!("script:{script}:{name}") == key || name == key
+            key.strip_prefix(&format!("script:{script}:"))
+                .is_some_and(|rest| same_name(rest, name))
+                || same_distribution(name)
         },
     }
 }
@@ -692,6 +708,8 @@ mod tests {
             ("CHK002:script:scripts/tool.py:rich", Some("script")),
             ("CHK002:rich", Some("script")),
             ("CHK002:boto3", Some("distribution")),
+            ("CHK002:Boto3", Some("distribution")),
+            ("CHK002:script:scripts/tool.py:Rich", Some("script")),
             ("CHK008:ruff", Some("binary")),
             ("CHK001:src/legacy.py", Some("file")),
             ("CHK003:boto3", None),
@@ -735,6 +753,55 @@ mod tests {
             ("CHK010:mysite/settings.py:myapp", Some("reference")),
             ("CHK010:myapp", Some("reference")),
             ("CHK010:mysite/settings.py:0:myapp", None),
+        ] {
+            assert_eq!(
+                explain_issue(&report, selector).as_deref(),
+                expected,
+                "{selector}"
+            );
+        }
+    }
+
+    /// Distribution keys compare PEP 503-normalized, and a resolved import
+    /// is selected by its distribution as well as its module (#1159).
+    #[test]
+    fn explain_issue_normalizes_distribution_keys() {
+        let issues = vec![
+            candidate_to_issue(bare_candidate(
+                RuleId::Chk002,
+                IssueSubject::Distribution {
+                    name: "python-dotenv".to_owned(),
+                },
+                "unused",
+            )),
+            candidate_to_issue(bare_candidate(
+                RuleId::Chk003,
+                IssueSubject::Import {
+                    module: "yaml".to_owned(),
+                    file: "src/app.py".to_owned(),
+                    line: Some(1),
+                    distribution: Some("pyyaml".to_owned()),
+                },
+                "missing",
+            )),
+        ];
+        let report = IssueReport {
+            summary: build_summary(&issues),
+            issues,
+            suppressed: Vec::new(),
+            exit_status: ExitStatus::IssuesFound,
+        };
+
+        for (selector, expected) in [
+            ("CHK002:python-dotenv", Some("unused")),
+            ("CHK002:python_dotenv", Some("unused")),
+            ("CHK002:Python.Dotenv", Some("unused")),
+            ("CHK003:yaml", Some("missing")),
+            ("CHK003:pyyaml", Some("missing")),
+            ("CHK003:PyYAML", Some("missing")),
+            // Module names are case-sensitive in Python.
+            ("CHK003:YAML", None),
+            ("CHK002:pyyaml", None),
         ] {
             assert_eq!(
                 explain_issue(&report, selector).as_deref(),
