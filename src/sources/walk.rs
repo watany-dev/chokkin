@@ -83,7 +83,7 @@ pub(super) fn load_gitignore(
     }
 }
 
-pub(super) fn should_prune_dir(rel_str: &str, exclude_matcher: &GlobSet) -> bool {
+fn should_prune_dir(rel_str: &str, exclude_matcher: &GlobSet) -> bool {
     if rel_str.is_empty() {
         return false;
     }
@@ -235,7 +235,7 @@ fn dir_warnings(
 
 /// [`SourcesWarning::GitignoreUnreadable`] for the `.gitignore` of `dir`,
 /// named relative to the walk root like the root's own.
-pub(super) fn nested_gitignore_unreadable(root: &Path, dir: &Path) -> Option<SourcesWarning> {
+fn nested_gitignore_unreadable(root: &Path, dir: &Path) -> Option<SourcesWarning> {
     let rel = dir.strip_prefix(root).ok()?;
     Some(SourcesWarning::GitignoreUnreadable {
         path: normalize_rel_path(&rel.join(GITIGNORE_PATH)),
@@ -250,11 +250,7 @@ pub(super) fn nested_gitignore_unreadable(root: &Path, dir: &Path) -> Option<Sou
 /// from its components to spell it with the platform's separator either way.
 /// An error without a path names `fallback`, the walk root or the directory
 /// whose ignore files failed.
-pub(super) fn push_walk_error(
-    fallback: &Path,
-    error: &ignore::Error,
-    warnings: &mut Vec<SourcesWarning>,
-) {
+fn push_walk_error(fallback: &Path, error: &ignore::Error, warnings: &mut Vec<SourcesWarning>) {
     let native = |path: &Path| {
         path.components()
             .collect::<PathBuf>()
@@ -282,11 +278,11 @@ pub(super) fn push_walk_error(
 
 /// Symlinks the walk did not follow, with why (#986).
 #[derive(Default)]
-pub(super) struct SkippedSymlinks(Vec<SourcesWarning>);
+struct SkippedSymlinks(Vec<SourcesWarning>);
 
 impl SkippedSymlinks {
     /// Record `entry` if it is a link [`skipped_symlink`] names.
-    pub(super) fn check(
+    fn check(
         &mut self,
         root: &Path,
         entry: &DirEntry,
@@ -304,7 +300,7 @@ impl SkippedSymlinks {
 
     /// Append the links in path order: the walk meets them in directory
     /// order, which the file system picks.
-    pub(super) fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
+    fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
         self.0.sort_by_cached_key(ToString::to_string);
         warnings.append(&mut self.0);
     }

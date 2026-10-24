@@ -13,6 +13,7 @@ use crate::path_util::{join_rel, strip_py_suffix};
 use crate::plugins::pytest_import_settings;
 
 use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
+use super::glob::check_braces;
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
 
@@ -201,7 +202,8 @@ fn top_level_package(root: &Path, path: &str) -> Option<(String, String)> {
 fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
     let matches = |patterns: &[String], name: &str| {
         patterns.iter().any(|pattern| {
-            Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
+            check_braces(pattern).is_ok()
+                && Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
         })
     };
     find.where_dirs
@@ -591,6 +593,15 @@ fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
         return None;
     }
     Some(module_path.replace('/', "."))
+}
+
+/// Whether the package `path` (`foo/__init__.py`) shadows `held`, the module
+/// beside it (`foo.py`): in one directory the path finder tries the package
+/// first. Files in different directories never shadow each other here; which
+/// one Python imports is `sys.path` order (#1108).
+#[must_use]
+pub(crate) fn shadows(path: &str, held: &str) -> bool {
+    path.ends_with("/__init__.py") && module_path(path) == module_path(held)
 }
 
 /// `None` when a path component holds a `.` (`foo.bar.py`, `.hidden/`): no

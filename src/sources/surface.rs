@@ -7,7 +7,7 @@ use globset::{Glob, GlobMatcher};
 use crate::manifest::{PackageFind, WheelTargets};
 use crate::path_util::join_rel;
 
-use super::glob::path_glob;
+use super::glob::{check_braces, path_glob};
 use super::types::{DiscoveredFile, LayoutInfo};
 
 /// Discovered files a wheel ships, resolved from `WheelTargets`.
@@ -100,8 +100,9 @@ impl PathTarget {
     fn new(path: &str) -> Option<Self> {
         if path.contains(['*', '?', '[', '{']) {
             // An invalid pattern ships nothing we can resolve, so it is ignored.
-            return path_glob(path)
+            return check_braces(path)
                 .ok()
+                .and_then(|()| path_glob(path).ok())
                 .map(|glob| Self::Glob(glob.compile_matcher()));
         }
         Some(Self::Prefix(path.to_owned()))
@@ -131,6 +132,7 @@ impl FindTarget {
         let compile = |patterns: &[String]| -> Vec<GlobMatcher> {
             patterns
                 .iter()
+                .filter(|pattern| check_braces(pattern).is_ok())
                 .filter_map(|pattern| Glob::new(pattern).ok())
                 .map(|glob| glob.compile_matcher())
                 .collect()

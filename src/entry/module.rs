@@ -1,7 +1,9 @@
 //! First-party module → file path resolution for entry targets.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::Path;
+
+use rustc_hash::FxHashMap;
 
 use crate::path_util::join_rel;
 use crate::sources::{LayoutInfo, ProjectLayout};
@@ -24,13 +26,13 @@ pub(crate) fn resolve_module_to_path(
 /// files whose path ends in the name: airflow's 11k string literals walked
 /// its 133 members over every file for 3 s (#1025).
 pub(crate) struct ModuleIndex<'a> {
-    by_tail: HashMap<&'a str, Vec<&'a str>>,
-    base_rank: HashMap<String, usize>,
+    by_tail: FxHashMap<&'a str, Vec<&'a str>>,
+    base_rank: FxHashMap<String, usize>,
 }
 
 impl<'a> ModuleIndex<'a> {
     pub(crate) fn new(known_paths: &'a BTreeSet<String>, layout: &LayoutInfo) -> Self {
-        let mut by_tail: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut by_tail: FxHashMap<&str, Vec<&str>> = FxHashMap::default();
         for path in known_paths {
             let tails = path.match_indices('/').map(|(slash, _)| &path[slash + 1..]);
             for tail in std::iter::once(path.as_str()).chain(tails) {
@@ -39,7 +41,7 @@ impl<'a> ModuleIndex<'a> {
         }
         let mut bases = Vec::new();
         push_bases(layout, "", &mut bases);
-        let mut base_rank = HashMap::new();
+        let mut base_rank = FxHashMap::default();
         for (rank, base) in bases.into_iter().enumerate() {
             base_rank.entry(base).or_insert(rank);
         }
@@ -49,7 +51,7 @@ impl<'a> ModuleIndex<'a> {
     /// What [`resolve_module_to_path`] returns over the indexed files.
     pub(crate) fn resolve(&self, module: &str) -> Option<String> {
         let suffix = normalize_module_target(module).replace('.', "/");
-        [format!("{suffix}.py"), format!("{suffix}/__init__.py")]
+        [format!("{suffix}/__init__.py"), format!("{suffix}.py")]
             .iter()
             .enumerate()
             .flat_map(|(kind, tail)| {
@@ -108,7 +110,8 @@ fn resolve_in(
         .chain((!package_root.is_empty()).then_some(""))
         .flat_map(|root| {
             let stem = join_rel(prefix, &join_rel(root, suffix));
-            [format!("{stem}.py"), format!("{stem}/__init__.py")]
+            // The path finder tries the package before the module (#1108).
+            [format!("{stem}/__init__.py"), format!("{stem}.py")]
         })
         .find(|path| exists(path))
         .or_else(|| {
@@ -171,6 +174,19 @@ mod tests {
         assert_eq!(
             resolve_module_to_path("acme", &layout, &paths),
             Some("src/acme/__init__.py".to_owned())
+        );
+    }
+
+    /// `foo/__init__.py` shadows `foo.py` beside it, as in the path finder (#1108).
+    #[test]
+    fn a_package_wins_over_the_module_beside_it() {
+        let layout = src_layout();
+        let paths = known(&["src/acme/foo.py", "src/acme/foo/__init__.py"]);
+        let package = Some("src/acme/foo/__init__.py".to_owned());
+        assert_eq!(resolve_module_to_path("acme.foo", &layout, &paths), package);
+        assert_eq!(
+            ModuleIndex::new(&paths, &layout).resolve("acme.foo"),
+            package
         );
     }
 
@@ -401,10 +417,11 @@ mod tests {
                     };
                     let resolved = resolve_module_to_path(&module, &layout, &paths);
                     // `x.py` beside `x/__init__.py` is one module name for two
-                    // files; both the index and this resolver take `x.py`.
+                    // files; both the index and this resolver take the
+                    // package, as the path finder does (#1108).
                     let twin = path
-                        .strip_suffix("/__init__.py")
-                        .map(|stem| format!("{stem}.py"))
+                        .strip_suffix(".py")
+                        .map(|stem| format!("{stem}/__init__.py"))
                         .filter(|twin| paths.contains(twin));
                     prop_assert_eq!(
                         resolved,

@@ -46,6 +46,19 @@ where
     map_on(worker_count(items.len()), items, init, work)
 }
 
+/// [`map_in_order`] over a few heavy `items` that each walk the project's
+/// `units` files, such as one extractor per plugin: threads are worth
+/// starting for the files, not for the item count.
+pub(crate) fn map_heavy_in_order<T, R, F>(units: usize, items: &[T], work: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> R + Sync,
+{
+    let workers = worker_count(units).min(items.len()).max(1);
+    map_on(workers, items, || (), |(), item| work(item))
+}
+
 /// [`map_in_order_with`] over `workers` threads.
 fn map_on<T, S, R, I, F>(workers: usize, items: &[T], init: I, work: F) -> Vec<R>
 where
@@ -191,6 +204,17 @@ mod tests {
                 "{before:?} {item}"
             );
         }
+    }
+
+    #[test]
+    fn map_heavy_in_order_spreads_few_items_only_for_large_inputs() {
+        let items = [0, 1, 2, 3];
+        let caller = std::thread::current().id();
+        let small = map_heavy_in_order(1, &items, |_| std::thread::current().id());
+        assert!(small.iter().all(|id| *id == caller));
+        let large = map_heavy_in_order(10_000, &items, |&item| (item, item * 2));
+        assert_eq!(large, vec![(0, 0), (1, 2), (2, 4), (3, 6)]);
+        assert!(map_heavy_in_order(10_000, &[] as &[usize], |&item| item).is_empty());
     }
 
     #[test]

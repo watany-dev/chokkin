@@ -1,12 +1,12 @@
 //! First-party module name → file index.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
 use crate::plugins::{SysPathImport, SysPathImporter};
 use crate::resolver::PytestImportPaths;
-use crate::sources::{DiscoveredSources, path_to_module};
+use crate::sources::{DiscoveredSources, path_to_module, shadows};
 
 /// Maps dotted module names to project files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,11 +20,23 @@ impl ModuleIndex {
     /// Build a module index from discovered sources and the project graph.
     #[must_use]
     pub(crate) fn build(graph: &ProjectGraph, sources: &DiscoveredSources) -> Self {
-        let mut module_to_file = HashMap::new();
-        let mut path_to_file = HashMap::new();
+        let mut module_to_file = HashMap::default();
+        let mut path_to_file = HashMap::default();
         for (file_id, file) in graph.files() {
             if let Some(module) = path_to_module(&file.path, &sources.layout) {
-                module_to_file.entry(module).or_insert(file_id);
+                // Between directories the first file in the graph stands in
+                // for `sys.path` order.
+                module_to_file
+                    .entry(module)
+                    .and_modify(|held: &mut FileId| {
+                        if graph
+                            .file(*held)
+                            .is_some_and(|held| shadows(&file.path, &held.path))
+                        {
+                            *held = file_id;
+                        }
+                    })
+                    .or_insert(file_id);
             }
             path_to_file.insert(file.path.clone(), file_id);
         }
@@ -147,6 +159,44 @@ mod tests {
         assert_eq!(updated.under("acm"), []);
     }
 
+    /// `CPython`'s path finder tries `foo/__init__.py` before `foo.py` in the
+    /// same directory, so the package is what `import foo` loads, whichever
+    /// file the graph holds first (#1108).
+    #[test]
+    fn a_package_shadows_the_module_beside_it() {
+        for paths in [
+            ["src/acme/foo.py", "src/acme/foo/__init__.py"],
+            ["src/acme/foo/__init__.py", "src/acme/foo.py"],
+        ] {
+            let mut graph = ProjectGraph::new(ProjectRoot {
+                path: std::env::temp_dir(),
+                marker: RootMarker::PyProjectToml,
+            });
+            for path in paths {
+                graph
+                    .intern_file(FileNode {
+                        path: path.to_owned(),
+                        context: FileContext::Runtime,
+                        kind: FileKind::Python,
+                    })
+                    .expect("file");
+            }
+            let sources = DiscoveredSources {
+                root: graph.root.clone(),
+                layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
+                effective_globs: Vec::new(),
+                files: Vec::new(),
+                warnings: Vec::new(),
+            };
+            let index = ModuleIndex::build(&graph, &sources);
+            assert_eq!(
+                index.resolve("acme.foo"),
+                graph.file_id("src/acme/foo/__init__.py"),
+                "{paths:?}"
+            );
+        }
+    }
+
     #[test]
     fn modules_of_the_project_take_no_named_sys_path_hints() {
         let temp = tempfile::TempDir::new().expect("tempdir");
@@ -161,7 +211,7 @@ mod tests {
             "src/acme/__init__.py",
             "src/acme/sphinxext.py",
         ];
-        let mut ids = HashMap::new();
+        let mut ids = HashMap::default();
         for path in files {
             let id = graph
                 .intern_file(FileNode {

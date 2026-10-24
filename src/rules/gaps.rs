@@ -69,6 +69,9 @@ pub enum GapKind {
     /// An entry point that is not a discovered source, so it was skipped
     /// (#923): the code it runs is not followed.
     SkippedEntry,
+    /// An app-mode project has no entry root (#1138): no file is known to
+    /// run, so any file or distribution may be used by code that does.
+    NoEntryRoot,
     /// A skipped public module of a library that no root reaches: a caller
     /// may import it, so it may use any declared distribution (#550). It
     /// leaves orphans alone, since what it imports must ship in the wheel
@@ -197,6 +200,7 @@ impl GapKind {
             (
                 Self::UnreadModule
                 | Self::SkippedEntry
+                | Self::NoEntryRoot
                 | Self::UnreadNotebookCells
                 | Self::OpaqueDynamicImport
                 | Self::UnreadCommandTarget
@@ -208,6 +212,7 @@ impl GapKind {
             | (
                 Self::UnreadModule
                 | Self::SkippedEntry
+                | Self::NoEntryRoot
                 | Self::UnreadPublicModule
                 | Self::UnreadNotebookCells
                 | Self::UnreadDjangoSettings
@@ -280,6 +285,7 @@ impl GapKind {
         match self {
             Self::UnreadModule => "a reachable module could not be read",
             Self::SkippedEntry => "an entry point is not a discovered source file",
+            Self::NoEntryRoot => "no entry root was found, so no file is known to run",
             Self::UnreadPublicModule => "a public module of the library could not be read",
             Self::UnreadNotebookCells => {
                 "some code cells of a reachable notebook could not be read"
@@ -426,10 +432,12 @@ impl Gap {
         self.site.as_ref().is_some_and(|(site, _)| site == name)
     }
 
-    /// What `--explain` names: the import or target and its line, or else the file.
+    /// What `--explain` names: the import or target and its line, or else
+    /// the file; nothing for a gap of the whole project.
     fn label(&self) -> String {
         match &self.site {
             Some((what, line)) => format!("`{what}` in `{}`", import_site(&self.file, *line)),
+            None if self.file.is_empty() => String::new(),
             None => format!("`{}`", self.file),
         }
     }
@@ -441,7 +449,7 @@ impl Gap {
 /// count only where the module is reached or, for an unread module, where a
 /// caller of the library may import it. `skipped_entries` are the entry
 /// paths skipped as not discovered, less those that do not exist, which run
-/// nothing.
+/// nothing; `no_entry_root` says an app has no root at all (#1138).
 #[must_use]
 #[expect(
     clippy::too_many_arguments,
@@ -454,6 +462,7 @@ pub fn collect_gaps(
     scripts: &[InlineScript],
     plugins: &PluginHints,
     skipped_entries: &[String],
+    no_entry_root: bool,
     unread_path_sources: &[String],
     groups: &DependencyGroupsConfig,
     project_range: StdlibRange,
@@ -462,6 +471,14 @@ pub fn collect_gaps(
     gaps.extend(skipped_entries.iter().map(|path| Gap {
         file: path.clone(),
         kind: GapKind::SkippedEntry,
+        member: None,
+        target: None,
+        site: None,
+    }));
+    // The whole project: no file to name.
+    gaps.extend(no_entry_root.then(|| Gap {
+        file: String::new(),
+        kind: GapKind::NoEntryRoot,
         member: None,
         target: None,
         site: None,
@@ -761,8 +778,10 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         .map(|file| file.path.clone())
         .collect();
     let index = ModuleIndex::new(&known_paths, &context.sources.layout);
-    let mut gaps = Vec::new();
-    for module in &context.parse.modules {
+    // Every dotted string literal is a lookup: spread the files over workers,
+    // keeping their order (#1087).
+    let per_module = crate::parallel::map_in_order(&context.parse.modules, |module| {
+        let mut gaps = Vec::new();
         for reference in &module.module_refs {
             let name = crate::parser::module_ref_name(&reference.text);
             let Some(target) = resolve_dotted_prefix(name, &index) else {
@@ -779,8 +798,9 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
                 target: Some(target),
             });
         }
-    }
-    gaps
+        gaps
+    });
+    per_module.into_iter().flatten().collect()
 }
 
 /// The project file `module` names, or else the one its longest prefix of
@@ -1132,6 +1152,7 @@ fn gap_detail(kind: GapKind, gaps: &[&Gap]) -> String {
         .map(|gap| gap.label());
     let first = labels.next().unwrap_or_default();
     match labels.count() {
+        0 if first.is_empty() => kind.reason().to_owned(),
         0 => format!("{}: {first}", kind.reason()),
         more => format!("{}: {first} (and {more} more)", kind.reason()),
     }
@@ -1211,6 +1232,7 @@ mod tests {
         for gap in [
             gap("acme/latin.py", GapKind::UnreadModule),
             gap("manage.py", GapKind::SkippedEntry),
+            gap("", GapKind::NoEntryRoot),
             gap("manage.py", GapKind::UnreadDjangoSettings),
             gap("docs/conf.py", GapKind::UnreadSphinxExtensions),
         ] {
@@ -1233,6 +1255,17 @@ mod tests {
                 ]
             );
         }
+    }
+
+    /// A gap of the whole project names no file in `--explain` (#1138).
+    #[test]
+    fn no_entry_root_explains_without_a_file() {
+        let mut candidates = vec![candidate(RuleId::Chk002, distribution("requests"))];
+        apply_gaps(&mut candidates, &[gap("", GapKind::NoEntryRoot)]);
+        assert_eq!(
+            candidates[0].explain.details,
+            ["no entry root was found, so no file is known to run"]
+        );
     }
 
     #[test]
@@ -2213,9 +2246,10 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 24] = [
+        const KINDS: [GapKind; 25] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
+            GapKind::NoEntryRoot,
             GapKind::UnreadPublicModule,
             GapKind::UnreadNotebookCells,
             GapKind::OpaqueDynamicImport,
@@ -2247,6 +2281,7 @@ mod tests {
             match kind {
                 GapKind::UnreadModule
                 | GapKind::SkippedEntry
+                | GapKind::NoEntryRoot
                 | GapKind::UnreadNotebookCells
                 | GapKind::UnreadDjangoSettings
                 | GapKind::UnreadSphinxExtensions => &[RuleId::Chk001, RuleId::Chk002],

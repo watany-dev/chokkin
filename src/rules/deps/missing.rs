@@ -1118,4 +1118,266 @@ mod tests {
             HashSet::from([2, 3, 4, 6, 7].map(|line| (FILE.to_owned(), line)))
         );
     }
+
+    /// One input row of `docs/dev/formal/deps_rules_z3.py`.
+    #[derive(Debug, Clone, Copy)]
+    struct FormalCase {
+        usage: crate::parser::ImportContext,
+        /// `[runtime, dev, type, optional]` buckets of `D`.
+        root: [bool; 4],
+        member: Option<[bool; 4]>,
+        strict: bool,
+        optional: bool,
+        /// `(listed, edge from the root's declarations, edge from the member's)`.
+        root_lock: Option<(bool, bool, bool)>,
+        /// `(listed, edge from the member's declarations)`.
+        member_lock: Option<(bool, bool)>,
+    }
+
+    /// `decide` in `deps_rules_z3.py`: rule, severity and confidence of each
+    /// finding (CHK005's verdict is `misplaced.rs` `mod verification`'s).
+    fn formal_decision(case: FormalCase) -> Vec<(RuleId, Option<(Severity, Confidence)>)> {
+        use crate::parser::ImportContext;
+        let matches = |[runtime, dev, ty, optional]: [bool; 4]| match case.usage {
+            ImportContext::Runtime => runtime || optional,
+            ImportContext::Type => ty || runtime || optional,
+            ImportContext::Test | ImportContext::Dev => dev || runtime || optional,
+        };
+        let usage_runtime = case.usage == ImportContext::Runtime;
+        let member = case.member.filter(|buckets| buckets.contains(&true));
+        if member.is_some_and(matches) {
+            return Vec::new();
+        }
+        let root = case.root.contains(&true).then_some(case.root);
+        let governing = member.filter(|_| case.strict).or(root);
+        let Some([runtime, dev, ty, optional]) = governing else {
+            if !case.strict && !usage_runtime {
+                return Vec::new();
+            }
+            let in_member = case.member.is_some();
+            let root_edge = |(_, from_root, from_member): (bool, bool, bool)| {
+                if in_member { from_member } else { from_root }
+            };
+            let edge = case.member_lock.is_some_and(|(_, edge)| edge)
+                || case.root_lock.is_some_and(root_edge);
+            let listed = case.member_lock.is_some_and(|(listed, _)| listed)
+                || case.root_lock.is_some_and(|(listed, ..)| listed);
+            let finding = if case.optional && !edge {
+                let severity = if case.strict {
+                    Severity::Warning
+                } else {
+                    Severity::Info
+                };
+                (RuleId::Chk003, severity, Confidence::Likely)
+            } else if edge || listed {
+                let severity = if case.optional {
+                    Severity::Warning
+                } else {
+                    Severity::Error
+                };
+                let confidence = if edge {
+                    Confidence::Certain
+                } else {
+                    Confidence::Likely
+                };
+                (RuleId::Chk004, severity, confidence)
+            } else {
+                (RuleId::Chk003, Severity::Error, Confidence::Certain)
+            };
+            return vec![(finding.0, Some((finding.1, finding.2)))];
+        };
+        if case.strict && case.member.is_some() && member.is_none() && matches(case.root) {
+            return vec![(RuleId::Chk003, Some((Severity::Error, Confidence::Certain)))];
+        }
+        if usage_runtime && !(runtime || optional) && (dev || ty) {
+            return vec![(RuleId::Chk005, None)];
+        }
+        Vec::new()
+    }
+
+    const FORMAL_D: &str = "pkg";
+
+    /// Every input row of `deps_rules_z3.py` for the usage contexts that
+    /// reach distinct rows (`Dev` behaves as `Test`).
+    fn formal_cases() -> Vec<FormalCase> {
+        use crate::parser::ImportContext;
+        let bit = |bits: u8, k: u8| bits & (1 << k) != 0;
+        let buckets = |bits: u8| [0, 1, 2, 3].map(|k| bit(bits, k));
+        let root_locks = std::iter::once(None)
+            .chain((0..8_u8).map(|bits| Some((bit(bits, 0), bit(bits, 1), bit(bits, 2)))));
+        let member_locks: Vec<_> = std::iter::once(None)
+            .chain((0..4_u8).map(|bits| Some((bit(bits, 0), bit(bits, 1)))))
+            .collect();
+        let members: Vec<_> = std::iter::once(None)
+            .chain((0..16_u8).map(|bits| Some(buckets(bits))))
+            .collect();
+        let usages = [
+            ImportContext::Runtime,
+            ImportContext::Type,
+            ImportContext::Test,
+        ];
+        let members = &members;
+        let declarations = usages.into_iter().flat_map(|usage| {
+            (0..16_u8).flat_map(move |root| {
+                members
+                    .iter()
+                    .map(move |&member| (usage, buckets(root), member))
+            })
+        });
+        let locks = |member: Option<[bool; 4]>| {
+            let member_locks = member_locks[..if member.is_some() { 5 } else { 1 }].to_vec();
+            root_locks.clone().flat_map(move |root_lock| {
+                member_locks
+                    .clone()
+                    .into_iter()
+                    .map(move |member_lock| (root_lock, member_lock))
+            })
+        };
+        declarations
+            .flat_map(|(usage, root, member)| {
+                locks(member).flat_map(move |(root_lock, member_lock)| {
+                    (0..4_u8).map(move |bits| FormalCase {
+                        usage,
+                        root,
+                        member,
+                        strict: bit(bits, 0),
+                        optional: bit(bits, 1),
+                        root_lock,
+                        member_lock,
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// `pkg`'s entries in `buckets`, next to `other`, a runtime dependency
+    /// whose lock edge may reach `pkg`.
+    fn formal_index<'a>(
+        entries: &'a [DeclaredDependency],
+        buckets: [bool; 4],
+        other: &'a DeclaredDependency,
+    ) -> DeclaredIndex<'a> {
+        let own: Vec<_> = entries
+            .iter()
+            .zip(buckets)
+            .filter_map(|(entry, on)| on.then_some(entry))
+            .collect();
+        let mut index = BTreeMap::from([(other.name.clone(), vec![other])]);
+        if !own.is_empty() {
+            index.insert(FORMAL_D.to_owned(), own);
+        }
+        index
+    }
+
+    /// A lockfile listing `pkg` when `listed`, with an edge to it from each of `from`.
+    fn formal_lock(listed: bool, from: &[(bool, &str)]) -> LockfileGraph {
+        LockfileGraph {
+            edges: from
+                .iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, name)| ((*name).to_owned(), vec![FORMAL_D.to_owned()]))
+                .chain(listed.then(|| (FORMAL_D.to_owned(), Vec::new())))
+                .collect(),
+            ..LockfileGraph::default()
+        }
+    }
+
+    /// `detect_missing_dependencies` and `detect_misplaced_dependencies` on
+    /// one row built as real declarations and lockfiles.
+    fn run_formal_case(case: FormalCase) -> Vec<(RuleId, Option<(Severity, Confidence)>)> {
+        let entries = [
+            DependencyContext::Runtime,
+            DependencyContext::Group("dev".to_owned()),
+            DependencyContext::Group("typing".to_owned()),
+            DependencyContext::OptionalExtra("extra".to_owned()),
+        ]
+        .map(|context| declared_dep_in(FORMAL_D, context));
+        let (root_dep, member_dep) = (declared_dep("rootdep"), declared_dep("memberdep"));
+        let root_index = formal_index(&entries, case.root, &root_dep);
+        let transitive = case.root_lock.map(|(listed, from_root, from_member)| {
+            formal_lock(
+                listed,
+                &[(from_root, "rootdep"), (from_member, "memberdep")],
+            )
+        });
+        let member_lock = case
+            .member_lock
+            .map(|(listed, edge)| formal_lock(listed, &[(edge, "memberdep")]));
+        let workspace: Vec<_> = case
+            .member
+            .map(|buckets| WorkspaceDeclaredIndex {
+                member_id: "api",
+                declared: formal_index(&entries, buckets, &member_dep),
+                lockfile: member_lock.as_ref(),
+            })
+            .into_iter()
+            .collect();
+        let import = ResolvedImport {
+            context: case.usage,
+            optional: case.optional,
+            workspace_member: case.member.map(|_| "api".to_owned()),
+            ..runtime_import(FORMAL_D)
+        };
+        let resolution = ResolutionIndex {
+            imports: vec![Arc::new(import)],
+            warnings: Vec::new(),
+            transitive: transitive.clone().unwrap_or_default(),
+            binary_resolutions: BTreeMap::new(),
+            pytest_plugin_distributions: std::collections::BTreeSet::new(),
+        };
+        let config = default_config();
+        let sources = sources();
+        let parse = parse_for(&resolution.imports);
+        let rules = RuleContext {
+            resolution: &resolution,
+            sources: &sources,
+            graph: &crate::graph::ProjectGraph::new(sources.root.clone()),
+            reachability: &crate::reachability::ReachabilityReport::default(),
+            parse: &parse,
+            surface: None,
+        };
+        let dependency = DependencyRuleContext {
+            rules: &rules,
+            config: &config,
+            strict: case.strict,
+            build_scripts: &BTreeMap::new(),
+            local: &crate::sources::LocalTrees::default(),
+        };
+        let reachable = HashSet::from([FILE]);
+        let mut found = detect_missing_dependencies(
+            &root_index,
+            &dependency,
+            &reachable,
+            transitive.is_some(),
+            &workspace,
+        );
+        found.extend(super::super::misplaced::detect_misplaced_dependencies(
+            &root_index,
+            &dependency,
+            &reachable,
+            &workspace,
+            &HashSet::new(),
+        ));
+        found.iter().map(formal_verdict).collect()
+    }
+
+    /// CHK005's severity and confidence are `misplaced.rs` `mod verification`'s.
+    fn formal_verdict(candidate: &IssueCandidate) -> (RuleId, Option<(Severity, Confidence)>) {
+        let verdict = (candidate.rule != RuleId::Chk005)
+            .then_some((candidate.severity, candidate.confidence));
+        (candidate.rule, verdict)
+    }
+
+    /// The decision table `docs/dev/formal/deps_rules_z3.py` checks is the one
+    /// `detect_missing_dependencies` and `detect_misplaced_dependencies`
+    /// implement (#1108): every usage context × root and member buckets ×
+    /// `--strict` × optional import × what the root and member lockfiles say.
+    #[test]
+    fn decisions_follow_the_formal_model() {
+        let cases = formal_cases();
+        assert_eq!(cases.len(), 3 * 16 * (9 * 4 + 16 * 9 * 5 * 4));
+        for case in cases {
+            assert_eq!(run_formal_case(case), formal_decision(case), "{case:?}");
+        }
+    }
 }

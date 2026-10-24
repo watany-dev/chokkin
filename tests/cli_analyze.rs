@@ -343,6 +343,10 @@ fn binary_fix_dry_run_reports_planned_not_applied() {
     assert!(stderr.contains("  planned CHK002 boto3"), "{stderr}");
     assert!(!stderr.contains("  applied CHK"), "{stderr}");
     assert_eq!(
+        dry_run.status.code(),
+        Some(ExitStatus::IssuesFound.code().into())
+    );
+    assert_eq!(
         fs::read_to_string(&pyproject).expect("read pyproject"),
         before
     );
@@ -355,6 +359,57 @@ fn binary_fix_dry_run_reports_planned_not_applied() {
     let stderr = String::from_utf8(fix.stderr).expect("utf8");
     assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
     assert!(!stderr.contains("  planned CHK"), "{stderr}");
+    // Every finding was fixed, so nothing is left to fail on (#1164).
+    assert_eq!(fix.status.code(), Some(ExitStatus::Success.code().into()));
+}
+
+/// #1164: a finding `--fix` leaves standing still fails the run, and one
+/// `--add-missing` edit resolves every import of the distribution.
+#[test]
+fn binary_fix_add_missing_counts_every_resolved_import() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"boto3\"]\n",
+    )
+    .expect("write pyproject");
+    let package = temp.path().join("src/acme");
+    fs::create_dir_all(&package).expect("mkdir");
+    fs::write(package.join("__init__.py"), "from acme import a, b\n").expect("write init");
+    fs::write(package.join("a.py"), "import yaml\n").expect("write a");
+    fs::write(package.join("b.py"), "import yaml\n").expect("write b");
+
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "compact"])
+            .args(args)
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin")
+    };
+    let partial = run(&["--fix"]);
+    let stderr = String::from_utf8(partial.stderr).expect("utf8");
+    assert!(stderr.contains("  applied CHK002 boto3"), "{stderr}");
+    assert_eq!(
+        partial.status.code(),
+        Some(ExitStatus::IssuesFound.code().into()),
+        "{stderr}"
+    );
+
+    let fix = run(&["--fix", "--add-missing"]);
+    let stdout = String::from_utf8(fix.stdout).expect("utf8");
+    let stderr = String::from_utf8(fix.stderr).expect("utf8");
+    assert_eq!(stdout.matches("CHK003").count(), 2, "{stdout}");
+    assert!(stderr.contains("  applied CHK003 pyyaml"), "{stderr}");
+    assert_eq!(
+        fix.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(
+        run(&[]).status.code(),
+        Some(ExitStatus::Success.code().into())
+    );
 }
 
 /// A `pyproject.toml` symlinked outside the root: `--fix` refuses it, and
@@ -617,9 +672,10 @@ fn binary_baseline_update_then_suppresses_existing_issue() {
         .arg(temp.path())
         .output()
         .expect("run chokkin");
+    // Writing the baseline is the run's purpose, so it succeeds (#1164).
     assert_eq!(
         update.status.code(),
-        Some(ExitStatus::IssuesFound.code().into())
+        Some(ExitStatus::Success.code().into())
     );
     let baseline_contents = fs::read_to_string(&baseline).expect("read baseline");
     assert!(baseline_contents.contains("CHK002:boto3"));
@@ -3257,6 +3313,53 @@ fn binary_non_utf8_setup_py_does_not_abort_the_run() {
     assert!(keys.iter().all(|(code, _)| code != "CHK003"), "{keys:?}");
 }
 
+/// A `Shift_JIS` source is read through its PEP 263 declaration (#1150), and
+/// a UTF-16LE `requirements.txt` from PowerShell's `pip freeze >` through
+/// its BOM (#1153): the run sees the import and the declaration both hold.
+#[test]
+fn binary_shift_jis_source_and_utf16_requirements_are_read() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[tool.chokkin]\nmode = \"app\"\nentry = [\"app.py\"]\n",
+        ),
+        ("helper.py", "x = 1\n"),
+        ("worker.py", "import urllib3\n"),
+    ]);
+    // `# 日本語` and `s = 'ソ'`, whose second byte is a backslash.
+    fs::write(
+        project.path().join("app.py"),
+        b"# -*- coding: shift_jis -*-\n# \x93\xfa\x96{\x8c\xea\ns = '\x83\\'\nimport requests\nimport helper\nimport worker\n",
+    )
+    .expect("write shift_jis app.py");
+    let requirements: Vec<u8> = [0xFF, 0xFE]
+        .into_iter()
+        .chain(
+            "requests\r\nurllib3\r\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        )
+        .collect();
+    fs::write(project.path().join("requirements.txt"), requirements)
+        .expect("write utf-16 requirements.txt");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("skipped"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let keys = issue_keys(parsed["issues"].as_array().expect("issues"));
+    assert!(keys.is_empty(), "{keys:?}\n{stderr}");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{stderr}"
+    );
+}
+
 /// `--production` still parses a library's tests for CHK006, so what the
 /// parser could not read there is reported like any other file (#894).
 #[test]
@@ -5082,6 +5185,8 @@ fn binary_module_entry_outside_the_inventory_is_a_skipped_entry() {
                 "import requests\nfrom acme import helper\n\ndef main():\n    pass\n",
             ),
             ("acme/helper.py", "# helper\n"),
+            // A root that uses neither, so no root at all is not what lowers (#1138).
+            ("acme/__main__.py", "pass\n"),
         ])
     };
     let project = files(manifest("acme.cli:main"));
@@ -5132,6 +5237,7 @@ fn binary_production_module_entry_in_tests_is_not_a_skipped_entry() {
         ),
         ("acme/__init__.py", ""),
         ("acme/helper.py", "# helper\n"),
+        ("acme/__main__.py", "pass\n"),
         ("tests/__init__.py", ""),
         ("tests/app.py", "import requests\n\ndef main():\n    pass\n"),
     ]);
@@ -5391,6 +5497,8 @@ fn binary_skipped_entry_lowers_unused_files_and_distributions() {
         ),
         ("acme/__init__.py", ""),
         ("acme/helper.py", "# helper\n"),
+        // A root that uses neither, so no root at all is not what lowers (#1138).
+        ("acme/__main__.py", "pass\n"),
     ]);
     assert_eq!(
         issue_levels(project.path()),
@@ -9357,6 +9465,136 @@ fn binary_unreadable_entry_point_is_reported() {
     );
 }
 
+/// A project with `pyproject.toml` declaring a `demo` console script and
+/// `exclude` as its only `tool.chokkin.exclude` entry (#1145).
+fn deep_brace_project(dir: &Path, exclude: &str) {
+    fs::create_dir_all(dir.join("src/demo")).expect("mkdir");
+    fs::write(
+        dir.join("pyproject.toml"),
+        format!(
+            "[project]\nname = \"demo\"\nversion = \"0.1\"\n\
+             [project.scripts]\ndemo = \"demo.cli:main\"\n\
+             [tool.chokkin]\nexclude = [\"{exclude}\"]\n"
+        ),
+    )
+    .expect("write pyproject");
+    fs::write(dir.join("src/demo/__init__.py"), "").expect("write init");
+    fs::write(dir.join("src/demo/cli.py"), "def main():\n    pass\n").expect("write cli");
+}
+
+#[test]
+fn binary_deeply_nested_glob_braces_are_a_config_error_not_an_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let deep = format!("{}{}", "{".repeat(100_000), "}".repeat(100_000));
+    deep_brace_project(temp.path(), &deep);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::UsageError.code().into()),
+        "{:?}",
+        stderr.lines().last()
+    );
+    assert!(stderr.contains("more than the 1000 chokkin compiles"));
+}
+
+#[test]
+fn binary_deeply_nested_gitignore_braces_do_not_abort() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    deep_brace_project(temp.path(), "nothing/**");
+    let deep = format!("{}{}\n", "{".repeat(100_000), "}".repeat(100_000));
+    fs::write(temp.path().join(".gitignore"), deep).expect("write gitignore");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::Success.code().into()),
+        "{:?}",
+        stderr.lines().last()
+    );
+}
+
+/// A project with only `requirements.txt` and a flat package resolves to app
+/// mode with no entry root. Nothing is known to run, so no file or
+/// distribution is certainly unused: the findings stay below certain, a
+/// warning says why, and `--fix` keeps every requirement (#1138).
+#[test]
+fn binary_app_without_entry_roots_keeps_requirements_under_fix() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let requirements = "PyYAML\nattrs\nrequests\n";
+    fs::write(project.path().join("requirements.txt"), requirements).expect("requirements");
+    fs::create_dir(project.path().join("app")).expect("package");
+    fs::write(
+        project.path().join("app/__init__.py"),
+        "import yaml, attr\n",
+    )
+    .expect("init");
+    fs::write(project.path().join("app/x.py"), "import yaml\n").expect("module");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let mut issues: Vec<(&str, &str, &str)> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["target"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    issues.sort_unstable();
+    assert_eq!(
+        issues,
+        [
+            ("CHK001", "app/x.py", "likely"),
+            ("CHK002", "attrs", "likely"),
+            ("CHK002", "pyyaml", "likely"),
+            ("CHK002", "requests", "likely"),
+        ],
+        "{parsed}"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("entry: no entry root was found"),
+        "{stderr}"
+    );
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:requests"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains("no entry root was found, so no file is known to run"),
+        "{stderr}"
+    );
+
+    let fix = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--fix"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin --fix");
+    assert!(fix.status.code().is_some(), "{fix:?}");
+    let after = fs::read_to_string(project.path().join("requirements.txt")).expect("read");
+    assert_eq!(after, requirements);
+}
+
 /// Root `main.py` and root scripts with a `__main__` block are entries in
 /// flat and src layouts too, so what only they import is used (#1137). A
 /// root module that is neither stays outside the walk, as before.
@@ -9414,4 +9652,51 @@ fn binary_resolves_module_with_uppercase_extension() {
     assert!(!stdout.contains("Unresolved imports"), "{stdout}");
     assert!(!stdout.contains("Unused files"), "{stdout}");
     assert!(stdout.contains("helper.PY:1 requests"), "{stdout}");
+}
+
+/// An explicit `--confidence` wins over `--strict`, which only lowers the
+/// default floor and widens the exit gate (#1134).
+#[test]
+fn binary_explicit_confidence_wins_over_strict() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = []\n",
+        ),
+        (
+            "main.py",
+            "try:\n    import yaml\nexcept ImportError:\n    yaml = None\n",
+        ),
+    ]);
+    let run = |extra: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .args(extra)
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let issues: Vec<(String, String)> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .map(|issue| {
+                (
+                    issue["code"].as_str().unwrap_or_default().to_owned(),
+                    issue["target"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        (issues, output.status.code())
+    };
+    let yaml = vec![("CHK003".to_owned(), "main.py:yaml".to_owned())];
+
+    let (issues, _) = run(&["--strict"]);
+    assert_eq!(issues, yaml);
+    let (issues, code) = run(&["--confidence", "certain"]);
+    assert_eq!(issues, Vec::<(String, String)>::new());
+    assert_eq!(code, Some(0));
+    let (issues, code) = run(&["--strict", "--confidence", "certain"]);
+    assert_eq!(issues, Vec::<(String, String)>::new());
+    assert_eq!(code, Some(0));
 }
