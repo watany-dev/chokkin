@@ -15,6 +15,7 @@ pub(crate) use context::{
     DeclarationBucket, declaration_bucket, declaration_buckets, file_context,
 };
 pub(crate) use duplicate::duplicate_to_remove;
+pub(crate) use reconcile::member_indexes;
 pub(crate) use used::local_source_member;
 
 pub use reconcile::reconcile_with_context;

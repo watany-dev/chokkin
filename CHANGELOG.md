@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   group. A `conf.py` with no root document beside it is not read (#814).
 
 ### Fixed
+- `--fix` moves a workspace member's CHK005 dependency in the manifest that
+  decided the finding: under `--strict`, the member's own `pyproject.toml`
+  when it declares the distribution, instead of adding it to the root's
+  `[project].dependencies` and leaving the finding. A root entry that
+  decides several findings (the root's and a member's) moves once, without
+  a "could not remove" skip for the rest.
 - A source file whose PEP 263 declaration names a CJK codec (`shift_jis`,
   `cp932`, `euc_jp`, `gbk`, `gb18030`, `big5`, `euc_kr` and their Python
   aliases) is read instead of skipped, so its imports count (#1150).

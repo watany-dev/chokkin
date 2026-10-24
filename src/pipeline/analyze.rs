@@ -139,6 +139,7 @@ pub fn analyze_project(
             &probe.root,
             &probe.manifest,
             &workspace_manifests,
+            overrides.strict.unwrap_or(false),
             options.fix,
         );
         if !options.update_baseline {

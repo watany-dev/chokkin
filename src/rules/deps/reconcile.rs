@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use indexmap::IndexSet;
 
 use crate::manifest::{
-    DeclaredDependency, DependencyContext, InlineScript, LoadedManifest, supported_python,
+    DeclaredDependency, DependencyContext, InlineScript, LoadedManifest, LockfileGraph,
+    supported_python,
 };
 use crate::plugins::PluginHints;
 use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
@@ -274,14 +275,7 @@ fn workspace_declared_indices<'a>(
     workspace_boundaries
         .iter()
         .map(|boundary| {
-            // A uv workspace member reads the root's lockfile; a member with
-            // its own (langchain's `libs/core/uv.lock`) reads that (#653).
-            let own_lockfile = boundary
-                .manifest
-                .sources
-                .lockfile
-                .is_some()
-                .then_some(&boundary.manifest.lockfile);
+            let own_lockfile = own_lockfile(boundary.manifest);
             WorkspaceDeclaredIndex {
                 member_id: boundary.member_id,
                 declared: build_import_declared_index(
@@ -292,6 +286,28 @@ fn workspace_declared_indices<'a>(
             }
         })
         .collect()
+}
+
+/// A uv workspace member reads the root's lockfile; a member with its own
+/// (langchain's `libs/core/uv.lock`) reads that (#653).
+fn own_lockfile(member: &LoadedManifest) -> Option<&LockfileGraph> {
+    member
+        .sources
+        .lockfile
+        .is_some()
+        .then_some(&member.lockfile)
+}
+
+/// Whether the member's declared index has `distribution`, as
+/// `ImportDeclarations::lookup` builds it: the entries that govern the
+/// member's imports under `--strict`.
+pub(crate) fn member_indexes(
+    root: &LoadedManifest,
+    member: &LoadedManifest,
+    distribution: &str,
+) -> bool {
+    build_import_declared_index(member, own_lockfile(member).unwrap_or(&root.lockfile))
+        .contains_key(distribution)
 }
 
 fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSet<String>) {

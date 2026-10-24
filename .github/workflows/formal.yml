@@ -29,6 +29,11 @@ on:
       - "src/baseline/store.rs"
       # ignore_model.py
       - "src/rules/ignore.rs"
+      # fix_plan_model.py (also the deps_rules_z3.py rule files)
+      - "src/fix/plan.rs"
+      - "src/fix/pyproject.rs"
+      - "src/rules/deps/reconcile.rs"
+      - "src/rules/deps/used.rs"
       # Reachability.tla
       - "src/reachability/bfs.rs"
       - "src/reachability/build.rs"
@@ -84,6 +89,7 @@ jobs:
           deps_rules_z3 src/rules/deps/context.rs src/rules/deps/missing.rs src/rules/deps/misplaced.rs
           exit_status_z3 src/rules/emit.rs src/rules/filter.rs src/rules/types.rs src/baseline/store.rs
           ignore_model src/rules/ignore.rs
+          fix_plan_model src/fix/plan.rs src/fix/pyproject.rs src/rules/deps/misplaced.rs src/rules/deps/missing.rs src/rules/deps/reconcile.rs src/rules/deps/used.rs
           Reachability src/reachability/bfs.rs src/reachability/build.rs src/reachability/trace.rs src/reachability/module_index.rs src/sources/layout.rs src/graph/edges.rs
           EOF
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
