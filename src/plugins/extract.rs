@@ -74,20 +74,22 @@ pub fn extract_plugin_hints_with_parse(
         manifest,
         parse,
     };
-    let mut contributions = Vec::new();
-    let mut warnings = Vec::new();
-
-    for plugin in PluginId::all() {
-        let enabled = config
-            .effective
-            .plugins
-            .get(plugin)
-            .copied()
-            .unwrap_or(false);
-        if !enabled {
-            continue;
-        }
-        let (contrib, plugin_warnings) = match plugin {
+    let enabled: Vec<PluginId> = PluginId::all()
+        .iter()
+        .copied()
+        .filter(|plugin| {
+            config
+                .effective
+                .plugins
+                .get(plugin)
+                .copied()
+                .unwrap_or(false)
+        })
+        .collect();
+    // Each extractor reads the whole project on its own; run them side by
+    // side and keep their order (#1087).
+    let extracted =
+        crate::parallel::map_heavy_in_order(sources.files.len(), &enabled, |plugin| match plugin {
             PluginId::Pytest => pytest::extract(&ctx),
             PluginId::Django => django::extract(&ctx),
             PluginId::Fastapi => fastapi::extract(&ctx),
@@ -106,7 +108,10 @@ pub fn extract_plugin_hints_with_parse(
             PluginId::Dagster => (dagster::extract(&ctx), Vec::new()),
             PluginId::Prefect => (prefect::extract(&ctx), Vec::new()),
             PluginId::Scrapy => (scrapy::extract(&ctx), Vec::new()),
-        };
+        });
+    let mut contributions = Vec::with_capacity(extracted.len());
+    let mut warnings = Vec::new();
+    for (contrib, plugin_warnings) in extracted {
         warnings.extend(plugin_warnings);
         contributions.push(contrib);
     }
@@ -156,19 +161,21 @@ pub(crate) fn discover_plugin_entries(
         manifest,
         parse: &parse,
     };
-    let mut entries = Vec::new();
-    let enabled = PluginId::all()
+    let enabled: Vec<PluginId> = PluginId::all()
         .iter()
-        .filter(|plugin| config.effective.plugins.get(plugin) == Some(&true));
-    for plugin in enabled {
-        let contrib = match plugin {
-            PluginId::Django => django::extract(&ctx).0,
-            PluginId::Sphinx => doctools::extract(*plugin, &ctx),
-            PluginId::Alembic => alembic::extract(&ctx),
-            PluginId::Prefect => prefect::extract(&ctx),
-            PluginId::Airflow => airflow::extract(&ctx),
-            PluginId::Dagster => dagster::extract(&ctx),
-            PluginId::Scrapy => scrapy::extract(&ctx),
+        .copied()
+        .filter(|plugin| config.effective.plugins.get(plugin) == Some(&true))
+        .collect();
+    // As in the full extraction, each walks the inventory on its own.
+    let contributions =
+        crate::parallel::map_heavy_in_order(sources.files.len(), &enabled, |plugin| match plugin {
+            PluginId::Django => Some(django::extract(&ctx).0),
+            PluginId::Sphinx => Some(doctools::extract(*plugin, &ctx)),
+            PluginId::Alembic => Some(alembic::extract(&ctx)),
+            PluginId::Prefect => Some(prefect::extract(&ctx)),
+            PluginId::Airflow => Some(airflow::extract(&ctx)),
+            PluginId::Dagster => Some(dagster::extract(&ctx)),
+            PluginId::Scrapy => Some(scrapy::extract(&ctx)),
             // Their entries come from the inventory or the parse, so they
             // name no file the inventory lacks.
             PluginId::Pytest
@@ -179,11 +186,13 @@ pub(crate) fn discover_plugin_entries(
             | PluginId::Nox
             | PluginId::PreCommit
             | PluginId::GithubActions
-            | PluginId::MkDocs => continue,
-        };
-        entries.extend(contrib.entries);
-    }
-    entries
+            | PluginId::MkDocs => None,
+        });
+    contributions
+        .into_iter()
+        .flatten()
+        .flat_map(|contrib| contrib.entries)
+        .collect()
 }
 
 #[derive(Serialize, Deserialize)]

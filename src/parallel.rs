@@ -46,6 +46,19 @@ where
     map_on(worker_count(items.len()), items, init, work)
 }
 
+/// [`map_in_order`] over a few heavy `items` that each walk the project's
+/// `units` files, such as one extractor per plugin: threads are worth
+/// starting for the files, not for the item count.
+pub(crate) fn map_heavy_in_order<T, R, F>(units: usize, items: &[T], work: F) -> Vec<R>
+where
+    T: Sync,
+    R: Send,
+    F: Fn(&T) -> R + Sync,
+{
+    let workers = worker_count(units).min(items.len()).max(1);
+    map_on(workers, items, || (), |(), item| work(item))
+}
+
 /// [`map_in_order_with`] over `workers` threads.
 fn map_on<T, S, R, I, F>(workers: usize, items: &[T], init: I, work: F) -> Vec<R>
 where

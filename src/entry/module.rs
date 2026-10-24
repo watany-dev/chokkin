@@ -1,7 +1,9 @@
 //! First-party module → file path resolution for entry targets.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::Path;
+
+use rustc_hash::FxHashMap;
 
 use crate::path_util::join_rel;
 use crate::sources::{LayoutInfo, ProjectLayout};
@@ -24,13 +26,13 @@ pub(crate) fn resolve_module_to_path(
 /// files whose path ends in the name: airflow's 11k string literals walked
 /// its 133 members over every file for 3 s (#1025).
 pub(crate) struct ModuleIndex<'a> {
-    by_tail: HashMap<&'a str, Vec<&'a str>>,
-    base_rank: HashMap<String, usize>,
+    by_tail: FxHashMap<&'a str, Vec<&'a str>>,
+    base_rank: FxHashMap<String, usize>,
 }
 
 impl<'a> ModuleIndex<'a> {
     pub(crate) fn new(known_paths: &'a BTreeSet<String>, layout: &LayoutInfo) -> Self {
-        let mut by_tail: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut by_tail: FxHashMap<&str, Vec<&str>> = FxHashMap::default();
         for path in known_paths {
             let tails = path.match_indices('/').map(|(slash, _)| &path[slash + 1..]);
             for tail in std::iter::once(path.as_str()).chain(tails) {
@@ -39,7 +41,7 @@ impl<'a> ModuleIndex<'a> {
         }
         let mut bases = Vec::new();
         push_bases(layout, "", &mut bases);
-        let mut base_rank = HashMap::new();
+        let mut base_rank = FxHashMap::default();
         for (rank, base) in bases.into_iter().enumerate() {
             base_rank.entry(base).or_insert(rank);
         }

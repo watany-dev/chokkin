@@ -23,6 +23,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
+
 use crate::parser::ParseSummary;
 use crate::path_util::{lowercase_extension, strip_source_suffix};
 use crate::plugins::{
@@ -320,7 +322,10 @@ impl PytestImportPaths {
     /// Append the directories the `imported` files hint to those of `file`,
     /// each once. Whether `file` got any.
     fn extend_hinted(&mut self, file: &str, imported: &[&str]) -> bool {
-        let mut seen: HashSet<&str> = self
+        // Most of what the imported files hint is shared, so most lookups
+        // here are repeats: airflow's 108 importers and 17 Sphinx extension
+        // modules make 2M of them (#1087).
+        let mut seen: FxHashSet<&str> = self
             .hinted
             .get(file)
             .into_iter()
