@@ -194,7 +194,7 @@ R-16 は enum members を主にし、class members は Vulture との棲み分�
 PEP 695 を使う library、R-01〜R-05 の recall fixture) は v0.5.0 までに入った
 (`docs/dev/oss-validation-report.md`)。v0.7.1 の release validation は
 `scripts/oss-clones.manifest` の 35 project と `scripts/oss-recall.manifest` の
-recall fixture 10 件 (計 45) で測った (`docs/dev/v0.7.1-release-validation.md`)。
+recall fixture 10 件 (計 45) で測った ([`v0.7.1-release-validation.md`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/v0.7.1-release-validation.md))。
 
 v0.8 の exit criteria に入る前に次を足す。
 

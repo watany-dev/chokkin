@@ -97,4 +97,4 @@ v0.4 qualifies as the second only if its release validation confirms this ADR.
 - `docs/dev/schema-migration-notes.md`
 - `docs/schema/chokkin-report.schema.json`
 - `docs/schema/chokkin-baseline.schema.json`
-- `docs/dev/plans/phase-3x-v0.4-reliability-contract.md` §6
+- [`plans/phase-3x-v0.4-reliability-contract.md`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/plans/phase-3x-v0.4-reliability-contract.md) §6

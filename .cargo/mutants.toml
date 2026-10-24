@@ -23,6 +23,9 @@ exclude_re = [
     # Walking every hinted directory instead of the name index gives the same
     # answer for a single-segment root, only slower (#1080).
     "replace match guard !root.contains\\('/'\\) with false in PytestImportPaths::provides_fallback",
+    # The first statement line never starts with `#`, so no directive starts
+    # exactly at `first_statement_offset`: `<` and `<=` agree.
+    "replace < with <= in extract_ignores_with",
     # Parsing the held-back tests when they cannot count changes nothing: off
     # `--production` there are none, and an app with no members has no public
     # surface for them to vouch for. The guard only skips the parse.

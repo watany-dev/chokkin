@@ -63,8 +63,8 @@ pub mod internals {
         extract_manifest_with_cache, resolve_target_version,
     };
     pub use crate::parser::{
-        Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule,
-        extract_ignores, parse_file, parse_project_sources_with_cache,
+        Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule, parse_file,
+        parse_project_sources_with_cache,
     };
     pub use crate::pipeline::{
         AnalyzeOptions, ProbeWarning, SkipReason, WorkspaceMemberInputs, diagnostic_lines,
@@ -95,6 +95,11 @@ pub mod internals {
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, LocalTrees,
         ProjectLayout, PublicSurface, SourcesError, SourcesWarning, discover_sources,
     };
+
+    /// `# chokkin: ignore[…]` directives in `source`, as the parser reads them.
+    pub fn extract_ignores(source: &str) -> Vec<crate::parser::IgnoreDirective> {
+        crate::parser::extract_ignores_with(source, &crate::parser::LineIndex::new(source))
+    }
 
     /// Case count for a proptest block tuned to `tuned` cases.
     ///

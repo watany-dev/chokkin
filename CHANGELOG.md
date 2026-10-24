@@ -1056,7 +1056,7 @@ keep matching.
 ## [0.7.1] - 2026-10-08
 
 v0.7.1 is a fix release on top of v0.7.0. Over the 45-project corpus in
-`docs/dev/v0.7.1-release-validation.md` (measured at `4836b55`), the issue
+[`v0.7.1-release-validation.md`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/v0.7.1-release-validation.md) (measured at `4836b55`), the issue
 count falls from 12,328 to 10,023, mostly CHK001 and CHK010. The JSON / baseline `schema_version` stays
 `"1"`, and CHK010 fingerprints are unchanged, so baselines keep matching.
 

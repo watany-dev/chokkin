@@ -25,7 +25,7 @@ pub(crate) use depth::parse_walkable_module;
 pub(crate) use dynamic::{apply_module_loaders, module_ref_name};
 pub(crate) use encoding::decode_python_source;
 pub(crate) use error::ParseError;
-pub use ignores::extract_ignores;
+pub(crate) use ignores::extract_ignores_with;
 pub(crate) use lines::LineIndex;
 pub(crate) use module_guard::{guarded_roots, predicate_name_module};
 pub use parse::{parse_file, parse_project_sources_with_cache};

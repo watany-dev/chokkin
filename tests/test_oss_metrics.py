@@ -154,7 +154,7 @@ def write_summary(run: Path, rows: list[tuple[str, str, int, int]]) -> None:
 
 # Medium and large rows of the summary.tsv of v0.7.3 and v0.7.4, -r 1 on one
 # machine: (slug, size, v0.7.3 median_ms, v0.7.4 median_ms). v0.7.4 made
-# transformers 4-6x slower (docs/dev/v0.7.x-uvx-regression-report.ja.md §5).
+# transformers 4-6x slower (https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/v0.7.x-uvx-regression-report.ja.md §5).
 V073_V074 = [
     ("airflow", "large", 2343, 2428),
     ("attrs", "medium", 23, 26),

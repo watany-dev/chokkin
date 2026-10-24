@@ -59,7 +59,7 @@ does not yet offer the stable public API this ADR made a precondition, and no
 head-to-head 10k measurement exists to back the switch on speed. The comparison
 table, the known PEP 695 coverage gap, the reproducible spike recipe, and the
 replacement re-evaluation conditions are recorded in
-[`docs/dev/issue-140-parser-reevaluation.md`](../dev/issue-140-parser-reevaluation.md);
+[`issue-140-parser-reevaluation.md`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/issue-140-parser-reevaluation.md);
 those conditions supersede the trigger list above.
 
 ## Amendment 2026-09-25 (issue #294, R-14)
@@ -145,7 +145,7 @@ The PoC swaps the backend directly (no `parser-ruff` feature, because wheels
 build with default features) on draft PR #349. It is verified in GitHub Actions,
 since the agent environment cannot download from `static.crates.io`. Details and
 per-target numbers are in
-[`docs/dev/issue-294-parser-migration-plan.md`](../dev/issue-294-parser-migration-plan.md).
+[`issue-294-parser-migration-plan.md`](https://github.com/watany-dev/chokkin/blob/a199e81/docs/dev/issue-294-parser-migration-plan.md).
 
 - **Pin: `=0.0.15`** for `ruff_python_parser`, `ruff_python_ast` and
   `ruff_text_size`. These crates need **Rust 1.96**, so the MSRV rises from 1.93
