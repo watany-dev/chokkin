@@ -34,9 +34,9 @@ pub(crate) struct SourcesCache(Arc<Inner>);
 #[derive(Default)]
 struct Inner {
     dirs: Mutex<HashMap<OsString, Arc<DirIgnore>>>,
-    /// [`SourcesCache::gitignore_only_skips`]'s directory chains, by the
-    /// directory they end at.
-    chains: Mutex<HashMap<PathBuf, Arc<DirChain>>>,
+    /// [`SourcesCache::gitignore_only_skips`]'s directory chains, by walk
+    /// root and the directory they end at.
+    chains: Mutex<HashMap<PathBuf, HashMap<PathBuf, Arc<DirChain>>>>,
     /// Compiled rules by ignore file content, rooted at `.`.
     rules: Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
     globs: Mutex<HashMap<Vec<String>, Arc<GlobSet>>>,
@@ -177,7 +177,10 @@ impl SourcesCache {
     /// entry of a parallel walk, and rebuilding the chain from the root each
     /// time cost a locked lookup per path component (#1087).
     fn chain(&self, root: &Path, dir: &Path) -> Option<Arc<DirChain>> {
-        if let Some(found) = lock(&self.0.chains).get(dir) {
+        if let Some(found) = lock(&self.0.chains)
+            .get(root)
+            .and_then(|chains| chains.get(dir))
+        {
             return Some(Arc::clone(found));
         }
         let below = dir.strip_prefix(root).ok()?;
@@ -196,6 +199,8 @@ impl SourcesCache {
         };
         Some(Arc::clone(
             lock(&self.0.chains)
+                .entry(root.to_path_buf())
+                .or_default()
                 .entry(dir.to_path_buf())
                 .or_insert_with(|| Arc::new(chain)),
         ))
@@ -650,6 +655,26 @@ impl<'a> MatchState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The chains are memoized per walk root: the same directory under
+    /// another root reads only the `.gitignore` files below that root.
+    #[test]
+    fn gitignore_only_skips_reads_from_each_walk_root_down() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outer = temp.path();
+        let inner = outer.join("a");
+        fs::create_dir_all(inner.join("b")).expect("mkdir");
+        fs::write(outer.join(".gitignore"), "y\n").expect("write");
+        fs::write(inner.join(".gitignore"), "x\n").expect("write");
+        let cache = SourcesCache::default();
+        for _ in 0..2 {
+            assert!(cache.gitignore_only_skips(outer, &inner.join("b/y"), false));
+            assert!(cache.gitignore_only_skips(outer, &inner.join("b/x"), false));
+            assert!(!cache.gitignore_only_skips(&inner, &inner.join("b/y"), false));
+            assert!(cache.gitignore_only_skips(&inner, &inner.join("b/x"), false));
+            assert!(!cache.gitignore_only_skips(&inner, &outer.join("y"), false));
+        }
+    }
 
     #[test]
     fn literal_braces_escapes_only_alternation() {

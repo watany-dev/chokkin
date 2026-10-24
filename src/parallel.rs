@@ -207,6 +207,17 @@ mod tests {
     }
 
     #[test]
+    fn map_heavy_in_order_spreads_few_items_only_for_large_inputs() {
+        let items = [0, 1, 2, 3];
+        let caller = std::thread::current().id();
+        let small = map_heavy_in_order(1, &items, |_| std::thread::current().id());
+        assert!(small.iter().all(|id| *id == caller));
+        let large = map_heavy_in_order(10_000, &items, |&item| (item, item * 2));
+        assert_eq!(large, vec![(0, 0), (1, 2), (2, 4), (3, 6)]);
+        assert!(map_heavy_in_order(10_000, &[] as &[usize], |&item| item).is_empty());
+    }
+
+    #[test]
     fn join_returns_both_results_in_place() {
         assert_eq!(join(0, || 1, || "b"), (1, "b"));
         assert_eq!(join(10_000, || 1, || "b"), (1, "b"));
