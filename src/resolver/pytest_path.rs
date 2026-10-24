@@ -19,7 +19,7 @@
 //! may report that a config file imports a module whose edits its own imports
 //! see (#779).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -114,8 +114,8 @@ impl PytestImportPaths {
         settings: &PytestImportSettings,
         members: &[(String, PytestImportSettings)],
     ) -> Self {
-        let mut files = HashMap::new();
-        let mut dirs = HashSet::new();
+        let mut files = HashMap::default();
+        let mut dirs = HashSet::default();
         for file in &sources.files {
             if !matches!(file.kind, FileKind::Python | FileKind::Stub) {
                 continue;
@@ -145,7 +145,7 @@ impl PytestImportPaths {
             .map(|file| (parent_dir(&file.path), basedir(&file.path, &files)))
             .collect();
 
-        let mut search = HashMap::new();
+        let mut search = HashMap::default();
         for file in &sources.files {
             if file.context != FileContext::Test {
                 continue;
@@ -167,7 +167,7 @@ impl PytestImportPaths {
                 }
             }
             file_dirs.extend(pythonpath.iter().cloned());
-            let mut seen = HashSet::new();
+            let mut seen = HashSet::default();
             file_dirs.retain(|dir| seen.insert(dir.clone()));
             search.insert(file.path.clone(), file_dirs);
         }
@@ -188,14 +188,14 @@ impl PytestImportPaths {
             scripts,
             dirs,
             search,
-            root_modules: HashSet::new(),
-            root_namespaces: HashSet::new(),
-            hinted: HashMap::new(),
+            root_modules: HashSet::default(),
+            root_namespaces: HashSet::default(),
+            hinted: HashMap::default(),
             conftest_hinted: Vec::new(),
-            hinted_on_disk: HashMap::new(),
-            hinted_roots: HashMap::new(),
-            hinted_index: HashMap::new(),
-            any_hinted_root: HashSet::new(),
+            hinted_on_disk: HashMap::default(),
+            hinted_roots: HashMap::default(),
+            hinted_index: HashMap::default(),
+            any_hinted_root: HashSet::default(),
         }
     }
 
@@ -211,7 +211,7 @@ impl PytestImportPaths {
         parse: &ParseSummary,
         imports: &[SysPathImport],
     ) -> Self {
-        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::new();
+        let mut by_name: HashMap<&str, Vec<&str>> = HashMap::default();
         for dir in &self.dirs {
             by_name.entry(file_name(dir)).or_default().push(dir);
         }
@@ -220,8 +220,8 @@ impl PytestImportPaths {
         }
         let mut probe = HintProbe {
             root,
-            listed: HashMap::new(),
-            on_disk: HashMap::new(),
+            listed: HashMap::default(),
+            on_disk: HashMap::default(),
         };
         for module in &parse.modules {
             let holder_dir = parent_dir(&module.path);
@@ -256,7 +256,7 @@ impl PytestImportPaths {
             if found.is_empty() {
                 continue;
             }
-            let mut seen = HashSet::new();
+            let mut seen = HashSet::default();
             found.retain(|dir| seen.insert(dir.clone()));
             if file_name(&module.path) == "conftest.py" {
                 self.conftest_hinted.push((holder_dir.to_owned(), found));
@@ -298,7 +298,7 @@ impl PytestImportPaths {
     fn add_named_hints(&mut self, imports: &[SysPathImport]) -> HashSet<String> {
         // By module file: many Sphinx confs may name one extension
         // (airflow's providers).
-        let mut named: HashMap<String, Vec<&str>> = HashMap::new();
+        let mut named: HashMap<String, Vec<&str>> = HashMap::default();
         for import in imports {
             let SysPathImporter::Named(module) = &import.importer else {
                 continue;
@@ -310,7 +310,7 @@ impl PytestImportPaths {
                     .push(&import.imported);
             }
         }
-        let mut added = HashSet::new();
+        let mut added = HashSet::default();
         for (file, imported) in named {
             if self.extend_hinted(&file, &imported) {
                 added.insert(file);
@@ -363,7 +363,7 @@ impl PytestImportPaths {
                 names.push(file_name(path));
             }
         }
-        let mut shared: HashMap<&[String], Arc<HintIndex>> = HashMap::new();
+        let mut shared: HashMap<&[String], Arc<HintIndex>> = HashMap::default();
         self.hinted
             .iter()
             .filter(|(file, _)| only.is_none_or(|only| only.contains(*file)))
@@ -401,7 +401,7 @@ impl PytestImportPaths {
             .values()
             .chain(self.conftest_hinted.iter().map(|(_, dirs)| dirs))
             .flatten()
-            .map(|dir| (dir.clone(), HashSet::new()))
+            .map(|dir| (dir.clone(), HashSet::default()))
             .collect();
         if hinted_roots.is_empty() {
             return hinted_roots;
@@ -695,7 +695,7 @@ fn entry_names(dir: &Path) -> Option<HashSet<String>> {
 /// Top-level module names in `dir`: subdirectories and `.py` / `.pyi` stems.
 fn module_names(dir: &Path) -> HashSet<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return HashSet::new();
+        return HashSet::default();
     };
     entries
         .flatten()
@@ -1612,16 +1612,16 @@ mod tests {
             fn new(built: &Built) -> Self {
                 let mut dirs: Vec<&String> = built.base.dirs.iter().collect();
                 dirs.sort();
-                let mut own: HashMap<String, Vec<String>> = HashMap::new();
+                let mut own: HashMap<String, Vec<String>> = HashMap::default();
                 let mut conftest = Vec::new();
-                let mut on_disk = HashMap::new();
+                let mut on_disk = HashMap::default();
                 for module in &built.parse.modules {
                     let holder = parent_dir(&module.path);
                     let mut found: Vec<String> = Vec::new();
                     for hint in &module.sys_path_hints {
                         found.extend(Self::hint_dirs(built, &dirs, holder, hint, &mut on_disk));
                     }
-                    let mut seen = HashSet::new();
+                    let mut seen = HashSet::default();
                     found.retain(|dir| seen.insert(dir.clone()));
                     if found.is_empty() {
                     } else if file_name(&module.path) == "conftest.py" {
