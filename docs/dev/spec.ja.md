@@ -1211,7 +1211,7 @@ lockfileとの整合にも注意する。`pyproject.toml` を編集するとuv.l
 |libraryのpublic APIは外部利用される    |内部参照がなくても公開APIかもしれない                                           |app/library modeを分け、libraryではunused exports/filesを低confidenceにする                           |
 |dev/test/docs/lint/type依存が混在する|`pytest` がmain dependenciesにある                                 |dependency contextを導入し、misplaced dependencyを出す                                             |
 |namespace packageがある          |`google.*`, `zope.*`                                           |namespace package modeと `Import-Namespace` を使う                                             |
-|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる。`[sys.executable, "-m", "pkg"]` は `pkg` の使用として数えるが、未宣言でも CHK003 にはしない。`"pkg.commands." + name` や `f"pkg.commands.{name}"` のようにliteralの接頭辞で組み立てた名前は、`pkg.commands` 配下の first-party module すべてへ到達させる(confidenceはopaqueのまま下げる)。その結果を同じスコープで `getattr(module, <非literal>)` に渡すと、配下の class を CHK006 にしない(§12、#728)。loader API (`import_string("pkg.mod.Cls")` など) の文字列も動的 import として解く (§11、#493)                                 |
+|dynamic importを完全には解けない       |`importlib.import_module(name)`                                |literalは式中(代入・return・引数など)も解く。`from importlib import import_module as im` などの別名と `name=` キーワード引数も認識する。非literalや `map(importlib.import_module, names)` のような関数値での受け渡しはopaque dynamic importとしてconfidenceを下げる。`[sys.executable, "-m", "pkg"]` は `pkg` の使用として数えるが、未宣言でも CHK003 にはしない。`"pkg.commands." + name` や `f"pkg.commands.{name}"` のようにliteralの接頭辞で組み立てた名前は、`pkg.commands` 配下の first-party module すべてと、どの名前でも先に import される `pkg` と `pkg.commands` 自身へ到達させる(#1108。confidenceはopaqueのまま下げる)。その結果を同じスコープで `getattr(module, <非literal>)` に渡すと、配下の class を CHK006 にしない(§12、#728)。loader API (`import_string("pkg.mod.Cls")` など) の文字列も動的 import として解く (§11、#493)                                 |
 |monorepo/workspaceで依存境界が曖昧    |root depsをmemberが使う                                            |workspace graphを作り、`--strict` でmemberごとの直接依存を要求する                                          |
 |auto-fixが危険                   |dead code削除で実行時破壊                                              |default fixはmanifest中心。file/code削除は明示フラグ必須                                                 |
 
@@ -1777,7 +1777,7 @@ uvx chokkin --baseline chokkin-baseline.json --update-baseline
 uvx chokkin --baseline chokkin-baseline.json
 ```
 
-baselineは既存issueを黙らせ、新規issueだけCIで落とすためのもの。大規模既存projectでは必須。fingerprintは `rule_id + stable target` を基本とし、workspace member付きissueでは stable target に `member:` prefix を含める。file pathは `/` 区切りに正規化し、dependency/file issueではline numberをkeyに含めない。
+baselineは既存issueを黙らせ、新規issueだけCIで落とすためのもの。大規模既存projectでは必須。fingerprintは `rule_id + stable target` を基本とし、workspace member付きissueでは stable target に `member:` prefix を含める。file pathは `/` 区切りに正規化し、dependency/file issueではline numberをkeyに含めない。stable target の path と member id は `%` を `%25`、`:` を `%3A` にしてから `:` でつなぐ (#1108)。POSIX の path は `:` を含められるので、そのままでは member `a` の `b.py` と root の `a:b.py` が同じ fingerprint になる。dotted module・symbol・distribution 名は `:` を含まないのでそのまま使う。`%` も `:` も含まない path の fingerprint は変わらない。
 
 ## 19. パフォーマンス目標
 

@@ -350,24 +350,35 @@ pub(crate) fn import_evidence(import: &ResolvedImport) -> String {
 /// Stable target identifier used by baseline and machine-readable reporters.
 #[must_use]
 pub(crate) fn issue_stable_target(issue: &Issue) -> String {
+    let path = |path: &str| target_part(&normalize_rel_path(Path::new(path)));
     let target = match &issue.subject {
-        IssueSubject::File { path } => normalize_rel_path(Path::new(path)),
+        IssueSubject::File { path: file } => path(file),
         IssueSubject::Distribution { name } | IssueSubject::Binary { name } => name.clone(),
         IssueSubject::Symbol { module, name } => issue.location.file.as_deref().map_or_else(
             || format!("{module}:{name}"),
-            |path| format!("{}:{name}", normalize_rel_path(Path::new(path))),
+            |file| format!("{}:{name}", path(file)),
         ),
-        IssueSubject::Import { module, file, .. } => {
-            format!("{}:{module}", normalize_rel_path(Path::new(file)))
-        },
+        IssueSubject::Import { module, file, .. } => format!("{}:{module}", path(file)),
         IssueSubject::ScriptDistribution { script, name } => {
-            format!("script:{}:{name}", normalize_rel_path(Path::new(script)))
+            format!("script:{}:{name}", path(script))
         },
     };
-    issue
-        .workspace_member
-        .as_ref()
-        .map_or_else(|| target.clone(), |member| format!("{member}:{target}"))
+    issue.workspace_member.as_ref().map_or_else(
+        || target.clone(),
+        |member| format!("{}:{target}", target_part(member)),
+    )
+}
+
+/// A path or member id with `%` and `:` percent-encoded, so that `:` only
+/// ever separates the parts of a target: member `a` with `b.py` and a
+/// root-level `a:b.py` would otherwise share a fingerprint (#1108). Names
+/// and dotted modules never hold `:`, and other paths keep their form.
+fn target_part(raw: &str) -> String {
+    if raw.contains(['%', ':']) {
+        raw.replace('%', "%25").replace(':', "%3A")
+    } else {
+        raw.to_owned()
+    }
 }
 
 /// Stable issue fingerprint using `rule_id + stable target`.
@@ -482,6 +493,32 @@ mod tests {
         issue.workspace_member = Some("api".to_owned());
 
         assert_eq!(issue_fingerprint(&issue), "CHK001:api:src/legacy.py");
+    }
+
+    /// The assumption `exit_status_z3.py` E1 makes of the encoding: no
+    /// `:` survives it, and it decodes back, so it is injective.
+    mod props {
+        use super::super::target_part;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn target_parts_hold_no_colon_and_decode_back(raw in "[a-z%:/3A5]{0,12}") {
+                let part = target_part(&raw);
+                prop_assert!(!part.contains(':'));
+                prop_assert_eq!(part.replace("%3A", ":").replace("%25", "%"), raw);
+            }
+        }
+    }
+
+    #[test]
+    fn issue_fingerprint_keeps_member_and_path_apart() {
+        let mut member = issue("b.py");
+        member.workspace_member = Some("a".to_owned());
+        let root = issue("a:b.py");
+        assert_eq!(issue_fingerprint(&member), "CHK001:a:b.py");
+        assert_eq!(issue_fingerprint(&root), "CHK001:a%3Ab.py");
+        assert_eq!(issue_fingerprint(&issue("100%.py")), "CHK001:100%25.py");
     }
 
     #[test]

@@ -571,7 +571,8 @@ impl PytestImportPaths {
         }
         path.extend(module.chars().map(|c| if c == '.' { '/' } else { c }));
         let base = path.len();
-        [".py", "/__init__.py"].into_iter().find_map(|suffix| {
+        // The path finder tries the package before the module (#1108).
+        ["/__init__.py", ".py"].into_iter().find_map(|suffix| {
             path.truncate(base);
             path.push_str(suffix);
             self.files.get(&path).map(String::as_str)
@@ -810,6 +811,18 @@ mod tests {
         assert_eq!(paths.resolve("tests/unit/test_core.py", "lifecycle"), None);
         // Runtime code is never affected.
         assert_eq!(paths.resolve("src/acme/__init__.py", "lifecycle"), None);
+    }
+
+    /// On pytest's `sys.path` too, a package shadows the module beside it (#1108).
+    #[test]
+    fn a_test_package_wins_over_the_module_beside_it() {
+        let files = ["tests/test_x.py", "tests/foo.py", "tests/foo/__init__.py"];
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default());
+        assert_eq!(
+            paths.resolve("tests/test_x.py", "foo"),
+            Some("tests/foo/__init__.py")
+        );
     }
 
     #[test]

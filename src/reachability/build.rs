@@ -751,6 +751,9 @@ mod tests {
         LibraryRoot,
         MemberOfApp,
         MemberOfLibrary,
+        /// An app member of an app root, which ships no wheel of its own
+        /// unless a metapackage root distributes it (#1060).
+        AppMember,
     }
 
     impl OrphanPlace {
@@ -759,16 +762,29 @@ mod tests {
         }
 
         const fn in_member(self) -> bool {
+            matches!(
+                self,
+                Self::MemberOfApp | Self::MemberOfLibrary | Self::AppMember
+            )
+        }
+
+        const fn library_member(self) -> bool {
             matches!(self, Self::MemberOfApp | Self::MemberOfLibrary)
         }
     }
 
+    #[expect(
+        clippy::struct_excessive_bools,
+        reason = "independent switches of one table row"
+    )]
     struct OrphanCase {
         place: OrphanPlace,
         /// The root wheel surface, if declared: whether it ships the orphan.
         root_ships: Option<bool>,
         /// The member wheel surface, if declared: whether it ships the orphan.
         member_ships: Option<bool>,
+        /// Whether the root is a metapackage that distributes the member.
+        distributed: bool,
         opaque: bool,
         shim: bool,
         strict: bool,
@@ -784,22 +800,30 @@ mod tests {
                 OrphanPlace::LibraryRoot,
                 OrphanPlace::MemberOfApp,
                 OrphanPlace::MemberOfLibrary,
+                OrphanPlace::AppMember,
             ];
-            let ships = surfaces
-                .into_iter()
-                .flat_map(|root| surfaces.map(|member| (root, member)));
+            let ships = surfaces.into_iter().flat_map(|root| {
+                surfaces
+                    .into_iter()
+                    .flat_map(move |member| flags.map(|distributed| (root, member, distributed)))
+            });
             let switches = flags.into_iter().flat_map(|opaque| {
                 flags
                     .into_iter()
                     .flat_map(move |shim| flags.map(|strict| (opaque, shim, strict)))
             });
             for place in places {
-                for (root_ships, member_ships) in ships.clone() {
+                // A metapackage root distributes members; a root file has none.
+                let ships = ships
+                    .clone()
+                    .filter(|&(_, _, distributed)| place.in_member() || !distributed);
+                for (root_ships, member_ships, distributed) in ships {
                     for (opaque, shim, strict) in switches.clone() {
                         cases.push(Self {
                             place,
                             root_ships,
                             member_ships,
+                            distributed,
                             opaque,
                             shim,
                             strict,
@@ -835,7 +859,9 @@ mod tests {
             if self.place.library_root() {
                 entry.mode = ProjectMode::Library;
             }
-            entry.library_members = vec!["libs/core".to_owned()];
+            if self.place.library_member() {
+                entry.library_members = vec!["libs/core".to_owned()];
+            }
             let mut report =
                 analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
                     .expect("reachability");
@@ -845,10 +871,20 @@ mod tests {
             if let Some(ships) = self.root_ships {
                 apply_public_surface(&mut report, &surface(ships, orphan), &entry);
             }
+            // As in the pipeline: only a library member's declared wheel
+            // narrows reachability, and a distributed member without one
+            // ships its layout's packages, the orphan among them.
             let member = self
                 .member_ships
                 .map(|ships| ("libs/core".to_owned(), surface(ships, "pkg/orphan.py")));
-            apply_member_surfaces(&mut report, &member.iter().collect::<Vec<_>>());
+            if self.place.library_member() {
+                apply_member_surfaces(&mut report, &member.iter().collect::<Vec<_>>());
+            }
+            if self.distributed {
+                let shipped = member
+                    .unwrap_or_else(|| ("libs/core".to_owned(), surface(true, "pkg/orphan.py")));
+                apply_distributed_surfaces(&mut report, &[(&shipped, "distributed")], &entry);
+            }
 
             let gaps: Vec<_> = self
                 .opaque
@@ -884,12 +920,16 @@ mod tests {
 
         /// §8 / §11 written out: a file of a library that its wheel ships
         /// (or every file, when no wheel target is declared) may be imported
-        /// by a caller, so it is `maybe`; a reachable module read only in
+        /// by a caller, so it is `maybe`, and so is a file of an app member
+        /// that a metapackage root distributes, when the member's wheel ships
+        /// it (#1060, #1073); a reachable module read only in
         /// part lowers the rest to `likely`; a deprecated shim is info and
         /// every other candidate a warning (§3); and the exit status counts
         /// what the run counts (§7, E1).
         fn expected(&self) -> (Option<(Severity, Confidence)>, ExitStatus) {
-            let library = self.place.library_root() || self.place.in_member();
+            let library = self.place.library_root()
+                || self.place.library_member()
+                || (self.place.in_member() && self.distributed);
             let ships = if self.place.in_member() {
                 self.member_ships
             } else {
@@ -934,8 +974,14 @@ mod tests {
     fn library_orphans_callers_may_import_never_fail_the_run() {
         for case in OrphanCase::all() {
             let label = format!(
-                "{:?}, root ships {:?}, member ships {:?}, opaque {}, shim {}, strict {}",
-                case.place, case.root_ships, case.member_ships, case.opaque, case.shim, case.strict
+                "{:?}, root ships {:?}, member ships {:?}, distributed {}, opaque {}, shim {}, strict {}",
+                case.place,
+                case.root_ships,
+                case.member_ships,
+                case.distributed,
+                case.opaque,
+                case.shim,
+                case.strict
             );
             assert_eq!(case.run(), case.expected(), "{label}");
         }

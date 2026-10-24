@@ -1,37 +1,45 @@
 #!/usr/bin/env python3
 """Z3 model of the §10 dependency-context decision table (CHK003/CHK004/CHK005),
-workspace members and ``--strict`` included.
+workspace members, lockfile scopes and ``--strict`` included.
 
 Ported from:
 
-- ``src/rules/deps/context.rs``   (``declaration_matches_usage``, ``declaration_bucket``)
-- ``src/rules/deps/missing.rs``   (``detect_missing_dependencies``, ``is_transitive_only``)
-- ``src/rules/deps/misplaced.rs`` (``detect_misplaced_dependencies``)
+- ``src/rules/deps/context.rs``   (``declaration_matches_usage``, ``is_directly_declared``)
+- ``src/rules/deps/missing.rs``   (``detect_missing_dependencies``,
+  ``ImportDeclarations``, ``undeclared_candidate``, ``lock_evidence``)
+- ``src/rules/deps/misplaced.rs`` (``detect_misplaced_dependencies`` up to the
+  bucket check; the CHK005 confidence is ``misplaced.rs`` ``mod verification``)
 
 One reachable third-party import of a single distribution ``D`` is modelled
 symbolically.  The declaration side is the set of buckets ``D`` is declared in
-(runtime / dev / type / optional), the usage side is the file/import context,
-plus the environment flags (lockfile present, ``D`` reachable in the lockfile
-closure of *other* declared deps, optional try-import, ``--strict``).
+(runtime / dev / type / optional) at the root and, for an import inside a
+workspace member, in the member.  The usage side is the file/import context.
+The environment is ``--strict``, whether the import is optional (``try`` or a
+platform guard), and what each lockfile says about ``D``.
 
-Workspace members (``missing.rs``/``misplaced.rs`` with ``workspace_declared``):
-the import may sit in a workspace member, which has its own declaration buckets.
-``--strict`` lets the member's own entry govern and falls back to the root when
-the member does not mention ``D`` (``governing_declarations``); a member that
-omits a root-declared ``D`` is a strict-only CHK003.
+Lockfiles (``lock_evidence``): a member import is checked against the member's
+own lockfile (#653) and the root lockfile, both walked from the *member's*
+declarations (#649); a root import against the root lockfile from the root's
+declarations.  Per lockfile ``edge`` means a lock edge from a declaration other
+than ``D`` reaches ``D`` (``LockEvidence::TransitiveEdge``), ``listed`` that
+the lockfile has an entry for ``D`` (``LockEvidence::LockedOnly`` when no edge
+reaches it).  The root lockfile walked from the root's own declarations is a
+separate input, so the scope rule is checked rather than assumed.
 
-Properties (spec.ja.md §10, lines 498-524):
+Tie to the implementation: the exhaustive test ``missing.rs`` ``decisions_follow_the_formal_model`` builds every
+combination of these inputs as real declarations and lockfiles, runs
+``detect_missing_dependencies`` and ``detect_misplaced_dependencies``, and
+compares rule, severity and confidence with ``decide`` below transcribed to
+Rust.  Change both together.
+
+Properties (spec.ja.md §10):
 
 S1  CHK004 ("only available as a transitive dependency") is emitted only when
     ``D`` is absent from the governing declarations (root, and under
-    ``--strict`` the member's own entry).  The message and the spec
-    (``src/ で import urllib3 / requests のtransitive dependencyとして入っているだけ``)
-    both require that ``D`` is absent from the manifest.
+    ``--strict`` the member's own entry).
 
-S2  ``src/ で import pytest`` with pytest only in ``dependency-groups.dev`` yields
-    CHK005 and nothing else (spec line 511-513).  A dev/type-only declaration
-    used at runtime must not additionally be reported as *missing* (CHK003) or
-    *transitive* (CHK004).
+S2  A dev/type-only declaration used at runtime is CHK005 and nothing else:
+    never also missing (CHK003) or transitive (CHK004).
 
 W1  CHK003 (plain, optional-import or workspace), CHK004 and CHK005 are
     mutually exclusive for one import.
@@ -41,6 +49,23 @@ W2  ``--strict``, runtime import in a member that does not mention ``D``, root
 
 W3  ``--strict``, runtime import in a member that declares ``D`` as runtime or
     optional: nothing fires, whatever the root declares.
+
+W4  A member that declares ``D`` for the usage context is satisfied, with or
+    without ``--strict``, whatever the root declares (``member_satisfies``).
+
+L1  A lock edge proves a transitive dependency: an undeclared import with an
+    edge in scope is CHK004 / certain even under ``try`` or a platform guard
+    (#504), and then a warning instead of an error (#582).
+
+L2  A lockfile entry without an edge (stale lock, ``pylock.toml``) is weaker:
+    CHK004 / likely for a plain import, the conditional CHK003 for an optional
+    one.
+
+L3  A member import's CHK004 / certain needs an edge from the member's own
+    declarations; a package only the root's declarations reach is not
+    transitive for the member (#649).
+
+L4  Without any lockfile in scope there is no CHK004.
 
 Run:  python3 docs/dev/formal/deps_rules_z3.py
 Exit status 1 when Z3 finds a counterexample for any property.
@@ -52,20 +77,22 @@ import sys
 
 from z3 import And, Bool, If, Implies, Not, Or, Solver, sat
 
+INFO, WARNING, ERROR = 0, 1, 2
+MAYBE, LIKELY, CERTAIN = 0, 1, 2
+BUCKETS = ("runtime", "dev", "type", "optional")
+
 
 def buckets(prefix):
     """Declaration buckets D is declared in (DeclarationBucket)."""
-    return {
-        kind: Bool(f"{prefix}_{kind}") for kind in ("runtime", "dev", "type", "optional")
-    }
+    return {kind: Bool(f"{prefix}_{kind}") for kind in BUCKETS}
 
 
-def matches_usage(decl, usage_runtime, usage_type, usage_dev_like):
-    """context.rs::declaration_matches_usage over a set of buckets."""
+def matches_usage(decl, usage):
+    """context.rs::is_directly_declared over a set of buckets."""
     return Or(
-        And(usage_runtime, Or(decl["runtime"], decl["optional"])),
-        And(usage_type, Or(decl["type"], decl["runtime"], decl["optional"])),
-        And(usage_dev_like, Or(decl["dev"], decl["runtime"], decl["optional"])),
+        And(usage["runtime"], Or(decl["runtime"], decl["optional"])),
+        And(usage["type"], Or(decl["type"], decl["runtime"], decl["optional"])),
+        And(usage["dev_like"], Or(decl["dev"], decl["runtime"], decl["optional"])),
     )
 
 
@@ -77,29 +104,18 @@ def dev_or_type_only(decl):
     return And(Or(decl["dev"], decl["type"]), Not(decl["runtime"]), Not(decl["optional"]))
 
 
-def build():
-    # usage context (one-hot over UsageContext)
-    usage_runtime = Bool("usage_runtime")
-    usage_type = Bool("usage_type")
-    usage_dev_like = Bool("usage_dev_like")  # Test | Docs | Dev
+def decide(i):
+    """The findings for one import, as ``{name: (fires, severity, confidence)}``.
 
-    root = buckets("root")
-    member = buckets("member")
-    in_member = Bool("in_member")  # import.workspace_member.is_some()
-    root_any = any_bucket(root)
-    member_any = any_bucket(member)  # member_entry.is_some()
+    ``i`` maps every input name to a Z3 Bool; see ``inputs``.
+    """
+    usage = {"runtime": i["usage_runtime"], "type": i["usage_type"], "dev_like": i["usage_dev_like"]}
+    root, member = i["root"], i["member"]
+    in_member, strict, optional = i["in_member"], i["strict"], i["optional_import"]
+    root_any, member_any = any_bucket(root), any_bucket(member)
 
-    has_lockfile = Bool("has_lockfile")
-    # D is in the lockfile transitive closure of some *other* declared dep
-    in_closure_of_others = Bool("in_closure_of_others")
-    optional_import = Bool("optional_import")
-    strict = Bool("strict")
-
-    usage = (usage_runtime, usage_type, usage_dev_like)
-    root_declared = matches_usage(root, *usage)
-    member_declared = And(in_member, matches_usage(member, *usage))
-
-    # ---- missing.rs::governing_declarations --------------------------------
+    # ---- missing.rs::ImportDeclarations ------------------------------------
+    member_satisfies = And(in_member, member_any, matches_usage(member, usage))
     member_governs = And(strict, in_member, member_any)
 
     def governing(kind):
@@ -107,110 +123,165 @@ def build():
 
     governing_some = Or(member_governs, root_any)
 
-    # ---- missing.rs::is_transitive_only -------------------------------------
-    # The queue is seeded with the declared dependency names *other than* D, so
-    # a directly declared D is only "transitive" when some other declared dep
-    # pulls it in.
-    is_transitive_only = in_closure_of_others
-
     # ---- missing.rs::detect_missing_dependencies ---------------------------
-    skip_declared = Or(
-        member_declared,
-        And(Not(strict), root_declared),
-        And(root_declared, Not(in_member)),
-    )
-    skip_non_runtime = And(Not(strict), Not(usage_runtime))
-    reaches_workspace = And(Not(skip_declared), Not(skip_non_runtime))
+    reaches_checks = And(Not(member_satisfies), Or(strict, usage["runtime"]))
     emits_workspace_chk003 = And(
-        reaches_workspace, strict, root_declared, Not(member_any), in_member
+        reaches_checks, strict, in_member, Not(member_any), matches_usage(root, usage)
     )
-    # D declared in a governing bucket, just not one matching the usage
+    # Declared in any governing bucket, just not one matching the usage
     # context: §10 leaves that to CHK005 (misplaced).
-    proceeds = And(reaches_workspace, Not(emits_workspace_chk003), Not(governing_some))
-    emits_optional_chk003 = And(proceeds, optional_import)
-    emits_chk004 = And(proceeds, Not(optional_import), has_lockfile, is_transitive_only)
-    emits_chk003 = And(
-        proceeds, Not(optional_import), Not(And(has_lockfile, is_transitive_only))
+    undeclared = And(reaches_checks, Not(emits_workspace_chk003), Not(governing_some))
+
+    # ---- missing.rs::lock_evidence -----------------------------------------
+    # Seeds are the member's declarations for a member import (#649).
+    root_lock_edge = If(in_member, i["root_lock_edge_from_member"], i["root_lock_edge_from_root"])
+    member_lock = And(in_member, i["member_lock"])
+    edge = Or(
+        And(member_lock, i["member_lock_edge"]),
+        And(i["root_lock"], root_lock_edge),
     )
+    listed = Or(
+        And(member_lock, i["member_lock_listed"]),
+        And(i["root_lock"], i["root_lock_listed"]),
+    )
+
+    # ---- missing.rs::undeclared_candidate ----------------------------------
+    emits_optional_chk003 = And(undeclared, optional, Not(edge))
+    emits_chk004 = And(undeclared, Or(edge, And(Not(optional), listed)))
+    emits_chk003 = And(undeclared, Not(optional), Not(edge), Not(listed))
 
     # ---- misplaced.rs::detect_misplaced_dependencies -----------------------
     emits_chk005 = And(
-        usage_runtime,
+        usage["runtime"],
+        Not(member_satisfies),
         governing_some,
         Not(Or(governing("runtime"), governing("optional"))),
         Or(governing("dev"), governing("type")),
     )
 
-    well_formed = And(
-        Or(usage_runtime, usage_type, usage_dev_like),
-        Not(And(usage_runtime, usage_type)),
-        Not(And(usage_runtime, usage_dev_like)),
-        Not(And(usage_type, usage_dev_like)),
-        # Only a workspace member import has member declarations.
-        Implies(Not(in_member), Not(member_any)),
+    return {
+        "CHK003": (emits_chk003, ERROR, CERTAIN),
+        "CHK003 optional": (emits_optional_chk003, If(strict, WARNING, INFO), LIKELY),
+        "CHK003 workspace": (emits_workspace_chk003, ERROR, CERTAIN),
+        "CHK004": (emits_chk004, If(optional, WARNING, ERROR), If(edge, CERTAIN, LIKELY)),
+        "CHK005": (emits_chk005, None, None),
+    }
+
+
+def inputs():
+    """Every input of ``decide`` as a Z3 Bool."""
+    names = {
+        name: Bool(name)
+        for name in (
+            "usage_runtime", "usage_type", "usage_dev_like",
+            "in_member", "strict", "optional_import",
+            "root_lock", "root_lock_listed", "root_lock_edge_from_root", "root_lock_edge_from_member",
+            "member_lock", "member_lock_listed", "member_lock_edge",
+        )
+    }
+    names["root"] = buckets("root")
+    names["member"] = buckets("member")
+    return names
+
+
+def well_formed(i):
+    u = (i["usage_runtime"], i["usage_type"], i["usage_dev_like"])
+    return And(
+        Or(*u),
+        *[Not(And(a, b)) for k, a in enumerate(u) for b in u[k + 1 :]],
+        # Only a workspace member import has member declarations or a member lockfile.
+        Implies(Not(i["in_member"]), And(Not(any_bucket(i["member"])), Not(i["member_lock"]))),
     )
 
-    findings = [
-        emits_chk003, emits_optional_chk003, emits_workspace_chk003, emits_chk004, emits_chk005,
+
+def flat(i):
+    return [v for k, v in i.items() if not isinstance(v, dict)] + [
+        v for k in ("root", "member") for v in i[k].values()
     ]
-    at_most_one = And(
-        *[Not(And(a, b)) for i, a in enumerate(findings) for b in findings[i + 1 :]]
+
+
+def build():
+    i = inputs()
+    out = decide(i)
+    fires = {name: f for name, (f, _, _) in out.items()}
+    chk003 = Or(fires["CHK003"], fires["CHK003 optional"], fires["CHK003 workspace"])
+    chk004, chk005 = fires["CHK004"], fires["CHK005"]
+    _, chk004_sev, chk004_conf = out["CHK004"]
+    usage = {"runtime": i["usage_runtime"], "type": i["usage_type"], "dev_like": i["usage_dev_like"]}
+    root, member = i["root"], i["member"]
+    nothing = Not(Or(chk003, chk004, chk005))
+    governing_some = Or(And(i["strict"], i["in_member"], any_bucket(member)), any_bucket(root))
+    member_lock = And(i["in_member"], i["member_lock"])
+    edge_from_member = Or(
+        And(member_lock, i["member_lock_edge"]),
+        And(i["root_lock"], i["root_lock_edge_from_member"]),
     )
-    any_chk003 = Or(emits_chk003, emits_optional_chk003, emits_workspace_chk003)
+    edge_in_scope = Or(
+        And(member_lock, i["member_lock_edge"]),
+        And(i["root_lock"], If(i["in_member"], i["root_lock_edge_from_member"], i["root_lock_edge_from_root"])),
+    )
+    undeclared_import = Or(chk003, chk004)  # reached undeclared_candidate or the workspace CHK003
+    fs = list(fires.values())
 
     props = {
         "S1 CHK004 only when D is undeclared in the governing manifest": Implies(
-            emits_chk004, Not(governing_some)
+            chk004, Not(governing_some)
         ),
-        "S2 dev/type-only D used at runtime -> CHK005 only": Implies(
-            emits_chk005, Not(Or(any_chk003, emits_chk004))
+        "S2 dev/type-only D used at runtime -> CHK005 only": Implies(chk005, Not(Or(chk003, chk004))),
+        "W1 CHK003/CHK004/CHK005 are mutually exclusive": And(
+            *[Not(And(a, b)) for k, a in enumerate(fs) for b in fs[k + 1 :]]
         ),
-        "W1 CHK003/CHK004/CHK005 are mutually exclusive": at_most_one,
         "W2 strict member without D falls back to root -> CHK005": Implies(
-            And(strict, in_member, Not(member_any), usage_runtime, dev_or_type_only(root)),
-            And(emits_chk005, Not(Or(any_chk003, emits_chk004))),
+            And(i["strict"], i["in_member"], Not(any_bucket(member)), i["usage_runtime"], dev_or_type_only(root)),
+            And(chk005, Not(Or(chk003, chk004))),
         ),
         "W3 strict member declares D at runtime -> nothing": Implies(
-            And(strict, in_member, usage_runtime, Or(member["runtime"], member["optional"])),
-            Not(Or(any_chk003, emits_chk004, emits_chk005)),
+            And(i["strict"], i["in_member"], i["usage_runtime"], Or(member["runtime"], member["optional"])),
+            nothing,
+        ),
+        "W4 member declaring D for the usage is satisfied": Implies(
+            And(i["in_member"], matches_usage(member, usage)), nothing
+        ),
+        "L1 a lock edge keeps an undeclared optional import on CHK004 / certain": Implies(
+            And(undeclared_import, Not(fires["CHK003 workspace"]), edge_in_scope),
+            And(chk004, chk004_conf == CERTAIN, chk004_sev == If(i["optional_import"], WARNING, ERROR)),
+        ),
+        "L2 a lock entry without an edge is CHK004 / likely, or the optional CHK003": Implies(
+            And(chk004, Not(edge_in_scope)),
+            And(chk004_conf == LIKELY, Not(i["optional_import"])),
+        ),
+        "L3 a member's CHK004 / certain needs an edge from the member's declarations": Implies(
+            And(i["in_member"], chk004, chk004_conf == CERTAIN), edge_from_member
+        ),
+        "L4 no lockfile in scope -> no CHK004": Implies(
+            And(Not(i["root_lock"]), Not(member_lock)), Not(chk004)
         ),
     }
-    names = [
-        usage_runtime, usage_type, usage_dev_like,
-        *root.values(), in_member, *member.values(),
-        has_lockfile, in_closure_of_others, optional_import, strict,
-    ]
-    derived = {
-        "root_declared": root_declared,
-        "member_declared": member_declared,
-        "member_governs": member_governs,
-        "is_transitive_only": is_transitive_only,
-        "emits_chk003": emits_chk003,
-        "emits_optional_chk003": emits_optional_chk003,
-        "emits_workspace_chk003": emits_workspace_chk003,
-        "emits_chk004": emits_chk004,
-        "emits_chk005": emits_chk005,
-    }
-    return well_formed, props, names, derived
+    return well_formed(i), props, i, out
 
 
 def main() -> int:
-    well_formed, props, names, derived = build()
+    well_formed_, props, i, out = build()
     failed = 0
     for label, prop in props.items():
         solver = Solver()
-        solver.add(well_formed, Not(prop))
+        solver.add(well_formed_, Not(prop))
         if solver.check() == sat:
             failed += 1
             model = solver.model()
             print(f"VIOLATED {label}")
-            print("  inputs : " + ", ".join(f"{n}={model.eval(n, True)}" for n in names))
-            print(
-                "  derived: "
-                + ", ".join(f"{k}={model.eval(v, True)}" for k, v in derived.items())
-            )
+            print("  inputs : " + ", ".join(f"{n}={model.eval(n, True)}" for n in flat(i)))
+            print("  fires  : " + ", ".join(f"{k}={model.eval(f, True)}" for k, (f, _, _) in out.items()))
         else:
             print(f"OK       {label}")
+    # A finding no input can produce would make every property above about it
+    # hold vacuously.
+    for name, (fires, _, _) in out.items():
+        solver = Solver()
+        solver.add(well_formed_, fires)
+        if solver.check() != sat:
+            failed += 1
+            print(f"VACUOUS  {name} never fires")
     return 1 if failed else 0
 
 
