@@ -778,8 +778,10 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         .map(|file| file.path.clone())
         .collect();
     let index = ModuleIndex::new(&known_paths, &context.sources.layout);
-    let mut gaps = Vec::new();
-    for module in &context.parse.modules {
+    // Every dotted string literal is a lookup: spread the files over workers,
+    // keeping their order (#1087).
+    let per_module = crate::parallel::map_in_order(&context.parse.modules, |module| {
+        let mut gaps = Vec::new();
         for reference in &module.module_refs {
             let name = crate::parser::module_ref_name(&reference.text);
             let Some(target) = resolve_dotted_prefix(name, &index) else {
@@ -796,8 +798,9 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
                 target: Some(target),
             });
         }
-    }
-    gaps
+        gaps
+    });
+    per_module.into_iter().flatten().collect()
 }
 
 /// The project file `module` names, or else the one its longest prefix of

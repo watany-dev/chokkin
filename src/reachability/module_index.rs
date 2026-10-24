@@ -1,6 +1,6 @@
 //! First-party module name → file index.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
@@ -20,8 +20,8 @@ impl ModuleIndex {
     /// Build a module index from discovered sources and the project graph.
     #[must_use]
     pub(crate) fn build(graph: &ProjectGraph, sources: &DiscoveredSources) -> Self {
-        let mut module_to_file = HashMap::new();
-        let mut path_to_file = HashMap::new();
+        let mut module_to_file = HashMap::default();
+        let mut path_to_file = HashMap::default();
         for (file_id, file) in graph.files() {
             if let Some(module) = path_to_module(&file.path, &sources.layout) {
                 // Between directories the first file in the graph stands in
@@ -211,7 +211,7 @@ mod tests {
             "src/acme/__init__.py",
             "src/acme/sphinxext.py",
         ];
-        let mut ids = HashMap::new();
+        let mut ids = HashMap::default();
         for path in files {
             let id = graph
                 .intern_file(FileNode {

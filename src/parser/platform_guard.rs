@@ -1,7 +1,7 @@
 //! Platform guard detection for conditional imports: `sys.platform`,
 //! `os.name` and `platform.system()` tests (#957).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use ruff_python_ast::visitor::{Visitor, walk_except_handler, walk_expr, walk_pattern, walk_stmt};
 use ruff_python_ast::{CmpOp, ExceptHandler, Expr, ExprContext, Parameters, Pattern, Stmt};
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn mentions_need_the_bound_name_and_attribute() {
-        let modules = PlatformModules::from([("s".to_owned(), PlatformModule::Sys)]);
+        let modules = PlatformModules::from_iter([("s".to_owned(), PlatformModule::Sys)]);
         assert!(mentions_platform_test(
             "if s.platform == 'win32': pass",
             &modules

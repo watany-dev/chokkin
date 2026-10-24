@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
@@ -126,7 +126,7 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// Names the current scope binds to a module a prefixed loader call
     /// returned (`module = import_module("pkg." + name)`), with that call's
     /// index in `dynamic_import_prefixes` (#728).
-    prefix_modules: HashMap<String, usize>,
+    prefix_modules: FxHashMap<String, usize>,
     /// Names the current scope binds to the module a literal
     /// `import_module("pkg.m")` returned, with that module's name (#1144).
     literal_modules: HashMap<String, String>,
@@ -168,7 +168,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
-            platform_modules: PlatformModules::new(),
+            platform_modules: PlatformModules::default(),
             imported_guards: Vec::new(),
             async_library_names: HashSet::new(),
             mentions: SourceMentions {
@@ -186,7 +186,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
             server_names: ServerNames::default(),
-            prefix_modules: HashMap::new(),
+            prefix_modules: FxHashMap::default(),
             literal_modules: HashMap::new(),
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
@@ -330,7 +330,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         if self.mentions.platform {
             platform_modules(Some(&self.platform_modules), parameters, body)
         } else {
-            PlatformModules::new()
+            PlatformModules::default()
         }
     }
 

@@ -34,6 +34,9 @@ pub(crate) struct SourcesCache(Arc<Inner>);
 #[derive(Default)]
 struct Inner {
     dirs: Mutex<HashMap<OsString, Arc<DirIgnore>>>,
+    /// [`SourcesCache::gitignore_only_skips`]'s directory chains, by walk
+    /// root and the directory they end at.
+    chains: Mutex<HashMap<PathBuf, HashMap<PathBuf, Arc<DirChain>>>>,
     /// Compiled rules by ignore file content, rooted at `.`.
     rules: Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
     globs: Mutex<HashMap<Vec<String>, Arc<GlobSet>>>,
@@ -69,6 +72,14 @@ pub(super) enum RootLoad {
     /// whose target is missing counts: `ignore` skips it as if absent.
     Unreadable,
     Loaded,
+}
+
+/// The ignore files of a directory and of each directory above it up to a
+/// walk root, root first, with the directory spelled as the root joined with
+/// each component, as [`DirIgnore`] keys it.
+struct DirChain {
+    path: PathBuf,
+    dirs: Vec<Arc<DirIgnore>>,
 }
 
 /// The walk root's ancestors, closest first, and the canonical root they
@@ -149,25 +160,50 @@ impl SourcesCache {
     /// down to `path`'s parent, closest first. Without `require_git`,
     /// `ignore` sees no `.git`, so a nested repository does not stop them.
     pub(crate) fn gitignore_only_skips(&self, root: &Path, path: &Path, is_dir: bool) -> bool {
-        let Some(below) = path
-            .parent()
-            .and_then(|parent| parent.strip_prefix(root).ok())
-        else {
+        let Some(chain) = path.parent().and_then(|parent| self.chain(root, parent)) else {
             return false;
         };
-        let mut dir = root.to_path_buf();
-        let mut chain = vec![self.dir(&dir)];
-        for component in below.components() {
-            dir.push(component);
-            chain.push(self.dir(&dir));
-        }
-        for dir in chain.iter().rev() {
+        for dir in chain.dirs.iter().rev() {
             let matched = dir.gitignore.matched(path, is_dir);
             if !matched.is_none() {
                 return matched.is_ignore();
             }
         }
         false
+    }
+
+    /// The ignore files from `root` down to `dir`, `None` when `dir` is not
+    /// under `root`. Memoized per directory: the member scan asks for every
+    /// entry of a parallel walk, and rebuilding the chain from the root each
+    /// time cost a locked lookup per path component (#1087).
+    fn chain(&self, root: &Path, dir: &Path) -> Option<Arc<DirChain>> {
+        if let Some(found) = lock(&self.0.chains)
+            .get(root)
+            .and_then(|chains| chains.get(dir))
+        {
+            return Some(Arc::clone(found));
+        }
+        let below = dir.strip_prefix(root).ok()?;
+        let chain = match below.components().next_back() {
+            None => DirChain {
+                path: root.to_path_buf(),
+                dirs: vec![self.dir(root)],
+            },
+            Some(last) => {
+                let parent = self.chain(root, dir.parent()?)?;
+                let path = parent.path.join(last);
+                let mut dirs = parent.dirs.clone();
+                dirs.push(self.dir(&path));
+                DirChain { path, dirs }
+            },
+        };
+        Some(Arc::clone(
+            lock(&self.0.chains)
+                .entry(root.to_path_buf())
+                .or_default()
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| Arc::new(chain)),
+        ))
     }
 
     /// Directories whose ignore files have been read so far.
@@ -619,6 +655,26 @@ impl<'a> MatchState<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The chains are memoized per walk root: the same directory under
+    /// another root reads only the `.gitignore` files below that root.
+    #[test]
+    fn gitignore_only_skips_reads_from_each_walk_root_down() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outer = temp.path();
+        let inner = outer.join("a");
+        fs::create_dir_all(inner.join("b")).expect("mkdir");
+        fs::write(outer.join(".gitignore"), "y\n").expect("write");
+        fs::write(inner.join(".gitignore"), "x\n").expect("write");
+        let cache = SourcesCache::default();
+        for _ in 0..2 {
+            assert!(cache.gitignore_only_skips(outer, &inner.join("b/y"), false));
+            assert!(cache.gitignore_only_skips(outer, &inner.join("b/x"), false));
+            assert!(!cache.gitignore_only_skips(&inner, &inner.join("b/y"), false));
+            assert!(cache.gitignore_only_skips(&inner, &inner.join("b/x"), false));
+            assert!(!cache.gitignore_only_skips(&inner, &outer.join("y"), false));
+        }
+    }
 
     #[test]
     fn literal_braces_escapes_only_alternation() {

@@ -127,26 +127,32 @@ pub fn resolve_imports_for_analysis(
         imports.push(Arc::new(site.import));
     }
 
-    let mut cache = RootCache::new();
-    for reference in plugin_refs {
-        let mut log = Vec::new();
-        imports.push(Arc::new(resolver.site(
-            &Site {
-                full_module: &reference.module,
-                imported: &reference.module,
-                file: &reference.origin.file,
-                line: reference.origin.line,
-                reference: Some(&reference.origin.label),
-                context: ImportContext::Runtime,
-                optional: false,
-                dead_fallback: false,
-                platform_guarded: false,
-                relative_level: 0,
-                stdlib,
-            },
-            &mut cache,
-            &mut log,
-        )));
+    // Plugin references resolve on workers too: airflow names 2.7k modules
+    // by string, and each unresolved one walks every declaration (#1087).
+    let per_reference =
+        crate::parallel::map_in_order_with(plugin_refs, RootCache::new, |cache, reference| {
+            let mut log = Vec::new();
+            let import = resolver.site(
+                &Site {
+                    full_module: &reference.module,
+                    imported: &reference.module,
+                    file: &reference.origin.file,
+                    line: reference.origin.line,
+                    reference: Some(&reference.origin.label),
+                    context: ImportContext::Runtime,
+                    optional: false,
+                    dead_fallback: false,
+                    platform_guarded: false,
+                    relative_level: 0,
+                    stdlib,
+                },
+                cache,
+                &mut log,
+            );
+            (import, log)
+        });
+    for (import, log) in per_reference {
+        imports.push(Arc::new(import));
         merge.replay(log, &mut warnings);
     }
 
