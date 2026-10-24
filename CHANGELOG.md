@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-24
+
 ### Added
 - Python 3.15's standard library (`profiling` from PEP 799, ...) is in the
   stdlib table, so `import profiling` is no longer CHK010; `sre_compile` /
@@ -35,6 +37,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Sphinx reads, not CHK006, even inside a package, and it is docs context
   wherever it is, so the extensions it loads are no CHK005 against a docs
   group. A `conf.py` with no root document beside it is not read (#814).
+- Entry points declared in `[tool.poetry.scripts]`,
+  `[tool.poetry.plugins."<group>"]`, setup.cfg `[options.entry_points]` and
+  `setup(entry_points=...)` root their targets as `[project.scripts]` does,
+  so a CLI declared only there is no longer CHK001 / CHK006. setuptools'
+  `console_scripts` and `gui_scripts` count as console and gui scripts for
+  `mode = "auto"`, and a trailing `[extras]` or spaces around the colon are
+  dropped from a target (`acme.cli : main [cli]` roots `acme.cli:main`). A
+  declaration chokkin cannot read (a non-string value, a Poetry
+  `type = "file"` script, a non-literal `entry_points=`,
+  `entry_points = file:...`, or a non-table `[project.scripts]`) roots
+  nothing and warns `EntryPointUnreadable` (#916).
+- The Django plugin roots the modules Django loads by convention from the
+  apps in `INSTALLED_APPS` (a project package, or the package an
+  `AppConfig` subclass names): `apps.py`, `templatetags/` modules that bind
+  `register`, `management/commands/` modules that bind `Command`, and
+  `admin.py` when `django.contrib.admin` or a non-`Simple` `AdminConfig` is
+  installed or `INSTALLED_APPS` is not fully read. Functions decorated with
+  `@receiver` anywhere, and with `@register.*` inside an installed app, are
+  used, so they are no longer CHK006 (#399).
+
+### Changed
+- An explicit `--confidence` wins over `--strict`. `--strict` lowers only
+  the default (config) floor, so `--strict --confidence certain` shows, and
+  fails the exit gate on, `certain` findings only; it used to show `likely`
+  ones too (#1134).
+- `--fix` exits on the findings it leaves standing: 0 when every finding was
+  applied (one `--add-missing` edit covers every import of that
+  distribution), 1 while a skipped fix or a dry-run preview remains. A
+  successful `--update-baseline` exits 0. Both exited 1, which stopped the
+  README's adoption steps under `set -e` (#1164).
+- An unknown rule code in `--include` / `--exclude` (`CHK02`, `chk002`, an
+  empty element) is a usage error (exit 2), validated like
+  `[tool.chokkin.ignore]`. A typo used to hide every finding and exit 0
+  (#1126).
+- `--explain` compares distribution names after PEP 503 normalization and
+  also selects CHK003 / CHK004 by the distribution their message names. A
+  malformed selector or an unknown rule code is a usage error (exit 2); a
+  well-formed selector that matches nothing keeps the findings' exit code
+  (#1159).
+- `--probe` with a flag that needs issues (`--fix`, `--dry-run`,
+  `--allow-remove-files`, `--add-missing`, `--strict`, `--no-exit-code`,
+  `--include`, `--exclude`, `--reporter`, `--confidence`, `--baseline`,
+  `--update-baseline`, `--explain`, `--trace`) is a usage error (exit 2).
+  `--probe` stops before issues exist, so these flags were ignored, and
+  `--fix` / `--update-baseline` exited 0 without acting.
+- An app-mode project with no entry root (a `requirements.txt` project with
+  a flat package) records a project-wide `NoEntryRoot` gap that caps CHK001
+  and distribution CHK002 at `likely`, with one warning. Every file and
+  dependency was certainly unused, so `--fix` emptied `requirements.txt`.
+  Library mode is unchanged: its public modules stand in for roots (#1138).
+- Under `--production`, only the public modules the held-aside tests reach
+  through imports count as outside callers for CHK006. Every unreachable
+  public module used to count, including CHK001 orphans, so `--production`
+  could clear a CHK006 the default run kept. `--production` can report more
+  CHK006 than before; a default CHK006 now disappears under `--production`
+  only when its file becomes CHK001 (#950).
+- A nested directory whose `setup.py` imports `setuptools`, `distutils` or a
+  `setup` (from `skbuild`, `numpy.distutils.core`, ...) is a nested project,
+  skipped like a nested `[project]` and listed in `NestedProjectsSkipped`,
+  so the CHK003 / CHK010 its sources raised against the root manifest are
+  gone (click's `examples/*`). A `setup.py` that cannot be read or parsed
+  counts too; one that parses without such an import stays root code, and
+  `--no-auto-workspace` keeps every one in the root (#1078).
 
 ### Fixed
 - `--fix` moves a workspace member's CHK005 dependency in the manifest that
@@ -141,6 +206,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comprehension, a tuple) and a star import not followed are a gap
   (`UnreadSphinxExtensions`) with a plugin warning, which lowers CHK001 and
   distribution CHK002 to likely (#1062).
+- A cold run no longer does on the calling thread the serial work added
+  since 0.7.7: plugin module references and plugin extractors run on
+  workers, string module-reference gap checks are mapped per file, member
+  `.gitignore` chains are memoized, and the hot module indexes use FxHash.
+  Output is unchanged; the 17 large OSS projects take 1.04x of 0.7.7's time
+  summed, down from 1.10x (#1087).
+- Peak memory is lower: resolved imports are shared instead of cloned when
+  rules drop script or build-environment imports (airflow 201 -> 156 MiB,
+  transformers 157 -> 123 MiB). CHK009 groups declarations into buckets
+  instead of comparing every pair, and `include-group` keeps one next hop per
+  includer instead of every chain, so thousands of declarations or a long
+  include chain no longer take seconds and gigabytes. With several shortest
+  include chains, `--explain` may print a different one of the same length
+  (#1092, #1048, #1046). `uv.lock` scanning and the parse walk's name sets
+  are lighter (#760, #1047).
+- A cold run of a project whose `sys.path`-editing module holds many path
+  literals (airflow's provider `conf.py` files) no longer walks every hinted
+  directory per unresolved import: each distinct hint list is indexed once
+  (#1080).
+- A Sphinx extension that a `conf.py` names resolves its imports with the
+  `sys.path` that `conf.py` (and the modules it imports) set up, as Sphinx
+  imports it after running `conf.py`. airflow's `sphinx_exts` helpers are no
+  longer CHK010. An extension that is a module of the project's own package
+  gets no such hints (#1086).
+- A server app (`uvicorn app.main:app`, gunicorn, ...) that a nested
+  Dockerfile or Containerfile runs is an entry root, so it is no longer
+  CHK001. When the app resolves only beside that Dockerfile, its directory is
+  a separate image whose requirements are not read: an `UnreadImageTree` gap
+  lowers CHK003 / CHK004 / CHK010 for imports under it, and CHK005 for
+  distributions imported from it, to `maybe` (#1061).
+- A Python file nested deeper than 1000 levels is skipped like a syntax
+  error instead of aborting chokkin with a stack overflow, and a string
+  annotation that deep is ignored (#1045). A glob pattern holding more than
+  1000 `{` is rejected as invalid, and a `.gitignore` reads braces literally,
+  so deep brace nesting no longer aborts either (#1145).
+- An `ns.portion` import resolves to the `{ns}-{portion}` distribution that
+  the file's script block, its member or the root declares, at `likely`,
+  instead of the namespace's own distribution (`optimum.intel` with
+  `optimum-intel` declared); an undeclared `optimum.intel` is CHK003 against
+  `optimum-intel` (#1022).
+- A `[tool.uv.sources]` path outside the project root is no longer read to
+  infer its layout; it falls back to the distribution name (#1042).
+- A `.gitignore` reads `{` and `}` literally, as git does: `{}` no longer
+  drops the whole project and `*.{py,pyc}` no longer drops every `.py` file
+  (#1149).
+- Names in `match` case patterns (`case m.CONST:`, `case Point(x=0):`,
+  mapping keys) count as references, so they are no longer CHK006 (#1141).
+- The target of an augmented assignment counts as a read: `m.counter += 1`,
+  `CACHE["a"] += 1` and `global TOTAL; TOTAL += 1` are no longer CHK006
+  (#1142).
+- `getattr`, `hasattr`, `setattr` and `delattr` on a module with a literal
+  name count as a use of that symbol, like `m.name` (#1143).
+- Attribute chains in string annotations and in typing's string type
+  arguments (`cast`, `TypeVar`), and attributes read off a literal
+  `importlib.import_module(...)` result, directly or through a name bound to
+  it, count as references to that module's symbols (#1144).
+- opencv (`opencv-python-headless`, ...), `msgpack-python`, `psycopg2` and
+  `pillow-simd` variants map to the import they provide without a readable
+  environment. Declaring one no longer reports the declaration as CHK002 and
+  the import as CHK003, nor makes `--fix --add-missing` swap it; the
+  declared variant wins and silences the ambiguity warning (#1139).
+- A workspace member under root `examples/` no longer counts as a skipped
+  entry of the root, which lowered the root's unused dependencies to
+  `likely` (#1140).
+- Without `target_version` or a `requires-python` lower bound, every bundled
+  Python minor counts as stdlib, so modules only 3.8-3.10 ship (`formatter`,
+  `symbol`, `binhex`) are no longer CHK010. An unreadable `requires-python`
+  still assumes 3.11 (#1172).
+- A module whose extension is uppercase (`helper.PY`) is discovered and
+  resolved on every OS, as CPython on Windows and macOS imports it (#1170).
+- A dependency ignore pattern is compared with the PEP 503 normalized name,
+  so `typing_extensions` or `Boto3` matches as the manifest spells it; glob
+  syntax and `[...]` classes stay as written, and CHK008 binary names are
+  still matched as written. Ignored CHK005 sites are dropped before the
+  finding is weighed (#1106, #1107).
+- `--fix` keeps a leading UTF-8 BOM when it edits a manifest, and finds a
+  dependency on the first line of a `requirements.txt` or `setup.cfg` that
+  starts with one (#1152).
+- A requirements file splits on every Python line boundary, as pip's
+  `str.splitlines()` does, so a CR-only file is no longer one invalid
+  requirement; `--fix` uses the same lines (#1154).
+- A `.py` file starting with two BOMs is skipped as Python rejects it, and a
+  fatal error prints its cause (a non-UTF-8 or symlink-looped
+  `pyproject.toml`, config or lockfile no longer says only "failed to read")
+  (#1160).
+- A `.py` path that is not valid UTF-8 is skipped with
+  `sources: skipped <path>: its path is not valid UTF-8` instead of stopping
+  the run with exit 2 (#1146).
+- The parse cache keys stat-only fingerprints on inode and ctime too, so a
+  same-size file restored with its old mtime (`cp -p`, `rsync -a`, `tar`) is
+  parsed again instead of served stale (#1158).
+- Fixed manifest and config names (`requirements.txt`, `pyproject.toml`,
+  lockfiles, root plugin files) are matched against the directory listing,
+  so `Requirements.txt` on macOS or Windows is treated as on Linux (#1163).
+- A backslash in config path globs (`exclude = ['legacy\**']`) and config
+  entry paths is a separator on every OS, and a leading `./` is dropped
+  (#1165, #1168).
+- A quoted `-e "libs\foo"` path is named on `/` and `\` alike on every OS
+  (#1171).
+- The venv's `site-packages` is picked by the `pyvenv.cfg` version, else
+  the highest version with a warning about the others, instead of directory
+  order, so a venv rebuilt with `--upgrade` reads the same everywhere
+  (#1169).
+- `--trace` accepts absolute and current-directory-relative paths, says when
+  an absolute path is outside the root, and names the root paths are matched
+  against (#1157).
+- A config validation error separates the file from the key
+  (`pyproject.toml: tool.chokkin.severity.CHK999`) and qualifies
+  pyproject keys with `tool.chokkin.` (#1167).
+- A standalone `chokkin.toml` / `.chokkin.toml` that uses a `[tool.chokkin]`
+  table gets a hint to write the keys at the top level, and the READMEs show
+  that form (#1151).
+- `--help` marks every flag that needs `--fix` or `--baseline`, and long
+  flags no longer overflow the description column (#1166).
 
 ## [0.7.8] - 2026-10-20
 
