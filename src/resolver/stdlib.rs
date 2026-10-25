@@ -11,8 +11,8 @@ use crate::manifest::{
 
 static STDLIB_MODULES: OnceLock<HashMap<&'static str, Shipped>> = OnceLock::new();
 
-const OLDEST_BUNDLED_MINOR: u32 = 8;
-const NEWEST_BUNDLED_MINOR: u32 = 15;
+const OLDEST_BUNDLED_MINOR: u32 = TargetVersion::OLDEST_MINOR;
+const NEWEST_BUNDLED_MINOR: u32 = TargetVersion::NEWEST_MINOR;
 
 /// Stdlib roots that a given interpreter may still lack: platform-only
 /// modules and those built on an optional library or split out by distros.
@@ -522,8 +522,9 @@ mod tests {
                 .copied()
                 .filter(|&minor| minor < FAR);
             for target in 7..=15 {
-                let target_version =
-                    TargetVersion::parse(&format!("py3{target:02}")).expect("target");
+                // py307 is out of the configurable range but `requires-python`
+                // can infer it.
+                let target_version = TargetVersion::from_minor(u64::from(target));
                 let range = StdlibRange::new(&target_version, requires);
                 let top = upper.map_or(NEWEST_BUNDLED_MINOR, |upper| upper.max(target));
                 let window: Vec<u32> = (target..=top.max(target)).collect();

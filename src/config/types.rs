@@ -196,25 +196,48 @@ impl PluginId {
 pub struct TargetVersion(String);
 
 impl TargetVersion {
+    /// Oldest Python 3 minor whose stdlib is bundled.
+    pub(crate) const OLDEST_MINOR: u32 = 8;
+    /// Newest Python 3 minor whose stdlib is bundled.
+    pub(crate) const NEWEST_MINOR: u32 = 15;
+
     /// Default target version used when config does not override it.
     #[must_use]
     pub fn default_py311() -> Self {
         Self("py311".to_owned())
     }
 
-    /// Parse and validate a `py3XX` version string.
+    /// Parse a configured `py3<minor>` string; the minor must be a bundled
+    /// one (`py38`–`py315`, #1125). `py308`, the form inferred from
+    /// `requires-python` and written by `chokkin init`, is the same minor.
     pub fn parse(value: &str) -> Option<Self> {
-        if !value.starts_with("py3") {
+        let suffix = value.strip_prefix("py3")?;
+        if suffix.len() > 3 || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
             return None;
         }
-        let suffix = &value[3..];
-        if suffix.len() < 2 || suffix.len() > 3 {
-            return None;
+        let minor: u32 = suffix.parse().ok()?;
+        let spelled = suffix == minor.to_string() || suffix == format!("{minor:02}");
+        (spelled && (Self::OLDEST_MINOR..=Self::NEWEST_MINOR).contains(&minor))
+            .then(|| Self(value.to_owned()))
+    }
+
+    /// Target version for any Python 3 minor, unchecked against the bundled
+    /// range: `requires-python` may name minors older or newer than it.
+    #[must_use]
+    pub(crate) fn from_minor(minor: u64) -> Self {
+        Self(format!("py3{minor:02}"))
+    }
+
+    /// The nearest configurable version, for writing an inferred one back
+    /// to config: minors outside the bundled range read the same as its ends.
+    #[must_use]
+    pub(crate) fn clamped_to_bundled(&self) -> Self {
+        let minor = self.minor().clamp(Self::OLDEST_MINOR, Self::NEWEST_MINOR);
+        if minor == self.minor() {
+            self.clone()
+        } else {
+            Self(format!("py3{minor}"))
         }
-        if !suffix.chars().all(|ch| ch.is_ascii_digit()) {
-            return None;
-        }
-        Some(Self(value.to_owned()))
     }
 
     /// Borrow the underlying version string.
@@ -235,7 +258,13 @@ impl TryFrom<String> for TargetVersion {
     type Error = String;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::parse(&value).ok_or_else(|| format!("expected py3XX form; got {value}"))
+        Self::parse(&value).ok_or_else(|| {
+            format!(
+                "expected py3{}–py3{} (the bundled Python minors); got {value}",
+                Self::OLDEST_MINOR,
+                Self::NEWEST_MINOR
+            )
+        })
     }
 }
 
@@ -541,6 +570,27 @@ mod tests {
         assert!(TargetVersion::parse("python3.11").is_none());
     }
 
+    #[test]
+    fn target_version_accepts_every_bundled_minor() {
+        // #1125: one-digit minors are the py38 / py39 spelling.
+        for value in ["py38", "py39", "py310", "py314", "py315", "py308"] {
+            assert!(TargetVersion::parse(value).is_some(), "{value}");
+        }
+        assert_eq!(TargetVersion::parse("py38").map(|v| v.minor()), Some(8));
+        assert_eq!(TargetVersion::parse("py308").map(|v| v.minor()), Some(8));
+    }
+
+    #[test]
+    fn target_version_rejects_minors_outside_the_bundled_range() {
+        for value in [
+            "py3", "py37", "py307", "py316", "py3100", "py31234", "py3+8", "py3 8",
+        ] {
+            assert!(TargetVersion::parse(value).is_none(), "{value}");
+        }
+        let error = TargetVersion::try_from("py37".to_owned()).unwrap_err();
+        assert!(error.contains("py38") && error.contains("py315"), "{error}");
+    }
+
     /// Deserialize a config enum from a bare string, as a TOML value would.
     fn from_str<'de, T: Deserialize<'de>>(value: &'de str) -> Option<T> {
         T::deserialize(
@@ -563,11 +613,11 @@ mod tests {
         use super::*;
         use proptest::prelude::*;
 
-        /// Reference model for `TargetVersion::parse`: `py3` + 2-3 ASCII digits.
+        /// Reference model for `TargetVersion::parse`: `py3` + the decimal
+        /// spelling of a bundled minor, with at most one leading zero.
         fn is_valid_target_version(value: &str) -> bool {
-            value.strip_prefix("py3").is_some_and(|suffix| {
-                (2..=3).contains(&suffix.len()) && suffix.chars().all(|ch| ch.is_ascii_digit())
-            })
+            (8..=15)
+                .any(|minor| value == format!("py3{minor}") || value == format!("py3{minor:02}"))
         }
 
         proptest! {
@@ -580,8 +630,8 @@ mod tests {
             }
 
             #[test]
-            fn target_version_accepts_generated_valid_forms(suffix in "[0-9]{2,3}") {
-                let value = format!("py3{suffix}");
+            fn target_version_accepts_generated_valid_forms(minor in 8u32..=15) {
+                let value = format!("py3{minor}");
                 let parsed = TargetVersion::parse(&value).expect("valid form must parse");
                 prop_assert_eq!(parsed.as_str(), value.as_str());
             }

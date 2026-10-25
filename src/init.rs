@@ -101,7 +101,9 @@ pub fn init_project(
         &project_globs,
         &entry,
         &config.effective.dependencies,
-        resolve_target_version(&config.effective, &manifest).as_str(),
+        resolve_target_version(&config.effective, &manifest)
+            .clamped_to_bundled()
+            .as_str(),
     );
     append_config(&pyproject, &block)?;
 
@@ -212,6 +214,7 @@ fn append_config(path: &Path, block: &str) -> Result<(), InitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TargetVersion;
     use std::fs;
 
     fn write(path: &Path, contents: &str) {
@@ -245,6 +248,40 @@ mod tests {
         assert!(text.contains("mode = \"auto\""));
         assert!(text.contains("entry = [\"manage.py\"]"));
         assert!(text.contains("dev_groups = [\"dev\", \"test\", \"tests\", \"lint\", \"docs\"]"));
+    }
+
+    #[test]
+    fn init_writes_a_target_version_that_loads_back() {
+        // #1125: `requires-python` may name minors outside the bundled range.
+        for (requires_python, target) in [
+            (">=3.6", "py38"),
+            (">=3.8", "py308"),
+            (">=3.12", "py312"),
+            (">=3.16", "py315"),
+        ] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            write(
+                &temp.path().join("pyproject.toml"),
+                &format!("[project]\nname = \"demo\"\nrequires-python = \"{requires_python}\"\n"),
+            );
+            let report =
+                init_project(temp.path(), None, &RuntimeOverrides::default()).expect("init");
+            let text = fs::read_to_string(report.path).expect("read pyproject");
+            assert!(
+                text.contains(&format!("target_version = \"{target}\"")),
+                "{requires_python}: {text}"
+            );
+            let root = discover_project_root(temp.path()).expect("root");
+            let loaded = load_config(&root).expect("config loads back");
+            assert_eq!(
+                loaded
+                    .effective
+                    .target_version
+                    .as_ref()
+                    .map(TargetVersion::as_str),
+                Some(target)
+            );
+        }
     }
 
     #[test]

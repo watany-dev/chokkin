@@ -511,7 +511,7 @@ pub(crate) fn infer_target_version_from_requires_python(specifier: &str) -> Opti
             )
         })
         .max()?;
-    TargetVersion::parse(&format!("py{major}{minor:02}"))
+    (major == 3 && minor < 1000).then(|| TargetVersion::from_minor(minor))
 }
 
 /// Whether `requires-python` parses as a specifier set at all.
@@ -797,7 +797,8 @@ mod tests {
             #[test]
             fn infer_target_version_never_panics(specifier in "\\PC{0,80}") {
                 if let Some(version) = infer_target_version_from_requires_python(&specifier) {
-                    prop_assert!(TargetVersion::parse(version.as_str()).is_some());
+                    let expected = format!("py3{:02}", version.minor());
+                    prop_assert_eq!(version.as_str(), expected.as_str());
                 }
             }
 

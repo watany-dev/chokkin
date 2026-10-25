@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `target_version = "py38"` and `"py39"` are accepted; they were rejected as
+  invalid config while `"py3100"` was accepted. The value must now name a
+  bundled minor (`py38`–`py315`), and anything else is a config error that
+  names the accepted range. `chokkin init` writes the nearest bundled minor
+  when `requires-python` names an older or newer one (#1125).
+
 ## [0.7.9] - 2026-10-24
 
 ### Added

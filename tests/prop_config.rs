@@ -135,7 +135,7 @@ proptest! {
         confidence in confidence_value(),
         production in proptest::bool::ANY,
         respect_gitignore in proptest::bool::ANY,
-        minor in 0u32..100,
+        minor in 8u32..=15,
         exclude in prop::collection::vec("[a-z][a-z0-9_/*.]{0,20}", 0..5),
     ) {
         let target_version = format!("py3{minor:02}");
