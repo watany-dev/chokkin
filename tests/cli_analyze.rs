@@ -4692,6 +4692,10 @@ fn binary_django_installed_app_conventions_are_used() {
         key.starts_with("CHK001") && (key.contains("admin.py") || key.contains("models.py"))
     });
     assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
+    // An addition read in full installs no admin either (#1127).
+    let mut added = flagged("['mysite.polls']\nINSTALLED_APPS += ['django.contrib.auth']");
+    added.retain(|key| key.contains("admin.py"));
+    assert_eq!(added, ["CHK001:mysite/polls/admin.py"]);
     // The inherited config makes the package that defines it no app.
     let project = django_app_project("['mysite.apps.SiteAdminConfig', 'mysite.polls']");
     let keys = issue_keys(&json_issues(
@@ -4708,6 +4712,158 @@ fn binary_django_installed_app_conventions_are_used() {
             .any(|(_, target)| target.starts_with("mysite/apps.py")),
         "{keys:?}"
     );
+}
+
+/// A project with one app, `mysite.blog`, that only `settings` installs.
+fn django_blog_project(settings: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", settings),
+        ("mysite/blog/__init__.py", ""),
+        ("mysite/blog/models.py", ""),
+    ])
+}
+
+/// An app added to `INSTALLED_APPS` after its assignment, or through a list
+/// the settings name, is installed; one added in a form not read lowers the
+/// project's CHK001 and names the line (#1127, ADR 0005).
+#[test]
+fn binary_django_reads_apps_added_to_installed_apps() {
+    const BASE: &str = "INSTALLED_APPS = ['django.contrib.admin']\n";
+    for added in [
+        "INSTALLED_APPS += ['mysite.blog']",
+        "INSTALLED_APPS += ('mysite.blog',)",
+        "INSTALLED_APPS.append('mysite.blog')",
+        "INSTALLED_APPS.extend(['mysite.blog'])",
+        "INSTALLED_APPS.insert(0, 'mysite.blog')",
+        "if True:\n    INSTALLED_APPS += ['mysite.blog']",
+        "INSTALLED_APPS = INSTALLED_APPS + ['mysite.blog']",
+        "LOCAL_APPS = ['mysite.blog']\nINSTALLED_APPS += LOCAL_APPS",
+        "LOCAL_APPS = ['mysite.blog']\nINSTALLED_APPS = [*INSTALLED_APPS, *LOCAL_APPS]",
+        "INSTALLED_APPS = list(INSTALLED_APPS) + list(['mysite.blog'])",
+    ] {
+        let project = django_blog_project(&format!("{BASE}{added}\n"));
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(
+            chk001_confidence(&issues, "mysite/blog/models.py"),
+            None,
+            "{added}: {issues:?}"
+        );
+    }
+    for (settings, line) in [
+        (
+            "BASE = ['mysite.blog']\nINSTALLED_APPS = BASE + ['django.contrib.admin']\n",
+            None,
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin']\nINSTALLED_APPS += extra_apps()\n",
+            Some(2),
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin']\nINSTALLED_APPS.append(APP)\n",
+            Some(2),
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin', *EXTRA]\n",
+            Some(1),
+        ),
+        (
+            "INSTALLED_APPS = BASE_APPS + ['django.contrib.admin']\n",
+            Some(1),
+        ),
+        (
+            "INSTALLED_APPS = []\nINSTALLED_APPS[0:0] = ['x']\n",
+            Some(2),
+        ),
+    ] {
+        let project = django_blog_project(settings);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let issues = parsed["issues"].as_array().cloned().unwrap_or_default();
+        let confidence = chk001_confidence(&issues, "mysite/blog/models.py");
+        let Some(line) = line else {
+            // `BASE` is read, so the app is installed and nothing is unread.
+            assert_eq!(confidence, None, "{settings}: {issues:?}");
+            assert!(!stderr.contains("INSTALLED_APPS"), "{settings}: {stderr}");
+            continue;
+        };
+        assert_ne!(
+            confidence.as_deref(),
+            Some("certain"),
+            "{settings}: {issues:?}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "settings `mysite/settings.py:{line}` sets `INSTALLED_APPS` in a form that could not be fully read"
+            )),
+            "{settings}: {stderr}"
+        );
+    }
+}
+
+/// The migration package `MIGRATION_MODULES` names is loaded like an app's
+/// `migrations`: its modules are used and so is their `Migration` (#993).
+#[test]
+fn binary_django_migration_modules_are_loaded() {
+    let moved = "mysite/blog/db_migrations/0001_initial.py";
+    for (migration_modules, loaded) in [
+        ("{'blog': 'mysite.blog.db_migrations'}", true),
+        ("{'blog': None}", false),
+        ("{'blog': modules_for('blog')}", false),
+        ("migration_modules()", false),
+    ] {
+        let settings =
+            format!("INSTALLED_APPS = ['mysite.blog']\nMIGRATION_MODULES = {migration_modules}\n");
+        let project = django_blog_project(&settings);
+        for (path, text) in [
+            ("mysite/blog/db_migrations/__init__.py", ""),
+            (moved, "class Migration:\n    pass\n"),
+            ("mysite/blog/db_migrations/_helper.py", ""),
+            (
+                "mysite/blog/db_migrations/old/0001_initial.py",
+                "class Migration:\n    pass\n",
+            ),
+        ] {
+            let path = project.path().join(path);
+            fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            fs::write(path, text).expect("write migration");
+        }
+        let issues = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"]);
+        let keys: Vec<String> = issue_keys(&issues)
+            .into_iter()
+            .filter(|(_, target)| target.contains("db_migrations"))
+            .map(|(code, target)| format!("{code}:{target}"))
+            .collect();
+        let expected: &[&str] = if loaded {
+            // Django imports no module starting with `_` and no subpackage.
+            &[
+                "CHK001:mysite/blog/db_migrations/_helper.py",
+                "CHK001:mysite/blog/db_migrations/old/0001_initial.py",
+            ]
+        } else {
+            &[
+                "CHK001:mysite/blog/db_migrations/0001_initial.py",
+                "CHK001:mysite/blog/db_migrations/_helper.py",
+                "CHK001:mysite/blog/db_migrations/old/0001_initial.py",
+            ]
+        };
+        let mut keys = keys;
+        keys.sort();
+        assert_eq!(keys, expected, "{migration_modules}");
+    }
 }
 
 #[test]

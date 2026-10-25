@@ -1,6 +1,7 @@
 //! Django plugin extractor.
 
 mod apps;
+mod installed;
 mod settings_refs;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -36,8 +37,9 @@ use super::warnings::{PluginsWarning, SettingsUnread};
 
 /// Settings whose string-list values become module references (spec §9
 /// Django plugin). Each is also reported as a partial parse when present but
-/// not a literal list. Nested import settings use `settings_refs` instead.
-const LIST_FIELDS: &[&str] = &["INSTALLED_APPS", "MIDDLEWARE"];
+/// not a literal list. `INSTALLED_APPS` is read by `installed`, and nested
+/// import settings by `settings_refs`.
+const LIST_FIELDS: &[&str] = &["MIDDLEWARE"];
 
 /// Fields whose absence from the settings read leaves project files or
 /// distributions unexplained, so an unfollowed star import may hide them.
@@ -436,17 +438,31 @@ fn read_settings(
         }
         partial.sort();
         partial.dedup();
-        // A second mention may be a `+=` or `.append()`, which is not read.
-        if partial.iter().any(|field| field == "INSTALLED_APPS")
-            || contents.matches("INSTALLED_APPS").count() > 1
-        {
-            installed.incomplete = true;
-        }
         if !partial.is_empty() {
             warnings.push(PluginsWarning::PartialSettingsParse {
                 path: rel.clone(),
                 fields: partial,
             });
+        }
+
+        if let Some(apps) = installed::read(&stmts) {
+            for (module, start) in apps.values {
+                let origin = origin(start, "INSTALLED_APPS");
+                contrib.module_refs.push(ModuleReference {
+                    module: module.clone(),
+                    origin: origin.clone(),
+                });
+                installed.apps.push((module, origin));
+            }
+            if let Some(start) = apps.unread {
+                installed.incomplete = true;
+                let line = Some(lines.line(start));
+                let reason = SettingsUnread::UnreadField {
+                    field: "INSTALLED_APPS".to_owned(),
+                    site: import_site(&rel, line),
+                };
+                push_unread(contrib, warnings, rel.clone(), line, reason);
+            }
         }
 
         for (field, scan) in &lists {
@@ -455,8 +471,16 @@ fn read_settings(
                     module: module.clone(),
                     origin: origin(*start, field),
                 });
-                if field == "INSTALLED_APPS" {
-                    installed.apps.push((module.clone(), origin(*start, field)));
+            }
+        }
+
+        // A value that is not a string literal is not read, and is no gap:
+        // its package is treated as it was before this setting was read.
+        if let Some(Expr::Dict(dict)) = assigned_value(&stmts, "MIGRATION_MODULES") {
+            for item in &dict.items {
+                if let Some(package) = string_value(&item.value) {
+                    let origin = origin(item.value.start(), "MIGRATION_MODULES");
+                    installed.migration_modules.push((package, origin));
                 }
             }
         }

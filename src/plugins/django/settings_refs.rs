@@ -52,7 +52,7 @@ pub(super) fn extract(
         if LIST_FIELDS.contains(&field)
             || matches!(
                 field,
-                "ROOT_URLCONF" | "WSGI_APPLICATION" | "ASGI_APPLICATION"
+                "INSTALLED_APPS" | "ROOT_URLCONF" | "WSGI_APPLICATION" | "ASGI_APPLICATION"
             )
         {
             return;
