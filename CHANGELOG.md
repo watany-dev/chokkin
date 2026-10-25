@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A `.gitignore` below the root re-includes with `!` a file the root
+  `.gitignore` ignores, as git does: the root's rules no longer drop it a
+  second time after the walk, so its imports count and a dependency only it
+  uses is no longer a certain CHK002. A directory without `.git` reads every
+  `.gitignore` from the root down in the same order, not only the root's
+  (#1220).
+
 ## [0.7.9] - 2026-10-24
 
 ### Added

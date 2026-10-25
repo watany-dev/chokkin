@@ -13,8 +13,8 @@ use super::glob::{build_glob_set, effective_exclude};
 use super::layout::{ENTRY_TREE_GLOBS, infer_layout, pytest_testpaths};
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
-    CollectOptions, Collected, collect_files, large_project_warning, load_gitignore,
-    matches_source, validate_entries,
+    CollectOptions, Collected, collect_files, large_project_warning, matches_source,
+    root_gitignore_warning, validate_entries,
 };
 
 /// Discover Python source files under `root` using config and manifest hints.
@@ -71,11 +71,11 @@ pub(crate) fn discover_sources_cached(
     let exclude_matcher = cache.glob_set(&exclude_patterns)?;
     let test_matcher = cache.glob_set(&test_globs)?;
 
-    let (gitignore, gitignore_warning) = if config.effective.respect_gitignore {
-        load_gitignore(&root.path, cache)
-    } else {
-        (None, None)
-    };
+    let gitignore_warning = config
+        .effective
+        .respect_gitignore
+        .then(|| root_gitignore_warning(&root.path, cache))
+        .flatten();
 
     let collect_options = CollectOptions {
         root: &root.path,
@@ -84,7 +84,6 @@ pub(crate) fn discover_sources_cached(
         test_matcher: &test_matcher,
         exclude_patterns: &exclude_patterns,
         respect_gitignore: config.effective.respect_gitignore,
-        gitignore: gitignore.as_deref(),
         production: config.effective.production,
         cache,
         dirs: None,
@@ -151,11 +150,6 @@ pub(crate) fn discover_named_files(
     let exclude_patterns = effective_exclude(&config.effective.exclude);
     let project_matcher = cache.glob_set(&globs)?;
     let exclude_matcher = cache.glob_set(&exclude_patterns)?;
-    let gitignore = if config.effective.respect_gitignore {
-        load_gitignore(&config.root.path, &cache).0
-    } else {
-        None
-    };
     let collected = collect_files(&CollectOptions {
         root: &config.root.path,
         project_matcher: &project_matcher,
@@ -163,7 +157,6 @@ pub(crate) fn discover_named_files(
         test_matcher: &globset::GlobSet::empty(),
         exclude_patterns: &exclude_patterns,
         respect_gitignore: config.effective.respect_gitignore,
-        gitignore: gitignore.as_deref(),
         production: false,
         cache: &cache,
         dirs: Some(&dirs),

@@ -12,7 +12,7 @@ use tempfile::tempdir;
 use super::cache::SourcesCache;
 use super::glob::{build_glob_set, effective_exclude};
 use super::types::DiscoveredFile;
-use super::walk::{CollectOptions, collect_files, load_gitignore};
+use super::walk::{CollectOptions, collect_files, root_gitignore_warning};
 use super::warnings::SourcesWarning;
 
 type Outcome = (Vec<DiscoveredFile>, Vec<SourcesWarning>);
@@ -34,11 +34,9 @@ fn walk(cache: &SourcesCache, root: &Path, custom: &[String], respect: bool) -> 
     let exclude_patterns = effective_exclude(custom);
     let exclude = cache.glob_set(&exclude_patterns).expect("exclude globs");
     let project = project_globs();
-    let (gitignore, gitignore_warning) = if respect {
-        load_gitignore(root, cache)
-    } else {
-        (None, None)
-    };
+    let gitignore_warning = respect
+        .then(|| root_gitignore_warning(root, cache))
+        .flatten();
     let options = CollectOptions {
         root,
         project_matcher: &project,
@@ -46,7 +44,6 @@ fn walk(cache: &SourcesCache, root: &Path, custom: &[String], respect: bool) -> 
         test_matcher: &GlobSet::empty(),
         exclude_patterns: &exclude_patterns,
         respect_gitignore: respect,
-        gitignore: gitignore.as_deref(),
         production: false,
         cache,
         dirs: None,
@@ -126,20 +123,25 @@ fn nested_whitelists_and_exclude() {
 
     let outcomes = walk_roots(&[root.clone(), root.join("pkg"), root.join("pkg/sub")], &[]);
     no_warnings(&outcomes);
-    // `pkg/.gitignore` re-includes `pkg/gen` for the walk, but the root
-    // `.gitignore` post-filter still drops it, unlike git (#1220); a member
-    // walk of `pkg` has no such post-filter.
+    // `pkg/.gitignore` re-includes `pkg/gen` over the root's `gen`, as git
+    // does (#1220).
     assert_eq!(
         all_paths(&outcomes),
         [
             vec![
                 "app.py",
                 "keep.pyi",
+                "pkg/gen/model.py",
                 "pkg/sub/only_here.py",
                 "pkg/sub/secret.py",
                 "pkg/top.py",
             ],
-            vec!["gen/model.py", "sub/only_here.py", "top.py"],
+            vec![
+                "gen/model.py",
+                "sub/only_here.py",
+                "sub/secret.py",
+                "top.py",
+            ],
             vec!["only_here.py", "secret.py"],
             vec![
                 "app.py",
@@ -312,23 +314,34 @@ fn invalid_ignore_lines_warn_once_per_file() {
     no_warnings(&outcomes[3..]);
 }
 
-/// A root `.gitignore` that cannot be read is dropped whole and named once.
+/// A root `.gitignore` that cannot be read is named once; the lines before
+/// the one that fails still apply, in a repository or not.
 #[test]
 fn unreadable_root_gitignore_warns() {
-    let temp = tempdir().expect("tempdir");
-    let root = temp.path().join("repo");
-    write_file(&root.join("app.py"), "");
-    fs::write(root.join(".gitignore"), b"app.py\n\xff\n").expect("write");
+    for repository in [true, false] {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join("app.py"), "");
+        write_file(&root.join("main.py"), "");
+        if repository {
+            fs::create_dir_all(root.join(".git")).expect("git dir");
+        }
+        fs::write(root.join(".gitignore"), b"app.py\n\xff\n").expect("write");
 
-    let outcomes = walk_roots(&[root], &[]);
-    assert_eq!(all_paths(&outcomes), [["app.py"], ["app.py"]]);
-    assert_eq!(
-        outcomes[0].1,
-        [SourcesWarning::GitignoreUnreadable {
-            path: ".gitignore".to_owned(),
-        }]
-    );
-    no_warnings(&outcomes[1..]);
+        let outcomes = walk_roots(&[root], &[]);
+        assert_eq!(
+            all_paths(&outcomes),
+            [vec!["main.py"], vec!["app.py", "main.py"]],
+            "repository {repository}"
+        );
+        assert_eq!(
+            outcomes[0].1,
+            [SourcesWarning::GitignoreUnreadable {
+                path: ".gitignore".to_owned(),
+            }]
+        );
+        no_warnings(&outcomes[1..]);
+    }
 }
 
 /// A `.gitignore` below the root that cannot be read is named once, by its
@@ -541,7 +554,8 @@ fn concurrent_walks_sharing_a_cache_agree_with_fresh_ones() {
 fn plain_directories_and_custom_excludes() {
     let temp = tempdir().expect("tempdir");
     let root = temp.path().join("plain");
-    // No `.git` anywhere: `.gitignore` applies only through the post-filter.
+    // No `.git` anywhere: every `.gitignore` from the walk root down still
+    // applies, in git's order (#1220).
     write_file(&root.join(".gitignore"), "skipped.py\nnested/\n");
     write_file(&root.join("pkg/.gitignore"), "inner.py\n");
     write_file(&root.join("skipped.py"), "");
@@ -554,12 +568,11 @@ fn plain_directories_and_custom_excludes() {
         &["pkg/generated/**".to_owned(), "*.pyi".to_owned()],
     );
     no_warnings(&outcomes);
-    // A member's own `.gitignore` is its root post-filter; the custom exclude
-    // is relative to each walk root.
+    // The custom exclude is relative to each walk root.
     assert_eq!(
         all_paths(&outcomes),
         [
-            vec!["pkg/inner.py"],
+            vec![],
             vec!["generated/model.py"],
             vec!["nested/a.py", "pkg/inner.py", "skipped.py"],
             vec!["generated/model.py", "inner.py"],
@@ -694,18 +707,28 @@ fn every_file() -> Vec<&'static str> {
     .concat()
 }
 
+/// Each case in a repository and in a plain directory: without `.git` the
+/// `.gitignore` files drop the same files (#1220).
 fn assert_rule_cases(cases: &[RuleCase]) {
     for (ignores, expected) in cases {
-        let temp = tempdir().expect("tempdir");
-        let base = temp.path().join("t");
-        pattern_tree(&base);
-        fs::create_dir_all(base.join(".git/info")).expect("git dir");
-        for (dir, rules) in ignores {
-            write_file(&base.join(dir).join(".gitignore"), rules);
+        for repository in [true, false] {
+            let temp = tempdir().expect("tempdir");
+            let base = temp.path().join("t");
+            pattern_tree(&base);
+            if repository {
+                fs::create_dir_all(base.join(".git/info")).expect("git dir");
+            }
+            for (dir, rules) in ignores {
+                write_file(&base.join(dir).join(".gitignore"), rules);
+            }
+            let outcomes = walk_roots(std::slice::from_ref(&base), &[]);
+            no_warnings(&outcomes);
+            assert_eq!(
+                dropped(&outcomes),
+                *expected,
+                "{ignores:?}, repository {repository}"
+            );
         }
-        let outcomes = walk_roots(std::slice::from_ref(&base), &[]);
-        no_warnings(&outcomes);
-        assert_eq!(dropped(&outcomes), *expected, "{ignores:?}");
     }
 }
 
@@ -770,6 +793,12 @@ fn combined_gitignore_rules_drop_what_git_drops() {
             ]),
         ),
         (vec![("a", "*.pyi\n!y.pyi")], vec![]),
+        // A deeper `.gitignore` wins over the root's (#1220).
+        (
+            vec![("", "gen.py"), ("a", "!gen.py")],
+            vec!["b/gen.py", "b/gen/gen.py", "gen.py"],
+        ),
+        (vec![("", "c/"), ("a", "!c/")], vec![]),
         (vec![("", "/a/c/")], A_C.to_vec()),
         (
             vec![("", "b/**/*.py")],
