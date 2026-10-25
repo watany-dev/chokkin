@@ -116,8 +116,8 @@ fn is_alembic_revision(module: &ParsedModule) -> bool {
 
 /// `Migration` in a module directly under a `migrations` directory, when
 /// Django is in use (#926): Django's migration loader reads it by name from
-/// each module of an app's `migrations` package. A package that
-/// `MIGRATION_MODULES` renames is not read, so its `Migration` stays CHK006.
+/// each module of an app's `migrations` package. The Django plugin marks the
+/// `Migration` of a package `MIGRATION_MODULES` names as used (#993).
 fn django_migration_symbols(
     plugins: &PluginHints,
     modules: &[&ParsedModule],

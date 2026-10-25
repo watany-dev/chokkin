@@ -105,6 +105,14 @@ pub enum ProbeWarning {
         /// How many other such literals there are in the project.
         more: usize,
     },
+    /// The baseline's `schema_version` is none this chokkin reads; its
+    /// fingerprints were applied anyway (#1131).
+    BaselineSchemaUnknown {
+        /// Root-relative path of the baseline file.
+        path: String,
+        /// The `schema_version` as written.
+        version: String,
+    },
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -158,7 +166,8 @@ impl ProbeWarning {
             | Self::OpaqueDynamicImport { .. }
             | Self::ArchiveRequirement { .. }
             | Self::UnreadCommandTarget { .. }
-            | Self::StringModuleRef { .. } => {},
+            | Self::StringModuleRef { .. }
+            | Self::BaselineSchemaUnknown { .. } => {},
         }
         hasher.finish()
     }
@@ -211,7 +220,9 @@ impl ProbeWarning {
                 };
                 (Some(path), source_line(path, line))
             },
-            Self::OpaqueDynamicImport { path, .. } => (Some(path), None),
+            Self::OpaqueDynamicImport { path, .. } | Self::BaselineSchemaUnknown { path, .. } => {
+                (Some(path), None)
+            },
             Self::ArchiveRequirement { path, line, .. }
             | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
             Self::StringModuleRef { path, line, .. } => (Some(path), Some(*line)),
@@ -232,10 +243,24 @@ fn source_line(path: &str, line: Option<u32>) -> Option<u32> {
     line.filter(|_| !notebook)
 }
 
+fn write_baseline_schema_unknown(
+    formatter: &mut fmt::Formatter<'_>,
+    path: &str,
+    version: &str,
+) -> fmt::Result {
+    write!(
+        formatter,
+        "baseline: `{path}` has schema_version {version:?}, which this chokkin does not know (it reads \"0\" and \"1\"); its fingerprints were applied as if it were \"1\""
+    )
+}
+
 fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
     match warning {
         ManifestWarning::InvalidRequirementLine { file, line, .. } => (Some(file), *line),
-        ManifestWarning::RequirementsOptionIgnored { file, line, .. } => (Some(file), Some(*line)),
+        ManifestWarning::RequirementsOptionIgnored { file, line, .. }
+        | ManifestWarning::RequirementsIncludeNotRead { file, line, .. } => {
+            (Some(file), Some(*line))
+        },
         ManifestWarning::SetupPyNotStatic { file }
         | ManifestWarning::RuntimeDependenciesUnknown { file }
         | ManifestWarning::SetupPyPartiallyStatic { file, .. }
@@ -340,6 +365,9 @@ impl fmt::Display for ProbeWarning {
                 target,
                 more,
             } => write_string_module_ref(formatter, (path, *line), text, target, *more),
+            Self::BaselineSchemaUnknown { path, version } => {
+                write_baseline_schema_unknown(formatter, path, version)
+            },
         }
     }
 }
@@ -550,6 +578,23 @@ fn write_manifest_warning(
         ),
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
+        },
+        ManifestWarning::RequirementsIncludeNotRead {
+            file,
+            line,
+            option,
+            path,
+            reason,
+        } => {
+            let effect = if *option == "-r" {
+                "the dependencies it declares are not read"
+            } else {
+                "its constraints are not applied"
+            };
+            write!(
+                formatter,
+                "manifest: `{option} {path}` at `{file}:{line}` is {reason}, which chokkin does not read; {effect}"
+            )
         },
         ManifestWarning::PathOutsideRoot { file, field, path } => write!(
             formatter,

@@ -24,6 +24,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mt-940`, `django-formset-js-improved` and `pytest-xdist` are in the package
   map, so their imports are no CHK010 and their declarations no CHK002
   (#1223).
+- A requirements file whose `-r` names a URL or a `${VAR}` path pip expands
+  from the environment no longer stops the run with exit 2: the line is
+  skipped with a warning, the rest of the file is read, and missing-dependency
+  findings are lowered as for any partly read runtime manifest. A `-c` of
+  either form warns that its constraints are not applied (#1130).
+- A one-line `install_requires` / extra in `setup.cfg` is split at `;` as
+  setuptools does, so `install_requires = requests; rich` declares both
+  instead of reporting an invalid requirement and `rich` as undeclared. A
+  multi-line value still reads `;` as a marker, and `--fix` leaves a line
+  that holds several dependencies alone (#989).
+- The release workflow publishes only a tag that names the `Cargo.toml` and
+  `pyproject.toml` version and points at the release commit on `main` (v0.7.1
+  and v0.7.4 would have failed), and the GitHub Release and its attestation
+  wait for the same approval as the PyPI upload (#1043). maturin, syft and the
+  Linux build containers are pinned, so a release is built and described by
+  the same tools each time (#1044).
+- The Django plugin reads apps added to `INSTALLED_APPS` with `+=`,
+  `.append()`, `.insert()` and `.extend()`, and lists built from names the
+  settings file assigns (`DJANGO_APPS + LOCAL_APPS`), so their `models.py`
+  and other convention modules are no longer CHK001 certain. A form still not
+  read is a settings gap that caps CHK001 below certain and names its line,
+  instead of only a `partial Django settings parse` warning (#1127).
+- The migration packages a literal `MIGRATION_MODULES` names are loaded like
+  an app's `migrations/`: their modules are no longer CHK001 and their
+  `Migration` is no longer CHK006 (#993).
+- SARIF `artifactLocation.uri` is percent-encoded per path segment, so a
+  path with a space, `#`, `%`, or non-ASCII characters is a valid URI
+  reference and GitHub code scanning annotates the file; fingerprints and
+  the other reporters keep the raw path (#1129).
+- A baseline whose `schema_version` is neither `"0"` nor `"1"` (written by a
+  newer chokkin, or edited by hand) warns that it may be misread; it is still
+  applied, so the exit code does not change (#1131).
+- A `# chokkin:` comment that suppresses nothing now warns: a malformed
+  directive (`ignore[chk003]`, `ignore [CHK003]`, `ignore[CHK003,]`, bare
+  `ignore`), a code that is not CHK001-CHK010, a `file-ignore` after the
+  first statement, or an `ignore` before it. No new spelling is accepted
+  (#1132).
+- An entry point reference with an empty part (`acme..cli:main`) or a second
+  `:` (`acme.cli:main:x`) is reported as `could not map` and roots nothing,
+  instead of a skipped `src/acme//cli.py` or a CHK006 for `main` (#1133).
 - A `.gitignore` below the root re-includes with `!` a file the root
   `.gitignore` ignores, as git does: the root's rules no longer drop it a
   second time after the walk, so its imports count and a dependency only it

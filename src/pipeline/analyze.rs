@@ -123,6 +123,17 @@ pub fn analyze_project(
     )?;
     let mut core = run_analysis_core(&probe, overrides, &options)?;
     let baseline = apply_baseline_options(&mut core.issues, &probe.root.path, overrides, &options)?;
+    if let Some(BaselineReport {
+        path: Some(path),
+        unknown_schema_version: Some(version),
+        ..
+    }) = &baseline
+    {
+        core.warnings.push(ProbeWarning::BaselineSchemaUnknown {
+            path: path.clone(),
+            version: version.clone(),
+        });
+    }
     let fix = if options.fix_enabled {
         let workspace_manifests = probe
             .workspace_inputs

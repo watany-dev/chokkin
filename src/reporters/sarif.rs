@@ -1,5 +1,6 @@
 //! Minimal SARIF v2.1.0 reporter for GitHub code scanning (Phase 3 / v0.3).
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use serde::Serialize;
@@ -116,7 +117,7 @@ fn sarif_notification(diagnostic: &Diagnostic) -> Value {
     });
     if let Some(file) = &diagnostic.file {
         let mut location = json!({
-            "artifactLocation": { "uri": normalize_rel_path(Path::new(file)) }
+            "artifactLocation": { "uri": artifact_uri(file) }
         });
         if let Some(line) = diagnostic.line {
             location["region"] = json!({ "startLine": line });
@@ -161,13 +162,30 @@ fn sarif_locations(issue: &Issue) -> Vec<Value> {
     file.map(|file| {
         json!({
             "physicalLocation": {
-                "artifactLocation": { "uri": normalize_rel_path(Path::new(file)) },
+                "artifactLocation": { "uri": artifact_uri(file) },
                 "region": { "startLine": line.unwrap_or(1) }
             }
         })
     })
     .into_iter()
     .collect()
+}
+
+/// SARIF wants a URI reference (§3.10), so each path segment is
+/// percent-encoded: a raw space, `%`, or `#` would break the URI or cut the
+/// path at a fragment. Everything but RFC 3986 unreserved bytes is encoded,
+/// which also keeps a `:` in the first segment from reading as a scheme.
+fn artifact_uri(file: &str) -> String {
+    let path = normalize_rel_path(Path::new(file));
+    let mut uri = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') {
+            uri.push(char::from(byte));
+        } else {
+            let _ = write!(uri, "%{byte:02X}");
+        }
+    }
+    uri
 }
 
 fn sarif_level(severity: Severity) -> &'static str {

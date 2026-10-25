@@ -19,6 +19,10 @@ use super::types::{BaselineEntry, BaselineError, BaselineFile, BaselineReport};
 /// Baseline file `schema_version` written by chokkin v0.3+.
 const BASELINE_SCHEMA_VERSION: &str = "1";
 
+/// `schema_version`s this reader understands: the v0.2 draft (`"0"`, also
+/// what a file without the key reads as) and the v0.3 schema.
+const KNOWN_SCHEMA_VERSIONS: [&str; 2] = ["0", BASELINE_SCHEMA_VERSION];
+
 /// Apply a baseline file, recomputing the exit status under `overrides`.
 ///
 /// # Errors
@@ -68,10 +72,16 @@ pub fn apply_baseline(
     report.exit_status =
         compute_exit_status(&report.issues, overrides, overrides.strict.unwrap_or(false));
 
+    // A newer or hand-edited file is still applied, so the exit code does
+    // not change under it, but the run says it may be misread (#1131).
+    let unknown_schema_version = (!KNOWN_SCHEMA_VERSIONS
+        .contains(&baseline.schema_version.as_str()))
+    .then_some(baseline.schema_version);
     Ok(BaselineReport {
         path: Some(rel_to_root(root, &path)),
         suppressed: suppressed_count,
         written: 0,
+        unknown_schema_version,
     })
 }
 
@@ -119,6 +129,7 @@ pub fn write_baseline(
         path: Some(rel_to_root(root, &path)),
         suppressed: 0,
         written,
+        unknown_schema_version: None,
     })
 }
 

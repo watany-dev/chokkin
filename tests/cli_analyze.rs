@@ -734,6 +734,49 @@ fn binary_baseline_update_then_suppresses_existing_issue() {
     assert!(stdout.contains("Summary: 0 issues"));
 }
 
+/// Issue #1131: a baseline whose `schema_version` this chokkin does not know
+/// still suppresses (the exit code does not change in a patch release), but
+/// says so; the known versions stay silent.
+#[test]
+fn binary_baseline_with_unknown_schema_version_warns() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(&fixture_path(&["deps", "unused_boto3"]), temp.path()).expect("copy");
+    let baseline = temp.path().join("chokkin-baseline.json");
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--baseline")
+            .arg(&baseline)
+            .args(args)
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin")
+    };
+    run(&["--update-baseline"]);
+    let written = fs::read_to_string(&baseline).expect("read baseline");
+    assert!(written.contains("\"schema_version\": \"1\""), "{written}");
+
+    for (contents, warns) in [
+        (written.clone(), false),
+        (written.replace("  \"schema_version\": \"1\",\n", ""), false),
+        (
+            written.replace("\"schema_version\": \"1\"", "\"schema_version\": \"99\""),
+            true,
+        ),
+    ] {
+        fs::write(&baseline, &contents).expect("write baseline");
+        let output = run(&[]);
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::Success.code().into())
+        );
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(stdout.contains("(1 baseline-suppressed)"), "{stdout}");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let warning = "baseline: `chokkin-baseline.json` has schema_version \"99\"";
+        assert_eq!(stderr.contains(warning), warns, "{contents}\n{stderr}");
+    }
+}
+
 /// Issue #712: a src-layout root inventories only `src/**`, so the member
 /// files whose imports use another member are parsed for that check alone.
 /// They go into the root's parse cache bundle, and an edit to one is seen on
@@ -2148,6 +2191,44 @@ fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
         fs::write(path, text).expect("write fixture");
     }
     temp
+}
+
+/// pip fetches a `-r` URL and expands `${VAR}`; chokkin reads neither, so
+/// the run goes on with a warning and lowers the missing-dependency findings
+/// the unread include may have declared, instead of exiting 2 (#1130).
+#[test]
+fn binary_url_and_env_var_includes_warn_and_lower_instead_of_stopping() {
+    for (include, warning) in [
+        (
+            "-r ${BASE}/base.txt",
+            "manifest: `-r ${BASE}/base.txt` at `requirements.txt:1` is a path with an environment variable, which chokkin does not read; the dependencies it declares are not read",
+        ),
+        (
+            "-r https://example.com/base.txt",
+            "manifest: `-r https://example.com/base.txt` at `requirements.txt:1` is a URL, which chokkin does not read; the dependencies it declares are not read",
+        ),
+    ] {
+        let project = write_project(&[
+            ("requirements.txt", &format!("{include}\nrequests\n")),
+            ("main.py", "import requests\nimport yaml\n"),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json", "--confidence", "maybe"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert_eq!(output.status.code(), Some(0), "{include}: {stderr}");
+        assert!(stderr.contains(warning), "{include}: {stderr}");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let yaml = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .find(|issue| issue["code"] == "CHK003")
+            .unwrap_or_else(|| panic!("{include}: CHK003 for yaml"));
+        assert_eq!(yaml["severity"], "info", "{include}: {yaml}");
+    }
 }
 
 /// Every path that resolves outside the root says so, instead of "not found"
@@ -4651,6 +4732,10 @@ fn binary_django_installed_app_conventions_are_used() {
         key.starts_with("CHK001") && (key.contains("admin.py") || key.contains("models.py"))
     });
     assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
+    // An addition read in full installs no admin either (#1127).
+    let mut added = flagged("['mysite.polls']\nINSTALLED_APPS += ['django.contrib.auth']");
+    added.retain(|key| key.contains("admin.py"));
+    assert_eq!(added, ["CHK001:mysite/polls/admin.py"]);
     // The inherited config makes the package that defines it no app.
     let project = django_app_project("['mysite.apps.SiteAdminConfig', 'mysite.polls']");
     let keys = issue_keys(&json_issues(
@@ -4667,6 +4752,158 @@ fn binary_django_installed_app_conventions_are_used() {
             .any(|(_, target)| target.starts_with("mysite/apps.py")),
         "{keys:?}"
     );
+}
+
+/// A project with one app, `mysite.blog`, that only `settings` installs.
+fn django_blog_project(settings: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", settings),
+        ("mysite/blog/__init__.py", ""),
+        ("mysite/blog/models.py", ""),
+    ])
+}
+
+/// An app added to `INSTALLED_APPS` after its assignment, or through a list
+/// the settings name, is installed; one added in a form not read lowers the
+/// project's CHK001 and names the line (#1127, ADR 0005).
+#[test]
+fn binary_django_reads_apps_added_to_installed_apps() {
+    const BASE: &str = "INSTALLED_APPS = ['django.contrib.admin']\n";
+    for added in [
+        "INSTALLED_APPS += ['mysite.blog']",
+        "INSTALLED_APPS += ('mysite.blog',)",
+        "INSTALLED_APPS.append('mysite.blog')",
+        "INSTALLED_APPS.extend(['mysite.blog'])",
+        "INSTALLED_APPS.insert(0, 'mysite.blog')",
+        "if True:\n    INSTALLED_APPS += ['mysite.blog']",
+        "INSTALLED_APPS = INSTALLED_APPS + ['mysite.blog']",
+        "LOCAL_APPS = ['mysite.blog']\nINSTALLED_APPS += LOCAL_APPS",
+        "LOCAL_APPS = ['mysite.blog']\nINSTALLED_APPS = [*INSTALLED_APPS, *LOCAL_APPS]",
+        "INSTALLED_APPS = list(INSTALLED_APPS) + list(['mysite.blog'])",
+    ] {
+        let project = django_blog_project(&format!("{BASE}{added}\n"));
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(
+            chk001_confidence(&issues, "mysite/blog/models.py"),
+            None,
+            "{added}: {issues:?}"
+        );
+    }
+    for (settings, line) in [
+        (
+            "BASE = ['mysite.blog']\nINSTALLED_APPS = BASE + ['django.contrib.admin']\n",
+            None,
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin']\nINSTALLED_APPS += extra_apps()\n",
+            Some(2),
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin']\nINSTALLED_APPS.append(APP)\n",
+            Some(2),
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin', *EXTRA]\n",
+            Some(1),
+        ),
+        (
+            "INSTALLED_APPS = BASE_APPS + ['django.contrib.admin']\n",
+            Some(1),
+        ),
+        (
+            "INSTALLED_APPS = []\nINSTALLED_APPS[0:0] = ['x']\n",
+            Some(2),
+        ),
+    ] {
+        let project = django_blog_project(settings);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let issues = parsed["issues"].as_array().cloned().unwrap_or_default();
+        let confidence = chk001_confidence(&issues, "mysite/blog/models.py");
+        let Some(line) = line else {
+            // `BASE` is read, so the app is installed and nothing is unread.
+            assert_eq!(confidence, None, "{settings}: {issues:?}");
+            assert!(!stderr.contains("INSTALLED_APPS"), "{settings}: {stderr}");
+            continue;
+        };
+        assert_ne!(
+            confidence.as_deref(),
+            Some("certain"),
+            "{settings}: {issues:?}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "settings `mysite/settings.py:{line}` sets `INSTALLED_APPS` in a form that could not be fully read"
+            )),
+            "{settings}: {stderr}"
+        );
+    }
+}
+
+/// The migration package `MIGRATION_MODULES` names is loaded like an app's
+/// `migrations`: its modules are used and so is their `Migration` (#993).
+#[test]
+fn binary_django_migration_modules_are_loaded() {
+    let moved = "mysite/blog/db_migrations/0001_initial.py";
+    for (migration_modules, loaded) in [
+        ("{'blog': 'mysite.blog.db_migrations'}", true),
+        ("{'blog': None}", false),
+        ("{'blog': modules_for('blog')}", false),
+        ("migration_modules()", false),
+    ] {
+        let settings =
+            format!("INSTALLED_APPS = ['mysite.blog']\nMIGRATION_MODULES = {migration_modules}\n");
+        let project = django_blog_project(&settings);
+        for (path, text) in [
+            ("mysite/blog/db_migrations/__init__.py", ""),
+            (moved, "class Migration:\n    pass\n"),
+            ("mysite/blog/db_migrations/_helper.py", ""),
+            (
+                "mysite/blog/db_migrations/old/0001_initial.py",
+                "class Migration:\n    pass\n",
+            ),
+        ] {
+            let path = project.path().join(path);
+            fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            fs::write(path, text).expect("write migration");
+        }
+        let issues = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"]);
+        let keys: Vec<String> = issue_keys(&issues)
+            .into_iter()
+            .filter(|(_, target)| target.contains("db_migrations"))
+            .map(|(code, target)| format!("{code}:{target}"))
+            .collect();
+        let expected: &[&str] = if loaded {
+            // Django imports no module starting with `_` and no subpackage.
+            &[
+                "CHK001:mysite/blog/db_migrations/_helper.py",
+                "CHK001:mysite/blog/db_migrations/old/0001_initial.py",
+            ]
+        } else {
+            &[
+                "CHK001:mysite/blog/db_migrations/0001_initial.py",
+                "CHK001:mysite/blog/db_migrations/_helper.py",
+                "CHK001:mysite/blog/db_migrations/old/0001_initial.py",
+            ]
+        };
+        let mut keys = keys;
+        keys.sort();
+        assert_eq!(keys, expected, "{migration_modules}");
+    }
 }
 
 #[test]
@@ -9774,4 +10011,56 @@ fn binary_explicit_confidence_wins_over_strict() {
     let (issues, code) = run(&["--strict", "--confidence", "certain"]);
     assert_eq!(issues, Vec::<(String, String)>::new());
     assert_eq!(code, Some(0));
+}
+
+/// Issue #1133: an object reference with an empty segment or a second `:`
+/// does not name a module, so it maps to nothing and roots nothing.
+#[test]
+fn binary_malformed_entry_point_reference_is_unmapped() {
+    for (target, mapped) in [
+        ("acme.cli:main", true),
+        ("acme..cli:main", false),
+        (".acme.cli:main", false),
+        ("acme.cli:main:x", false),
+        ("acme.cli:main..x", false),
+        ("acme.cli:", false),
+    ] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        fs::create_dir_all(temp.path().join("src/acme")).expect("mkdir");
+        fs::write(temp.path().join("src/acme/__init__.py"), "").expect("write");
+        fs::write(
+            temp.path().join("src/acme/cli.py"),
+            "def main():\n    pass\n",
+        )
+        .expect("write");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            format!(
+                "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n[project.scripts]\nacme = \"{target}\"\n"
+            ),
+        )
+        .expect("write pyproject");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+        let codes: Vec<&str> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter_map(|issue| issue["code"].as_str())
+            .collect();
+        assert!(!codes.contains(&"CHK006"), "{target}: {stdout}");
+        assert!(!stderr.contains("//"), "{target}: {stderr}");
+        let unmapped = format!("entry: could not map `{target}` to a source file");
+        assert_eq!(stderr.contains(&unmapped), !mapped, "{target}: {stderr}");
+        if mapped {
+            assert_eq!(codes, Vec::<&str>::new(), "{target}: {stdout}");
+        }
+    }
 }

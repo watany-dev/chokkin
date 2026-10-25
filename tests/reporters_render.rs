@@ -622,3 +622,44 @@ fn sarif_reporter_omits_invocations_without_diagnostics() {
     let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("sarif json");
     assert!(parsed["runs"][0].get("invocations").is_none(), "{rendered}");
 }
+
+#[test]
+fn sarif_reporter_percent_encodes_artifact_uris() {
+    let path = "my pkg/日本 #1%?.py";
+    let mut report = report();
+    report.issues[0].location.file = Some(path.to_owned());
+    let context = RenderContext {
+        diagnostics: diagnostic_lines(&[ProbeWarning::ParseDiagnostic {
+            path: path.to_owned(),
+            line: 3,
+            message: "relative import without a package".to_owned(),
+        }]),
+        ..context()
+    };
+
+    let rendered = render_issues(ReporterId::Sarif, &report, &context);
+    let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("sarif json");
+
+    let run = &parsed["runs"][0];
+    let result_uri =
+        &run["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"];
+    let notification_uri = &run["invocations"][0]["toolExecutionNotifications"][0]["locations"][0]
+        ["physicalLocation"]["artifactLocation"]["uri"];
+    let expected = "my%20pkg/%E6%97%A5%E6%9C%AC%20%231%25%3F.py";
+    assert_eq!(result_uri, expected);
+    assert_eq!(notification_uri, expected);
+    let bytes = expected.as_bytes();
+    let mut decoded = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("hex digits");
+            decoded.push(u8::from_str_radix(hex, 16).expect("hex byte"));
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    assert_eq!(String::from_utf8(decoded).expect("utf-8 path"), path);
+}
