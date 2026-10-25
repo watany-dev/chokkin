@@ -551,18 +551,14 @@ fn raw_testpaths(root: &Path, dir: &str) -> Vec<String> {
         .collect()
 }
 
-/// [`raw_testpaths`] with each glob replaced by the paths it matches. A
-/// literal entry stays as written whether or not it exists, and so does a
-/// glob that matches nothing but names an existing path as written (`t[1]`).
+/// [`raw_testpaths`] with each entry replaced by the paths it matches as a
+/// glob. An entry that matches nothing stays as written, whether or not it
+/// exists (`t[1]` names a directory called that, not `t1`).
 fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
     raw_testpaths(root, dir)
         .into_iter()
         .flat_map(|entry| {
-            let matched = if has_glob_magic(&entry) {
-                expand_testpath(root, &entry)
-            } else {
-                Vec::new()
-            };
+            let matched = expand_testpath(root, &entry);
             if matched.is_empty() {
                 vec![entry]
             } else {
@@ -570,11 +566,6 @@ fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
             }
         })
         .collect()
-}
-
-/// Whether `pattern` holds a character Python's `glob` expands.
-fn has_glob_magic(pattern: &str) -> bool {
-    pattern.contains(['*', '?', '['])
 }
 
 /// The root-relative paths `pattern` names, sorted, as pytest's
@@ -590,13 +581,8 @@ fn expand_testpath(root: &Path, pattern: &str) -> Vec<String> {
         for base in &found {
             if component == "**" {
                 dirs_from(root, base, &mut next);
-            } else if has_glob_magic(component) {
-                next.extend(matching_children(root, base, component));
             } else {
-                let path = join_rel(base, component);
-                if root.join(&path).exists() {
-                    next.push(path);
-                }
+                next.extend(matching_children(root, base, component));
             }
         }
         next.sort();
@@ -1066,6 +1052,26 @@ mod tests {
             unmatched_testpaths(temp.path(), &layout),
             ["odd/{y}", "t?sts"]
         );
+    }
+
+    /// Matches come back sorted, as pytest sorts them, and once each: a
+    /// repeated `**` would otherwise list every directory again per level.
+    #[test]
+    fn testpath_globs_match_sorted_and_once() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        for name in ["f", "c", "a", "e", "b", "d"] {
+            fs::create_dir_all(temp.path().join("suites").join(name).join("x"))
+                .expect("create dir");
+        }
+        assert_eq!(
+            expand_testpath(temp.path(), "suites/*"),
+            [
+                "suites/a", "suites/b", "suites/c", "suites/d", "suites/e", "suites/f"
+            ]
+        );
+        let all = expand_testpath(temp.path(), "suites/**/**");
+        assert_eq!(all.len(), 13);
+        assert!(all.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     /// A glob match widens to the top of its `__init__.py` chain like a
