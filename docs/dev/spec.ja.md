@@ -978,6 +978,7 @@ discovery に無い entry を skip した (SkippedEntry)           -> CHK001 と
 app mode で entry root が 1 つも無い (NoEntryRoot)         -> CHK001 と distribution の CHK002 を likely 以下に
 どこからも到達しない library の公開 module を skip した (UnreadPublicModule) -> distribution の CHK002 を likely 以下に
 到達可能な notebook の一部の cell を読めなかった (UnreadNotebookCells) -> CHK001 と distribution の CHK002 を likely 以下に
+到達可能な file の相対 import を解決できない (UnresolvedRelativeImport) -> その dot が指す directory の下の file の CHK001 を likely 以下に
 到達可能な file に opaque dynamic import (OpaqueDynamicImport) -> CHK001 を likely 以下に
 runtime 依存が読めない (RuntimeDependenciesUnknown)        -> import の CHK003 / CHK004 と distribution の CHK005 を info / maybe に
 extras を読み切れない (UnknownExtras)                     -> import の CHK003 / CHK004 と distribution の CHK005 を likely 以下に
@@ -999,6 +1000,8 @@ PEP 723 script の `requires-python` を読めず project の範囲で読んだ 
 PEP 723 script の block に名前の読める invalid な `dependencies` 行がある (InvalidScriptRequirement) -> その script の、その名前の CHK003 を info / maybe に
 project の file を dotted name で名指しする文字列 literal がある (StringModuleRef) -> その file の CHK001 を info / likely に
 ```
+
+解決できない相対 import の gap は、到達可能な file で parser が解決できなかった相対 import (`could not resolve relative import` などの parse warning を出したもの) ごとに集める (#1113)。flat layout の namespace package のように layout が package を知らない file では、`from .. import b` がどの file を読み込むかは決まらないが、dot の数だけ file の directory から上った directory (1 つなら file の directory、root より上に出れば root) の下のどれかである。その directory の下の file の CHK001 は「どこからも使われていない」と言い切れないので likely 以下に下げる (`target` にその directory を持つ)。同じ file で同じ directory を指すものは最初の行の 1 件にまとめ、`site` は dot と行にする。warning は parse の warning がそのまま届けるので、gap を集めた後には出さない。
 
 解決できない import の gap は、CHK010 が warning で出す site と同じ条件で集める (#911)。到達可能な file にあり、`TYPE_CHECKING` の下でも optional import でもなく、file context が docs / dev でなく、first-party でもない import root が、どの distribution にも解決できないとき 1 件にする。import map で解決できない module は、宣言済みのどれかの distribution が提供しているかもしれない。その distribution の CHK002 (unused) は「使っていない」と言い切れないので certain から外す。どの distribution かは分からないので、root manifest の CHK002 をすべて下げる (CHK002 は root manifest だけで判定するため member では絞らない)。PEP 723 script の import は、script の block が環境を決めるので、その script の block の CHK002 だけを下げ、file context を問わず数える。script が import する同じ project の helper module の解決できない import は project 側の gap になり、script の block は下げない。`site` は `--explain` が file の代わりに出す module と行で (`` `zz_widgets_core` in `acme/main.py:1` ``)、同じ file の同じ module は最初の行の 1 件にまとめる。CHK010 自体は変えず、この gap を利用者に届ける warning として使う。
 

@@ -29,7 +29,7 @@ pub(crate) use ignores::extract_ignores_with;
 pub(crate) use lines::LineIndex;
 pub(crate) use module_guard::{guarded_roots, predicate_name_module};
 pub use parse::{parse_file, parse_project_sources_with_cache};
-pub(crate) use relative::resolve_relative_import;
+pub(crate) use relative::{NOT_IN_PACKAGE, resolve_relative_import};
 #[cfg(test)]
 pub(crate) use types::ParseDiagnostic;
 pub(crate) use types::import_context_for_file;

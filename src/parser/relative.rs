@@ -68,6 +68,12 @@ pub(super) fn resolve_relative_name(name: &str, package: &str) -> Option<String>
     })
 }
 
+/// The diagnostic for a relative import in a file the layout names no
+/// module for: the one case where the import may still work, run with the
+/// right directory on `sys.path` (#1113).
+pub(crate) const NOT_IN_PACKAGE: &str =
+    "could not resolve relative import (file is not inside a known package)";
+
 /// Build a diagnostic for a relative import `resolve_relative_import`
 /// rejected, naming why: the file has no module name in the layout, it is a
 /// top-level module with no parent package, or the import climbs past the
@@ -85,7 +91,7 @@ pub(super) fn unresolved_relative_diagnostic(
         .as_deref()
         .map(|module| containing_package(module, file_path.ends_with("__init__.py")));
     let message = match package {
-        None => "could not resolve relative import (file is not inside a known package)".to_owned(),
+        None => NOT_IN_PACKAGE.to_owned(),
         Some(package) if package.is_empty() => {
             let module = module.unwrap_or_default();
             format!(
