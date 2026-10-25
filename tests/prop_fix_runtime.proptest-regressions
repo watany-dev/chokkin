@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7ac5efc4a5fdd9bf84715c483f9d74928943ce264be049984bc0710c06bf58a4 # shrinks to spec = Spec { package_init: false, main: [(1, FromPackage)], modules: [[], [(2, FromPackage)], [], []] }

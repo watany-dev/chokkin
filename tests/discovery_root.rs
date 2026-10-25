@@ -25,19 +25,17 @@ fn fs_canonicalize(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn has_project_marker_ancestor(path: &Path) -> bool {
-    path.ancestors().skip(1).any(|ancestor| {
-        [
-            "pyproject.toml",
-            "uv.lock",
-            "setup.cfg",
-            "setup.py",
-            "requirements.txt",
-            ".git",
-        ]
-        .iter()
-        .any(|marker| ancestor.join(marker).exists())
-    })
+fn has_project_marker(dir: &Path) -> bool {
+    [
+        "pyproject.toml",
+        "uv.lock",
+        "setup.cfg",
+        "setup.py",
+        "requirements.txt",
+        ".git",
+    ]
+    .iter()
+    .any(|marker| dir.join(marker).exists())
 }
 
 #[test]
@@ -102,42 +100,43 @@ fn discovers_git_gitfile_when_no_manifest() {
     assert_discovered(root, root, RootMarker::Git);
 }
 
+/// A marker that cannot be stat'ed for any reason but absence is an I/O
+/// error, not a missing marker. A symlink loop fails the same way for root,
+/// which permission bits would not stop (#1136).
 #[cfg(unix)]
 #[test]
-fn returns_io_error_for_unreadable_start_dir() {
-    use std::os::unix::fs::PermissionsExt;
-
+fn returns_io_error_for_unreadable_marker() {
     let temp = tempfile::tempdir().expect("tempdir");
     let dir = temp.path();
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).expect("chmod");
-
-    // Root (CAP_DAC_OVERRIDE) bypasses permission bits; the unreadable-dir
-    // scenario cannot be reproduced there, so skip instead of failing.
-    let denied = matches!(
-        std::fs::metadata(dir.join("pyproject.toml")),
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied
-    );
-    if !denied {
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).ok();
-        return;
-    }
+    std::os::unix::fs::symlink("pyproject.toml", dir.join("pyproject.toml")).expect("symlink");
 
     let error = discover_project_root(dir).expect_err("expected io error");
 
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).ok();
-
-    assert!(matches!(error, DiscoveryError::Io { .. }));
+    assert!(
+        matches!(&error, DiscoveryError::Io { path, .. } if path.ends_with("pyproject.toml")),
+        "{error:?}"
+    );
 }
 
+/// No marker up to the file system root is `NotFound`. When the temp
+/// directory sits under a marker, the walk must stop at the nearest one
+/// instead, so the test asserts that rather than passing vacuously (#1136).
 #[test]
 fn returns_not_found_for_empty_tree() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let start = std::fs::canonicalize(temp.path()).expect("canonical tempdir");
 
-    if has_project_marker_ancestor(temp.path()) {
+    if let Some(nearest) = start
+        .ancestors()
+        .skip(1)
+        .find(|dir| has_project_marker(dir))
+    {
+        let root = discover_project_root(&start).expect("marker above the tempdir");
+        assert_eq!(root.path, nearest);
         return;
     }
 
-    let error = discover_project_root(temp.path()).expect_err("expected not found");
+    let error = discover_project_root(&start).expect_err("expected not found");
     assert!(matches!(error, DiscoveryError::NotFound { .. }));
 }
 
@@ -157,11 +156,18 @@ fn ignores_markers_spelled_in_another_case() {
     }
     std::fs::create_dir(temp.path().join(".GIT")).expect("create dir");
 
-    if has_project_marker_ancestor(temp.path()) {
+    let start = std::fs::canonicalize(temp.path()).expect("canonical tempdir");
+    if let Some(nearest) = start
+        .ancestors()
+        .skip(1)
+        .find(|dir| has_project_marker(dir))
+    {
+        let root = discover_project_root(&start).expect("marker above the tempdir");
+        assert_eq!(root.path, nearest);
         return;
     }
 
-    let error = discover_project_root(temp.path()).expect_err("expected not found");
+    let error = discover_project_root(&start).expect_err("expected not found");
     assert!(matches!(error, DiscoveryError::NotFound { .. }));
 }
 

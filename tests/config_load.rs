@@ -350,3 +350,73 @@ fn empty_chokkin_toml_uses_defaults() {
     assert!(loaded.sources.chokkin_toml.is_some());
     assert!(!loaded.sources.pyproject_tool_chokkin);
 }
+
+/// `.chokkin.toml` is read before `chokkin.toml`, so the latter wins a key
+/// both set (spec §225, #1136).
+#[test]
+fn merge_priority_chokkin_toml_wins_over_dot_chokkin_toml() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"demo\"\n",
+    )
+    .expect("write pyproject");
+    std::fs::write(
+        temp.path().join(".chokkin.toml"),
+        "confidence = \"maybe\"\nmode = \"app\"\n",
+    )
+    .expect("write .chokkin.toml");
+    std::fs::write(
+        temp.path().join("chokkin.toml"),
+        "confidence = \"certain\"\n",
+    )
+    .expect("write chokkin.toml");
+
+    let loaded = load_config(&project_root_at(temp.path())).expect("load config");
+
+    assert_eq!(loaded.effective.confidence, Confidence::Certain);
+    assert_eq!(loaded.effective.mode, ProjectMode::App);
+    assert!(loaded.sources.dot_chokkin_toml.is_some());
+    assert!(loaded.sources.chokkin_toml.is_some());
+    assert!(!loaded.sources.pyproject_tool_chokkin);
+}
+
+/// `EntrySpec::parse` rejects each malformed form on its own, with its own
+/// message (#1136).
+#[test]
+fn entry_spec_rejects_each_malformed_form() {
+    use chokkin::internals::EntrySpec;
+
+    for (value, message) in [
+        ("pkg/app.py:a/b", "entry path must not contain ':'"),
+        ("pkg/app.py:a\\b", "entry path must not contain ':'"),
+        (".:app", "entry path must not be . or .."),
+        ("..:app", "entry path must not be . or .."),
+        (":app", "entry path must not be empty"),
+        ("pkg/app.py:", "entry symbol must not be empty"),
+        ("a:b:app", "entry path must not contain ':'"),
+        (".", "entry path must not be . or .."),
+        ("./", "entry path must not be empty"),
+    ] {
+        assert_eq!(EntrySpec::parse(value), Err(message), "{value:?}");
+    }
+    let spec = EntrySpec::parse("./pkg\\app.py:app").expect("parse");
+    assert_eq!(spec.path, "pkg/app.py");
+    assert_eq!(spec.symbol.as_deref(), Some("app"));
+}
+
+/// `Display` is what warnings and messages print (#1136).
+#[test]
+fn confidence_and_target_version_display_their_spelling() {
+    use chokkin::internals::TargetVersion;
+
+    for (confidence, text) in [
+        (Confidence::Certain, "certain"),
+        (Confidence::Likely, "likely"),
+        (Confidence::Maybe, "maybe"),
+    ] {
+        assert_eq!(confidence.to_string(), text);
+    }
+    let version = TargetVersion::parse("py311").expect("py311");
+    assert_eq!(version.to_string(), "py311");
+}

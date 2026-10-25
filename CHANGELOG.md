@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#1094).
 
 ### Fixed
+- A module in a namespace directory at the root (`pkg/` without
+  `__init__.py`) that imports a sibling by the directory's name (`from pkg
+  import m2`) reaches it, so `pkg/m2.py` is no longer a certain CHK001 that
+  `--fix --allow-remove-files` deletes while the program still imports it
+  (#1114).
+- A relative import the layout cannot resolve (`from .. import b` in a
+  namespace package of a flat layout) no longer leaves the files it may
+  import as certain CHK001: those below the directory its dots climb to are
+  reported at likely, beside the parse warning that already named the import
+  (#1113).
 - `celery -A pkg` that names a package whose `__init__.py` has no `app` /
   `celery` reaches `pkg/celery.py`, which Celery imports to find the app, so
   it is no longer CHK001 and its `app` is no CHK006 (#865).

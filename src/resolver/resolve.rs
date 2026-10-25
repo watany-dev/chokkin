@@ -553,6 +553,17 @@ impl Resolver<'_> {
                 })
                 .or_else(|| contextless_requirement_match(&root_name, declared))
                 .or_else(|| runtime_provided(&root_name))
+                // Last, so a declaration still takes a third-party namespace
+                // a vendored root directory shares (#1114).
+                .or_else(|| {
+                    pytest_paths
+                        .in_root_namespace(file, &root_name)
+                        .then_some(RootResolution {
+                            origin: ModuleOrigin::FirstParty,
+                            distribution: None,
+                            confidence: ResolveConfidence::Certain,
+                        })
+                })
                 .unwrap_or(core)
         } else {
             core

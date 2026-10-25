@@ -80,3 +80,43 @@ pub(crate) fn config_label(sources: &ConfigSources, pyproject_label: &str) -> St
         parts.join(", ")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    /// The `Config :` line names every file that contributed, in merge order
+    /// (#1136).
+    #[test]
+    fn config_label_names_each_source_in_merge_order() {
+        let mut sources = ConfigSources {
+            dot_chokkin_toml: None,
+            chokkin_toml: None,
+            pyproject_tool_chokkin: false,
+        };
+        assert_eq!(config_label_from_sources(&sources), "defaults");
+        sources.dot_chokkin_toml = Some(PathBuf::from(".chokkin.toml"));
+        assert_eq!(config_label_from_sources(&sources), ".chokkin.toml");
+        sources.chokkin_toml = Some(PathBuf::from("chokkin.toml"));
+        assert_eq!(
+            config_label_from_sources(&sources),
+            ".chokkin.toml, chokkin.toml"
+        );
+        sources.pyproject_tool_chokkin = true;
+        assert_eq!(
+            config_label_from_sources(&sources),
+            ".chokkin.toml, chokkin.toml, pyproject.toml"
+        );
+        assert_eq!(
+            config_label(&sources, "pyproject.toml [tool.chokkin]"),
+            ".chokkin.toml, chokkin.toml, pyproject.toml [tool.chokkin]"
+        );
+        sources.dot_chokkin_toml = None;
+        assert_eq!(
+            config_label_from_sources(&sources),
+            "chokkin.toml, pyproject.toml"
+        );
+    }
+}

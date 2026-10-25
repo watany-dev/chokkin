@@ -15,7 +15,7 @@ use crate::manifest::{
     ExtrasState, InlineScript, LoadedManifest, ManifestWarning, archive_distribution_name,
     invalid_requirement_name, normalize_distribution_name,
 };
-use crate::parser::{ImportContext, ParseSummary, ParsedModule};
+use crate::parser::{ImportContext, NOT_IN_PACKAGE, ParseSummary, ParsedModule};
 use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
@@ -44,7 +44,9 @@ pub struct Gap {
     /// command's target (#913).
     pub site: Option<(String, Option<u32>)>,
     /// The root-relative project file the site names, whose findings alone
-    /// the gap lowers: a module a string literal names (#1026).
+    /// the gap lowers: a module a string literal names (#1026); for an
+    /// unresolved relative import, the directory whose files it lowers
+    /// (#1113).
     pub target: Option<String>,
 }
 
@@ -81,6 +83,10 @@ pub enum GapKind {
     /// not (#902): what those cells import is unknown. Every notebook is an
     /// entry (#514), so none is a public orphan (#942).
     UnreadNotebookCells,
+    /// A reachable module has a relative import that could not be resolved
+    /// (#1113): it may import any file below the directory its dots climb
+    /// to, which `target` holds.
+    UnresolvedRelativeImport,
     /// A reachable module loads a module whose name is computed at runtime.
     /// One in a public orphan is no gap: it lowers no distribution, and what
     /// a public module loads ships in the wheel and so is public too (#942).
@@ -202,6 +208,7 @@ impl GapKind {
                 | Self::SkippedEntry
                 | Self::NoEntryRoot
                 | Self::UnreadNotebookCells
+                | Self::UnresolvedRelativeImport
                 | Self::OpaqueDynamicImport
                 | Self::UnreadCommandTarget
                 | Self::UnreadDjangoSettings
@@ -289,6 +296,9 @@ impl GapKind {
             Self::UnreadPublicModule => "a public module of the library could not be read",
             Self::UnreadNotebookCells => {
                 "some code cells of a reachable notebook could not be read"
+            },
+            Self::UnresolvedRelativeImport => {
+                "a reachable module has a relative import that could not be resolved"
             },
             Self::OpaqueDynamicImport => {
                 "a reachable module imports a module by a name computed at runtime"
@@ -409,6 +419,9 @@ impl Gap {
                 candidate.origins.iter().any(
                     |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, self.image_dir())),
                 )
+            },
+            (GapKind::UnresolvedRelativeImport, IssueSubject::File { path }) => {
+                self.target.as_deref().is_some_and(|dir| is_under(path, dir))
             },
             (GapKind::StringModuleRef, subject) => {
                 matches!(subject, IssueSubject::File { path } if self.target.as_deref() == Some(path))
@@ -575,8 +588,61 @@ fn module_gaps(
         if module.has_opaque_dynamic_import {
             push(GapKind::OpaqueDynamicImport);
         }
+        gaps.extend(unresolved_relative_gaps(module));
     }
     gaps
+}
+
+/// One gap per directory the module's unresolved relative imports climb to,
+/// at the first such import (#1113). The parser records an import it could
+/// not resolve with an empty module and its dots; `level` dots name the
+/// file's directory and the `level - 1` above it, as `__package__` would
+/// for a module run from there. Only a file the layout names no module for
+/// may still run the import: a top-level module's, or one climbing past its
+/// package or the directories above it, raises `ImportError` and loads
+/// nothing.
+fn unresolved_relative_gaps(module: &ParsedModule) -> Vec<Gap> {
+    let unplaced: BTreeSet<u32> = module
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.message == NOT_IN_PACKAGE)
+        .map(|diagnostic| diagnostic.line)
+        .collect();
+    let mut sites: BTreeMap<&str, (u8, u32)> = BTreeMap::new();
+    for import in &module.imports {
+        if !import.module.is_empty() || !unplaced.contains(&import.line) {
+            continue;
+        }
+        let Some(dir) = package_dir(&module.path, import.relative_level) else {
+            continue;
+        };
+        // One file reaches a directory with one dot count only.
+        let site = sites
+            .entry(dir)
+            .or_insert((import.relative_level, import.line));
+        site.1 = site.1.min(import.line);
+    }
+    sites
+        .into_iter()
+        .map(|(dir, (level, line))| Gap {
+            file: module.path.clone(),
+            kind: GapKind::UnresolvedRelativeImport,
+            member: None,
+            site: Some((".".repeat(usize::from(level)), Some(line))),
+            target: Some(dir.to_owned()),
+        })
+        .collect()
+}
+
+/// The directory `level` dots name from the file at `path`: its own
+/// directory, then one up per further dot. `None` past the file's top-level
+/// directory, which is the outermost package the file can be imported in.
+fn package_dir(path: &str, level: u8) -> Option<&str> {
+    let (mut dir, _) = path.rsplit_once('/')?;
+    for _ in 1..level {
+        (dir, _) = dir.rsplit_once('/')?;
+    }
+    (level > 0).then_some(dir)
 }
 
 /// Skipped modules no root reaches that a caller of the library may import:
@@ -1225,6 +1291,87 @@ mod tests {
             .iter()
             .map(|candidate| (candidate.severity, candidate.confidence))
             .collect()
+    }
+
+    /// An unresolved relative import lowers the CHK001 below the directory
+    /// its dots climb to, and nothing else (#1113).
+    #[test]
+    fn unresolved_relative_import_caps_the_files_below_its_directory() {
+        let relative = Gap {
+            target: Some("ns".to_owned()),
+            site: Some(("..".to_owned(), Some(1))),
+            ..gap("ns/sub/a.py", GapKind::UnresolvedRelativeImport)
+        };
+        let certain = (Severity::Error, Confidence::Certain);
+        let likely = (Severity::Error, Confidence::Likely);
+        let found = lowered(
+            &[relative],
+            vec![
+                candidate(RuleId::Chk001, file("ns/b.py")),
+                candidate(RuleId::Chk001, file("ns/sub/c.py")),
+                candidate(RuleId::Chk001, file("nsx/d.py")),
+                candidate(RuleId::Chk001, file("other/e.py")),
+                candidate(RuleId::Chk002, distribution("requests")),
+            ],
+        );
+        assert_eq!(found, [likely, likely, certain, certain, certain]);
+    }
+
+    #[test]
+    fn package_dir_climbs_one_directory_per_further_dot() {
+        assert_eq!(package_dir("ns/sub/a.py", 1), Some("ns/sub"));
+        assert_eq!(package_dir("ns/sub/a.py", 2), Some("ns"));
+        assert_eq!(package_dir("ns/sub/a.py", 3), None);
+        assert_eq!(package_dir("ns/sub/a.py", 0), None);
+        assert_eq!(package_dir("main.py", 1), None);
+    }
+
+    /// Only an import the parser left unresolved, on a line it said is
+    /// outside a package, opens a gap, at the first such line per directory.
+    #[test]
+    fn unresolved_relative_gaps_take_the_first_unplaced_import_per_directory() {
+        use crate::parser::{ImportKind, ImportRef, ParseDiagnostic, ParseSeverity};
+        let import = |module: &str, level: u8, line: u32| ImportRef {
+            module: module.to_owned(),
+            name: None,
+            alias: None,
+            line,
+            kind: ImportKind::ImportFrom,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            deferred: false,
+            relative_level: level,
+            fallback_for: Vec::new(),
+            version_minors: None,
+        };
+        let unplaced = |line: u32| ParseDiagnostic {
+            line,
+            message: NOT_IN_PACKAGE.to_owned(),
+            severity: ParseSeverity::Warning,
+        };
+        let module = ParsedModule {
+            path: "ns/sub/a.py".to_owned(),
+            imports: vec![
+                // Resolved, though its line also holds an unplaced one.
+                import("ns.sub.x", 1, 2),
+                // Unresolved, but not for being outside a package.
+                import("", 2, 3),
+                import("", 1, 7),
+                import("", 1, 5),
+                import("", 1, 9),
+            ],
+            diagnostics: vec![unplaced(2), unplaced(5), unplaced(7), unplaced(9)],
+            ..ParsedModule::default()
+        };
+        let sites: Vec<_> = unresolved_relative_gaps(&module)
+            .into_iter()
+            .map(|gap| (gap.target, gap.site))
+            .collect();
+        assert_eq!(
+            sites,
+            [(Some("ns/sub".to_owned()), Some((".".to_owned(), Some(5))))]
+        );
     }
 
     #[test]
@@ -2247,12 +2394,13 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 25] = [
+        const KINDS: [GapKind; 26] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
             GapKind::UnreadPublicModule,
             GapKind::UnreadNotebookCells,
+            GapKind::UnresolvedRelativeImport,
             GapKind::OpaqueDynamicImport,
             GapKind::RuntimeDependenciesUnknown,
             GapKind::UnknownExtras,
@@ -2286,7 +2434,8 @@ mod tests {
                 | GapKind::UnreadNotebookCells
                 | GapKind::UnreadDjangoSettings
                 | GapKind::UnreadSphinxExtensions => &[RuleId::Chk001, RuleId::Chk002],
-                GapKind::OpaqueDynamicImport
+                GapKind::UnresolvedRelativeImport
+                | GapKind::OpaqueDynamicImport
                 | GapKind::UnreadCommandTarget
                 | GapKind::StringModuleRef => &[RuleId::Chk001],
                 GapKind::UnreadPublicModule

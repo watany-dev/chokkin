@@ -162,6 +162,22 @@ pub(crate) fn resolve_under_root(
     Ok(resolved.starts_with(canonical_root).then_some(resolved))
 }
 
+/// Make `link` a junction to `target`: the link Windows lets anyone make
+/// without admin rights, which `canonicalize` follows like a Unix symlink.
+#[cfg(all(test, windows))]
+pub(crate) fn junction(target: &Path, link: &Path) {
+    let status = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("mklink")
+        .arg("/J")
+        .arg(link)
+        .arg(target)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("run mklink");
+    assert!(status.success(), "mklink /J {link:?} {target:?}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +331,20 @@ mod tests {
         std::os::unix::fs::symlink(&outside, root.join("linked")).expect("symlink");
         let path = root.join("linked").join("x.json");
         assert_eq!(resolve_under_root(&root, &path).expect("resolve"), None);
+    }
+
+    /// The Windows counterpart of the symlink case above, through a
+    /// junction, which needs no admin rights (#1136).
+    #[cfg(windows)]
+    #[test]
+    fn resolve_under_root_follows_junction_out_of_root() {
+        let (_dir, root) = canonical_tempdir();
+        let (_other, outside) = canonical_tempdir();
+        junction(&outside, &root.join("linked"));
+        assert_eq!(
+            resolve_under_root(&root, &root.join("linked").join("x.json")).expect("resolve"),
+            None
+        );
     }
 
     mod props {

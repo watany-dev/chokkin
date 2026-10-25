@@ -503,6 +503,11 @@ impl PytestImportPaths {
             .flatten()
             .or_else(|| self.resolve_in_own_package(file, module))
             .or_else(|| {
+                self.in_root_namespace(file, import_root(module))
+                    .then(|| self.find_module("", module))
+                    .flatten()
+            })
+            .or_else(|| {
                 let root = import_root(module);
                 if !self.any_hinted_root.contains(root) {
                     return None;
@@ -524,6 +529,15 @@ impl PytestImportPaths {
                         }))
                 .find_map(|dir| self.find_module(dir, module))
             })
+    }
+
+    /// Whether `file` is under `root/`, a namespace directory at the project
+    /// root (#1114): a module there runs as `root.x` only with the project
+    /// root on `sys.path`, so its imports of `root.y` load the root's.
+    #[must_use]
+    pub(crate) fn in_root_namespace(&self, file: &str, root: &str) -> bool {
+        file.split_once('/').is_some_and(|(top, _)| top == root)
+            && self.root_namespaces.contains(root)
     }
 
     /// `module` inside the outermost package around a script or test, looked
@@ -992,6 +1006,39 @@ mod tests {
         // Runtime code does not run with the root on its path.
         assert!(!paths.provides_root("src/acme/__init__.py", "dummyserver"));
         assert!(!paths.provides_fallback("src/acme/__init__.py", "docs_src"));
+    }
+
+    /// A module of a namespace directory at the root imports its siblings by
+    /// the directory's name, as its own name says the root is on `sys.path`
+    /// (#1114); a file outside the directory does not.
+    #[test]
+    fn root_namespace_modules_find_their_siblings() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("pkg/sub")).expect("mkdir");
+        std::fs::create_dir_all(temp.path().join("other")).expect("mkdir");
+        let files = [
+            "main.py",
+            "pkg/m1.py",
+            "pkg/m2.py",
+            "pkg/sub/deep.py",
+            "other/x.py",
+        ];
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default())
+                .with_root_entries(temp.path());
+        for file in ["pkg/m1.py", "pkg/sub/deep.py"] {
+            assert!(paths.in_root_namespace(file, "pkg"), "{file}");
+            assert_eq!(
+                paths.resolve_fallback(file, "pkg.m2"),
+                Some("pkg/m2.py"),
+                "{file}"
+            );
+        }
+        assert_eq!(paths.resolve_fallback("pkg/m1.py", "pkg.gone"), None);
+        assert_eq!(paths.resolve_fallback("pkg/m1.py", "other.x"), None);
+        assert!(!paths.in_root_namespace("other/x.py", "pkg"));
+        assert!(!paths.in_root_namespace("pkg.py", "pkg"));
+        assert_eq!(paths.resolve_fallback("other/x.py", "pkg.m2"), None);
     }
 
     #[test]

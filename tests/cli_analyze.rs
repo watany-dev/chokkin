@@ -10219,3 +10219,52 @@ fn binary_malformed_entry_point_reference_is_unmapped() {
         }
     }
 }
+
+/// A relative import the layout cannot resolve may import any file below
+/// the directory its dots climb to, so those files are no certain CHK001
+/// (#1113): `from .. import b` in a namespace package of a flat layout. One
+/// in a top-level module, or climbing past the top directory, always fails.
+#[test]
+fn binary_unresolved_relative_import_is_no_certain_unused_file() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0\"\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "main.py",
+            "import tool\nfrom ns.sub import a\nif __name__ == \"__main__\":\n    pass\n",
+        ),
+        // CPython rejects these two outright: they load nothing.
+        ("tool.py", "from . import c\n"),
+        ("ns/sub/a.py", "from .. import b\nfrom .... import c\n"),
+        ("ns/b.py", ""),
+        ("other/c.py", ""),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--reporter",
+            "json",
+            "--confidence",
+            "certain",
+        ])
+        .arg(temp.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let targets: Vec<&str> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter_map(|issue| issue["target"].as_str())
+        .collect();
+    assert_eq!(targets, ["other/c.py"], "{stdout}");
+    assert!(
+        stderr.contains("`ns/sub/a.py:1`: could not resolve relative import"),
+        "{stderr}"
+    );
+}
