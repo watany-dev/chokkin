@@ -93,6 +93,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer CHK003, CHK004 or CHK005, and its CHK010 is info. Only
   `sys.version_info` and `sys.version_info[:2]` compared with a literal tuple
   are read; other forms keep the import a runtime requirement (#997).
+- A `.gitignore` below the root re-includes with `!` a file the root
+  `.gitignore` ignores, as git does: the root's rules no longer drop it a
+  second time after the walk, so its imports count and a dependency only it
+  uses is no longer a certain CHK002. A directory without `.git` reads every
+  `.gitignore` from the root down in the same order, not only the root's
+  (#1220).
+- Workspace member auto-detection skips the directories source discovery
+  skips: `.git/info/exclude` and the `.gitignore` files above the root now
+  count, and a nested repository stops the outer rules below it, so a
+  directory left out as source is no longer treated as a member (#1135).
 
 ## [0.7.9] - 2026-10-24
 

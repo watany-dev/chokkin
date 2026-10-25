@@ -308,7 +308,7 @@ CHK002 = "error"
 
 `target_version` は `py3` に続けて minor を書き、同梱した minor (3.8〜3.15) だけを受理する (`py38`・`py39`・`py310`〜`py315`。`requires-python` から推定した値と `chokkin init` が書く `py308` / `py309` も同じ minor)。範囲外 (`py37`・`py316`・`py3100`) と `py3` 以外の形は、受理できる範囲を示す設定の検証エラー（exit 2）にする (#1125)。同梱していない minor の stdlib は持たないので、範囲外の値を受理すると黙って端の minor で読むことになるため。`requires-python` からの推定は範囲で検証しない (`>=3.6` は 3.6 を下限として読み、stdlib の判定は §7 のとおり同梱の端に寄せる)。`chokkin init` は推定した minor を同梱の範囲に寄せて書き (`>=3.6` なら `py38`)、書いた設定がそのまま読めるようにする。
 
-`.gitignore` と `.git/info/exclude` は git と同じ意味で読む。git の pattern に brace 展開は無いので、`{` `}` はリテラルとして扱う（`*.{py,pyc}` はその名前の file だけ、`{}` は何にも一致しない）。`ignore` crate は alternation として読むため、行を渡す前に `{` `}` をエスケープする（character class の中と既にエスケープ済みのものはそのまま）。workspace member の自動検出の走査も同じ規則で読む (#1149)。
+`.gitignore` と `.git/info/exclude` は git と同じ意味で読む。git の pattern に brace 展開は無いので、`{` `}` はリテラルとして扱う（`*.{py,pyc}` はその名前の file だけ、`{}` は何にも一致しない）。`ignore` crate は alternation として読むため、行を渡す前に `{` `}` をエスケープする（character class の中と既にエスケープ済みのものはそのまま）。workspace member の自動検出の走査も同じ規則で読み、`.git/info/exclude`・祖先の `.gitignore`・入れ子の repository での打ち切りもソース走査と揃える。ソース走査が除く directory の `pyproject.toml` は member にしない (#1149, #1135)。下位の `.gitignore` の規則は上位のものより優先し、`!` で戻した file は root の `.gitignore` が除いても読む。`.git` が root にも祖先にも無い directory では git は ignore file を読まないが、chokkin は root から下の `.gitignore` を同じ優先順で読む (`.git/info/exclude` は無いので読まない) (#1220)。
 
 `respect_gitignore = true` のとき、走査が出会った `.gitignore` を読めなかった場合（root でも配下の directory でも、UTF-8 でない・読み取り権限がない・リンク先のない symlink）は、そのファイルごとに `sources: could not read <path>; its ignore rules may be missing` を 1 回出す。workspace member の走査が同じファイルに出会っても重ねて出さない (#915)。読めなかった ignore 規則は除外を減らす方向にしか働かず、finding を誤って消さないので gap にはしない。
 
