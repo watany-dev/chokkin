@@ -211,3 +211,47 @@ fn is_computed_string(expr: &Expr) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The modules `source` includes, and `None` for each computed name.
+    fn included(source: &str) -> Vec<Option<String>> {
+        let stmts = parse_module(source).expect("parse");
+        let mut calls = Includes::default();
+        calls.visit_body(&stmts);
+        calls
+            .0
+            .into_iter()
+            .map(|included| match included {
+                Included::Module(module, _) => Some(module),
+                Included::Unread(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn include_is_read_by_name_and_on_a_urls_module() {
+        assert_eq!(
+            included(
+                "include('a.urls')\nurls.include(arg=('b.urls', 'b'))\ndjango.urls.include('c.urls')\njinja.include('d.html')\n"
+            ),
+            [
+                Some("a.urls".to_owned()),
+                Some("b.urls".to_owned()),
+                Some("c.urls".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn only_a_computed_string_is_unread() {
+        assert_eq!(
+            included(
+                "include(f'{a}.urls')\ninclude('a.' + b)\ninclude('{}.urls'.format(a))\ninclude(*args)\ninclude(router.urls)\ninclude(get_urls())\ninclude(a + b)\ninclude([])\n"
+            ),
+            [None, None, None, None]
+        );
+    }
+}
