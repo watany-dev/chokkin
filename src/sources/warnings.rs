@@ -66,6 +66,14 @@ pub enum SourcesWarning {
         /// Root-relative path, with the invalid bytes replaced.
         path: String,
     },
+    /// A pytest `testpaths` entry names no file or directory, literally or
+    /// as a glob (#998): pytest collects nothing from it, and the tests it
+    /// meant get no test context.
+    #[error("sources: pytest testpaths entry `{entry}` matched nothing")]
+    TestpathsUnmatched {
+        /// Root-relative entry, as written.
+        entry: String,
+    },
     /// The only undeclared package directory is not named after the project.
     #[error(
         "sources: no package directory matches project `{project}`; guessed `{chosen}` \
@@ -88,7 +96,8 @@ impl SourcesWarning {
             | Self::EntryPathIsDirectory { path }
             | Self::GitignoreUnreadable { path }
             | Self::SymlinkSkipped { path, .. }
-            | Self::NonUtf8Path { path } => *path = join_rel(base, path),
+            | Self::NonUtf8Path { path }
+            | Self::TestpathsUnmatched { entry: path } => *path = join_rel(base, path),
             Self::AmbiguousFlatLayout { candidates, chosen } => {
                 for candidate in candidates {
                     *candidate = join_rel(base, candidate);
@@ -105,6 +114,18 @@ impl SourcesWarning {
 #[cfg(test)]
 mod tests {
     use super::SourcesWarning;
+
+    #[test]
+    fn unmatched_testpaths_entry_renders_and_rebases_onto_its_member() {
+        let mut warning = SourcesWarning::TestpathsUnmatched {
+            entry: "packages/*/tests".to_owned(),
+        };
+        warning.rebase("members/x");
+        assert_eq!(
+            warning.to_string(),
+            "sources: pytest testpaths entry `members/x/packages/*/tests` matched nothing"
+        );
+    }
 
     #[test]
     fn rebase_joins_relative_paths_and_keeps_absolute_ones() {

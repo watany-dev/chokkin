@@ -10,12 +10,13 @@ use crate::manifest::LoadedManifest;
 use super::cache::SourcesCache;
 use super::error::SourcesError;
 use super::glob::{build_glob_set, effective_exclude};
-use super::layout::{ENTRY_TREE_GLOBS, infer_layout, pytest_testpaths};
+use super::layout::{ENTRY_TREE_GLOBS, infer_layout, pytest_testpaths, unmatched_testpaths};
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{
     CollectOptions, Collected, collect_files, large_project_warning, matches_source,
     root_gitignore_warning, validate_entries,
 };
+use super::warnings::SourcesWarning;
 
 /// Discover Python source files under `root` using config and manifest hints.
 pub fn discover_sources(
@@ -50,7 +51,12 @@ pub(crate) fn discover_sources_cached(
     let (mut layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
     // Only inferred globs take testpaths: the parse cache keys on the globs,
     // so testpaths outside them would change file contexts unnoticed.
+    let mut testpath_warnings = Vec::new();
     let (test_globs, effective_globs) = if config.effective.project.is_empty() {
+        testpath_warnings = unmatched_testpaths(&root.path, &layout)
+            .into_iter()
+            .map(|entry| SourcesWarning::TestpathsUnmatched { entry })
+            .collect();
         let test_globs: Vec<String> = pytest_testpaths(&root.path, &layout)
             .iter()
             .map(|path| globset::escape(path))
@@ -107,6 +113,7 @@ pub(crate) fn discover_sources_cached(
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
     warnings.extend(layout_warning);
+    warnings.extend(testpath_warnings);
     warnings.extend(collected.warnings);
     if let Some(warning) = gitignore_warning {
         warnings.push(warning);

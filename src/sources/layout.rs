@@ -494,16 +494,11 @@ fn is_main_guard_line(line: &str) -> bool {
 ///
 /// Each entry widens to the top of its `__init__.py` chain within the
 /// config's directory (#978): celery's `t/unit` is package `t.unit`, so its
-/// sibling suites under `t/` are tests too. Entries are taken literally;
-/// a glob such as `tests/*` is not expanded.
+/// sibling suites under `t/` are tests too. A glob entry (`packages/*/tests`)
+/// stands for the paths it matches, as pytest expands it (#998).
 pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> {
-    let package_root = layout.package_root.as_str();
-    let mut dirs = vec![""];
-    if !package_root.is_empty() {
-        dirs.push(package_root);
-    }
     let mut testpaths = Vec::new();
-    for dir in dirs {
+    for dir in testpath_config_dirs(layout) {
         for path in testpath_tops(root, dir) {
             let overlaps_package = layout.packages.iter().any(|package| {
                 let package = layout.package_dir(package);
@@ -517,8 +512,36 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
     testpaths
 }
 
+/// Root-relative `testpaths` entries of the pytest configs
+/// [`pytest_testpaths`] reads that name no file or directory, literally or as
+/// a glob: pytest collects nothing from them, and the tests they meant get no
+/// test context (#998).
+pub(super) fn unmatched_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+    let mut unmatched = Vec::new();
+    for dir in testpath_config_dirs(layout) {
+        for entry in raw_testpaths(root, dir) {
+            let names_nothing =
+                expand_testpath(root, &entry).is_empty() && !root.join(&entry).exists();
+            if names_nothing && !unmatched.contains(&entry) {
+                unmatched.push(entry);
+            }
+        }
+    }
+    unmatched
+}
+
+/// The directories whose pytest config gives `testpaths`: the root and the
+/// package root.
+fn testpath_config_dirs(layout: &LayoutInfo) -> Vec<&str> {
+    let mut dirs = vec![""];
+    if !layout.package_root.is_empty() {
+        dirs.push(layout.package_root.as_str());
+    }
+    dirs
+}
+
 /// Root-relative `testpaths` of the pytest config in `dir`, as written.
-fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
+fn raw_testpaths(root: &Path, dir: &str) -> Vec<String> {
     pytest_import_settings(&root.join(dir))
         .unwrap_or_default()
         .testpaths
@@ -526,6 +549,100 @@ fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
         .filter_map(|path| in_root_dir(path))
         .map(|path| join_rel(dir, &path))
         .collect()
+}
+
+/// [`raw_testpaths`] with each glob replaced by the paths it matches. A
+/// literal entry stays as written whether or not it exists, and so does a
+/// glob that matches nothing but names an existing path as written (`t[1]`).
+fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
+    raw_testpaths(root, dir)
+        .into_iter()
+        .flat_map(|entry| {
+            let matched = if has_glob_magic(&entry) {
+                expand_testpath(root, &entry)
+            } else {
+                Vec::new()
+            };
+            if matched.is_empty() {
+                vec![entry]
+            } else {
+                matched
+            }
+        })
+        .collect()
+}
+
+/// Whether `pattern` holds a character Python's `glob` expands.
+fn has_glob_magic(pattern: &str) -> bool {
+    pattern.contains(['*', '?', '['])
+}
+
+/// The root-relative paths `pattern` names, sorted, as pytest's
+/// `glob.iglob(entry, recursive=True)` finds them: `*`, `?` and `[...]` match
+/// within one component, `**` alone matches any run of directories, and a
+/// wildcard skips names starting with `.` unless its component does too.
+/// Braces are literal, as in Python. `**` does not descend through symlinks,
+/// so a link loop cannot hang the walk.
+fn expand_testpath(root: &Path, pattern: &str) -> Vec<String> {
+    let mut found = vec![String::new()];
+    for component in pattern.split('/') {
+        let mut next = Vec::new();
+        for base in &found {
+            if component == "**" {
+                dirs_from(root, base, &mut next);
+            } else if has_glob_magic(component) {
+                next.extend(matching_children(root, base, component));
+            } else {
+                let path = join_rel(base, component);
+                if root.join(&path).exists() {
+                    next.push(path);
+                }
+            }
+        }
+        next.sort();
+        next.dedup();
+        found = next;
+    }
+    found.retain(|path| !path.is_empty());
+    found
+}
+
+/// Children of `base` whose name matches the one-component glob `component`.
+fn matching_children(root: &Path, base: &str, component: &str) -> Vec<String> {
+    let literal_braces = component.replace('{', "[{]").replace('}', "[}]");
+    let Ok(glob) = Glob::new(&literal_braces) else {
+        return Vec::new();
+    };
+    let matcher = glob.compile_matcher();
+    let dot = component.starts_with('.');
+    let Ok(entries) = fs::read_dir(root.join(base)) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| dot || !name.starts_with('.'))
+        .filter(|name| matcher.is_match(name))
+        .map(|name| join_rel(base, &name))
+        .collect()
+}
+
+/// `base` and every directory below it, not through symlinks or names
+/// starting with `.`.
+fn dirs_from(root: &Path, base: &str, out: &mut Vec<String>) {
+    out.push(base.to_owned());
+    let Ok(entries) = fs::read_dir(root.join(base)) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if let Ok(name) = entry.file_name().into_string()
+            && is_dir
+            && !name.starts_with('.')
+        {
+            dirs_from(root, &join_rel(base, &name), out);
+        }
+    }
 }
 
 /// [`testpath_entries`] of `dir`, each widened to the top of its
@@ -908,6 +1025,87 @@ mod tests {
         assert_eq!(
             pytest_testpaths(temp.path(), &layout),
             vec!["lib/tests".to_owned()]
+        );
+    }
+
+    /// pytest expands each `testpaths` entry with `glob.iglob` (#998): a
+    /// monorepo's `packages/*/tests` names every package's suite.
+    #[test]
+    fn testpaths_globs_expand_to_the_paths_they_match() {
+        let temp = tree(&["acme"]);
+        for dir in [
+            "packages/a/tests",
+            "packages/b/tests",
+            "packages/c",
+            "packages/.hidden/tests",
+            "suites/x/deep/unit",
+            "odd/{x}",
+        ] {
+            fs::create_dir_all(temp.path().join(dir)).expect("create dir");
+        }
+        fs::write(
+            temp.path().join("pytest.ini"),
+            "[pytest]\ntestpaths = packages/*/tests suites/**/unit odd/{x} odd/{y} t?sts\n",
+        )
+        .expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout),
+            [
+                "packages/a/tests",
+                "packages/b/tests",
+                "suites/x/deep/unit",
+                "odd/{x}",
+                "odd/{y}",
+                "t?sts",
+            ]
+        );
+        // Neither names a path: `odd/{y}` is literal and missing, `t?sts`
+        // matches nothing. Both stay, as a literal entry always has.
+        assert_eq!(
+            unmatched_testpaths(temp.path(), &layout),
+            ["odd/{y}", "t?sts"]
+        );
+    }
+
+    /// A glob match widens to the top of its `__init__.py` chain like a
+    /// literal entry, and one overlapping the distributed package is dropped.
+    #[test]
+    fn testpaths_glob_matches_widen_and_skip_the_package() {
+        let temp = tree(&["acme", "acme/tests", "t", "t/unit"]);
+        fs::write(
+            temp.path().join("pytest.ini"),
+            "[pytest]\ntestpaths = */unit acme/tests\n",
+        )
+        .expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(pytest_testpaths(temp.path(), &layout), ["t"]);
+        assert_eq!(layout.local_packages, ["t"]);
+        assert_eq!(
+            unmatched_testpaths(temp.path(), &layout),
+            Vec::<String>::new()
+        );
+    }
+
+    /// `**` does not follow a symlink, so a loop under it ends.
+    #[cfg(unix)]
+    #[test]
+    fn testpaths_double_star_does_not_follow_symlinks() {
+        let temp = tree(&["acme", "tests/unit"]);
+        std::os::unix::fs::symlink(
+            temp.path().join("tests"),
+            temp.path().join("tests/unit/loop"),
+        )
+        .expect("symlink");
+        fs::write(
+            temp.path().join("pytest.ini"),
+            "[pytest]\ntestpaths = tests/**\n",
+        )
+        .expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout),
+            ["tests", "tests/unit"]
         );
     }
 
