@@ -232,9 +232,15 @@ fn parse_requirements_line(
             return Ok(());
         }
     } else if let Some(include_path) = options.requirement {
-        return follow_requirements_include(ctx, &include_path);
+        if !include_not_read(ctx.result, rel, line_no, "-r", &include_path) {
+            return follow_requirements_include(ctx, &include_path);
+        }
+        return Ok(());
     } else if let Some(constraint_path) = options.constraint {
-        return follow_constraints_include(ctx, rel, constraint_path);
+        if !include_not_read(ctx.result, rel, line_no, "-c", &constraint_path) {
+            return follow_constraints_include(ctx, rel, constraint_path);
+        }
+        return Ok(());
     }
 
     ctx.result
@@ -245,6 +251,32 @@ fn parse_requirements_line(
             raw: trimmed.to_owned(),
         });
     Ok(())
+}
+
+/// Warn and return `true` when `option`'s `value` is a URL or a `${VAR}`
+/// path, which chokkin does not read (#1130). A `-r` of one leaves the file
+/// partly read, since pip would read more declarations from it.
+fn include_not_read(
+    result: &mut RequirementsExtraction,
+    rel: &str,
+    line: u32,
+    option: &str,
+    value: &str,
+) -> bool {
+    let Some(reason) = unread_include_reason(value) else {
+        return false;
+    };
+    result.skipped |= option == "-r";
+    result
+        .warnings
+        .push(ManifestWarning::RequirementsIncludeNotRead {
+            file: rel.to_owned(),
+            line,
+            option: option.to_owned(),
+            path: value.to_owned(),
+            reason: reason.to_owned(),
+        });
+    true
 }
 
 /// Read the file a `-r` names, with the context its path implies; its
@@ -780,6 +812,32 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
+/// Why pip reads a `-r` / `-c` value that chokkin does not (#1130): pip's
+/// `get_file_content` fetches an `http:` / `https:` / `file:` URL, and
+/// `expand_env_variables` substitutes `${NAME}` (upper-case, digits, `_`)
+/// from the environment, which the analysis does not depend on. Any other
+/// value is a path, missing or not.
+fn unread_include_reason(value: &str) -> Option<&'static str> {
+    let scheme = value.split_once(':').map(|(scheme, _)| scheme);
+    if scheme.is_some_and(|scheme| {
+        ["http", "https", "file"]
+            .iter()
+            .any(|url| scheme.eq_ignore_ascii_case(url))
+    }) {
+        return Some("a URL");
+    }
+    let expands = value.match_indices("${").any(|(start, _)| {
+        let rest = &value[start + 2..];
+        rest.find('}').is_some_and(|end| {
+            end > 0
+                && rest[..end]
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        })
+    });
+    expands.then_some("a path with an environment variable")
+}
+
 #[must_use]
 fn is_local_path(spec: &str) -> bool {
     spec.starts_with('.')
@@ -1215,6 +1273,66 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["requests", "urllib3"]
         );
+    }
+
+    /// #1130: pip fetches a URL and expands `${VAR}`; chokkin reads neither,
+    /// so the line is skipped with a warning instead of stopping the file.
+    #[test]
+    fn url_and_env_var_includes_are_not_read_and_do_not_stop_the_file() {
+        for (line, option, reason, skipped) in [
+            (
+                "-r ${BASE}/base.txt",
+                "-r",
+                "a path with an environment variable",
+                true,
+            ),
+            ("-r https://example.com/base.txt", "-r", "a URL", true),
+            ("--requirement=FILE:///srv/base.txt", "-r", "a URL", true),
+            (
+                "-c ${X}/c.txt",
+                "-c",
+                "a path with an environment variable",
+                false,
+            ),
+        ] {
+            let result = parse_requirements_text(&format!("{line}\nrequests\n"));
+            assert_eq!(declared(&result), [("requests", Some(2))], "{line}");
+            assert_eq!(result.skipped, skipped, "{line}");
+            assert_eq!(result.files_missing, Vec::<String>::new(), "{line}");
+            let path = line.split_once([' ', '=']).expect("value").1;
+            assert_eq!(
+                result.warnings,
+                [ManifestWarning::RequirementsIncludeNotRead {
+                    file: "requirements.txt".to_owned(),
+                    line: 1,
+                    option: option.to_owned(),
+                    path: path.to_owned(),
+                    reason: reason.to_owned(),
+                }],
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn unread_include_reason_follows_pip() {
+        for (value, reason) in [
+            ("http://x/r.txt", Some("a URL")),
+            ("HTTPS://x/r.txt", Some("a URL")),
+            ("file:r.txt", Some("a URL")),
+            ("${A_1}/r.txt", Some("a path with an environment variable")),
+            ("a/${B}", Some("a path with an environment variable")),
+            // pip expands only upper-case names in braces.
+            ("${lower}/r.txt", None),
+            ("$BASE/r.txt", None),
+            ("${}/r.txt", None),
+            ("${BASE/r.txt", None),
+            ("ftp://x/r.txt", None),
+            ("base.txt", None),
+            (r"C:\reqs\base.txt", None),
+        ] {
+            assert_eq!(unread_include_reason(value), reason, "{value}");
+        }
     }
 
     fn parse_requirements_text(text: &str) -> RequirementsExtraction {

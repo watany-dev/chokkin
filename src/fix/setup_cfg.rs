@@ -1,8 +1,8 @@
 //! `setup.cfg` dependency line edits (limited sections).
 
 use crate::manifest::{
-    IniLine, ini_lines, normalize_distribution_name, pep508_distribution_name,
-    setuptools_requirement_items,
+    IniLine, ini_lines, normalize_distribution_name, one_line_options, pep508_distribution_name,
+    setup_cfg_requirement_items,
 };
 
 use super::error::FixError;
@@ -15,7 +15,9 @@ use super::write::{ManifestText, read_manifest, write_manifest};
 /// ending, and an inline value leaves `key =` and the line ending behind, so
 /// the option stays declared. Other sections, options and items, comments
 /// and line endings stay as written. Refuses when the item no longer names
-/// `distribution`, so a stale index never removes another dependency.
+/// `distribution`, so a stale index never removes another dependency, and
+/// when a one-line value holds several items (`requests; rich`, #989), as
+/// the line cannot go without the others.
 pub(super) fn remove_dependency(
     path: &std::path::Path,
     label: &str,
@@ -26,6 +28,7 @@ pub(super) fn remove_dependency(
         detail: format!("unsupported setup.cfg label `{label}`"),
     })?;
     let target = normalize_distribution_name(distribution);
+    let one_line = one_line_options(&contents).contains(&(section, key.to_owned()));
 
     let mut output = String::with_capacity(contents.len());
     let mut seen = 0;
@@ -40,10 +43,16 @@ pub(super) fn remove_dependency(
             && !removed
             && *at == section
             && *option == key
-            // One physical line is at most one item (#965).
-            && let Some(item) =
-                setuptools_requirement_items(std::iter::once(*value)).into_iter().next()
+            // One physical line is at most one item (#965), unless the value
+            // is that one line.
+            && let items = setup_cfg_requirement_items(value, one_line)
+            && let Some(item) = items.first()
         {
+            if items.len() > 1 {
+                return Err(FixError::Unsupported {
+                    detail: format!("`{label}` shares its line in {rel} with other dependencies"),
+                });
+            }
             if seen == index {
                 // A line continued with `\` is only the start of its item:
                 // removing it alone would leave the rest of the item behind.
@@ -178,6 +187,43 @@ mod tests {
         assert_eq!(
             remove(url, "options.install_requires[0]", "requests"),
             Err("could not find `options.install_requires[0]` in setup.cfg".to_owned())
+        );
+    }
+
+    /// A one-line value holds every item setuptools splits at `;` (#989),
+    /// so one of several cannot be removed by its line.
+    #[test]
+    fn leaves_a_line_shared_by_several_items() {
+        let contents = "[options]\ninstall_requires = requests; rich\n";
+        for (label, distribution) in [
+            ("options.install_requires[0]", "requests"),
+            ("options.install_requires[1]", "rich"),
+        ] {
+            assert_eq!(
+                remove(contents, label, distribution),
+                Err(format!(
+                    "`{label}` shares its line in setup.cfg with other dependencies"
+                ))
+            );
+        }
+        assert_eq!(
+            remove(
+                "[options]\ninstall_requires = rich;\n",
+                "options.install_requires[0]",
+                "rich"
+            )
+            .as_deref(),
+            Ok("[options]\ninstall_requires =\n")
+        );
+        // On several lines `;` starts a marker, and the line is one item.
+        assert_eq!(
+            remove(
+                "[options]\ninstall_requires =\n    six; python_version < \"3\"\n    rich\n",
+                "options.install_requires[0]",
+                "six"
+            )
+            .as_deref(),
+            Ok("[options]\ninstall_requires =\n    rich\n")
         );
     }
 

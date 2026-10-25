@@ -2153,6 +2153,44 @@ fn write_project(files: &[(&str, &str)]) -> tempfile::TempDir {
     temp
 }
 
+/// pip fetches a `-r` URL and expands `${VAR}`; chokkin reads neither, so
+/// the run goes on with a warning and lowers the missing-dependency findings
+/// the unread include may have declared, instead of exiting 2 (#1130).
+#[test]
+fn binary_url_and_env_var_includes_warn_and_lower_instead_of_stopping() {
+    for (include, warning) in [
+        (
+            "-r ${BASE}/base.txt",
+            "manifest: `-r ${BASE}/base.txt` at `requirements.txt:1` is a path with an environment variable, which chokkin does not read; the dependencies it declares are not read",
+        ),
+        (
+            "-r https://example.com/base.txt",
+            "manifest: `-r https://example.com/base.txt` at `requirements.txt:1` is a URL, which chokkin does not read; the dependencies it declares are not read",
+        ),
+    ] {
+        let project = write_project(&[
+            ("requirements.txt", &format!("{include}\nrequests\n")),
+            ("main.py", "import requests\nimport yaml\n"),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json", "--confidence", "maybe"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        assert_eq!(output.status.code(), Some(0), "{include}: {stderr}");
+        assert!(stderr.contains(warning), "{include}: {stderr}");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let yaml = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .find(|issue| issue["code"] == "CHK003")
+            .unwrap_or_else(|| panic!("{include}: CHK003 for yaml"));
+        assert_eq!(yaml["severity"], "info", "{include}: {yaml}");
+    }
+}
+
 /// Every path that resolves outside the root says so, instead of "not found"
 /// or nothing (#981): chokkin's own config is an error, a manifest's is a
 /// warning naming what was not read.
