@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of reporting an invalid requirement and `rich` as undeclared. A
   multi-line value still reads `;` as a marker, and `--fix` leaves a line
   that holds several dependencies alone (#989).
+- The release workflow publishes only a tag that names the `Cargo.toml` and
+  `pyproject.toml` version and points at the release commit on `main` (v0.7.1
+  and v0.7.4 would have failed), and the GitHub Release and its attestation
+  wait for the same approval as the PyPI upload (#1043). maturin, syft and the
+  Linux build containers are pinned, so a release is built and described by
+  the same tools each time (#1044).
 - SARIF `artifactLocation.uri` is percent-encoded per path segment, so a
   path with a space, `#`, `%`, or non-ASCII characters is a valid URI
   reference and GitHub code scanning annotates the file; fingerprints and
