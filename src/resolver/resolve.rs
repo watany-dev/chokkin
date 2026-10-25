@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
-use crate::parser::{ImportContext, ParseSummary, ParsedModule, import_context_for_file};
+use crate::parser::{
+    ImportContext, ImportRef, ParseSummary, ParsedModule, import_context_for_file,
+};
 use crate::plugins::{ModuleReference, SysPathImport};
 use crate::sources::{DiscoveredSources, LocalTrees, path_to_module};
 
@@ -303,9 +305,16 @@ struct RootResolution {
     confidence: ResolveConfidence,
 }
 
-/// A fallback for modules every supported Python ships never runs.
-fn is_dead_fallback(fallback_for: &[String], stdlib: StdlibRange) -> bool {
-    !fallback_for.is_empty() && fallback_for.iter().all(|root| stdlib.always_contains(root))
+/// No Python `requires-python` allows runs the import: it is a fallback for
+/// modules they all ship (#721), or a `sys.version_info` test rules out
+/// every one of them (#997).
+fn never_runs(import: &ImportRef, stdlib: StdlibRange) -> bool {
+    let fallback_for = &import.fallback_for;
+    (!fallback_for.is_empty() && fallback_for.iter().all(|root| stdlib.always_contains(root)))
+        || import
+            .version_minors
+            .as_deref()
+            .is_some_and(|runs| stdlib.excludes_minors(runs))
 }
 
 impl Resolver<'_> {
@@ -335,7 +344,7 @@ impl Resolver<'_> {
                 || import.module.clone(),
                 |name| format!("{}.{name}", import.module),
             );
-            let never_runs = is_dead_fallback(&import.fallback_for, stdlib);
+            let never_runs = never_runs(import, stdlib);
             resolve(
                 &Site {
                     full_module: &import.module,
@@ -560,6 +569,9 @@ impl Resolver<'_> {
             }));
         }
 
+        // The range is the root's: a member's own `requires-python` may allow
+        // the Python a never-run import runs on, so its findings stay.
+        let in_root = member.is_none();
         ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),
@@ -570,7 +582,7 @@ impl Resolver<'_> {
             context,
             optional,
             platform_guarded,
-            never_runs,
+            never_runs: never_runs && in_root,
             origin: core.origin,
             distribution: core.distribution,
             confidence: core.confidence,

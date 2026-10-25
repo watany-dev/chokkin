@@ -9713,6 +9713,23 @@ fn binary_imports_no_allowed_python_runs_need_no_declaration() {
     // A fallback for a module every allowed Python ships never runs (#1027).
     assert!(!has("CHK003", "simplejson"), "{keys:?}");
     assert!(!has("CHK005", "ujson"), "{keys:?}");
-    // A fallback that runs on some allowed Python still needs a declaration.
+    // So does a branch a `sys.version_info` test rules out on all of them (#997).
+    assert!(!has("CHK003", "backports-zoneinfo"), "{keys:?}");
+    // An import that runs on some allowed Python still needs a declaration,
+    // and so does one under a test that is not read.
     assert!(has("CHK003", "tomli"), "{keys:?}");
+    assert!(has("CHK003", "importlib-metadata"), "{keys:?}");
+    assert!(has("CHK003", "six"), "{keys:?}");
+}
+
+#[test]
+fn binary_never_run_imports_use_the_root_range_only_for_root_files() {
+    let issues = json_issues(&fixture_path(&["deps", "never_run_member"]), &[]);
+    let paths: Vec<&str> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK003" && issue["distribution"] == "backports-zoneinfo")
+        .filter_map(|issue| issue["path"].as_str())
+        .collect();
+    // A member's own `requires-python` is not read, and may allow 3.8 (#997).
+    assert_eq!(paths, ["packages/core/src/acme_core/__init__.py"]);
 }

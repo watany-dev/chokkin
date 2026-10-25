@@ -144,6 +144,17 @@ impl StdlibRange {
         !self.contains(import_root) && stdlib_modules().contains_key(import_root)
     }
 
+    /// Returns whether no Python 3 minor `requires-python` allows, from its
+    /// lower bound up, is in `runs` (inclusive minor runs), so code only
+    /// they run never runs (#997). `false` without a lower bound.
+    #[must_use]
+    pub fn excludes_minors(self, runs: &[[u32; 2]]) -> bool {
+        self.floor.is_some_and(|floor| {
+            runs.iter()
+                .all(|&[low, high]| high < floor || self.max < low)
+        })
+    }
+
     /// Returns whether every interpreter `requires-python` allows, from its
     /// lower bound up, ships `import_root`, so an `except ImportError:`
     /// fallback for it never runs (#721). `false` without a lower bound.
@@ -353,6 +364,21 @@ mod tests {
         assert!(!floor(Some(">=3.10")).always_contains("cgi"));
         assert!(floor(Some(">=3.10,<3.13")).always_contains("cgi"));
         assert!(!floor(Some(">=3.8")).always_contains("dummy_threading"));
+    }
+
+    #[test]
+    fn excludes_minors_outside_the_allowed_range() {
+        let below_39 = [[0, 8]];
+        assert!(floor(Some(">=3.9")).excludes_minors(&below_39));
+        assert!(!floor(Some(">=3.8")).excludes_minors(&below_39));
+        // An upper bound rules out later minors; the target's stays in.
+        assert!(floor(Some(">=3.9,<3.13")).excludes_minors(&[[13, u32::MAX]]));
+        assert!(!floor(Some(">=3.9,<3.11")).excludes_minors(&[[11, u32::MAX]]));
+        assert!(floor(Some(">=3.9")).excludes_minors(&[]));
+        // Without a Python 3 lower bound any minor, or Python 2, may run.
+        assert!(!floor(None).excludes_minors(&below_39));
+        assert!(!floor(Some(">=2.7")).excludes_minors(&[]));
+        assert!(!floor(Some("<3.13")).excludes_minors(&below_39));
     }
 
     #[test]

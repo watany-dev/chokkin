@@ -41,8 +41,10 @@ pub struct ResolvedImport {
     pub optional: bool,
     /// `true` when the import appears under an `if sys.platform …` guard.
     pub platform_guarded: bool,
-    /// `true` when no interpreter `requires-python` allows runs the import:
-    /// a fallback for a module they all ship (#1027).
+    /// `true` when no interpreter the root's `requires-python` allows runs
+    /// the import: a fallback for a module they all ship (#1027), or a branch
+    /// a `sys.version_info` test rules out (#997). Never set in a workspace
+    /// member, whose own range is not read.
     pub never_runs: bool,
     /// Classification origin.
     pub origin: ModuleOrigin,

@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `requires-python` allows ships (`try: import json` / `except ImportError:
   import simplejson`) is no longer CHK003, CHK004 or CHK005: it never runs.
   Its CHK010 stays info, as before (#1027).
+- An import in a branch that a `sys.version_info` comparison rules out on
+  every Python `requires-python` allows (`if sys.version_info >= (3, 9): ...
+  else: from backports.zoneinfo import ZoneInfo` in a `>=3.10` project) is no
+  longer CHK003, CHK004 or CHK005, and its CHK010 is info. Only
+  `sys.version_info` and `sys.version_info[:2]` compared with a literal tuple
+  are read; other forms keep the import a runtime requirement (#997).
 
 ## [0.7.9] - 2026-10-24
 
