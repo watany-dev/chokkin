@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mt-940`, `django-formset-js-improved` and `pytest-xdist` are in the package
   map, so their imports are no CHK010 and their declarations no CHK002
   (#1223).
+- A requirements file whose `-r` names a URL or a `${VAR}` path pip expands
+  from the environment no longer stops the run with exit 2: the line is
+  skipped with a warning, the rest of the file is read, and missing-dependency
+  findings are lowered as for any partly read runtime manifest. A `-c` of
+  either form warns that its constraints are not applied (#1130).
+- A one-line `install_requires` / extra in `setup.cfg` is split at `;` as
+  setuptools does, so `install_requires = requests; rich` declares both
+  instead of reporting an invalid requirement and `rich` as undeclared. A
+  multi-line value still reads `;` as a marker, and `--fix` leaves a line
+  that holds several dependencies alone (#989).
 - `target_version = "py38"` and `"py39"` are accepted; they were rejected as
   invalid config while `"py3100"` was accepted. The value must now name a
   bundled minor (`py38`–`py315`), and anything else is a config error that

@@ -235,7 +235,10 @@ fn source_line(path: &str, line: Option<u32>) -> Option<u32> {
 fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
     match warning {
         ManifestWarning::InvalidRequirementLine { file, line, .. } => (Some(file), *line),
-        ManifestWarning::RequirementsOptionIgnored { file, line, .. } => (Some(file), Some(*line)),
+        ManifestWarning::RequirementsOptionIgnored { file, line, .. }
+        | ManifestWarning::RequirementsIncludeNotRead { file, line, .. } => {
+            (Some(file), Some(*line))
+        },
         ManifestWarning::SetupPyNotStatic { file }
         | ManifestWarning::RuntimeDependenciesUnknown { file }
         | ManifestWarning::SetupPyPartiallyStatic { file, .. }
@@ -550,6 +553,23 @@ fn write_manifest_warning(
         ),
         ManifestWarning::RequirementsConstraintMissing { path } => {
             write!(formatter, "manifest: missing constraints file `{path}`")
+        },
+        ManifestWarning::RequirementsIncludeNotRead {
+            file,
+            line,
+            option,
+            path,
+            reason,
+        } => {
+            let effect = if *option == "-r" {
+                "the dependencies it declares are not read"
+            } else {
+                "its constraints are not applied"
+            };
+            write!(
+                formatter,
+                "manifest: `{option} {path}` at `{file}:{line}` is {reason}, which chokkin does not read; {effect}"
+            )
         },
         ManifestWarning::PathOutsideRoot { file, field, path } => write!(
             formatter,
