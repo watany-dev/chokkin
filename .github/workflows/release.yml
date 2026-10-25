@@ -392,11 +392,59 @@ jobs:
           jq -e '.version == "2.1.0"' "$SARIF"
           test ! -e "$RUNNER_TEMP/demo/.chokkin"
 
+  # ── Check the tag (tags only) ─────────────────────────────────────────────────
+  # A tag publishes what it points at, to a GitHub Release and PyPI that cannot
+  # be changed afterwards (#1043). So before the approval gate below, check that
+  # it names the version being built and points at the release commit on main
+  # (v0.7.4 was tagged at the tip of main instead, CONTRIBUTING.md "Release
+  # flow"). Runs beside the builds, and fails in seconds.
+  release-tag:
+    name: Release tag
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # All branches, so origin/main is there to compare with.
+          fetch-depth: 0
+      - name: Check the tag names the release commit on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version() { sed -n 's/^version = "\(.*\)"$/\1/p'; }
+          status=0
+          for manifest in Cargo.toml pyproject.toml; do
+            v=$(version <"$manifest")
+            if [ "$TAG" != "v$v" ]; then
+              echo "::error::tag $TAG does not match $manifest version '$v'"
+              status=1
+            fi
+          done
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $TAG points at $GITHUB_SHA, which is not on main"
+            status=1
+          fi
+          # The release commit is the one that sets the version; a later commit
+          # on main has the same version but changes the CHANGELOG has not seen.
+          v=$(version <Cargo.toml)
+          if [ "$(git show "$GITHUB_SHA^:Cargo.toml" | version)" = "$v" ]; then
+            echo "::error::$GITHUB_SHA is not the release commit: its parent already has version $v"
+            status=1
+          fi
+          exit "$status"
+
   # ── GitHub Release (tags only) ────────────────────────────────────────────────
+  # The attestation and the release are published for good, so this job waits
+  # for the same approval as the PyPI upload (#1043): the pypi-chokkin
+  # environment's required reviewer and `v*` tag policy. A release therefore
+  # asks for two approvals, this one and publish-pypi's.
   release:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
     needs:
+      - release-tag
       - build-wheels
       - build-wheels-cross
       - build-sdist
@@ -407,6 +455,7 @@ jobs:
       - test-action
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    environment: pypi-chokkin
     permissions:
       contents: write      # gh release create
       id-token: write      # OIDC for attestation

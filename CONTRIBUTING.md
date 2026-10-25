@@ -86,12 +86,15 @@ for all platforms and publishes to PyPI via Trusted Publishing:
    merged after it ships in the wheels without a CHANGELOG entry or release
    validation (v0.7.4 was tagged at the tip and shipped #765–#772 and #774
    this way).
-6. GitHub Actions builds wheels, tests them (each wheel installed and run on
-   its platform, the sdist built from source on the MSRV toolchain, and the
-   test suite with the `dist` profile on `RUST_TOOLCHAIN`), creates a GitHub
-   Release, and publishes to PyPI. A failing test publishes nothing; the same
-   jobs run on every pull request, and `make wheel-smoke` / `make sdist-smoke`
-   run the wheel and sdist tests locally.
+6. GitHub Actions checks the tag (it must be `v` plus the `Cargo.toml` and
+   `pyproject.toml` version, on the release commit itself, on `main`), builds
+   wheels, tests them (each wheel installed and run on its platform, the sdist
+   built from source on the MSRV toolchain, and the test suite with the `dist`
+   profile on `RUST_TOOLCHAIN`), creates a GitHub Release, and publishes to
+   PyPI. A failing check or test publishes nothing; the tests also run on
+   every pull request, and `make wheel-smoke` / `make sdist-smoke` run the
+   wheel and sdist tests locally. The GitHub Release and the PyPI upload each wait for
+   approval in the `pypi-chokkin` environment, so approve twice.
 7. Once the tag is pushed, move `RELEASE_REV` in
    `.github/workflows/oss-metrics.yml` to `vX.Y.Z` in a `ci:` PR, so the
    run-time criteria compare with the new release (#1088). A slowdown that a
