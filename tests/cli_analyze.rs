@@ -694,6 +694,49 @@ fn binary_baseline_update_then_suppresses_existing_issue() {
     assert!(stdout.contains("Summary: 0 issues"));
 }
 
+/// Issue #1131: a baseline whose `schema_version` this chokkin does not know
+/// still suppresses (the exit code does not change in a patch release), but
+/// says so; the known versions stay silent.
+#[test]
+fn binary_baseline_with_unknown_schema_version_warns() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(&fixture_path(&["deps", "unused_boto3"]), temp.path()).expect("copy");
+    let baseline = temp.path().join("chokkin-baseline.json");
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--baseline")
+            .arg(&baseline)
+            .args(args)
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin")
+    };
+    run(&["--update-baseline"]);
+    let written = fs::read_to_string(&baseline).expect("read baseline");
+    assert!(written.contains("\"schema_version\": \"1\""), "{written}");
+
+    for (contents, warns) in [
+        (written.clone(), false),
+        (written.replace("  \"schema_version\": \"1\",\n", ""), false),
+        (
+            written.replace("\"schema_version\": \"1\"", "\"schema_version\": \"99\""),
+            true,
+        ),
+    ] {
+        fs::write(&baseline, &contents).expect("write baseline");
+        let output = run(&[]);
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::Success.code().into())
+        );
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(stdout.contains("(1 baseline-suppressed)"), "{stdout}");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let warning = "baseline: `chokkin-baseline.json` has schema_version \"99\"";
+        assert_eq!(stderr.contains(warning), warns, "{contents}\n{stderr}");
+    }
+}
+
 /// Issue #712: a src-layout root inventories only `src/**`, so the member
 /// files whose imports use another member are parsed for that check alone.
 /// They go into the root's parse cache bundle, and an edit to one is seen on
@@ -9928,4 +9971,56 @@ fn binary_explicit_confidence_wins_over_strict() {
     let (issues, code) = run(&["--strict", "--confidence", "certain"]);
     assert_eq!(issues, Vec::<(String, String)>::new());
     assert_eq!(code, Some(0));
+}
+
+/// Issue #1133: an object reference with an empty segment or a second `:`
+/// does not name a module, so it maps to nothing and roots nothing.
+#[test]
+fn binary_malformed_entry_point_reference_is_unmapped() {
+    for (target, mapped) in [
+        ("acme.cli:main", true),
+        ("acme..cli:main", false),
+        (".acme.cli:main", false),
+        ("acme.cli:main:x", false),
+        ("acme.cli:main..x", false),
+        ("acme.cli:", false),
+    ] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        fs::create_dir_all(temp.path().join("src/acme")).expect("mkdir");
+        fs::write(temp.path().join("src/acme/__init__.py"), "").expect("write");
+        fs::write(
+            temp.path().join("src/acme/cli.py"),
+            "def main():\n    pass\n",
+        )
+        .expect("write");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            format!(
+                "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n[project.scripts]\nacme = \"{target}\"\n"
+            ),
+        )
+        .expect("write pyproject");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+        let codes: Vec<&str> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter_map(|issue| issue["code"].as_str())
+            .collect();
+        assert!(!codes.contains(&"CHK006"), "{target}: {stdout}");
+        assert!(!stderr.contains("//"), "{target}: {stderr}");
+        let unmapped = format!("entry: could not map `{target}` to a source file");
+        assert_eq!(stderr.contains(&unmapped), !mapped, "{target}: {stderr}");
+        if mapped {
+            assert_eq!(codes, Vec::<&str>::new(), "{target}: {stdout}");
+        }
+    }
 }

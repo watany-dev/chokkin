@@ -49,6 +49,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The migration packages a literal `MIGRATION_MODULES` names are loaded like
   an app's `migrations/`: their modules are no longer CHK001 and their
   `Migration` is no longer CHK006 (#993).
+- SARIF `artifactLocation.uri` is percent-encoded per path segment, so a
+  path with a space, `#`, `%`, or non-ASCII characters is a valid URI
+  reference and GitHub code scanning annotates the file; fingerprints and
+  the other reporters keep the raw path (#1129).
+- A baseline whose `schema_version` is neither `"0"` nor `"1"` (written by a
+  newer chokkin, or edited by hand) warns that it may be misread; it is still
+  applied, so the exit code does not change (#1131).
+- A `# chokkin:` comment that suppresses nothing now warns: a malformed
+  directive (`ignore[chk003]`, `ignore [CHK003]`, `ignore[CHK003,]`, bare
+  `ignore`), a code that is not CHK001-CHK010, a `file-ignore` after the
+  first statement, or an `ignore` before it. No new spelling is accepted
+  (#1132).
+- An entry point reference with an empty part (`acme..cli:main`) or a second
+  `:` (`acme.cli:main:x`) is reported as `could not map` and roots nothing,
+  instead of a skipped `src/acme//cli.py` or a CHK006 for `main` (#1133).
 
 ## [0.7.9] - 2026-10-24
 
