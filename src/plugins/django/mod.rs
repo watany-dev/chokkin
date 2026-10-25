@@ -3,6 +3,7 @@
 mod apps;
 mod installed;
 mod settings_refs;
+mod urls;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
@@ -356,6 +357,7 @@ fn push_unread(
         SettingsUnread::UnreadCall { call, .. } => Some(call.clone()),
         SettingsUnread::UnreadField { field, .. } => Some(field.clone()),
         SettingsUnread::UnreadModule { .. } => Some("DJANGO_SETTINGS_MODULE".to_owned()),
+        SettingsUnread::UnreadInclude { .. } => Some("include()".to_owned()),
         SettingsUnread::NoSettings | SettingsUnread::Unreadable { .. } => None,
     };
     contrib.unread_settings.push(UnreadSettings {
@@ -510,7 +512,7 @@ fn read_settings(
             {
                 contrib.entries.push(PluginEntry {
                     spec: crate::config::EntrySpec {
-                        path: urls_path,
+                        path: urls_path.clone(),
                         symbol: None,
                     },
                     context: FileContext::Runtime,
@@ -520,6 +522,7 @@ fn read_settings(
                         label: "ROOT_URLCONF".to_owned(),
                     },
                 });
+                urls::follow(ctx, lookup, &urls_path, contrib, warnings);
             }
         }
 

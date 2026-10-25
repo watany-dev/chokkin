@@ -117,4 +117,11 @@ pub enum SettingsUnread {
         /// Where, as `path:line`.
         site: String,
     },
+    /// A URL configuration names the module it `include()`s by a string computed at
+    /// runtime, so the configurations it loads are not all known (#1094).
+    #[error("URLconf `{site}` includes a module named by a string that could not be read")]
+    UnreadInclude {
+        /// Where, as `path:line`.
+        site: String,
+    },
 }

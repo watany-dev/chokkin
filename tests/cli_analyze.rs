@@ -5177,6 +5177,108 @@ fn binary_unread_django_settings_lower_unused_files_and_distributions() {
     );
 }
 
+/// A project whose `ROOT_URLCONF` loads `urls` through `include()`, and an
+/// unused module beside them (#1094).
+fn django_urlconf_project(urls: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = []\nMIDDLEWARE = []\nROOT_URLCONF = 'mysite.urls'\n",
+        ),
+        ("mysite/urls.py", urls),
+        ("mysite/api/__init__.py", ""),
+        (
+            "mysite/api/urls.py",
+            "import django.urls\n\nfrom . import views\n\nurlpatterns = [\n    django.urls.path('', views.index),\n    django.urls.path('v2/', django.urls.include('mysite.api.v2.urls')),\n]\n",
+        ),
+        ("mysite/api/views.py", "def index(request):\n    pass\n"),
+        ("mysite/api/v2/__init__.py", ""),
+        ("mysite/api/v2/urls.py", "urlpatterns = []\n"),
+        ("mysite/front/__init__.py", ""),
+        (
+            "mysite/front/urls.py",
+            "from .views import home\n\napp_name = 'front'\nurlpatterns = [home]\n",
+        ),
+        ("mysite/front/views.py", "def home(request):\n    pass\n"),
+        ("mysite/unused.py", ""),
+    ])
+}
+
+/// Django loads the module an `include("pkg.urls")` names, and the views it
+/// imports, so none of them is an unused file; the include of a module
+/// another one includes is followed too, by name and as `django.urls.include`,
+/// and the `(module, app_name)` tuple names its module first (#1094). A name
+/// that is no project file adds nothing, and a module object is the import
+/// graph's.
+#[test]
+fn binary_django_urlconf_includes_reach_their_modules() {
+    let project = django_urlconf_project(
+        "from django.urls import include, path\n\nurlpatterns = [\n    path('api/', include('mysite.api.urls')),\n    path('', include(('mysite.front.urls', 'front'))),\n    path('accounts/', include('allauth.urls')),\n    path('admin/', include(admin.site.urls)),\n]\n",
+    );
+    // `urlpatterns` is Django's to read, which CHK006 does not see yet.
+    let unused: Vec<_> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, _, _, _)| code == "CHK001")
+        .collect();
+    assert_eq!(
+        unused,
+        [(
+            "CHK001".to_owned(),
+            "mysite/unused.py".to_owned(),
+            "warning".to_owned(),
+            "certain".to_owned()
+        )]
+    );
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", "mysite/api/v2/urls.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    assert!(stderr.contains("URLconf include()"), "{stderr}");
+}
+
+/// An `include()` of a string computed at runtime may load any module, so
+/// unused files and distributions fall below certain (ADR 0005, #1094).
+#[test]
+fn binary_django_computed_urlconf_include_is_a_gap() {
+    let project = django_urlconf_project(
+        "from django.urls import include, path\n\nAPP = 'api'\nurlpatterns = [\n    path('api/', include(f'mysite.{APP}.urls')),\n]\n",
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: URLconf `mysite/urls.py:5` includes a module named by a string that could not be read; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+    let levels = issue_levels(project.path());
+    assert!(
+        levels
+            .iter()
+            .any(|(code, target, _, _)| code == "CHK001" && target == "mysite/unused.py"),
+        "{levels:?}"
+    );
+    assert!(
+        levels
+            .iter()
+            .all(|(_, _, _, confidence)| confidence != "certain"),
+        "{levels:?}"
+    );
+}
+
 /// Settings files the plugin does not read are a gap too: one past the files
 /// it follows, and one chokkin never discovers that does not parse (#914).
 #[test]
