@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ignore`), a code that is not CHK001-CHK010, a `file-ignore` after the
   first statement, or an `ignore` before it. No new spelling is accepted
   (#1132).
+- An entry point reference with an empty part (`acme..cli:main`) or a second
+  `:` (`acme.cli:main:x`) is reported as `could not map` and roots nothing,
+  instead of a skipped `src/acme//cli.py` or a CHK006 for `main` (#1133).
 
 ## [0.7.9] - 2026-10-24
 

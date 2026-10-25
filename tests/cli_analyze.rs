@@ -9743,3 +9743,55 @@ fn binary_explicit_confidence_wins_over_strict() {
     assert_eq!(issues, Vec::<(String, String)>::new());
     assert_eq!(code, Some(0));
 }
+
+/// Issue #1133: an object reference with an empty segment or a second `:`
+/// does not name a module, so it maps to nothing and roots nothing.
+#[test]
+fn binary_malformed_entry_point_reference_is_unmapped() {
+    for (target, mapped) in [
+        ("acme.cli:main", true),
+        ("acme..cli:main", false),
+        (".acme.cli:main", false),
+        ("acme.cli:main:x", false),
+        ("acme.cli:main..x", false),
+        ("acme.cli:", false),
+    ] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        fs::create_dir_all(temp.path().join("src/acme")).expect("mkdir");
+        fs::write(temp.path().join("src/acme/__init__.py"), "").expect("write");
+        fs::write(
+            temp.path().join("src/acme/cli.py"),
+            "def main():\n    pass\n",
+        )
+        .expect("write");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            format!(
+                "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n[project.scripts]\nacme = \"{target}\"\n"
+            ),
+        )
+        .expect("write pyproject");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+        let codes: Vec<&str> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter_map(|issue| issue["code"].as_str())
+            .collect();
+        assert!(!codes.contains(&"CHK006"), "{target}: {stdout}");
+        assert!(!stderr.contains("//"), "{target}: {stderr}");
+        let unmapped = format!("entry: could not map `{target}` to a source file");
+        assert_eq!(stderr.contains(&unmapped), !mapped, "{target}: {stderr}");
+        if mapped {
+            assert_eq!(codes, Vec::<&str>::new(), "{target}: {stdout}");
+        }
+    }
+}
