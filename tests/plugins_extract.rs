@@ -1728,7 +1728,17 @@ fn full_pipeline_step5() {
 
 #[test]
 fn partial_settings_warns() {
+    // An `INSTALLED_APPS` not read may install any app: a gap at its line.
     let hints = extract_fixture("django_partial_settings");
+    assert!(hints.warnings.iter().any(|warning| matches!(warning,
+        PluginsWarning::DjangoSettingsUnread { path, line: Some(1), .. }
+            if path == "mysite/settings.py"
+    )));
+    assert!(!django_contrib(&hints).unread_settings.is_empty());
+    let hints = django_project(&[(
+        "mysite/settings.py",
+        "INSTALLED_APPS = []\nMIDDLEWARE = build()\n",
+    )]);
     assert!(
         hints
             .warnings

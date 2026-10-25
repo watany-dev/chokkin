@@ -98,7 +98,8 @@ pub mod internals {
 
     /// `# chokkin: ignore[…]` directives in `source`, as the parser reads them.
     pub fn extract_ignores(source: &str) -> Vec<crate::parser::IgnoreDirective> {
-        crate::parser::extract_ignores_with(source, &crate::parser::LineIndex::new(source))
+        let lines = crate::parser::LineIndex::new(source);
+        crate::parser::extract_ignores_with(source, &lines, &mut Vec::new())
     }
 
     /// Case count for a proptest block tuned to `tuned` cases.

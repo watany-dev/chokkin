@@ -67,6 +67,7 @@ mod tests {
 
     fn baseline(written: u32, suppressed: u32) -> BaselineReport {
         BaselineReport {
+            unknown_schema_version: None,
             path: Some("base\x1b[31m.json".to_owned()),
             suppressed,
             written,

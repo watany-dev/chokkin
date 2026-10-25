@@ -326,6 +326,16 @@ fn collect_manifest_entries(
         let Some((module, symbol)) = parse_manifest_target(&entry_point.target) else {
             continue;
         };
+        // A reference the entry-points format does not allow names no module,
+        // so it maps to nothing instead of a path with an empty part (#1133).
+        if !is_object_reference(&module, symbol.as_deref()) {
+            warnings.push(EntryWarning::UnresolvedModuleTarget {
+                module: entry_point.target.trim().to_owned(),
+                file: entry_point.origin.file.clone(),
+                label: entry_point.origin.label.clone(),
+            });
+            continue;
+        }
         let Some(path) = resolve_module_to_path(&module, &sources.layout, known_paths) else {
             warnings.push(unresolved_target(
                 &module,
@@ -729,6 +739,18 @@ fn parse_manifest_target(target: &str) -> Option<(String, Option<String>)> {
         return None;
     }
     Some((trimmed.to_owned(), None))
+}
+
+/// `module(.module)*` with an optional `:attr(.attr)*`, as the entry-points
+/// specification writes it: no part is empty and there is one `:` at most.
+/// The parts are not checked as identifiers, which `acme-cli:main` (#1113)
+/// is left to.
+fn is_object_reference(module: &str, symbol: Option<&str>) -> bool {
+    let dotted = |name: &str| {
+        name.split('.')
+            .all(|part| !part.is_empty() && !part.contains(':'))
+    };
+    dotted(module) && symbol.is_none_or(dotted)
 }
 
 fn context_for_path(path: &str, file_contexts: &BTreeMap<&str, FileContext>) -> FileContext {

@@ -214,7 +214,7 @@ Fields:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `schema_version` | string | baseline schema version (`"1"` in v0.3; omitted = v0.2 draft) |
+| `schema_version` | string | baseline schema version (`"1"` in v0.3; omitted = v0.2 draft; any other value is still applied, with a warning) |
 | `chokkin_version` | string | chokkin version that generated the baseline |
 | `generated_at` | string | `unix:<seconds>` in the v0.2 draft schema |
 | `issues` | array | frozen issue entries |
