@@ -26,6 +26,13 @@ env:
   # Pinned so a release is not built by whatever stable shipped that day.
   # Bump deliberately (see CONTRIBUTING.md "Release flow"); keep >= rust-version.
   RUST_TOOLCHAIN: "1.98.1"
+  # The tools that build and describe what ships, pinned for the same reason
+  # (#1044). The actions pick maturin and syft at run time otherwise:
+  # maturin-action the newest release that pyproject.toml's range allows, and
+  # a bumped sbom-action SHA its own default syft. Dependabot does not track
+  # them, so bump them by hand, like the Linux build containers below.
+  MATURIN_VERSION: "v1.15.0"
+  SYFT_VERSION: "v1.54.0"
 
 jobs:
   # A PR that only edits prose skips the build and test jobs, as in ci.yml
@@ -66,19 +73,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `container` pins the Linux build image by digest: the action's
+        # default is a tag such as `manylinux2014_x86_64:latest`, so the image
+        # a wheel is built in would otherwise change between runs (#1044). The
+        # digests are the ones v0.7.9 was built with; bump the tag and digest
+        # together by hand. Empty off Linux, where maturin builds on the runner.
         platform:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             manylinux: auto
+            container: quay.io/pypa/manylinux2014_x86_64:latest@sha256:ac38650bc13796f4a5858c1c46202bc163b7060f38629a50a0385522f193ce32
           - runner: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
             manylinux: auto
+            container: ghcr.io/rust-cross/manylinux2014-cross:aarch64@sha256:32c92568ebee8db53e0598c21bcd06a6dd1649d45d507646a8a49313c50325f8
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
             manylinux: musllinux_1_2
+            container: ghcr.io/rust-cross/rust-musl-cross:x86_64-musl@sha256:ce75e9174325d4fbb3de85c309e2d7ca29f7500169bc4b5d2c611ff7e86d549a
           - runner: ubuntu-24.04
             target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
+            container: ghcr.io/rust-cross/rust-musl-cross:aarch64-musl@sha256:ecae5dd62d1c938c14f8071d36c16fa699860aace03bfb5284fb1216474d2643
           - runner: macos-14
             target: x86_64-apple-darwin
             manylinux: ""
@@ -108,8 +124,10 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           rust-toolchain: ${{ env.RUST_TOOLCHAIN }}
+          maturin-version: ${{ env.MATURIN_VERSION }}
           # Pass manylinux only for Linux targets; empty string disables it for macOS/Windows.
           manylinux: ${{ matrix.platform.manylinux }}
+          container: ${{ matrix.platform.container }}
           # Use the fat-LTO `dist` profile (Cargo.toml [profile.dist]) for the
           # smallest, most-optimized wheel binaries shipped to PyPI.
           args: --profile dist --locked --out dist
@@ -143,21 +161,27 @@ jobs:
           - runner: ubuntu-24.04
             target: i686-unknown-linux-gnu
             manylinux: auto
+            container: quay.io/pypa/manylinux2014_i686:latest@sha256:06ddeb5288aec4cda672de6be8a28b9fb9a091fde44e97b9f2a5d3276bb8250e
           - runner: ubuntu-24.04
             target: armv7-unknown-linux-gnueabihf
             manylinux: auto
+            container: ghcr.io/rust-cross/manylinux2014-cross:armv7@sha256:9bd3f47d894bf11bd00a114a79de07916d325802dca7a176e0a1f974ad5e7563
           - runner: ubuntu-24.04
             target: powerpc64le-unknown-linux-gnu
             manylinux: auto
+            container: ghcr.io/rust-cross/manylinux2014-cross:ppc64le@sha256:6bc0da449a9890e705b10c88e056ea8e00eaf32ee512345a7156f92b379a3450
           - runner: ubuntu-24.04
             target: s390x-unknown-linux-gnu
             manylinux: auto
+            container: ghcr.io/rust-cross/manylinux2014-cross:s390x@sha256:3a7baad42e2f88815bfba320e7d1713bb05a380683008da25eba07dfc8a50703
           - runner: ubuntu-24.04
             target: i686-unknown-linux-musl
             manylinux: musllinux_1_2
+            container: ghcr.io/rust-cross/rust-musl-cross:i686-musl@sha256:e515546ceeb7fef8a70e7a59198981f5851cbcf16dd8d1adeb28736ea4751e05
           - runner: ubuntu-24.04
             target: armv7-unknown-linux-musleabihf
             manylinux: musllinux_1_2
+            container: ghcr.io/rust-cross/rust-musl-cross:armv7-musleabihf@sha256:714d7529ed9098699cc13abade83c565e6a946e53975c108089a8cd3b43cb871
     steps: *build-wheel-steps
 
   # ── Build sdist ───────────────────────────────────────────────────────────────
@@ -175,6 +199,7 @@ jobs:
         with:
           command: sdist
           args: --out dist
+          maturin-version: ${{ env.MATURIN_VERSION }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheel-sdist
@@ -477,6 +502,7 @@ jobs:
           artifact-name: chokkin-sbom.spdx.json
           # Write into dist/ so it is included in the gh release create glob below.
           output-file: ./dist/chokkin-sbom.spdx.json
+          syft-version: ${{ env.SYFT_VERSION }}
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/*

@@ -102,7 +102,8 @@ for all platforms and publishes to PyPI via Trusted Publishing:
    to that PR's merge commit instead.
 
 Wheels are built with the toolchain pinned by `RUST_TOOLCHAIN` in
-`.github/workflows/release.yml`, not the latest stable; the CI lint job
+`.github/workflows/release.yml`, not the latest stable (maturin, syft and the
+Linux build containers are pinned there too, and bumped by hand); the CI lint job
 (rustfmt, clippy, rustdoc) pins the same version in `.github/workflows/ci.yml`
 so a new clippy lint does not break open PRs the day it ships. To move it, bump
 both in their own `ci:` PR (the release workflow builds and tests every wheel
