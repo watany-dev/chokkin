@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-10-25
+
 ### Added
 - `pipx run [options] <path>.py` runs a script the way `python <path>.py`
   does, so a script a workflow `run:` step or a local pre-commit hook runs
