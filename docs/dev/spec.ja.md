@@ -306,7 +306,7 @@ CHK002 = "error"
 
 `module_loaders` は §11 の loader API に足す関数の名前で、呼び出しの関数名 (`x.LazyFeature(...)` なら属性名) と一致させる。identifier でない名前 (`pkg.LazyFeature`) はどの呼び出しにも一致しないので、設定の検証エラー（exit 2）にする。既定は空で、layer をまたいでは置き換える。
 
-`.gitignore` と `.git/info/exclude` は git と同じ意味で読む。git の pattern に brace 展開は無いので、`{` `}` はリテラルとして扱う（`*.{py,pyc}` はその名前の file だけ、`{}` は何にも一致しない）。`ignore` crate は alternation として読むため、行を渡す前に `{` `}` をエスケープする（character class の中と既にエスケープ済みのものはそのまま）。workspace member の自動検出の走査も同じ規則で読む (#1149)。下位の `.gitignore` の規則は上位のものより優先し、`!` で戻した file は root の `.gitignore` が除いても読む。`.git` が root にも祖先にも無い directory では git は ignore file を読まないが、chokkin は root から下の `.gitignore` を同じ優先順で読む (`.git/info/exclude` は無いので読まない) (#1220)。
+`.gitignore` と `.git/info/exclude` は git と同じ意味で読む。git の pattern に brace 展開は無いので、`{` `}` はリテラルとして扱う（`*.{py,pyc}` はその名前の file だけ、`{}` は何にも一致しない）。`ignore` crate は alternation として読むため、行を渡す前に `{` `}` をエスケープする（character class の中と既にエスケープ済みのものはそのまま）。workspace member の自動検出の走査も同じ規則で読み、`.git/info/exclude`・祖先の `.gitignore`・入れ子の repository での打ち切りもソース走査と揃える。ソース走査が除く directory の `pyproject.toml` は member にしない (#1149, #1135)。下位の `.gitignore` の規則は上位のものより優先し、`!` で戻した file は root の `.gitignore` が除いても読む。`.git` が root にも祖先にも無い directory では git は ignore file を読まないが、chokkin は root から下の `.gitignore` を同じ優先順で読む (`.git/info/exclude` は無いので読まない) (#1220)。
 
 `respect_gitignore = true` のとき、走査が出会った `.gitignore` を読めなかった場合（root でも配下の directory でも、UTF-8 でない・読み取り権限がない・リンク先のない symlink）は、そのファイルごとに `sources: could not read <path>; its ignore rules may be missing` を 1 回出す。workspace member の走査が同じファイルに出会っても重ねて出さない (#915)。読めなかった ignore 規則は除外を減らす方向にしか働かず、finding を誤って消さないので gap にはしない。
 

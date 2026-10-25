@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses is no longer a certain CHK002. A directory without `.git` reads every
   `.gitignore` from the root down in the same order, not only the root's
   (#1220).
+- Workspace member auto-detection skips the directories source discovery
+  skips: `.git/info/exclude` and the `.gitignore` files above the root now
+  count, and a nested repository stops the outer rules below it, so a
+  directory left out as source is no longer treated as a member (#1135).
 
 ## [0.7.9] - 2026-10-24
 

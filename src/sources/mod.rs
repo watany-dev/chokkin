@@ -15,7 +15,7 @@ mod walk;
 mod walk_fixtures;
 mod warnings;
 
-pub(crate) use cache::SourcesCache;
+pub(crate) use cache::{SourcesCache, WalkIgnore};
 pub(crate) use context::{
     apply_member_context, assign_file_context, assign_layout_file_context, is_test_data_path,
 };

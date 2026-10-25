@@ -34,8 +34,8 @@ pub(crate) struct SourcesCache(Arc<Inner>);
 #[derive(Default)]
 struct Inner {
     dirs: Mutex<HashMap<OsString, Arc<DirIgnore>>>,
-    /// [`SourcesCache::gitignore_only_skips`]'s and [`WalkIgnore`]'s
-    /// directory chains, by walk root and the directory they end at.
+    /// [`WalkIgnore`]'s directory chains, by walk root and the directory
+    /// they end at.
     chains: Mutex<HashMap<PathBuf, HashMap<PathBuf, Arc<DirChain>>>>,
     /// Compiled rules by ignore file content, rooted at `.`.
     rules: Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
@@ -152,24 +152,6 @@ impl SourcesCache {
         let base = root.canonicalize().ok()?;
         let dirs = base.ancestors().skip(1).map(|dir| self.dir(dir)).collect();
         Some(Ancestors { base, dirs })
-    }
-
-    /// Whether `.gitignore` files drop `path` for a walk with only
-    /// `git_ignore` on (no parents, no exclude, `require_git(false)`), as
-    /// `ignore`'s `matched_ignore` answers it: the directories from `root`
-    /// down to `path`'s parent, closest first. Without `require_git`,
-    /// `ignore` sees no `.git`, so a nested repository does not stop them.
-    pub(crate) fn gitignore_only_skips(&self, root: &Path, path: &Path, is_dir: bool) -> bool {
-        let Some(chain) = path.parent().and_then(|parent| self.chain(root, parent)) else {
-            return false;
-        };
-        for dir in chain.dirs.iter().rev() {
-            let matched = dir.gitignore.matched(path, is_dir);
-            if !matched.is_none() {
-                return matched.is_ignore();
-            }
-        }
-        false
     }
 
     /// The ignore files from `root` down to `dir`, `None` when `dir` is not
