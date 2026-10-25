@@ -13,11 +13,18 @@ use crate::rules::import_site;
 
 use super::super::context::PluginContext;
 use super::super::types::{ModuleReference, PluginContribution, ReferenceOrigin};
+use super::super::util::push_used_symbol;
 use super::super::warnings::{PluginsWarning, SettingsUnread};
 use super::{Lookup, abs_path, module_path, push_unread};
 
 /// Origin label of a URL configuration another one includes.
 const INCLUDE_LABEL: &str = "URLconf include()";
+
+/// Names Django reads from every URL configuration it loads.
+const URLCONF_NAMES: &[&str] = &["urlpatterns", "app_name"];
+
+/// Names Django reads from the root URL configuration only.
+const ROOT_URLCONF_NAMES: &[&str] = &["handler400", "handler403", "handler404", "handler500"];
 
 /// What the first argument of an `include()` names.
 enum Included {
@@ -37,6 +44,8 @@ enum Included {
 /// runtime is a gap: the configuration it names, and what that imports, are
 /// unknown (ADR 0005). Calls are found anywhere in the module, function
 /// bodies included, since following one too many only hides a finding.
+/// Django reads [`URLCONF_NAMES`] from each of them by name, so those are
+/// used.
 pub(super) fn follow(
     ctx: &PluginContext<'_>,
     lookup: &Lookup,
@@ -85,11 +94,26 @@ pub(super) fn follow(
                 line: Some(lines.line(start)),
                 label: INCLUDE_LABEL.to_owned(),
             };
+            for name in URLCONF_NAMES {
+                push_used_symbol(contrib, &module, name, &origin);
+            }
             contrib.module_refs.push(ModuleReference { module, origin });
             if visited.insert(path.clone()) {
                 queue.push_back(path);
             }
         }
+    }
+}
+
+/// Django reads [`URLCONF_NAMES`] and [`ROOT_URLCONF_NAMES`] from the root
+/// URL configuration `module` by name.
+pub(super) fn root_names_used(
+    contrib: &mut PluginContribution,
+    module: &str,
+    origin: &ReferenceOrigin,
+) {
+    for name in URLCONF_NAMES.iter().chain(ROOT_URLCONF_NAMES) {
+        push_used_symbol(contrib, module, name, origin);
     }
 }
 

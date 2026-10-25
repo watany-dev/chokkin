@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mt-940`, `django-formset-js-improved` and `pytest-xdist` are in the package
   map, so their imports are no CHK010 and their declarations no CHK002
   (#1223).
+- Django's `urlpatterns` and `app_name` in each URLconf it loads, and the
+  `handler404`-style names in the `ROOT_URLCONF` one, are no CHK006: Django
+  reads them by name (#1094).
 - A requirements file whose `-r` names a URL or a `${VAR}` path pip expands
   from the environment no longer stops the run with exit 2: the line is
   skipped with a warning, the rest of the file is read, and missing-dependency

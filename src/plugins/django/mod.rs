@@ -502,9 +502,10 @@ fn read_settings(
             && let Some(urlconf) = string_value(value)
         {
             urlconf_read = true;
+            let urlconf_origin = origin(value.start(), "ROOT_URLCONF");
             contrib.module_refs.push(ModuleReference {
                 module: urlconf.clone(),
-                origin: origin(value.start(), "ROOT_URLCONF"),
+                origin: urlconf_origin.clone(),
             });
             // Only a discovered file can be an entry.
             if let Some(urls_path) =
@@ -522,6 +523,7 @@ fn read_settings(
                         label: "ROOT_URLCONF".to_owned(),
                     },
                 });
+                urls::root_names_used(contrib, &urlconf, &urlconf_origin);
                 urls::follow(ctx, lookup, &urls_path, contrib, warnings);
             }
         }

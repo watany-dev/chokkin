@@ -5222,12 +5222,13 @@ fn django_urlconf_project(urls: &str) -> tempfile::TempDir {
 #[test]
 fn binary_django_urlconf_includes_reach_their_modules() {
     let project = django_urlconf_project(
-        "from django.urls import include, path\n\nurlpatterns = [\n    path('api/', include('mysite.api.urls')),\n    path('', include(('mysite.front.urls', 'front'))),\n    path('accounts/', include('allauth.urls')),\n    path('admin/', include(admin.site.urls)),\n]\n",
+        "from django.urls import include, path\n\nhandler404 = 'mysite.api.views.index'\nurlpatterns = [\n    path('api/', include('mysite.api.urls')),\n    path('', include(('mysite.front.urls', 'front'))),\n    path('accounts/', include('allauth.urls')),\n    path('admin/', include(admin.site.urls)),\n]\n",
     );
-    // `urlpatterns` is Django's to read, which CHK006 does not see yet.
+    // Django reads `urlpatterns`, `app_name` and the root's `handler404` by
+    // name; the settings' own names are not what this checks.
     let unused: Vec<_> = issue_levels(project.path())
         .into_iter()
-        .filter(|(code, _, _, _)| code == "CHK001")
+        .filter(|(_, target, _, _)| !target.starts_with("mysite/settings.py:"))
         .collect();
     assert_eq!(
         unused,
