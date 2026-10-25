@@ -999,6 +999,8 @@ mod tests {
         );
         assert_eq!(scripts("pipx run ruff check gen.py"), []);
         assert_eq!(scripts("pipx run --spec black==24.1 black gen.py"), []);
+        assert_eq!(scripts("pipx run --spec ./tools a.py"), []);
+        assert_eq!(scripts("pipx run --spec=./tools a.py"), []);
         assert_eq!(scripts("pipx run https://example.com/gen.py"), []);
         assert_eq!(scripts("pipx install gen.py"), []);
         assert_eq!(scripts("pipx run $SCRIPT"), []);
