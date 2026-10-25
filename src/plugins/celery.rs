@@ -113,13 +113,18 @@ fn is_task_decorator(name: &str, _is_call: bool) -> bool {
 
 /// `-A pkg.mod` is the module Celery searches for [`APP_NAMES`], or, since
 /// Celery resolves the value as `pkg` plus an attribute first, the attribute
-/// `mod` of `pkg`.
+/// `mod` of `pkg`. A package without those attributes makes Celery import its
+/// `celery` submodule (#865); whether the module is a package is unknown
+/// here, so `pkg.mod.celery` is always referenced, and a module that does not
+/// exist adds nothing.
 fn push_celery_app(contrib: &mut PluginContribution, value: &str, origin: &ReferenceOrigin) {
-    if let Some((package, attribute)) =
-        push_app_ref(contrib, value, origin, &APP_NAMES).and_then(|module| module.rsplit_once('.'))
-    {
+    let Some(module) = push_app_ref(contrib, value, origin, &APP_NAMES) else {
+        return;
+    };
+    if let Some((package, attribute)) = module.rsplit_once('.') {
         push_used_symbol(contrib, package, attribute, origin);
     }
+    push_app_ref(contrib, &format!("{module}.celery"), origin, &APP_NAMES);
 }
 
 fn celery_app_arg(line: &str) -> Option<&str> {
