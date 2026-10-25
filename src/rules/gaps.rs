@@ -1455,6 +1455,7 @@ mod tests {
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
             distribution: distribution.map(str::to_owned),
             confidence: crate::resolver::ResolveConfidence::Certain,

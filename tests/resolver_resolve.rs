@@ -758,7 +758,7 @@ fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
 }
 
 #[test]
-fn dead_stdlib_fallback_only_softens_the_unresolved_warning() {
+fn dead_stdlib_fallback_never_runs_and_softens_the_unresolved_warning() {
     let index = resolve_path(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/symbols/dead_stdlib_fallback"),
@@ -768,8 +768,9 @@ fn dead_stdlib_fallback_only_softens_the_unresolved_warning() {
         .iter()
         .find(|resolved| resolved.import_root == "dummy_threading")
         .expect("dummy_threading import");
-    // CHK003 and script deps still see a plain fallback (#721).
+    // Not optional: it is not "used when installed" but never run (#1027).
     assert!(!site.optional);
+    assert!(site.never_runs);
     assert!(index.warnings.iter().any(|warning| matches!(
         warning,
         chokkin::internals::ResolveWarning::UnresolvedImport { import, optional: true, .. }

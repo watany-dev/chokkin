@@ -541,6 +541,7 @@ mod tests {
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: ModuleOrigin::ThirdParty,
             distribution: Some("boto3".to_owned()),
             confidence: ResolveConfidence::Certain,
