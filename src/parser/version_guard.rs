@@ -196,7 +196,7 @@ mod tests {
     use crate::parser::platform_guard::platform_modules;
 
     fn runs(chain: &[&str], branch: usize) -> Vec<[u32; 2]> {
-        let header = ruff_python_parser::parse_module("import sys\n").expect("parse");
+        let header = ruff_python_parser::parse_module("import os\nimport sys\n").expect("parse");
         let modules = platform_modules(None, None, header.suite());
         let parsed: Vec<_> = chain
             .iter()
@@ -221,6 +221,9 @@ mod tests {
             ("sys.version_info >= (3, 9)", [9, u32::MAX], [0, 8]),
             ("sys.version_info < (3, 9)", [0, 8], [9, u32::MAX]),
             ("(3, 9) <= sys.version_info", [9, u32::MAX], [0, 8]),
+            ("(3, 9) > sys.version_info", [0, 8], [9, u32::MAX]),
+            ("(3, 9) < sys.version_info[:2]", [10, u32::MAX], [0, 9]),
+            ("(3, 9) >= sys.version_info[:2]", [0, 9], [10, u32::MAX]),
             ("sys.version_info[:2] >= (3, 9)", [9, u32::MAX], [0, 8]),
             ("sys.version_info[0:2] < (3, 9)", [0, 8], [9, u32::MAX]),
             // The longer tuple is greater: 3.9.0 is past `(3, 9)`.
@@ -233,6 +236,12 @@ mod tests {
             assert_eq!(runs(&[test], 1), [orelse], "else of {test}");
         }
         assert_eq!(runs(&["sys.version_info[:2] == (3, 9)"], 0), [[9, 9]]);
+        assert_eq!(runs(&["(3, 9) == sys.version_info[:2]"], 0), [[9, 9]]);
+        // The last minor with a bit of its own is still read.
+        assert_eq!(
+            runs(&["sys.version_info >= (3, 126)"], 0),
+            [[126, u32::MAX]]
+        );
         assert_eq!(
             runs(&["sys.version_info[:2] != (3, 9)"], 0),
             [[0, 8], [10, u32::MAX]]
@@ -287,6 +296,9 @@ mod tests {
             "sys.version_info >= (3, 9, 1)",
             "sys.version_info >= (3, minor)",
             "sys.version_info >= (3, 200)",
+            "sys.version_info >= (3, 127)",
+            "sys.platform >= (3, 9)",
+            "os.version_info >= (3, 9)",
             "sys.version_info == (3, 9)",
             "sys.version_info[:3] >= (3, 9)",
             "sys.version_info[::2] >= (3, 9)",

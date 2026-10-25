@@ -212,9 +212,7 @@ impl TargetVersion {
     /// `requires-python` and written by `chokkin init`, is the same minor.
     pub fn parse(value: &str) -> Option<Self> {
         let suffix = value.strip_prefix("py3")?;
-        if suffix.len() > 3 || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
-            return None;
-        }
+        // `+8` and `0008` parse too; only the plain spelling counts.
         let minor: u32 = suffix.parse().ok()?;
         let spelled = suffix == minor.to_string() || suffix == format!("{minor:02}");
         (spelled && (Self::OLDEST_MINOR..=Self::NEWEST_MINOR).contains(&minor))
@@ -224,7 +222,7 @@ impl TargetVersion {
     /// Target version for any Python 3 minor, unchecked against the bundled
     /// range: `requires-python` may name minors older or newer than it.
     #[must_use]
-    pub(crate) fn from_minor(minor: u64) -> Self {
+    pub(crate) fn from_minor(minor: u32) -> Self {
         Self(format!("py3{minor:02}"))
     }
 
@@ -295,10 +293,6 @@ impl EntrySpec {
         if value.is_empty() {
             return Err("entry path must not be empty");
         }
-        if value == "." || value == ".." {
-            return Err("entry path must not be . or ..");
-        }
-
         let (path, symbol) = match value.rsplit_once(':') {
             Some((_, symbol)) if symbol.contains('/') || symbol.contains('\\') => {
                 return Err("entry path must not contain ':'");
@@ -306,9 +300,6 @@ impl EntrySpec {
             Some((path, symbol)) => {
                 if symbol.is_empty() {
                     return Err("entry symbol must not be empty");
-                }
-                if path.is_empty() || path == "." || path == ".." {
-                    return Err("entry path must not be empty");
                 }
                 if path.contains(':') {
                     return Err("entry path must not contain ':'");
@@ -597,6 +588,13 @@ mod tests {
             serde::de::IntoDeserializer::<serde::de::value::Error>::into_deserializer(value),
         )
         .ok()
+    }
+
+    #[test]
+    fn config_values_display_as_written() {
+        assert_eq!(Confidence::Likely.to_string(), "likely");
+        let target = TargetVersion::parse("py38").expect("py38");
+        assert_eq!(target.to_string(), "py38");
     }
 
     #[test]

@@ -550,7 +550,7 @@ mod tests {
             for target in 7..=15 {
                 // py307 is out of the configurable range but `requires-python`
                 // can infer it.
-                let target_version = TargetVersion::from_minor(u64::from(target));
+                let target_version = TargetVersion::from_minor(target);
                 let range = StdlibRange::new(&target_version, requires);
                 let top = upper.map_or(NEWEST_BUNDLED_MINOR, |upper| upper.max(target));
                 let window: Vec<u32> = (target..=top.max(target)).collect();

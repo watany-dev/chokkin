@@ -321,6 +321,7 @@ fn uv_lock_builds_graph() {
     let lockfile = manifest.sources.lockfile.as_ref().expect("uv.lock read");
     assert_eq!(lockfile.kind, LockfileKind::Uv);
     assert_eq!(lockfile.path, "uv.lock");
+    assert!(manifest.sources.uv_lock);
     let requests_deps = manifest
         .lockfile
         .edges
