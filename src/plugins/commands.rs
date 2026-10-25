@@ -659,7 +659,7 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
 }
 
 /// `pipx run` options whose value is the next word.
-const PIPX_RUN_VALUE_OPTIONS: [&str; 4] = ["--spec", "--python", "--pip-args", "--index-url"];
+const PIPX_RUN_VALUE_OPTIONS: [&str; 5] = ["--spec", "--python", "--pip-args", "--index-url", "-i"];
 
 /// `pipx run [options] <path>.py` runs a local script (pipx ≥ 1.3, #956).
 /// Any other first word, or any word after `--spec`, is an app pipx installs
@@ -675,7 +675,7 @@ fn pipx_run_target(args: &[&str]) -> Option<Run> {
         if PIPX_RUN_VALUE_OPTIONS.contains(arg) {
             index += 1;
         } else if !arg.starts_with('-') {
-            let script = !arg.contains("://") && !is_computed(arg) && is_python_path(arg);
+            let script = !arg.contains("://") && is_python_path(arg);
             return script.then(|| Run::Target(path_target(arg)));
         }
     }
@@ -1002,6 +1002,10 @@ mod tests {
         assert_eq!(scripts("pipx run https://example.com/gen.py"), []);
         assert_eq!(scripts("pipx install gen.py"), []);
         assert_eq!(scripts("pipx run $SCRIPT"), []);
+        assert_eq!(
+            scripts("pipx run -i https://pypi.example/simple tools/a.py"),
+            [script("tools/a.py")]
+        );
         assert_eq!(binaries("pipx run ruff check"), Vec::<String>::new());
     }
 

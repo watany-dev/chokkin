@@ -19,10 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it is no longer CHK001 and its `app` is no CHK006 (#865).
 - The import names of `django-i18nfield`, `django-oauth-toolkit`,
   `django-localflavor`, `django-hierarkey`, `paypal-checkout-serversdk`,
-  `django-bootstrap3`, `django-hijack`, `pycryptodome`, `pycryptodomex`,
-  `django-extensions`, `django-statici18n`, `libsass`, `mt-940`,
-  `django-formset-js-improved` and `pytest-xdist` are in the package map, so
-  their imports are no CHK010 and their declarations no CHK002 (#1223).
+  `django-bootstrap3`, `django-hijack`, `pycryptodome`, `pycrypto`,
+  `pycryptodomex`, `django-extensions`, `django-statici18n`, `libsass`,
+  `mt-940`, `django-formset-js-improved` and `pytest-xdist` are in the package
+  map, so their imports are no CHK010 and their declarations no CHK002
+  (#1223).
 
 ## [0.7.9] - 2026-10-24
 

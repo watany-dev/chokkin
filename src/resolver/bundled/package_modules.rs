@@ -402,6 +402,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("pybars3", &["pybars"]),
     ("pycodestyle", &["pycodestyle"]),
     ("pycparser", &["pycparser"]),
+    ("pycrypto", &["Crypto"]),
     ("pycryptodome", &["Crypto"]),
     ("pycryptodomex", &["Cryptodome"]),
     ("pydantic", &["pydantic"]),
