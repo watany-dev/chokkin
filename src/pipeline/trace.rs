@@ -464,6 +464,7 @@ mod tests {
                     deferred: false,
                     relative_level: 0,
                     fallback_for: Vec::new(),
+                    version_minors: None,
                 }],
                 ..ParsedModule::default()
             },

@@ -1,0 +1,11 @@
+[project]
+name = "never-run-imports"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = []
+
+[dependency-groups]
+dev = ["ujson"]
+
+[project.scripts]
+acme-cli = "acme.main:main"

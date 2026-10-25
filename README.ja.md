@@ -71,7 +71,7 @@ pipx run chokkin
 pip install chokkin
 ```
 
-wheel のインストールには Python 3.10 以上が必要です。解析対象の project 側はどの Python バージョンでも構いません(設定の `target_version`)。
+wheel のインストールには Python 3.10 以上が必要です。解析対象の project 側は Python 3.8〜3.15 のどれでも構いません(設定の `target_version`、`py38`〜`py315`)。
 
 対象 project の仮想環境は不要です。`.venv` があれば dist-info metadata を読み、なければ manifest・lockfile・同梱の distribution → module map で解析します。
 

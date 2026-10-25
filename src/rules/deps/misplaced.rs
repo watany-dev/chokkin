@@ -56,7 +56,7 @@ pub(super) fn detect_misplaced_dependencies(
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
     for import in &resolution.imports {
-        if import.origin != ModuleOrigin::ThirdParty {
+        if import.origin != ModuleOrigin::ThirdParty || import.never_runs {
             continue;
         }
         let Some(distribution) = import.distribution.as_ref() else {

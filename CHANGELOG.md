@@ -64,6 +64,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An entry point reference with an empty part (`acme..cli:main`) or a second
   `:` (`acme.cli:main:x`) is reported as `could not map` and roots nothing,
   instead of a skipped `src/acme//cli.py` or a CHK006 for `main` (#1133).
+- `target_version = "py38"` and `"py39"` are accepted; they were rejected as
+  invalid config while `"py3100"` was accepted. The value must now name a
+  bundled minor (`py38`–`py315`), and anything else is a config error that
+  names the accepted range. `chokkin init` writes the nearest bundled minor
+  when `requires-python` names an older or newer one (#1125).
+- An `except ImportError:` fallback for a module every Python
+  `requires-python` allows ships (`try: import json` / `except ImportError:
+  import simplejson`) is no longer CHK003, CHK004 or CHK005: it never runs.
+  Its CHK010 stays info, as before (#1027).
+- An import in a branch that a `sys.version_info` comparison rules out on
+  every Python `requires-python` allows (`if sys.version_info >= (3, 9): ...
+  else: from backports.zoneinfo import ZoneInfo` in a `>=3.10` project) is no
+  longer CHK003, CHK004 or CHK005, and its CHK010 is info. Only
+  `sys.version_info` and `sys.version_info[:2]` compared with a literal tuple
+  are read; other forms keep the import a runtime requirement (#997).
 - A `.gitignore` below the root re-includes with `!` a file the root
   `.gitignore` ignores, as git does: the root's rules no longer drop it a
   second time after the walk, so its imports count and a dependency only it

@@ -215,7 +215,7 @@ fn missing_in_script(
     let mut candidates = Vec::new();
     for import in imports
         .iter()
-        .filter(|import| !import.optional && !import.platform_guarded)
+        .filter(|import| !import.optional && !import.platform_guarded && !import.never_runs)
     {
         let Some(name) = import_distribution(import) else {
             continue;
@@ -349,6 +349,7 @@ mod tests {
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: ModuleOrigin::ThirdParty,
             distribution: Some(distribution.to_owned()),
             confidence: ResolveConfidence::Certain,

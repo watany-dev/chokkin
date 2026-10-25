@@ -409,21 +409,12 @@ mod tests {
             context: crate::parser::ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
             distribution: Some("requests".to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }));
-        let plugins = PluginHints {
-            contributions: Vec::new(),
-            config_binary_usages: Vec::new(),
-            config_used_distributions: Vec::new(),
-            config_declared_distributions: Vec::new(),
-            config_provided_binaries: Vec::new(),
-            config_module_refs: Vec::new(),
-            config_script_entries: Vec::new(),
-            config_command_targets: Vec::new(),
-            warnings: Vec::new(),
-        };
+        let plugins = PluginHints::default();
         let config = crate::config::default_config();
         let report = reconcile_with_context(
             &DependencyRuleContext {
@@ -472,17 +463,7 @@ mod tests {
         let manifest = minimal_manifest(vec![dep]);
         let resolution = ResolutionIndex::default();
         let reachability = ReachabilityReport::default();
-        let plugins = PluginHints {
-            contributions: Vec::new(),
-            config_binary_usages: Vec::new(),
-            config_used_distributions: Vec::new(),
-            config_declared_distributions: Vec::new(),
-            config_provided_binaries: Vec::new(),
-            config_module_refs: Vec::new(),
-            config_script_entries: Vec::new(),
-            config_command_targets: Vec::new(),
-            warnings: Vec::new(),
-        };
+        let plugins = PluginHints::default();
         let config = crate::config::default_config();
         let (sources, parse, graph) = reconcile_inputs(&manifest);
         let report = reconcile_with_context(
@@ -544,17 +525,7 @@ mod tests {
         });
         let resolution = ResolutionIndex::default();
         let reachability = ReachabilityReport::default();
-        let plugins = PluginHints {
-            contributions: Vec::new(),
-            config_binary_usages: Vec::new(),
-            config_used_distributions: Vec::new(),
-            config_declared_distributions: Vec::new(),
-            config_provided_binaries: Vec::new(),
-            config_module_refs: Vec::new(),
-            config_script_entries: Vec::new(),
-            config_command_targets: Vec::new(),
-            warnings: Vec::new(),
-        };
+        let plugins = PluginHints::default();
         let config = crate::config::default_config();
         let (sources, parse, graph) = reconcile_inputs(&manifest);
         let report = reconcile_with_context(
@@ -625,21 +596,12 @@ mod tests {
             context: crate::parser::ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
             distribution: Some("pyyaml".to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }));
-        let plugins = PluginHints {
-            contributions: Vec::new(),
-            config_binary_usages: Vec::new(),
-            config_used_distributions: Vec::new(),
-            config_declared_distributions: Vec::new(),
-            config_provided_binaries: Vec::new(),
-            config_module_refs: Vec::new(),
-            config_script_entries: Vec::new(),
-            config_command_targets: Vec::new(),
-            warnings: Vec::new(),
-        };
+        let plugins = PluginHints::default();
         let config = crate::config::default_config();
         let report = reconcile_with_context(
             &DependencyRuleContext {
