@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- SARIF `artifactLocation.uri` is percent-encoded per path segment, so a
+  path with a space, `#`, `%`, or non-ASCII characters is a valid URI
+  reference and GitHub code scanning annotates the file; fingerprints and
+  the other reporters keep the raw path (#1129).
+
 ## [0.7.9] - 2026-10-24
 
 ### Added
