@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped with a warning, the rest of the file is read, and missing-dependency
   findings are lowered as for any partly read runtime manifest. A `-c` of
   either form warns that its constraints are not applied (#1130).
+- A one-line `install_requires` / extra in `setup.cfg` is split at `;` as
+  setuptools does, so `install_requires = requests; rich` declares both
+  instead of reporting an invalid requirement and `rich` as undeclared. A
+  multi-line value still reads `;` as a marker, and `--fix` leaves a line
+  that holds several dependencies alone (#989).
 
 ## [0.7.9] - 2026-10-24
 
