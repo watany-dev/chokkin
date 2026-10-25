@@ -9,7 +9,7 @@ use super::entry_points::EntryPoints;
 use super::error::ManifestError;
 use super::extract::unreadable_reason;
 use super::requirements::extract_requirements_path;
-use super::setuptools_reqs::setuptools_requirement_items;
+use super::setuptools_reqs::{SetuptoolsItem, setuptools_requirement_items};
 use super::types::{
     DeclaredDependency, DependencyContext, EntryPointDecl, ExtrasState, ProjectMetadata,
 };
@@ -56,6 +56,7 @@ pub(super) fn extract_setup_cfg(
     };
 
     let sections = parse_ini_sections(&contents);
+    let one_line = one_line_options(&contents);
     if let Some(metadata) = sections.get("metadata") {
         result.metadata.name = metadata.get("name").cloned();
         result.metadata.version = metadata.get("version").cloned();
@@ -69,6 +70,7 @@ pub(super) fn extract_setup_cfg(
             rel: &rel,
             option: "options.install_requires".to_owned(),
             context: DependencyContext::Runtime,
+            one_line: one_line.contains(&("options", "install_requires".to_owned())),
         };
         result.runtime_unknown = !option.push(&mut result, requires);
     }
@@ -84,6 +86,7 @@ pub(super) fn extract_setup_cfg(
                 rel: &rel,
                 option: format!("options.extras_require.{extra}"),
                 context: DependencyContext::SetupExtra(extra.clone()),
+                one_line: one_line.contains(&("options.extras_require", extra.clone())),
             };
             if !option.push(&mut result, requires) {
                 lost.insert(extra.clone());
@@ -118,6 +121,8 @@ struct Requirements<'a> {
     /// Dotted option name, e.g. `options.install_requires`.
     option: String,
     context: DependencyContext,
+    /// The value is one `key = value` line, which setuptools splits at `;`.
+    one_line: bool,
 }
 
 impl Requirements<'_> {
@@ -131,7 +136,7 @@ impl Requirements<'_> {
     /// missing file, but it may be generated before the build.
     fn push(&self, result: &mut SetupCfgExtraction, value: &str) -> bool {
         let Some(spec) = value.strip_prefix("file:") else {
-            for item in setuptools_requirement_items(value.lines()) {
+            for item in setup_cfg_requirement_items(value, self.one_line) {
                 push_dependency(DependencyPush {
                     dependencies: &mut result.dependencies,
                     warnings: &mut result.warnings,
@@ -198,6 +203,37 @@ impl Requirements<'_> {
             });
         false
     }
+}
+
+/// The items of a requirements option value as setuptools'
+/// `_parse_list_semicolon` and then `parse_strings` read them (#989): a
+/// one-line value splits at `;`, so `requests; rich` is two items and a
+/// marker is an item of its own; a multi-line value splits at line ends,
+/// where `;` starts a marker. The index counts the split items.
+pub(crate) fn setup_cfg_requirement_items(value: &str, one_line: bool) -> Vec<SetuptoolsItem> {
+    if one_line {
+        setuptools_requirement_items(value.split(';'))
+    } else {
+        setuptools_requirement_items(value.lines())
+    }
+}
+
+/// `(section, option)` pairs whose value `configparser` reads from one
+/// `key = value` line: no continuation line and no repeat. A blank line
+/// is no continuation: `configparser` keeps it only when a continuation
+/// follows, which then counts.
+pub(crate) fn one_line_options(contents: &str) -> BTreeSet<(&str, String)> {
+    let mut lines: std::collections::BTreeMap<(&str, String), usize> =
+        std::collections::BTreeMap::new();
+    for (_, line) in ini_lines(contents) {
+        if let IniLine::Value { section, key, .. } = line {
+            *lines.entry((section, key)).or_default() += 1;
+        }
+    }
+    lines
+        .into_iter()
+        .filter_map(|(option, count)| (count == 1).then_some(option))
+        .collect()
 }
 
 /// One `setup.cfg` line as `configparser` reads it.
@@ -446,6 +482,66 @@ install_requires =
                     raw: "pytest \\".to_owned(),
                     context: DependencyContext::SetupExtra("test".to_owned()),
                 },
+            ]
+        );
+    }
+
+    /// setuptools' `_parse_list_semicolon` splits a one-line value at `;`
+    /// and a multi-line value at line ends, where `;` starts a marker (#989).
+    #[test]
+    fn one_line_values_split_at_semicolons_like_setuptools() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("setup.cfg");
+        std::fs::write(
+            &path,
+            "[options]\ninstall_requires = requests; rich ;; # c\n\
+             [options.extras_require]\nwin = pywin32; os_name == \"nt\"\n\
+             old =\n    six; python_version < \"3\"\nany:  a;b\n\n    c\n",
+        )
+        .expect("write setup.cfg");
+
+        let result = extract_setup_cfg(temp.path(), &path).expect("extract");
+        let declared: Vec<(&str, Option<&str>, &str)> = result
+            .dependencies
+            .iter()
+            .map(|dep| {
+                (
+                    dep.name.as_str(),
+                    dep.marker.as_deref(),
+                    dep.origin.label.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                ("requests", None, "options.install_requires[0]"),
+                ("rich", None, "options.install_requires[1]"),
+                ("c", None, "options.extras_require.any[1]"),
+                (
+                    "six",
+                    Some("python_version < \"3\""),
+                    "options.extras_require.old[0]"
+                ),
+                ("pywin32", None, "options.extras_require.win[0]"),
+            ]
+        );
+        // On one line a marker is a requirement of its own, which setuptools
+        // also rejects; a blank line and a continuation make `a;b` a line of
+        // a multi-line value, where `b` is a marker.
+        let invalid =
+            |label: &str, raw: &str, extra: &str| ManifestWarning::InvalidRequirementLine {
+                file: "setup.cfg".to_owned(),
+                line: None,
+                label: label.to_owned(),
+                raw: raw.to_owned(),
+                context: DependencyContext::SetupExtra(extra.to_owned()),
+            };
+        assert_eq!(
+            result.warnings,
+            [
+                invalid("options.extras_require.any[0]", "a;b", "any"),
+                invalid("options.extras_require.win[1]", "os_name == \"nt\"", "win"),
             ]
         );
     }
