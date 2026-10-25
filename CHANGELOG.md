@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The corpus gate labels every CHK001 hit and samples app-mode CHK006 and
+  CHK005 / CHK007 / CHK008. CHK001's precision floor rises from 45% to 50%
+  (measured 53.5%); CHK006's falls from 90% to 70% (measured 74.8%): its 90%
+  was measured on library projects, where public names are only info.
+
 ## [0.7.10] - 2026-10-25
 
 ### Added

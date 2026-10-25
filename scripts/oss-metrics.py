@@ -190,8 +190,13 @@ FP_GATE_PCT = 5
 # labels, so that no single project's conventions (airflow's DAG files, #1062)
 # decide the gate. It rose from 25 to 45 once URLconf include() strings
 # became module references (#1094, 30.2% -> 48.1%); most of what remains is
-# settings strings and CLIs run from docker or shell (#1065).
-PRECISION_FLOORS = {"CHK001": 45, "CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
+# settings strings and CLIs run from docker or shell (#1065). With every hit
+# labelled it measures 53.5% and the floor is 50 (#1239). CHK006's 90 was
+# measured on library projects, where a public name is info rather than a hit;
+# labelling 8 hits of each app-mode project measured 74.8% (app mode alone
+# about a third: settings names, dotted strings, registration decorators), so
+# the floor is now 70 and the gate covers app mode (#1238).
+PRECISION_FLOORS = {"CHK001": 50, "CHK003": 90, "CHK004": 95, "CHK006": 70, "CHK010": 90}
 # Floors over `certain` findings only (#1094), which --fix acts on. A file
 # --fix --allow-remove-files deletes while it is in use breaks the project, so
 # CHK001's floor is every one: a `certain` false positive is a bug to fix, not
