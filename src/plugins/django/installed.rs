@@ -240,6 +240,8 @@ impl<'a> Visitor<'a> for Additions<'a, '_> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
     use crate::manifest::literals::parse_module;
 
@@ -278,6 +280,14 @@ INSTALLED_APPS.remove('a')
     }
 
     #[test]
+    fn reads_an_annotated_assignment_past_other_unpacking() {
+        assert_eq!(
+            apps("first, second = 1, 2\nINSTALLED_APPS: list[str] = ['a']\n"),
+            Some((vec!["a".to_owned()], false))
+        );
+    }
+
+    #[test]
     fn a_list_built_from_itself_ends() {
         assert_eq!(
             apps("A = B\nB = A + ['x']\nINSTALLED_APPS = A\n"),
@@ -300,6 +310,16 @@ INSTALLED_APPS.remove('a')
             "first, *INSTALLED_APPS = build()",
             "from .base import INSTALLED_APPS\nINSTALLED_APPS += ['a']",
             "from .apps import LOCAL as LOCAL_APPS\nINSTALLED_APPS = LOCAL_APPS",
+            "INSTALLED_APPS = ['a'] - ['b']",
+            "INSTALLED_APPS = sorted(['a'])",
+            "INSTALLED_APPS = list(['a'], ['b'])",
+            "INSTALLED_APPS = list(['a'], key=None)",
+            "INSTALLED_APPS = list(*['a'])",
+            "[first, INSTALLED_APPS] = build()",
+            "INSTALLED_APPS = []\nINSTALLED_APPS[0] += ['a']",
+            "INSTALLED_APPS = []\nINSTALLED_APPS.append('a', key=None)",
+            "INSTALLED_APPS = []\nINSTALLED_APPS.insert(0, 'a', key=None)",
+            "INSTALLED_APPS = []\nINSTALLED_APPS.extend(['a'], key=None)",
         ] {
             assert_eq!(
                 apps(source).map(|(_, unread)| unread),
@@ -307,6 +327,16 @@ INSTALLED_APPS.remove('a')
                 "{source}"
             );
         }
+    }
+
+    #[test]
+    fn a_chain_past_the_depth_is_unread() {
+        let chain = (0..=MAX_DEPTH).fold(String::new(), |mut chain, i| {
+            let _ = writeln!(chain, "N{i} = N{}", i + 1);
+            chain
+        });
+        let source = format!("{chain}N{} = ['a']\nINSTALLED_APPS = N0\n", MAX_DEPTH + 1);
+        assert_eq!(apps(&source).map(|(_, unread)| unread), Some(true));
     }
 
     #[test]
