@@ -38,6 +38,7 @@ use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef, ModuleRef,
     NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind, import_context_for_file,
 };
+use super::version_guard::{self, ALL_MINORS, Minors};
 
 /// Whether the module edits `sys.path`, and its path-like literals (#719).
 #[derive(Default)]
@@ -67,10 +68,12 @@ impl SourceMentions {
             async_library: mentions("current_async_library"),
             availability: mentions("find_spec") || mentions("_available"),
             // An aliased module (`import sys as s`) is checked once the
-            // module scope's names are known.
+            // module scope's names are known. `sys.version_info` tests read
+            // the same `sys` bindings (#997).
             platform: mentions("sys.platform")
                 || mentions("os.name")
-                || mentions("platform.system"),
+                || mentions("platform.system")
+                || mentions("sys.version_info"),
         }
     }
 }
@@ -95,6 +98,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// imports (#721).
     fallback_for: Vec<String>,
     platform_guard_depth: u32,
+    /// Python 3 minors the enclosing `sys.version_info` tests let the code
+    /// run on (#997).
+    version_minors: Minors,
     /// Names the current scope binds to `sys` / `os` / `platform` (#957);
     /// empty when the source tests none of them.
     platform_modules: PlatformModules,
@@ -168,6 +174,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
+            version_minors: ALL_MINORS,
             platform_modules: PlatformModules::default(),
             imported_guards: Vec::new(),
             async_library_names: HashSet::new(),
@@ -344,6 +351,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     ) {
         let was_type_checking = self.in_type_checking;
         let was_platform_guard = self.platform_guard_depth;
+        let was_version_minors = self.version_minors;
         let was_gated_depth = self.gated_depth;
         let was_main_block = self.in_main_block;
         let guard_count = self.imported_guards.len();
@@ -378,6 +386,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 }
             });
         let optional = excluded(&|expr| self.installed_leaf(expr));
+        let version_minors = version_guard::branch_minors(earlier, test, &self.platform_modules);
         let mut guards: Vec<String> = condition::leaves(earlier.iter().copied().chain(test))
             .into_iter()
             .filter_map(|expr| imported_module_guard(expr, &self.async_library_names))
@@ -408,6 +417,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             self.platform_guard_depth = self.platform_guard_depth.saturating_add(1);
         }
         self.in_main_block |= main_block;
+        self.version_minors &= version_minors;
         // A guard inside a function or class body says nothing about how the
         // file is run.
         if main_guard && self.module_level {
@@ -417,6 +427,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.visit_body(body);
         self.in_type_checking = was_type_checking;
         self.platform_guard_depth = was_platform_guard;
+        self.version_minors = was_version_minors;
         self.gated_depth = was_gated_depth;
         self.in_main_block = was_main_block;
         self.imported_guards.truncate(guard_count);
@@ -654,6 +665,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     deferred: self.function_depth > 0,
                     relative_level: 0,
                     fallback_for: Vec::new(),
+                    version_minors: None,
                 });
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
@@ -773,6 +785,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 deferred,
                 relative_level: 0,
                 fallback_for: self.fallback_for.clone(),
+                version_minors: self.version_minor_runs(),
             });
         }
     }
@@ -861,8 +874,13 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 deferred,
                 relative_level: level,
                 fallback_for: self.fallback_for.clone(),
+                version_minors: self.version_minor_runs(),
             });
         }
+    }
+
+    fn version_minor_runs(&self) -> Option<Vec<[u32; 2]>> {
+        (self.version_minors != ALL_MINORS).then(|| version_guard::minor_runs(self.version_minors))
     }
 
     fn push_import(&mut self, import: ImportRef) {
@@ -2447,6 +2465,33 @@ g = lambda x=utils.G: x
             .map(|import| (import.module.as_str(), import.optional))
             .collect();
         assert_eq!(lambdas, [("yaml_d", false), ("yaml_i", true)]);
+    }
+
+    /// Nested `sys.version_info` tests narrow the minors an import runs on,
+    /// inside functions too; outside them nothing bounds it (#997).
+    #[test]
+    fn version_info_tests_record_the_minors_an_import_runs_on() {
+        let parsed = visit_source(
+            "import sys\nif sys.version_info >= (3, 9):\n    import a\n    if sys.version_info < (3, 12):\n        import b\n    def f():\n        import c\nelse:\n    import d\nimport e\n\ndef g(sys):\n    if sys.version_info >= (3, 9):\n        import h\n",
+        );
+        let minors = |module: &str| {
+            parsed
+                .imports
+                .iter()
+                .find(|import| import.module == module)
+                .and_then(|import| import.version_minors.clone())
+        };
+        assert_eq!(minors("a"), Some(vec![[9, u32::MAX]]));
+        assert_eq!(minors("b"), Some(vec![[9, 11]]));
+        assert_eq!(minors("c"), Some(vec![[9, u32::MAX]]));
+        assert_eq!(minors("d"), Some(vec![[0, 8]]));
+        assert_eq!(minors("e"), None);
+        // A parameter named `sys` is not the module.
+        assert_eq!(minors("h"), None);
+        // An alias is read whether or not the file also tests the platform.
+        let aliased =
+            visit_source("import sys as s\nif s.version_info < (3, 9):\n    import old\n");
+        assert_eq!(aliased.imports[1].version_minors, Some(vec![[0, 8]]));
     }
 
     /// A bare `except:` and `except Exception:` / `BaseException` catch a

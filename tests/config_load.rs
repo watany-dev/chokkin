@@ -390,8 +390,8 @@ fn entry_spec_rejects_each_malformed_form() {
     for (value, message) in [
         ("pkg/app.py:a/b", "entry path must not contain ':'"),
         ("pkg/app.py:a\\b", "entry path must not contain ':'"),
-        (".:app", "entry path must not be empty"),
-        ("..:app", "entry path must not be empty"),
+        (".:app", "entry path must not be . or .."),
+        ("..:app", "entry path must not be . or .."),
         (":app", "entry path must not be empty"),
         ("pkg/app.py:", "entry symbol must not be empty"),
         ("a:b:app", "entry path must not contain ':'"),

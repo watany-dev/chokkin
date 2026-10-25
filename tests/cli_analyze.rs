@@ -659,6 +659,46 @@ fn binary_gitignored_directory_symlink_is_silent() {
     assert!(!stderr.contains("did not follow symlink"), "{stderr}");
 }
 
+/// A deeper `.gitignore` re-includes what the root's ignores, as git does,
+/// in a repository and in a plain directory: the file's import counts
+/// (#1220).
+#[test]
+fn binary_nested_gitignore_negation_wins_over_the_root() {
+    for repository in [true, false] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        if repository {
+            fs::create_dir_all(root.join(".git")).expect("mkdir");
+        }
+        fs::create_dir_all(root.join("demo")).expect("mkdir");
+        fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        )
+        .expect("write pyproject");
+        fs::write(root.join(".gitignore"), "gen.py\n").expect("write");
+        fs::write(root.join("demo/.gitignore"), "!gen.py\n").expect("write");
+        fs::write(root.join("demo/__init__.py"), "from . import gen\n").expect("write");
+        fs::write(root.join("demo/gen.py"), "import requests\n").expect("write");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "compact"])
+            .arg(root)
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(
+            !stdout.contains("CHK002"),
+            "repository {repository}: {stdout}"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::Success.code().into()),
+            "repository {repository}: {stdout}"
+        );
+    }
+}
+
 #[test]
 fn binary_baseline_update_then_suppresses_existing_issue() {
     let temp = tempfile::TempDir::new().expect("tempdir");
@@ -9971,6 +10011,39 @@ fn binary_explicit_confidence_wins_over_strict() {
     let (issues, code) = run(&["--strict", "--confidence", "certain"]);
     assert_eq!(issues, Vec::<(String, String)>::new());
     assert_eq!(code, Some(0));
+}
+
+#[test]
+fn binary_imports_no_allowed_python_runs_need_no_declaration() {
+    let issues = json_issues(&fixture_path(&["deps", "never_run_imports"]), &[]);
+    let keys = issue_keys(&issues);
+    let has = |code: &str, distribution: &str| {
+        issues
+            .iter()
+            .any(|issue| issue["code"] == code && issue["distribution"] == distribution)
+    };
+    // A fallback for a module every allowed Python ships never runs (#1027).
+    assert!(!has("CHK003", "simplejson"), "{keys:?}");
+    assert!(!has("CHK005", "ujson"), "{keys:?}");
+    // So does a branch a `sys.version_info` test rules out on all of them (#997).
+    assert!(!has("CHK003", "backports-zoneinfo"), "{keys:?}");
+    // An import that runs on some allowed Python still needs a declaration,
+    // and so does one under a test that is not read.
+    assert!(has("CHK003", "tomli"), "{keys:?}");
+    assert!(has("CHK003", "importlib-metadata"), "{keys:?}");
+    assert!(has("CHK003", "six"), "{keys:?}");
+}
+
+#[test]
+fn binary_never_run_imports_use_the_root_range_only_for_root_files() {
+    let issues = json_issues(&fixture_path(&["deps", "never_run_member"]), &[]);
+    let paths: Vec<&str> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK003" && issue["distribution"] == "backports-zoneinfo")
+        .filter_map(|issue| issue["path"].as_str())
+        .collect();
+    // A member's own `requires-python` is not read, and may allow 3.8 (#997).
+    assert_eq!(paths, ["packages/core/src/acme_core/__init__.py"]);
 }
 
 /// Issue #1133: an object reference with an empty segment or a second `:`

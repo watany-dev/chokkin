@@ -89,7 +89,7 @@ pip install chokkin
 ```
 
 Python 3.10+ is required to install the wheel. The analyzed project can target
-any Python version (`target_version` in the config).
+any Python from 3.8 to 3.15 (`target_version` in the config, `py38`–`py315`).
 
 chokkin does not need your project's virtualenv. If `.venv` exists it reads
 dist-info metadata from it; otherwise it works from manifests, lockfiles, and a

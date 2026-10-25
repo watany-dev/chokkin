@@ -1343,6 +1343,7 @@ mod tests {
             deferred: false,
             relative_level: level,
             fallback_for: Vec::new(),
+            version_minors: None,
         };
         let unplaced = |line: u32| ParseDiagnostic {
             line,
@@ -1601,6 +1602,7 @@ mod tests {
             context: ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
             distribution: distribution.map(str::to_owned),
             confidence: crate::resolver::ResolveConfidence::Certain,

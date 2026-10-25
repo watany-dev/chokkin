@@ -31,11 +31,11 @@ exclude_re = [
     # surface for them to vouch for. The guard only skips the parse.
     "replace && with \\|\\| in reads_production_tests",
     "replace reads_production_tests -> bool with true",
-    # Off Windows every absolute path starts with `/`, so `is_absolute() && /`
-    # still answers the same; `windows_drive_path_is_rejected` catches it on
-    # the Windows CI job (#1136). The column keeps the second `||` in, which
-    # `absolute_posix_path_is_rejected` catches.
-    ":35: replace \\|\\| with && in is_absolute_path_str",
+    # Each minor sets its own bit once, so `|` and `^` build the same set.
+    "replace \\| with \\^ in branch_minors",
+    # On POSIX `Path::is_absolute` is exactly the leading `/`, so requiring
+    # both agrees there; the Windows-only test covers the drive form.
+    "replace \\|\\| with && in is_absolute_path_str",
     # `resolve_baseline_path` has already refused every parent this check
     # would; it only guards a link swapped in between the two. The order is
     # pinned by `refused_baseline_write_creates_no_directory_outside_the_root`

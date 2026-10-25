@@ -6,7 +6,9 @@ use std::sync::Arc;
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
-use crate::parser::{ImportContext, ParseSummary, ParsedModule, import_context_for_file};
+use crate::parser::{
+    ImportContext, ImportRef, ParseSummary, ParsedModule, import_context_for_file,
+};
 use crate::plugins::{ModuleReference, SysPathImport};
 use crate::sources::{DiscoveredSources, LocalTrees, path_to_module};
 
@@ -141,7 +143,7 @@ pub fn resolve_imports_for_analysis(
                     reference: Some(&reference.origin.label),
                     context: ImportContext::Runtime,
                     optional: false,
-                    dead_fallback: false,
+                    never_runs: false,
                     platform_guarded: false,
                     relative_level: 0,
                     stdlib,
@@ -191,7 +193,7 @@ struct Site<'s> {
     reference: Option<&'s str>,
     context: ImportContext,
     optional: bool,
-    dead_fallback: bool,
+    never_runs: bool,
     platform_guarded: bool,
     relative_level: u8,
     stdlib: StdlibRange,
@@ -303,9 +305,16 @@ struct RootResolution {
     confidence: ResolveConfidence,
 }
 
-/// A fallback for modules every supported Python ships never runs.
-fn is_dead_fallback(fallback_for: &[String], stdlib: StdlibRange) -> bool {
-    !fallback_for.is_empty() && fallback_for.iter().all(|root| stdlib.always_contains(root))
+/// No Python `requires-python` allows runs the import: it is a fallback for
+/// modules they all ship (#721), or a `sys.version_info` test rules out
+/// every one of them (#997).
+fn never_runs(import: &ImportRef, stdlib: StdlibRange) -> bool {
+    let fallback_for = &import.fallback_for;
+    (!fallback_for.is_empty() && fallback_for.iter().all(|root| stdlib.always_contains(root)))
+        || import
+            .version_minors
+            .as_deref()
+            .is_some_and(|runs| stdlib.excludes_minors(runs))
 }
 
 impl Resolver<'_> {
@@ -335,7 +344,7 @@ impl Resolver<'_> {
                 || import.module.clone(),
                 |name| format!("{}.{name}", import.module),
             );
-            let dead_fallback = is_dead_fallback(&import.fallback_for, stdlib);
+            let never_runs = never_runs(import, stdlib);
             resolve(
                 &Site {
                     full_module: &import.module,
@@ -345,7 +354,7 @@ impl Resolver<'_> {
                     reference: None,
                     context: import.context,
                     optional: import.optional,
-                    dead_fallback,
+                    never_runs,
                     platform_guarded: import.platform_guarded,
                     relative_level: import.relative_level,
                     stdlib,
@@ -363,7 +372,7 @@ impl Resolver<'_> {
                     reference: None,
                     context: ImportContext::Runtime,
                     optional: dynamic.optional,
-                    dead_fallback: false,
+                    never_runs: false,
                     platform_guarded: dynamic.platform_guarded,
                     relative_level: 0,
                     stdlib,
@@ -385,7 +394,7 @@ impl Resolver<'_> {
                     reference: Some("pytest_plugins"),
                     context: plugin_context,
                     optional: false,
-                    dead_fallback: false,
+                    never_runs: false,
                     platform_guarded: false,
                     relative_level: 0,
                     stdlib,
@@ -424,7 +433,7 @@ impl Resolver<'_> {
             reference,
             context,
             optional,
-            dead_fallback,
+            never_runs,
             platform_guarded,
             relative_level,
             stdlib,
@@ -567,10 +576,13 @@ impl Resolver<'_> {
                 line,
                 reference: reference.map(str::to_owned),
                 context,
-                optional: optional || dead_fallback,
+                optional: optional || never_runs,
             }));
         }
 
+        // The range is the root's: a member's own `requires-python` may allow
+        // the Python a never-run import runs on, so its findings stay.
+        let in_root = member.is_none();
         ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),
@@ -581,6 +593,7 @@ impl Resolver<'_> {
             context,
             optional,
             platform_guarded,
+            never_runs: never_runs && in_root,
             origin: core.origin,
             distribution: core.distribution,
             confidence: core.confidence,
