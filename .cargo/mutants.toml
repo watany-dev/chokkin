@@ -41,4 +41,8 @@ exclude_re = [
     # pinned by `refused_baseline_write_creates_no_directory_outside_the_root`
     # (#1136).
     "replace ensure_parent_inside_root -> Result<\\(\\), BaselineError> with Ok\\(\\(\\)\\)",
+    # The `#[cfg(all(test, windows))]` junction helper is not compiled where
+    # cargo-mutants runs, so its mutants are guaranteed misses; the Windows
+    # junction tests fail without it (#1136).
+    "src/path_util.rs:.*: replace junction with \\(\\)",
 ]
