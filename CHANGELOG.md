@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pipx run [options] <path>.py` runs a script the way `python <path>.py`
+  does, so a script a workflow `run:` step or a local pre-commit hook runs
+  through pipx is no CHK001. `pipx run <app>` stays an app pipx installs in
+  its own venv and is no CHK008 usage (#956).
+
 ### Fixed
 - `celery -A pkg` that names a package whose `__init__.py` has no `app` /
   `celery` reaches `pkg/celery.py`, which Celery imports to find the app, so

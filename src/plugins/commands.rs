@@ -373,6 +373,9 @@ fn segment_target(words: &[&str]) -> Option<Run> {
         if command_name(word) == "uv" && rest.first() == Some(&"run") {
             return uv_run_target(rest.get(1..)?);
         }
+        if command_name(word) == "pipx" && rest.first() == Some(&"run") {
+            return pipx_run_target(rest.get(1..)?);
+        }
         if is_python_word(word) || is_python_variable(word) {
             return python_target(rest);
         }
@@ -650,6 +653,30 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
                 (Run::Target(target), Some(_)) => Run::Target(relocated(target)),
                 (run, _) => run,
             });
+        }
+    }
+    None
+}
+
+/// `pipx run` options whose value is the next word.
+const PIPX_RUN_VALUE_OPTIONS: [&str; 4] = ["--spec", "--python", "--pip-args", "--index-url"];
+
+/// `pipx run [options] <path>.py` runs a local script (pipx ≥ 1.3, #956).
+/// Any other first word, or any word after `--spec`, is an app pipx installs
+/// in its own venv, and a URL is no project file, so neither runs anything
+/// this reads.
+fn pipx_run_target(args: &[&str]) -> Option<Run> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        index += 1;
+        if *arg == "--spec" || arg.starts_with("--spec=") {
+            return None;
+        }
+        if PIPX_RUN_VALUE_OPTIONS.contains(arg) {
+            index += 1;
+        } else if !arg.starts_with('-') {
+            let script = !arg.contains("://") && !is_computed(arg) && is_python_path(arg);
+            return script.then(|| Run::Target(path_target(arg)));
         }
     }
     None
@@ -951,6 +978,31 @@ mod tests {
         assert_eq!(scripts("echo python gen.py"), []);
         // A variable interpreter after `uv run` is python too (#861).
         assert_eq!(scripts("uv run $(PYTHON) gen.py"), [script("gen.py")]);
+    }
+
+    /// pipx ≥ 1.3 runs a local `.py` file; any other first word is an app
+    /// pipx installs in its own venv (#956).
+    #[test]
+    fn command_scripts_read_pipx_run_paths() {
+        let script = |path: &str| (None, path.to_owned());
+        assert_eq!(
+            scripts("pipx run scripts/gen.py"),
+            [script("scripts/gen.py")]
+        );
+        assert_eq!(
+            scripts("pipx run --python 3.12 --no-cache tools/a.py --check"),
+            [script("tools/a.py")]
+        );
+        assert_eq!(
+            scripts("cd docs && pipx run build.py"),
+            [(Some("docs".to_owned()), "build.py".to_owned())]
+        );
+        assert_eq!(scripts("pipx run ruff check gen.py"), []);
+        assert_eq!(scripts("pipx run --spec black==24.1 black gen.py"), []);
+        assert_eq!(scripts("pipx run https://example.com/gen.py"), []);
+        assert_eq!(scripts("pipx install gen.py"), []);
+        assert_eq!(scripts("pipx run $SCRIPT"), []);
+        assert_eq!(binaries("pipx run ruff check"), Vec::<String>::new());
     }
 
     fn targets(command: &str) -> Vec<String> {
