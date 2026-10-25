@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#1094).
 
 ### Fixed
+- A pytest `testpaths` entry with a glob (`packages/*/tests`, `suites/**/unit`)
+  is expanded as pytest expands it, so the suites it names are read as test
+  code and `--production` leaves them out; before, the entry matched no
+  directory, so those files were runtime code or not read at all. An entry that names no file or
+  directory, literally or as a glob, is now a `sources:` warning (#998).
 - A module in a namespace directory at the root (`pkg/` without
   `__init__.py`) that imports a sibling by the directory's name (`from pkg
   import m2`) reaches it, so `pkg/m2.py` is no longer a certain CHK001 that
