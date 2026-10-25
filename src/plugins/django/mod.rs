@@ -479,6 +479,17 @@ fn read_settings(
             }
         }
 
+        // Values that are not literals keep the loader's packages unknown,
+        // which leaves those modules to the `migrations` glob as before.
+        if let Some(Expr::Dict(dict)) = assigned_value(&stmts, "MIGRATION_MODULES") {
+            for item in &dict.items {
+                if let Some(package) = string_value(&item.value) {
+                    let origin = origin(item.value.start(), "MIGRATION_MODULES");
+                    installed.migration_modules.push((package, origin));
+                }
+            }
+        }
+
         let (references, unread) = settings_refs::extract(lookup, &stmts, &rel, &lines);
         contrib.module_refs.extend(references);
         for origin in unread {

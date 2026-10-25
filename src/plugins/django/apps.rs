@@ -17,6 +17,9 @@ pub(super) struct Installed {
     pub apps: Vec<(String, ReferenceOrigin)>,
     /// `true` when the settings may install an app `apps` does not show.
     pub incomplete: bool,
+    /// The packages `MIGRATION_MODULES` names in place of an app's
+    /// `migrations` (#993).
+    pub migration_modules: Vec<(String, ReferenceOrigin)>,
 }
 
 /// What `@receiver` decorates is connected to a signal once its module is
@@ -90,6 +93,8 @@ pub(super) fn extract(
         }
     }
 
+    migration_modules(ctx, lookup, installed, contrib);
+
     for module in &ctx.parse.modules {
         let Some(name) = crate::sources::path_to_module(&module.path, &ctx.sources.layout) else {
             continue;
@@ -140,6 +145,49 @@ pub(super) fn extract(
 }
 
 const CONFIG_LABEL: &str = "Django app config";
+
+/// Make each module Django's migration loader imports from a package
+/// `MIGRATION_MODULES` names reachable, and its `Migration` used: the
+/// modules directly in the package whose name does not start with `_` or
+/// `~`. A module that does not parse may define `Migration`. A value that
+/// names no project package adds nothing, as for `INSTALLED_APPS`.
+fn migration_modules(
+    ctx: &PluginContext<'_>,
+    lookup: &Lookup,
+    installed: &Installed,
+    contrib: &mut PluginContribution,
+) {
+    for (value, origin) in &installed.migration_modules {
+        let Some(dir) = package_dir(ctx, lookup, value) else {
+            continue;
+        };
+        for module in &ctx.parse.modules {
+            let Some(file) = module
+                .path
+                .strip_prefix(dir.as_str())
+                .and_then(|rest| rest.strip_prefix('/'))
+                .filter(|file| !file.contains('/'))
+            else {
+                continue;
+            };
+            let loaded = file
+                .strip_suffix(".py")
+                .is_some_and(|stem| !stem.starts_with(['_', '~']));
+            let Some(name) = crate::sources::path_to_module(&module.path, &ctx.sources.layout)
+                .filter(|_| loaded)
+            else {
+                continue;
+            };
+            if module.skipped || binds(module, "Migration") {
+                push_used_symbol(contrib, &name, "Migration", origin);
+            }
+            contrib.module_refs.push(ModuleReference {
+                module: name,
+                origin: origin.clone(),
+            });
+        }
+    }
+}
 
 /// An installed value read from the project: the app package directory, the
 /// `AppConfig` it names, and whether that config is the admin's.

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and other convention modules are no longer CHK001 certain. A form still not
   read is a settings gap that caps CHK001 below certain and names its line,
   instead of only a `partial Django settings parse` warning (#1127).
+- The migration packages a literal `MIGRATION_MODULES` names are loaded like
+  an app's `migrations/`: their modules are no longer CHK001 and their
+  `Migration` is no longer CHK006 (#993).
 
 ## [0.7.9] - 2026-10-24
 

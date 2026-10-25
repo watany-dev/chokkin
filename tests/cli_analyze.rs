@@ -4729,6 +4729,58 @@ fn binary_django_reads_apps_added_to_installed_apps() {
     }
 }
 
+/// The migration package `MIGRATION_MODULES` names is loaded like an app's
+/// `migrations`: its modules are used and so is their `Migration` (#993).
+#[test]
+fn binary_django_migration_modules_are_loaded() {
+    let moved = "mysite/blog/db_migrations/0001_initial.py";
+    for (migration_modules, loaded) in [
+        ("{'blog': 'mysite.blog.db_migrations'}", true),
+        ("{'blog': None}", false),
+        ("{'blog': modules_for('blog')}", false),
+        ("migration_modules()", false),
+    ] {
+        let settings =
+            format!("INSTALLED_APPS = ['mysite.blog']\nMIGRATION_MODULES = {migration_modules}\n");
+        let project = django_blog_project(&settings);
+        for (path, text) in [
+            ("mysite/blog/db_migrations/__init__.py", ""),
+            (moved, "class Migration:\n    pass\n"),
+            ("mysite/blog/db_migrations/_helper.py", ""),
+            (
+                "mysite/blog/db_migrations/old/0001_initial.py",
+                "class Migration:\n    pass\n",
+            ),
+        ] {
+            let path = project.path().join(path);
+            fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            fs::write(path, text).expect("write migration");
+        }
+        let issues = json_issues(project.path(), &["--no-cache", "--confidence", "maybe"]);
+        let keys: Vec<String> = issue_keys(&issues)
+            .into_iter()
+            .filter(|(_, target)| target.contains("db_migrations"))
+            .map(|(code, target)| format!("{code}:{target}"))
+            .collect();
+        let expected: &[&str] = if loaded {
+            // Django imports no module starting with `_` and no subpackage.
+            &[
+                "CHK001:mysite/blog/db_migrations/_helper.py",
+                "CHK001:mysite/blog/db_migrations/old/0001_initial.py",
+            ]
+        } else {
+            &[
+                "CHK001:mysite/blog/db_migrations/0001_initial.py",
+                "CHK001:mysite/blog/db_migrations/_helper.py",
+                "CHK001:mysite/blog/db_migrations/old/0001_initial.py",
+            ]
+        };
+        let mut keys = keys;
+        keys.sort();
+        assert_eq!(keys, expected, "{migration_modules}");
+    }
+}
+
 #[test]
 fn binary_django_trace_names_the_convention() {
     let project = django_app_project("['mysite.polls']");
