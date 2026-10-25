@@ -54,13 +54,13 @@ pub(super) struct DirIgnore {
     has_git: bool,
     /// Errors `ignore` attaches to the directory entry.
     errors: Vec<ignore::Error>,
-    /// `.gitignore` as [`super::walk::root_gitignore_warning`] sees it, and as the
-    /// walk sees each directory below the root (#915).
+    /// `.gitignore` as [`super::walk::root_gitignore_warning`] sees it, and
+    /// as the walk sees each directory below the root (#915).
     root_load: RootLoad,
 }
 
-/// Whether [`super::walk::root_gitignore_warning`] finds the `.gitignore`, finds
-/// none, finds one with lines that do not parse, or warns that it is
+/// Whether [`super::walk::root_gitignore_warning`] finds the `.gitignore`,
+/// finds none, finds one with lines that do not parse, or warns that it is
 /// unreadable.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum RootLoad {
