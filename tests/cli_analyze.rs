@@ -4629,6 +4629,106 @@ fn binary_django_installed_app_conventions_are_used() {
     );
 }
 
+/// A project with one app, `mysite.blog`, that only `settings` installs.
+fn django_blog_project(settings: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", settings),
+        ("mysite/blog/__init__.py", ""),
+        ("mysite/blog/models.py", ""),
+    ])
+}
+
+/// An app added to `INSTALLED_APPS` after its assignment, or through a list
+/// the settings name, is installed; one added in a form not read lowers the
+/// project's CHK001 and names the line (#1127, ADR 0005).
+#[test]
+fn binary_django_reads_apps_added_to_installed_apps() {
+    const BASE: &str = "INSTALLED_APPS = ['django.contrib.admin']\n";
+    for added in [
+        "INSTALLED_APPS += ['mysite.blog']",
+        "INSTALLED_APPS += ('mysite.blog',)",
+        "INSTALLED_APPS.append('mysite.blog')",
+        "INSTALLED_APPS.extend(['mysite.blog'])",
+        "INSTALLED_APPS.insert(0, 'mysite.blog')",
+        "if True:\n    INSTALLED_APPS += ['mysite.blog']",
+        "INSTALLED_APPS = INSTALLED_APPS + ['mysite.blog']",
+        "LOCAL_APPS = ['mysite.blog']\nINSTALLED_APPS += LOCAL_APPS",
+        "LOCAL_APPS = ['mysite.blog']\nINSTALLED_APPS = [*INSTALLED_APPS, *LOCAL_APPS]",
+        "INSTALLED_APPS = list(INSTALLED_APPS) + list(['mysite.blog'])",
+    ] {
+        let project = django_blog_project(&format!("{BASE}{added}\n"));
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(
+            chk001_confidence(&issues, "mysite/blog/models.py"),
+            None,
+            "{added}: {issues:?}"
+        );
+    }
+    for (settings, line) in [
+        (
+            "BASE = ['mysite.blog']\nINSTALLED_APPS = BASE + ['django.contrib.admin']\n",
+            None,
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin']\nINSTALLED_APPS += extra_apps()\n",
+            Some(2),
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin']\nINSTALLED_APPS.append(APP)\n",
+            Some(2),
+        ),
+        (
+            "INSTALLED_APPS = ['django.contrib.admin', *EXTRA]\n",
+            Some(1),
+        ),
+        (
+            "INSTALLED_APPS = BASE_APPS + ['django.contrib.admin']\n",
+            Some(1),
+        ),
+        (
+            "INSTALLED_APPS = []\nINSTALLED_APPS[0:0] = ['x']\n",
+            Some(2),
+        ),
+    ] {
+        let project = django_blog_project(settings);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let issues = parsed["issues"].as_array().cloned().unwrap_or_default();
+        let confidence = chk001_confidence(&issues, "mysite/blog/models.py");
+        let Some(line) = line else {
+            // `BASE` is read, so the app is installed and nothing is unread.
+            assert_eq!(confidence, None, "{settings}: {issues:?}");
+            assert!(!stderr.contains("INSTALLED_APPS"), "{settings}: {stderr}");
+            continue;
+        };
+        assert_ne!(
+            confidence.as_deref(),
+            Some("certain"),
+            "{settings}: {issues:?}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "settings `mysite/settings.py:{line}` sets `INSTALLED_APPS` in a form that could not be fully read"
+            )),
+            "{settings}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn binary_django_trace_names_the_convention() {
     let project = django_app_project("['mysite.polls']");
