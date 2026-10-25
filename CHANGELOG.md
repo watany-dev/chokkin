@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wait for the same approval as the PyPI upload (#1043). maturin, syft and the
   Linux build containers are pinned, so a release is built and described by
   the same tools each time (#1044).
+- The Django plugin reads apps added to `INSTALLED_APPS` with `+=`,
+  `.append()`, `.insert()` and `.extend()`, and lists built from names the
+  settings file assigns (`DJANGO_APPS + LOCAL_APPS`), so their `models.py`
+  and other convention modules are no longer CHK001 certain. A form still not
+  read is a settings gap that caps CHK001 below certain and names its line,
+  instead of only a `partial Django settings parse` warning (#1127).
+- The migration packages a literal `MIGRATION_MODULES` names are loaded like
+  an app's `migrations/`: their modules are no longer CHK001 and their
+  `Migration` is no longer CHK006 (#993).
 
 ## [0.7.9] - 2026-10-24
 
