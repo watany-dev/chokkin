@@ -6,13 +6,15 @@ use ruff_python_ast::visitor::{Visitor, walk_expr};
 use ruff_python_ast::{Expr, ExprCall};
 use ruff_text_size::{Ranged, TextSize};
 
+use crate::entry::resolve_module_to_path;
 use crate::manifest::literals::{parse_module, string_value};
 use crate::manifest::util::read_to_string;
 use crate::parser::LineIndex;
 use crate::rules::import_site;
+use crate::sources::{FileContext, path_to_module};
 
 use super::super::context::PluginContext;
-use super::super::types::{ModuleReference, PluginContribution, ReferenceOrigin};
+use super::super::types::{ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin};
 use super::super::util::push_used_symbol;
 use super::super::warnings::{PluginsWarning, SettingsUnread};
 use super::{Lookup, abs_path, module_path, push_unread};
@@ -30,8 +32,8 @@ const ROOT_URLCONF_NAMES: &[&str] = &["handler400", "handler403", "handler404", 
 enum Included {
     /// A module by its dotted name, and where the literal starts.
     Module(String, TextSize),
-    /// A string computed at runtime (an f-string, a concatenation, a call),
-    /// which may name any module.
+    /// A string computed at runtime ([`is_computed_string`]), which may name
+    /// any module.
     Unread(TextSize),
 }
 
@@ -94,11 +96,29 @@ pub(super) fn follow(
                 line: Some(lines.line(start)),
                 label: INCLUDE_LABEL.to_owned(),
             };
+            let first = visited.insert(path.clone());
+            // A file found only under the setter's import directory is not
+            // what the name resolves to in the project, so it is an entry.
+            if first
+                && resolve_module_to_path(&module, &ctx.sources.layout, &lookup.known).as_ref()
+                    != Some(&path)
+            {
+                contrib.entries.push(PluginEntry {
+                    spec: crate::config::EntrySpec {
+                        path: path.clone(),
+                        symbol: None,
+                    },
+                    context: FileContext::Runtime,
+                    origin: origin.clone(),
+                });
+            }
+            let named =
+                path_to_module(&path, &ctx.sources.layout).unwrap_or_else(|| module.clone());
             for name in URLCONF_NAMES {
-                push_used_symbol(contrib, &module, name, &origin);
+                push_used_symbol(contrib, &named, name, &origin);
             }
             contrib.module_refs.push(ModuleReference { module, origin });
-            if visited.insert(path.clone()) {
+            if first {
                 queue.push_back(path);
             }
         }
@@ -117,8 +137,10 @@ pub(super) fn root_names_used(
     }
 }
 
-/// The `include()` calls of a module, in source order: by name or as the
-/// last attribute (`django.urls.include`, `django.conf.urls.include`).
+/// The `include()` calls of a module, in source order: by name, or as an
+/// attribute of a `urls` module (`django.urls.include`, `urls.include`,
+/// `django.conf.urls.include`), so a template engine's `.include()` is not
+/// one.
 #[derive(Default)]
 struct Includes(Vec<Included>);
 
@@ -126,12 +148,24 @@ impl Visitor<'_> for Includes {
     fn visit_expr(&mut self, expr: &Expr) {
         if let Expr::Call(call) = expr
             && is_include(call)
-            && let Some(first) = call.arguments.args.first()
         {
+            // Django's parameter is `arg`; a star argument may be anything.
+            let first = call.arguments.args.first().or_else(|| {
+                call.arguments
+                    .keywords
+                    .iter()
+                    .find(|keyword| {
+                        keyword
+                            .arg
+                            .as_ref()
+                            .is_some_and(|arg| arg.as_str() == "arg")
+                    })
+                    .map(|keyword| &keyword.value)
+            });
             // `include(("pkg.urls", "app_name"))` names the module first.
             let target = match first {
-                Expr::Tuple(tuple) => tuple.elts.first(),
-                other => Some(other),
+                Some(Expr::Tuple(tuple)) => tuple.elts.first(),
+                other => other,
             };
             if let Some(target) = target {
                 if let Some(module) = string_value(target) {
@@ -148,14 +182,32 @@ impl Visitor<'_> for Includes {
 fn is_include(call: &ExprCall) -> bool {
     match &*call.func {
         Expr::Name(name) => name.id.as_str() == "include",
-        Expr::Attribute(attribute) => attribute.attr.as_str() == "include",
+        Expr::Attribute(attribute) => {
+            let receiver = match &*attribute.value {
+                Expr::Name(name) => name.id.as_str(),
+                Expr::Attribute(parent) => parent.attr.as_str(),
+                _ => "",
+            };
+            attribute.attr.as_str() == "include" && receiver == "urls"
+        },
         _ => false,
     }
 }
 
-/// A string built at runtime: an f-string, `+` or `%` on operands, or a call
-/// such as `"{}.urls".format(app)`. Names, attributes, subscripts and list
-/// literals are module objects or patterns the import graph follows.
+/// A string built at runtime: an f-string, `+` or `%` with a string operand,
+/// a `str.format()` call on a literal, or a star argument. Names,
+/// attributes, subscripts, list literals, other calls (`router.get_urls()`,
+/// `i18n_patterns(...)`) and `+` of pattern lists are module objects or
+/// patterns the import graph follows.
 fn is_computed_string(expr: &Expr) -> bool {
-    matches!(expr, Expr::FString(_) | Expr::BinOp(_) | Expr::Call(_))
+    let is_string = |expr: &Expr| matches!(expr, Expr::StringLiteral(_) | Expr::FString(_));
+    match expr {
+        Expr::FString(_) | Expr::Starred(_) => true,
+        Expr::BinOp(op) => is_string(&op.left) || is_string(&op.right),
+        Expr::Call(call) => matches!(
+            &*call.func,
+            Expr::Attribute(attribute) if attribute.attr.as_str() == "format" && is_string(&attribute.value)
+        ),
+        _ => false,
+    }
 }

@@ -523,7 +523,10 @@ fn read_settings(
                         label: "ROOT_URLCONF".to_owned(),
                     },
                 });
-                urls::root_names_used(contrib, &urlconf, &urlconf_origin);
+                let urlconf_module =
+                    crate::sources::path_to_module(&urls_path, &ctx.sources.layout)
+                        .unwrap_or_else(|| urlconf.clone());
+                urls::root_names_used(contrib, &urlconf_module, &urlconf_origin);
                 urls::follow(ctx, lookup, &urls_path, contrib, warnings);
             }
         }

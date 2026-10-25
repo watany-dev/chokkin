@@ -5075,7 +5075,13 @@ fn binary_django_settings_module_resolves_beside_a_nested_setter() {
                 "demo/site/site/settings.py",
                 "ROOT_URLCONF = \"site.urls\"\n",
             ),
-            ("demo/site/site/urls.py", "# URL configuration\n"),
+            (
+                "demo/site/site/urls.py",
+                "from django.urls import include\n\nurlpatterns = [include(\"blog.urls\")]\n",
+            ),
+            // Found beside the setter, so its module name is the project's.
+            ("demo/site/blog/__init__.py", ""),
+            ("demo/site/blog/urls.py", "urlpatterns = []\n"),
             ("other/settings.py", ""),
         ]);
         let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -5096,6 +5102,7 @@ fn binary_django_settings_module_resolves_beside_a_nested_setter() {
         assert!(
             !unused.contains(&"demo/site/site/settings.py")
                 && !unused.contains(&"demo/site/site/urls.py")
+                && !unused.contains(&"demo/site/blog/urls.py")
                 && unused.contains(&"other/settings.py"),
             "{setter}: {unused:?}"
         );
@@ -5222,7 +5229,7 @@ fn django_urlconf_project(urls: &str) -> tempfile::TempDir {
 #[test]
 fn binary_django_urlconf_includes_reach_their_modules() {
     let project = django_urlconf_project(
-        "from django.urls import include, path\n\nhandler404 = 'mysite.api.views.index'\nurlpatterns = [\n    path('api/', include('mysite.api.urls')),\n    path('', include(('mysite.front.urls', 'front'))),\n    path('accounts/', include('allauth.urls')),\n    path('admin/', include(admin.site.urls)),\n]\n",
+        "from django.urls import include, path\n\nhandler404 = 'mysite.api.views.index'\nurlpatterns = [\n    path('api/', include('mysite.api.urls')),\n    path('', include(arg=('mysite.front.urls', 'front'))),\n    path('accounts/', include('allauth.urls')),\n    path('admin/', include(admin.site.urls)),\n    path('r/', include(router.get_urls())),\n    path('p/', include(api_patterns + extra_patterns)),\n]\njinja.include(f'{name}.html')\n",
     );
     // Django reads `urlpatterns`, `app_name` and the root's `handler404` by
     // name; the settings' own names are not what this checks.
@@ -5246,15 +5253,27 @@ fn binary_django_urlconf_includes_reach_their_modules() {
         .expect("run chokkin");
     let stderr = String::from_utf8(trace.stderr).expect("utf8");
     assert!(stderr.contains("URLconf include()"), "{stderr}");
+    // Pattern lists and a template engine's `.include()` are no gap.
+    assert!(!stderr.contains("could not be read"), "{stderr}");
 }
 
 /// An `include()` of a string computed at runtime may load any module, so
 /// unused files and distributions fall below certain (ADR 0005, #1094).
 #[test]
 fn binary_django_computed_urlconf_include_is_a_gap() {
-    let project = django_urlconf_project(
-        "from django.urls import include, path\n\nAPP = 'api'\nurlpatterns = [\n    path('api/', include(f'mysite.{APP}.urls')),\n]\n",
-    );
+    for computed in [
+        "f'mysite.{APP}.urls'",
+        "'mysite.' + APP + '.urls'",
+        "'mysite.{}.urls'.format(APP)",
+    ] {
+        computed_include_is_a_gap(computed);
+    }
+}
+
+fn computed_include_is_a_gap(computed: &str) {
+    let project = django_urlconf_project(&format!(
+        "from django.urls import include, path\n\nAPP = 'api'\nurlpatterns = [\n    path('api/', include({computed})),\n]\n",
+    ));
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--no-cache"])
         .arg(project.path())
