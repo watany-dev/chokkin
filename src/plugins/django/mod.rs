@@ -3,6 +3,7 @@
 mod apps;
 mod installed;
 mod settings_refs;
+mod urls;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
@@ -356,6 +357,7 @@ fn push_unread(
         SettingsUnread::UnreadCall { call, .. } => Some(call.clone()),
         SettingsUnread::UnreadField { field, .. } => Some(field.clone()),
         SettingsUnread::UnreadModule { .. } => Some("DJANGO_SETTINGS_MODULE".to_owned()),
+        SettingsUnread::UnreadInclude { .. } => Some("include()".to_owned()),
         SettingsUnread::NoSettings | SettingsUnread::Unreadable { .. } => None,
     };
     contrib.unread_settings.push(UnreadSettings {
@@ -500,9 +502,10 @@ fn read_settings(
             && let Some(urlconf) = string_value(value)
         {
             urlconf_read = true;
+            let urlconf_origin = origin(value.start(), "ROOT_URLCONF");
             contrib.module_refs.push(ModuleReference {
                 module: urlconf.clone(),
-                origin: origin(value.start(), "ROOT_URLCONF"),
+                origin: urlconf_origin.clone(),
             });
             // Only a discovered file can be an entry.
             if let Some(urls_path) =
@@ -510,7 +513,7 @@ fn read_settings(
             {
                 contrib.entries.push(PluginEntry {
                     spec: crate::config::EntrySpec {
-                        path: urls_path,
+                        path: urls_path.clone(),
                         symbol: None,
                     },
                     context: FileContext::Runtime,
@@ -520,6 +523,11 @@ fn read_settings(
                         label: "ROOT_URLCONF".to_owned(),
                     },
                 });
+                let urlconf_module =
+                    crate::sources::path_to_module(&urls_path, &ctx.sources.layout)
+                        .unwrap_or_else(|| urlconf.clone());
+                urls::root_names_used(contrib, &urlconf_module, &urlconf_origin);
+                urls::follow(ctx, lookup, &urls_path, contrib, warnings);
             }
         }
 

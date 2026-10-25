@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does, so a script a workflow `run:` step or a local pre-commit hook runs
   through pipx is no CHK001. `pipx run <app>` stays an app pipx installs in
   its own venv and is no CHK008 usage (#956).
+- Django: `include("pkg.urls")` (and `include(("pkg.urls", "app"))`) in the
+  `ROOT_URLCONF` URLconf, and in each URLconf it includes, reaches the named
+  module, so included URLconfs and the views they import are no CHK001. An
+  `include()` of a string built at runtime lowers unused files and
+  dependencies below certain (#1094).
+
+### Changed
+- The corpus gate's CHK001 precision floor rises from 25% to 45% (measured
+  48.1%, from 30.2%), and a separate gate requires every `certain` CHK001,
+  which `--fix --allow-remove-files` deletes, to be labelled and correct
+  (#1094).
 
 ### Fixed
 - A module in a namespace directory at the root (`pkg/` without
@@ -34,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mt-940`, `django-formset-js-improved` and `pytest-xdist` are in the package
   map, so their imports are no CHK010 and their declarations no CHK002
   (#1223).
+- Django's `urlpatterns` and `app_name` in each URLconf it loads, and the
+  `handler404`-style names in the `ROOT_URLCONF` one, are no CHK006: Django
+  reads them by name (#1094).
 - A requirements file whose `-r` names a URL or a `${VAR}` path pip expands
   from the environment no longer stops the run with exit 2: the line is
   skipped with a warning, the rest of the file is read, and missing-dependency

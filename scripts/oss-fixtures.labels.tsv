@@ -2292,6 +2292,7 @@ open-gov-crawlers	CHK006	public_law/shared/models/result.py:cat_oks	info-expecte
 open-gov-crawlers	CHK006	public_law/shared/utils/dates.py:SimpleTimezone	info-expected	library-public-api	library mode (no app signal), so info; Protocol referenced nowhere, not even in its module
 open-gov-crawlers	CHK006	public_law/shared/utils/html.py:T	info-expected	library-public-api	library mode (no app signal), so info; TypeVar defined and never used in its module
 open-gov-crawlers	CHK006	public_law/shared/utils/text.py:title_case	info-expected	library-public-api	library mode (no app signal), so info; function referenced nowhere else
+healthchecks	CHK003	hc/api/views.py:pydantic_core	tp	-	"from pydantic_core import PydanticCustomError" at hc/api/views.py:36; requirements.txt declares only pydantic, which pulls pydantic_core in (reached via include("hc.api.urls"), #1094)
 
 # #1089: CHK010 that are the project's intent, hand-labelled by reading the pinned
 # clones (nothing executed). Not part of the precision sample.

@@ -111,8 +111,8 @@ class PrecisionMissesTest(unittest.TestCase):
         self.assertEqual(om.precision_misses([finding("CHK008", "fp")]), [])
 
     def test_chk001_is_floored_once_app_projects_carry_labels(self) -> None:
-        findings = [finding("CHK001", "fp")] * 4 + [finding("CHK001", "tp")]  # 20%
-        self.assertEqual(om.precision_misses(findings), ["CHK001=20.0%<25%"])
+        findings = [finding("CHK001", "fp")] * 3 + [finding("CHK001", "tp")] * 2  # 40%
+        self.assertEqual(om.precision_misses(findings), ["CHK001=40.0%<45%"])
 
     def test_chk002_is_floored_by_the_fp_gate(self) -> None:
         # 95% precision is a 5% FP rate, which the §17 gate already fails.
@@ -123,6 +123,34 @@ class PrecisionMissesTest(unittest.TestCase):
     def test_a_rule_with_no_labelled_hit_passes(self) -> None:
         findings = [finding("CHK003", "unknown"), finding("CHK003", "fp", "info")]
         self.assertEqual(om.precision_misses(findings), [])
+
+
+def certain(code: str, verdict: str, severity: str = "warning") -> list[str]:
+    row = finding(code, verdict, severity)
+    row[5] = "certain"
+    return row
+
+
+class CertainMissesTest(unittest.TestCase):
+    def test_no_certain_finding_passes(self) -> None:
+        self.assertEqual(om.certain_misses([finding("CHK001", "fp")] * 3), [])
+
+    def test_a_certain_false_positive_fails_at_any_severity(self) -> None:
+        findings = [certain("CHK001", "tp")] * 9 + [certain("CHK001", "fp", "info")]
+        self.assertEqual(om.certain_precision(findings, "CHK001"), (9, 1, 0))
+        self.assertEqual(om.certain_misses(findings), ["CHK001:certain=90.0%<100%"])
+
+    def test_info_expected_is_a_false_positive(self) -> None:
+        # Right as a hint; deleting the file is not.
+        findings = [certain("CHK001", "info-expected", "info")]
+        self.assertEqual(om.certain_misses(findings), ["CHK001:certain=0.0%<100%"])
+
+    def test_an_unclassified_certain_finding_fails(self) -> None:
+        findings = [certain("CHK001", "tp"), certain("CHK001", "unknown"), certain("CHK001", "deferred")]
+        self.assertEqual(om.certain_misses(findings), ["CHK001:certain 2 unclassified"])
+
+    def test_labelled_true_positives_pass(self) -> None:
+        self.assertEqual(om.certain_misses([certain("CHK001", "tp", "info")] * 2), [])
 
 
 class RecallMissedTest(unittest.TestCase):

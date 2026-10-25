@@ -5115,7 +5115,13 @@ fn binary_django_settings_module_resolves_beside_a_nested_setter() {
                 "demo/site/site/settings.py",
                 "ROOT_URLCONF = \"site.urls\"\n",
             ),
-            ("demo/site/site/urls.py", "# URL configuration\n"),
+            (
+                "demo/site/site/urls.py",
+                "from django.urls import include\n\nurlpatterns = [include(\"blog.urls\")]\n",
+            ),
+            // Found beside the setter, so its module name is the project's.
+            ("demo/site/blog/__init__.py", ""),
+            ("demo/site/blog/urls.py", "urlpatterns = []\n"),
             ("other/settings.py", ""),
         ]);
         let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -5136,6 +5142,7 @@ fn binary_django_settings_module_resolves_beside_a_nested_setter() {
         assert!(
             !unused.contains(&"demo/site/site/settings.py")
                 && !unused.contains(&"demo/site/site/urls.py")
+                && !unused.contains(&"demo/site/blog/urls.py")
                 && unused.contains(&"other/settings.py"),
             "{setter}: {unused:?}"
         );
@@ -5214,6 +5221,121 @@ fn binary_unread_django_settings_lower_unused_files_and_distributions() {
     assert!(
         stderr.contains("plugin: django: settings `mysite/settings/dev.py:1` star-imports `configurations_pkg`, which was not read; unused files and dependencies are reported below certain"),
         "{stderr}"
+    );
+}
+
+/// A project whose `ROOT_URLCONF` loads `urls` through `include()`, and an
+/// unused module beside them (#1094).
+fn django_urlconf_project(urls: &str) -> tempfile::TempDir {
+    write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django']\n\n[tool.chokkin]\nmode = 'app'\n",
+        ),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = []\nMIDDLEWARE = []\nROOT_URLCONF = 'mysite.urls'\n",
+        ),
+        ("mysite/urls.py", urls),
+        ("mysite/api/__init__.py", ""),
+        (
+            "mysite/api/urls.py",
+            "import django.urls\n\nfrom . import views\n\nurlpatterns = [\n    django.urls.path('', views.index),\n    django.urls.path('v2/', django.urls.include('mysite.api.v2.urls')),\n]\n",
+        ),
+        ("mysite/api/views.py", "def index(request):\n    pass\n"),
+        ("mysite/api/v2/__init__.py", ""),
+        ("mysite/api/v2/urls.py", "urlpatterns = []\n"),
+        ("mysite/front/__init__.py", ""),
+        (
+            "mysite/front/urls.py",
+            "from .views import home\n\napp_name = 'front'\nurlpatterns = [home]\n",
+        ),
+        ("mysite/front/views.py", "def home(request):\n    pass\n"),
+        ("mysite/unused.py", ""),
+    ])
+}
+
+/// Django loads the module an `include("pkg.urls")` names, and the views it
+/// imports, so none of them is an unused file; the include of a module
+/// another one includes is followed too, by name and as `django.urls.include`,
+/// and the `(module, app_name)` tuple names its module first (#1094). A name
+/// that is no project file adds nothing, and a module object is the import
+/// graph's.
+#[test]
+fn binary_django_urlconf_includes_reach_their_modules() {
+    let project = django_urlconf_project(
+        "from django.urls import include, path\n\nhandler404 = 'mysite.api.views.index'\nurlpatterns = [\n    path('api/', include('mysite.api.urls')),\n    path('', include(arg=('mysite.front.urls', 'front'))),\n    path('accounts/', include('allauth.urls')),\n    path('admin/', include(admin.site.urls)),\n    path('r/', include(router.get_urls())),\n    path('p/', include(api_patterns + extra_patterns)),\n]\njinja.include(f'{name}.html')\n",
+    );
+    // Django reads `urlpatterns`, `app_name` and the root's `handler404` by
+    // name; the settings' own names are not what this checks.
+    let unused: Vec<_> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(_, target, _, _)| !target.starts_with("mysite/settings.py:"))
+        .collect();
+    assert_eq!(
+        unused,
+        [(
+            "CHK001".to_owned(),
+            "mysite/unused.py".to_owned(),
+            "warning".to_owned(),
+            "certain".to_owned()
+        )]
+    );
+    let trace = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--trace", "mysite/api/v2/urls.py"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(trace.stderr).expect("utf8");
+    assert!(stderr.contains("URLconf include()"), "{stderr}");
+    // Pattern lists and a template engine's `.include()` are no gap.
+    assert!(!stderr.contains("could not be read"), "{stderr}");
+}
+
+/// An `include()` of a string computed at runtime may load any module, so
+/// unused files and distributions fall below certain (ADR 0005, #1094).
+#[test]
+fn binary_django_computed_urlconf_include_is_a_gap() {
+    for computed in [
+        "f'mysite.{APP}.urls'",
+        "'mysite.' + APP + '.urls'",
+        "'mysite.{}.urls'.format(APP)",
+    ] {
+        computed_include_is_a_gap(computed);
+    }
+}
+
+fn computed_include_is_a_gap(computed: &str) {
+    let project = django_urlconf_project(&format!(
+        "from django.urls import include, path\n\nAPP = 'api'\nurlpatterns = [\n    path('api/', include({computed})),\n]\n",
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: URLconf `mysite/urls.py:5` includes a module named by a string that could not be read; unused files and dependencies are reported below certain"),
+        "{stderr}"
+    );
+    let levels = issue_levels(project.path());
+    assert!(
+        levels
+            .iter()
+            .any(|(code, target, _, _)| code == "CHK001" && target == "mysite/unused.py"),
+        "{levels:?}"
+    );
+    assert!(
+        levels
+            .iter()
+            .all(|(_, _, _, confidence)| confidence != "certain"),
+        "{levels:?}"
     );
 }
 
