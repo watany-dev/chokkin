@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path with a space, `#`, `%`, or non-ASCII characters is a valid URI
   reference and GitHub code scanning annotates the file; fingerprints and
   the other reporters keep the raw path (#1129).
+- A baseline whose `schema_version` is neither `"0"` nor `"1"` (written by a
+  newer chokkin, or edited by hand) warns that it may be misread; it is still
+  applied, so the exit code does not change (#1131).
 
 ## [0.7.9] - 2026-10-24
 

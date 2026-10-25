@@ -694,6 +694,49 @@ fn binary_baseline_update_then_suppresses_existing_issue() {
     assert!(stdout.contains("Summary: 0 issues"));
 }
 
+/// Issue #1131: a baseline whose `schema_version` this chokkin does not know
+/// still suppresses (the exit code does not change in a patch release), but
+/// says so; the known versions stay silent.
+#[test]
+fn binary_baseline_with_unknown_schema_version_warns() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    copy_dir_recursive(&fixture_path(&["deps", "unused_boto3"]), temp.path()).expect("copy");
+    let baseline = temp.path().join("chokkin-baseline.json");
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .arg("--baseline")
+            .arg(&baseline)
+            .args(args)
+            .arg(temp.path())
+            .output()
+            .expect("run chokkin")
+    };
+    run(&["--update-baseline"]);
+    let written = fs::read_to_string(&baseline).expect("read baseline");
+    assert!(written.contains("\"schema_version\": \"1\""), "{written}");
+
+    for (contents, warns) in [
+        (written.clone(), false),
+        (written.replace("  \"schema_version\": \"1\",\n", ""), false),
+        (
+            written.replace("\"schema_version\": \"1\"", "\"schema_version\": \"99\""),
+            true,
+        ),
+    ] {
+        fs::write(&baseline, &contents).expect("write baseline");
+        let output = run(&[]);
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::Success.code().into())
+        );
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(stdout.contains("(1 baseline-suppressed)"), "{stdout}");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let warning = "baseline: `chokkin-baseline.json` has schema_version \"99\"";
+        assert_eq!(stderr.contains(warning), warns, "{contents}\n{stderr}");
+    }
+}
+
 /// Issue #712: a src-layout root inventories only `src/**`, so the member
 /// files whose imports use another member are parsed for that check alone.
 /// They go into the root's parse cache bundle, and an edit to one is seen on

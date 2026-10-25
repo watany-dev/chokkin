@@ -41,6 +41,8 @@ pub struct BaselineReport {
     pub suppressed: u32,
     /// Issues written by `--update-baseline`.
     pub written: u32,
+    /// The read file's `schema_version` when it is none this chokkin knows.
+    pub unknown_schema_version: Option<String>,
 }
 
 /// Fatal baseline read/write error.
