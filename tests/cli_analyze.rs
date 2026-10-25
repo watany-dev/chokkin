@@ -7988,6 +7988,38 @@ fn binary_deferred_imports_of_optional_packages_are_info() {
     );
 }
 
+/// `pipx run <path>.py` runs a script as `python <path>.py` does, from a
+/// workflow and a local pre-commit hook; `pipx run <app>` installs the app in
+/// pipx's own venv, so it is no CHK008 (#956).
+#[test]
+fn binary_pipx_run_scripts_are_entries() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[dependency-groups]\ndev = [\"pre-commit\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"acme/main.py\"]\nproject = [\"**/*.py\"]\n",
+        ),
+        (
+            ".github/workflows/ci.yml",
+            "jobs:\n  gen:\n    steps:\n      - run: pipx run tools/gen.py\n      - run: pipx run ruff check\n",
+        ),
+        (
+            ".pre-commit-config.yaml",
+            "repos:\n  - repo: local\n    hooks:\n      - id: lint\n        name: lint\n        entry: pipx run --python 3.12 tools/hook.py\n        language: system\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/main.py", ""),
+        ("tools/gen.py", "print(1)\n"),
+        ("tools/hook.py", "print(1)\n"),
+        ("tools/orphan.py", "print(1)\n"),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert_eq!(
+        keys,
+        [("CHK001".to_owned(), "tools/orphan.py".to_owned())],
+        "{keys:?}"
+    );
+}
+
 #[test]
 fn binary_command_run_scripts_import_dependency_groups_as_dev() {
     // airflow's pre-commit runs `task-sdk/dev/generate_task_sdk_models.py`,
@@ -8074,7 +8106,9 @@ fn binary_command_run_runtime_roots_keep_runtime_context() {
 /// scripts are entry roots, so only the control module is unused. The
 /// `*_bare_module` fixtures name a module without `:attr`, whose app the tool
 /// finds by name, so it is no unused export either (#851); `flask_app_paths`
-/// and `flask_root_app` name them by file path (#866).
+/// and `flask_root_app` name them by file path (#866). `celery_package_app`
+/// names a package whose `__init__.py` has no app, so Celery imports its
+/// `celery` submodule (#865).
 #[test]
 fn binary_shell_script_apps_are_entry_roots() {
     for (fixture, unused) in [
@@ -8082,6 +8116,7 @@ fn binary_shell_script_apps_are_entry_roots() {
         ("celery_shell_scripts", "src/worker/orphan.py"),
         ("flask_bare_module", "src/web/orphan.py"),
         ("celery_bare_module", "src/worker/orphan.py"),
+        ("celery_package_app", "src/worker/orphan.py"),
         ("flask_app_paths", "src/web/orphan.py"),
         ("flask_root_app", "orphan.py"),
     ] {
