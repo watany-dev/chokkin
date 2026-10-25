@@ -1184,6 +1184,7 @@ fn flask_plugin_app_file_entries_keep_their_context() {
 
 /// `celery -A pkg.mod` names the module Celery searches for `app` / `celery`,
 /// or the attribute `mod` of `pkg` (#851).
+/// A package without either has Celery import its `celery` submodule (#865).
 #[test]
 fn celery_plugin_reads_bare_app_modules() {
     let hints = extract_fixture("celery_bare_module");
@@ -1193,12 +1194,30 @@ fn celery_plugin_reads_bare_app_modules() {
         [
             ("worker.celery", "bin/worker.sh", Some(2), "celery app"),
             (
+                "worker.celery.celery",
+                "bin/worker.sh",
+                Some(2),
+                "celery app"
+            ),
+            (
                 "worker.instance",
                 "pyproject.toml",
                 None,
                 "project.scripts.worker"
             ),
+            (
+                "worker.instance.celery",
+                "pyproject.toml",
+                None,
+                "project.scripts.worker"
+            ),
             ("worker.monitor", "scripts/flower.sh", Some(2), "celery app"),
+            (
+                "worker.monitor.celery",
+                "scripts/flower.sh",
+                Some(2),
+                "celery app"
+            ),
         ]
     );
     assert_eq!(
@@ -1209,10 +1228,16 @@ fn celery_plugin_reads_bare_app_modules() {
             ("worker", "monitor"),
             ("worker.celery", "app"),
             ("worker.celery", "celery"),
+            ("worker.celery.celery", "app"),
+            ("worker.celery.celery", "celery"),
             ("worker.instance", "app"),
             ("worker.instance", "celery"),
+            ("worker.instance.celery", "app"),
+            ("worker.instance.celery", "celery"),
             ("worker.monitor", "app"),
             ("worker.monitor", "celery"),
+            ("worker.monitor.celery", "app"),
+            ("worker.monitor.celery", "celery"),
         ]
     );
     assert!(contrib.symbol_refs.is_empty(), "{:?}", contrib.symbol_refs);
