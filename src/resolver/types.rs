@@ -41,6 +41,9 @@ pub struct ResolvedImport {
     pub optional: bool,
     /// `true` when the import appears under an `if sys.platform …` guard.
     pub platform_guarded: bool,
+    /// `true` when no interpreter `requires-python` allows runs the import:
+    /// a fallback for a module they all ship (#1027).
+    pub never_runs: bool,
     /// Classification origin.
     pub origin: ModuleOrigin,
     /// Normalized PEP 508 distribution name when third-party.

@@ -9700,3 +9700,19 @@ fn binary_explicit_confidence_wins_over_strict() {
     assert_eq!(issues, Vec::<(String, String)>::new());
     assert_eq!(code, Some(0));
 }
+
+#[test]
+fn binary_imports_no_allowed_python_runs_need_no_declaration() {
+    let issues = json_issues(&fixture_path(&["deps", "never_run_imports"]), &[]);
+    let keys = issue_keys(&issues);
+    let has = |code: &str, distribution: &str| {
+        issues
+            .iter()
+            .any(|issue| issue["code"] == code && issue["distribution"] == distribution)
+    };
+    // A fallback for a module every allowed Python ships never runs (#1027).
+    assert!(!has("CHK003", "simplejson"), "{keys:?}");
+    assert!(!has("CHK005", "ujson"), "{keys:?}");
+    // A fallback that runs on some allowed Python still needs a declaration.
+    assert!(has("CHK003", "tomli"), "{keys:?}");
+}

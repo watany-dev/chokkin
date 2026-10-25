@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bundled minor (`py38`–`py315`), and anything else is a config error that
   names the accepted range. `chokkin init` writes the nearest bundled minor
   when `requires-python` names an older or newer one (#1125).
+- An `except ImportError:` fallback for a module every Python
+  `requires-python` allows ships (`try: import json` / `except ImportError:
+  import simplejson`) is no longer CHK003, CHK004 or CHK005: it never runs.
+  Its CHK010 stays info, as before (#1027).
 
 ## [0.7.9] - 2026-10-24
 

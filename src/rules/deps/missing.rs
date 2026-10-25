@@ -54,7 +54,8 @@ pub(super) fn detect_missing_dependencies(
     let mut closures = LockClosures::default();
 
     for import in &resolution.imports {
-        if import.origin != ModuleOrigin::ThirdParty {
+        // An import no allowed interpreter runs needs no declaration (#1027).
+        if import.origin != ModuleOrigin::ThirdParty || import.never_runs {
             continue;
         }
         let Some(distribution) = import.distribution.as_ref() else {
@@ -568,6 +569,7 @@ mod tests {
             context: crate::parser::ImportContext::Runtime,
             optional: false,
             platform_guarded: false,
+            never_runs: false,
             origin: ModuleOrigin::ThirdParty,
             distribution: Some(distribution.to_owned()),
             confidence: crate::resolver::ResolveConfidence::Certain,

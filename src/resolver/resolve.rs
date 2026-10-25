@@ -141,7 +141,7 @@ pub fn resolve_imports_for_analysis(
                     reference: Some(&reference.origin.label),
                     context: ImportContext::Runtime,
                     optional: false,
-                    dead_fallback: false,
+                    never_runs: false,
                     platform_guarded: false,
                     relative_level: 0,
                     stdlib,
@@ -191,7 +191,7 @@ struct Site<'s> {
     reference: Option<&'s str>,
     context: ImportContext,
     optional: bool,
-    dead_fallback: bool,
+    never_runs: bool,
     platform_guarded: bool,
     relative_level: u8,
     stdlib: StdlibRange,
@@ -335,7 +335,7 @@ impl Resolver<'_> {
                 || import.module.clone(),
                 |name| format!("{}.{name}", import.module),
             );
-            let dead_fallback = is_dead_fallback(&import.fallback_for, stdlib);
+            let never_runs = is_dead_fallback(&import.fallback_for, stdlib);
             resolve(
                 &Site {
                     full_module: &import.module,
@@ -345,7 +345,7 @@ impl Resolver<'_> {
                     reference: None,
                     context: import.context,
                     optional: import.optional,
-                    dead_fallback,
+                    never_runs,
                     platform_guarded: import.platform_guarded,
                     relative_level: import.relative_level,
                     stdlib,
@@ -363,7 +363,7 @@ impl Resolver<'_> {
                     reference: None,
                     context: ImportContext::Runtime,
                     optional: dynamic.optional,
-                    dead_fallback: false,
+                    never_runs: false,
                     platform_guarded: dynamic.platform_guarded,
                     relative_level: 0,
                     stdlib,
@@ -385,7 +385,7 @@ impl Resolver<'_> {
                     reference: Some("pytest_plugins"),
                     context: plugin_context,
                     optional: false,
-                    dead_fallback: false,
+                    never_runs: false,
                     platform_guarded: false,
                     relative_level: 0,
                     stdlib,
@@ -424,7 +424,7 @@ impl Resolver<'_> {
             reference,
             context,
             optional,
-            dead_fallback,
+            never_runs,
             platform_guarded,
             relative_level,
             stdlib,
@@ -556,7 +556,7 @@ impl Resolver<'_> {
                 line,
                 reference: reference.map(str::to_owned),
                 context,
-                optional: optional || dead_fallback,
+                optional: optional || never_runs,
             }));
         }
 
@@ -570,6 +570,7 @@ impl Resolver<'_> {
             context,
             optional,
             platform_guarded,
+            never_runs,
             origin: core.origin,
             distribution: core.distribution,
             confidence: core.confidence,
