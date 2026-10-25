@@ -35,7 +35,8 @@ pub fn apply_baseline(
     baseline_path: &Path,
     overrides: &RuntimeOverrides,
 ) -> Result<BaselineReport, BaselineError> {
-    let path = resolve_baseline_path(root, baseline_path)?;
+    let (root, path) = resolve_baseline_path(root, baseline_path)?;
+    let root = root.as_path();
     if !path.exists() {
         return Ok(BaselineReport {
             path: Some(rel_to_root(root, &path)),
@@ -91,7 +92,8 @@ pub fn write_baseline(
     root: &Path,
     baseline_path: &Path,
 ) -> Result<BaselineReport, BaselineError> {
-    let path = resolve_baseline_path(root, baseline_path)?;
+    let (root, path) = resolve_baseline_path(root, baseline_path)?;
+    let root = root.as_path();
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| BaselineError::Io {
             path: parent.display().to_string(),
@@ -144,14 +146,20 @@ fn read_baseline(path: &Path) -> Result<BaselineFile, BaselineError> {
     })
 }
 
-fn resolve_baseline_path(root: &Path, baseline_path: &Path) -> Result<PathBuf, BaselineError> {
+/// The canonical root and the baseline path under it; reported paths are
+/// relative to the former, since the latter is resolved through it.
+fn resolve_baseline_path(
+    root: &Path,
+    baseline_path: &Path,
+) -> Result<(PathBuf, PathBuf), BaselineError> {
     let root = canonical_root(root)?;
     let path = if baseline_path.is_absolute() {
         baseline_path.to_path_buf()
     } else {
         root.join(baseline_path)
     };
-    contained(&root, &path)
+    let path = contained(&root, &path)?;
+    Ok((root, path))
 }
 
 fn ensure_parent_inside_root(root: &Path, parent: &Path) -> Result<(), BaselineError> {
