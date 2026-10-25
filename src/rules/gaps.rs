@@ -616,12 +616,11 @@ fn unresolved_relative_gaps(module: &ParsedModule) -> Vec<Gap> {
         let Some(dir) = package_dir(&module.path, import.relative_level) else {
             continue;
         };
+        // One file reaches a directory with one dot count only.
         let site = sites
             .entry(dir)
             .or_insert((import.relative_level, import.line));
-        if import.line < site.1 {
-            *site = (import.relative_level, import.line);
-        }
+        site.1 = site.1.min(import.line);
     }
     sites
         .into_iter()
@@ -1325,6 +1324,53 @@ mod tests {
         assert_eq!(package_dir("ns/sub/a.py", 3), None);
         assert_eq!(package_dir("ns/sub/a.py", 0), None);
         assert_eq!(package_dir("main.py", 1), None);
+    }
+
+    /// Only an import the parser left unresolved, on a line it said is
+    /// outside a package, opens a gap, at the first such line per directory.
+    #[test]
+    fn unresolved_relative_gaps_take_the_first_unplaced_import_per_directory() {
+        use crate::parser::{ImportKind, ImportRef, ParseDiagnostic, ParseSeverity};
+        let import = |module: &str, level: u8, line: u32| ImportRef {
+            module: module.to_owned(),
+            name: None,
+            alias: None,
+            line,
+            kind: ImportKind::ImportFrom,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            deferred: false,
+            relative_level: level,
+            fallback_for: Vec::new(),
+        };
+        let unplaced = |line: u32| ParseDiagnostic {
+            line,
+            message: NOT_IN_PACKAGE.to_owned(),
+            severity: ParseSeverity::Warning,
+        };
+        let module = ParsedModule {
+            path: "ns/sub/a.py".to_owned(),
+            imports: vec![
+                // Resolved, though its line also holds an unplaced one.
+                import("ns.sub.x", 1, 2),
+                // Unresolved, but not for being outside a package.
+                import("", 2, 3),
+                import("", 1, 7),
+                import("", 1, 5),
+                import("", 1, 9),
+            ],
+            diagnostics: vec![unplaced(2), unplaced(5), unplaced(7), unplaced(9)],
+            ..ParsedModule::default()
+        };
+        let sites: Vec<_> = unresolved_relative_gaps(&module)
+            .into_iter()
+            .map(|gap| (gap.target, gap.site))
+            .collect();
+        assert_eq!(
+            sites,
+            [(Some("ns/sub".to_owned()), Some((".".to_owned(), Some(5))))]
+        );
     }
 
     #[test]
