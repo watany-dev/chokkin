@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own venv and is no CHK008 usage (#956).
 
 ### Fixed
+- A module in a namespace directory at the root (`pkg/` without
+  `__init__.py`) that imports a sibling by the directory's name (`from pkg
+  import m2`) reaches it, so `pkg/m2.py` is no longer a certain CHK001 that
+  `--fix --allow-remove-files` deletes while the program still imports it
+  (#1114).
 - A relative import the layout cannot resolve (`from .. import b` in a
   namespace package of a flat layout) no longer leaves the files it may
   import as certain CHK001: those below the directory its dots climb to are
