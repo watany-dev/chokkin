@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `include()` of a string built at runtime lowers unused files and
   dependencies below certain (#1094).
 
+### Changed
+- The corpus gate's CHK001 precision floor rises from 25% to 45% (measured
+  48.1%, from 30.2%), and a separate gate requires every `certain` CHK001,
+  which `--fix --allow-remove-files` deletes, to be labelled and correct
+  (#1094).
+
 ### Fixed
 - `celery -A pkg` that names a package whose `__init__.py` has no `app` /
   `celery` reaches `pkg/celery.py`, which Celery imports to find the app, so

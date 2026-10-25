@@ -9,7 +9,9 @@ Exit criteria (docs/dev/spec.ja.md §17):
 Corpus regression gates (#495):
   4. CLI/config errors (exit 2) == 0
   5. every project in --expect stays within its floors (see below)
-  6. every rule in PRECISION_FLOORS stays at or above its floor (see Precision)
+  6. every rule in PRECISION_FLOORS stays at or above its floor, and every
+     `certain` finding of a rule in CERTAIN_FLOORS is labelled and at or
+     above that floor (see Precision)
 
 Release gate (with --baseline, #325):
   7. CHK003 hits (not info) not labelled `tp`, outside --expect projects and
@@ -93,6 +95,11 @@ CHK001 / CHK003 / CHK004 / CHK006 / CHK010 have a floor (#701, #1065), so a
 precision drop fails the gate even when the counts hold. CHK002's floor is
 criterion 1: with no unclassified finding, FP rate < 5% is precision > 95%.
 The other rules are recorded only until their labels can carry one (#862).
+CERTAIN_FLOORS gates the `certain` findings alone, at any severity: those are
+what --fix acts on (ADR 0003; `--allow-remove-files` deletes a `certain`
+CHK001 file whatever its severity). An unknown or deferred one fails it, as
+an unclassified CHK002 fails criterion 1, and `info-expected` counts as `fp`:
+the finding is right only as a hint, and deleting the file is not.
 CHK001 / CHK004 / CHK006 / CHK010 labels are a per-project stratified sample
 drawn by scripts/sample-precision-labels.py, so their precision is a sample estimate.
 Labels whose finding no longer appears are listed as stale.
@@ -181,9 +188,15 @@ FP_GATE_PCT = 5
 # labelled hits yet and are recorded only (#862). CHK001 is reported by default
 # in app mode only, so its floor waited until 8 app-mode projects carried
 # labels, so that no single project's conventions (airflow's DAG files, #1062)
-# decide the gate; it is low because URLconf include() strings are not import
-# edges, which hides most Django app modules (#1065).
-PRECISION_FLOORS = {"CHK001": 25, "CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
+# decide the gate. It rose from 25 to 45 once URLconf include() strings
+# became module references (#1094, 30.2% -> 48.1%); most of what remains is
+# settings strings and CLIs run from docker or shell (#1065).
+PRECISION_FLOORS = {"CHK001": 45, "CHK003": 90, "CHK004": 95, "CHK006": 90, "CHK010": 90}
+# Floors over `certain` findings only (#1094), which --fix acts on. A file
+# --fix --allow-remove-files deletes while it is in use breaks the project, so
+# CHK001's floor is every one: a `certain` false positive is a bug to fix, not
+# a rate to keep under.
+CERTAIN_FLOORS = {"CHK001": 100}
 # Release-gate slowdown (#1025): two -r 1 runs of one binary on one machine
 # differed by at most 1.13x per medium or large project, the slowdowns between
 # releases that were not regressions stayed under 1.3x (sqlalchemy v0.7.0 ->
@@ -359,6 +372,26 @@ def precision_misses(findings: list[list[str]]) -> list[str]:
         tp, fp = precision(findings, code)
         if 100 * tp < floor * (tp + fp):
             misses.append(f"{code}={100 * tp / (tp + fp):.1f}%<{floor}%")
+    return misses
+
+
+def certain_precision(findings: list[list[str]], code: str) -> tuple[int, int, int]:
+    """(tp, fp, unclassified) over the `certain` findings of `code` at any
+    severity; `info-expected` is `fp`, unknown and deferred are unclassified."""
+    verdicts = Counter(f[3] for f in findings if f[1] == code and f[5] == "certain")
+    return verdicts["tp"], verdicts["fp"] + verdicts["info-expected"], verdicts["unknown"] + verdicts["deferred"]
+
+
+def certain_misses(findings: list[list[str]]) -> list[str]:
+    """Rules in CERTAIN_FLOORS with an unclassified `certain` finding or a
+    `certain` precision below the floor. No `certain` finding passes."""
+    misses = []
+    for code, floor in CERTAIN_FLOORS.items():
+        tp, fp, unclassified = certain_precision(findings, code)
+        if unclassified:
+            misses.append(f"{code}:certain {unclassified} unclassified")
+        if 100 * tp < floor * (tp + fp):
+            misses.append(f"{code}:certain={100 * tp / (tp + fp):.1f}%<{floor}%")
     return misses
 
 
@@ -949,10 +982,17 @@ def main() -> int:
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
     missed = recall_missed(labels, reported)
     precision_low = precision_misses(findings)
+    certain_low = certain_misses(findings)
+
+    def certain_measured(code: str) -> str:
+        tp, fp, unclassified = certain_precision(findings, code)
+        pct = f"{100 * tp / (tp + fp):.1f}%" if tp + fp else "n/a"
+        return f"{code} {pct} ({tp} tp / {fp} fp, {unclassified} unclassified)"
 
     passes = {
         "fp": fp_ok,
         "precision": not precision_low,
+        "certain": not certain_low,
         "recall": not missed,
         "crash": crashes == 0,
         "config": config_errors == 0,
@@ -999,6 +1039,10 @@ def main() -> int:
                  ", ".join(f"{c} >= {f}%" for c, f in PRECISION_FLOORS.items()),
                  " ".join(precision_low) or "all at or above",
                  verdict(passes["precision"])],
+                ["Precision floor, `certain` only (what --fix acts on)",
+                 ", ".join(f"{c} >= {f}%, all labelled" for c, f in CERTAIN_FLOORS.items()),
+                 "; ".join([*certain_low, *(certain_measured(c) for c in CERTAIN_FLOORS)]),
+                 verdict(passes["certain"])],
                 ["Recall (`tp` labels)", "all detected",
                  f"{tp_detected}/{len(tp_labels)} detected" + (f" (missed: {' '.join(missed)})" if missed else ""),
                  verdict(passes["recall"])],

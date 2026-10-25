@@ -157,9 +157,11 @@ import edge, so the views, forms and transports it imports stay unreachable.
 21 of the 32 false positives in the six new projects are modules reached
 through `include()` only. The other 11 are 5 more modules named by a dotted
 string (settings, plugin lists), 4 framework-loaded (AppConfig, tests), 1
-script entry and 1 other. The gate puts
+script entry and 1 other. The gate put
 a 25% floor on CHK001 (spec §17); fixing `include()` is the lever, not the
-floor.
+floor. With `include()` followed (#1094) CHK001 precision went from 30.2% to
+48.1%, healthchecks reports no CHK001 at all (so none of the 30 oracle
+breaks can be flagged again), and the floor is 45%.
 
 **Maybe pool** (`scripts/oss-maybe.labels.tsv`): 50 CHK001 hits (info
 severity left out, as in the default run) at `maybe` drawn from the

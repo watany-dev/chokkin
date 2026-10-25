@@ -1457,16 +1457,24 @@ severity が `info` の finding (例: optional try-import の CHK003) はヒッ�
 ヒットを消す (#1065)。1 project が全体の precision を決めないようにするため。
 `report.md` は rule ごとの precision (tp / (tp + fp)) と、今回の findings に
 現れなくなった **stale** ラベル数を記録する (#656)。precision は info を除くヒットのうち `tp` / `fp` のラベルが付いたものだけで
-計算し、**CHK001 は 25%、CHK003 は 90%、CHK004 は 95%、CHK006 / CHK010 は 90% を
+計算し、**CHK001 は 45%、CHK003 は 90%、CHK004 は 95%、CHK006 / CHK010 は 90% を
 下限**として gate にかける (#701、#1065)。件数の gate では、件数を変えずに誤検知が増える精度低下を検出
 できないため。下限は計測時の precision を 5 の倍数に切り下げた値。CHK002 は上の
 FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の下限なので、
 重ねて置かない。ラベル付きのヒットが 0 件の rule は測れないので通す (何も出さなく
 なった rule は recall gate が捕まえる)。CHK001 は既定では app mode でしか出ないので、
 ラベル付きの app mode project が 8 本以上そろってから下限を置いた。1 project の
-慣習 (airflow の DAG file、#1062) で gate が決まらないようにするため。下限が低いのは、
+慣習 (airflow の DAG file、#1062) で gate が決まらないようにするため。当初の下限 25% は、
 Django の URLconf の `include("pkg.urls")` が import edge にならず、app の module の
-多くが到達不能に見えるため。下の oracle でも測る (#1065)。CHK005 / CHK007 / CHK008 / CHK009 はラベル付きのヒットがまだ少ないので
+多くが到達不能に見えたためで、`include()` を辿るようにして 30.2% から 48.1% になったので
+45% に上げた (#1094)。下の oracle でも測る (#1065)。`--fix --allow-remove-files` が
+実際に消すのは severity によらず `certain` の CHK001 だけ (ADR 0003) なので、これは
+別の gate にする。`certain` の CHK001 はすべてラベルが付いていること (unknown /
+deferred が 1 件でもあれば失敗)、precision が 100% であること (`info-expected` も
+`fp` に数える。hint としては正しくても、file を消すのは誤り) を求める。`certain`
+の誤検出は率で許すものではなく、直す不具合として扱う。`certain` の CHK001 が 0 件の
+ときは通す (v0.7.10 の corpus では、app mode の CHK001 はすべて gap で likely 以下に
+下がっていて 0 件)。CHK005 / CHK007 / CHK008 / CHK009 はラベル付きのヒットがまだ少ないので
 記録のみにする (#862)。既定で隠れる `maybe` の CHK001 は `--maybe` で `--strict`
 の report から別 pool として抽出し (`scripts/oss-maybe.labels.tsv`)、そのうち本当に
 dead な割合 (隠したことによる FN 率) を記録だけする。clone の revision を上げて
