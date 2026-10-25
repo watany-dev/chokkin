@@ -1400,6 +1400,97 @@
       "imports": [
         "opentelemetry.instrumentation.requests"
       ]
+    },
+    {
+      "distribution": "django-i18nfield",
+      "imports": [
+        "i18nfield"
+      ]
+    },
+    {
+      "distribution": "django-oauth-toolkit",
+      "imports": [
+        "oauth2_provider"
+      ]
+    },
+    {
+      "distribution": "django-localflavor",
+      "imports": [
+        "localflavor"
+      ]
+    },
+    {
+      "distribution": "django-hierarkey",
+      "imports": [
+        "hierarkey"
+      ]
+    },
+    {
+      "distribution": "paypal-checkout-serversdk",
+      "imports": [
+        "paypalcheckoutsdk"
+      ]
+    },
+    {
+      "distribution": "django-bootstrap3",
+      "imports": [
+        "bootstrap3"
+      ]
+    },
+    {
+      "distribution": "django-hijack",
+      "imports": [
+        "hijack"
+      ]
+    },
+    {
+      "distribution": "pycryptodome",
+      "imports": [
+        "Crypto"
+      ]
+    },
+    {
+      "distribution": "pycryptodomex",
+      "imports": [
+        "Cryptodome"
+      ]
+    },
+    {
+      "distribution": "django-extensions",
+      "imports": [
+        "django_extensions"
+      ]
+    },
+    {
+      "distribution": "django-statici18n",
+      "imports": [
+        "statici18n"
+      ]
+    },
+    {
+      "distribution": "libsass",
+      "imports": [
+        "sass",
+        "sassutils"
+      ]
+    },
+    {
+      "distribution": "mt-940",
+      "imports": [
+        "mt940"
+      ]
+    },
+    {
+      "distribution": "django-formset-js-improved",
+      "imports": [
+        "djangoformsetjs"
+      ]
+    },
+    {
+      "distribution": "pytest-xdist",
+      "imports": [
+        "xdist"
+      ]
     }
   ],
   "auto_packages": [
