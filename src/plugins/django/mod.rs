@@ -445,11 +445,6 @@ fn read_settings(
             });
         }
 
-        // A second mention may add the admin through another name
-        // (`apps = INSTALLED_APPS`), which is not followed.
-        if contents.matches("INSTALLED_APPS").count() > 1 {
-            installed.incomplete = true;
-        }
         if let Some(apps) = installed::read(&stmts) {
             for (module, start) in apps.values {
                 let origin = origin(start, "INSTALLED_APPS");
@@ -479,8 +474,8 @@ fn read_settings(
             }
         }
 
-        // Values that are not literals keep the loader's packages unknown,
-        // which leaves those modules to the `migrations` glob as before.
+        // A value that is not a string literal is not read, and is no gap:
+        // its package is treated as it was before this setting was read.
         if let Some(Expr::Dict(dict)) = assigned_value(&stmts, "MIGRATION_MODULES") {
             for item in &dict.items {
                 if let Some(package) = string_value(&item.value) {

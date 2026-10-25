@@ -15,7 +15,8 @@ const NON_ADDING: &[&str] = &[
     "remove", "pop", "clear", "index", "count", "copy", "sort", "reverse",
 ];
 
-/// Names a list is followed through before it counts as not read.
+/// Names a list is followed through before it counts as not read, so a
+/// long chain of names cannot exhaust the stack.
 const MAX_DEPTH: usize = 8;
 
 /// What a settings file adds to `INSTALLED_APPS`.
@@ -33,28 +34,28 @@ pub(super) struct Apps {
 /// unpacked with `*`, wrapped in `list()` / `tuple()`, or a name the file
 /// builds the same way (`LOCAL_APPS`). An earlier value of `INSTALLED_APPS`
 /// itself is what the file has already added. Anything else is unread, and
-/// so is a subscript or unpacking store. Removals are not followed, so an app
+/// so is a subscript or unpacking store and an import of the name
+/// (`from .base import INSTALLED_APPS`), whose value is not followed; a star
+/// import is the settings reader's to follow. Removals are not followed, so an app
 /// a file takes out still counts as installed: that hides no unused file.
 /// `None` when the file adds nothing.
 pub(super) fn read(stmts: &[Stmt]) -> Option<Apps> {
-    let mut apps = Apps::default();
     let mut reader = Reader {
         stmts,
         seen: BTreeSet::from([FIELD.to_owned()]),
-        apps: &mut apps,
+        apps: Apps::default(),
     };
-    let found = reader.name(FIELD, 0);
-    found.then_some(apps)
+    reader.name(FIELD, 0).then_some(reader.apps)
 }
 
-struct Reader<'a, 'b> {
+struct Reader<'a> {
     stmts: &'a [Stmt],
     /// Names already read, so a list built from itself ends.
     seen: BTreeSet<String>,
-    apps: &'b mut Apps,
+    apps: Apps,
 }
 
-impl Reader<'_, '_> {
+impl Reader<'_> {
     /// Read what the file adds to `name`; `false` when it adds nothing.
     fn name(&mut self, name: &str, depth: usize) -> bool {
         let mut additions = Additions {
@@ -75,12 +76,8 @@ impl Reader<'_, '_> {
 
     fn sequence(&mut self, expr: &Expr, depth: usize) {
         match expr {
-            Expr::List(list) => list
-                .elts
-                .iter()
-                .for_each(|elt| self.element_or_starred(elt, depth)),
-            Expr::Tuple(tuple) => tuple
-                .elts
+            Expr::List(ruff_python_ast::ExprList { elts, .. })
+            | Expr::Tuple(ruff_python_ast::ExprTuple { elts, .. }) => elts
                 .iter()
                 .for_each(|elt| self.element_or_starred(elt, depth)),
             Expr::BinOp(binop) if binop.op == Operator::Add => {
@@ -219,6 +216,15 @@ impl<'a> Visitor<'a> for Additions<'a, '_> {
             Stmt::AugAssign(assign) if self.stores_into(&assign.target) => {
                 self.found.push(Addition::Unread(assign.start()));
             },
+            Stmt::ImportFrom(ruff_python_ast::StmtImportFrom { names, .. })
+            | Stmt::Import(ruff_python_ast::StmtImport { names, .. }) => {
+                for alias in names {
+                    let bound = alias.asname.as_ref().unwrap_or(&alias.name);
+                    if bound.as_str() == self.name {
+                        self.found.push(Addition::Unread(alias.start()));
+                    }
+                }
+            },
             _ => {},
         }
         walk_stmt(self, stmt);
@@ -292,6 +298,8 @@ INSTALLED_APPS.remove('a')
             "INSTALLED_APPS = []\nINSTALLED_APPS[0:0] = ['a']",
             "INSTALLED_APPS = []\nINSTALLED_APPS *= 2",
             "first, *INSTALLED_APPS = build()",
+            "from .base import INSTALLED_APPS\nINSTALLED_APPS += ['a']",
+            "from .apps import LOCAL as LOCAL_APPS\nINSTALLED_APPS = LOCAL_APPS",
         ] {
             assert_eq!(
                 apps(source).map(|(_, unread)| unread),

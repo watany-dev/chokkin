@@ -4611,6 +4611,10 @@ fn binary_django_installed_app_conventions_are_used() {
         key.starts_with("CHK001") && (key.contains("admin.py") || key.contains("models.py"))
     });
     assert_eq!(without_admin, ["CHK001:mysite/polls/admin.py"]);
+    // An addition read in full installs no admin either (#1127).
+    let mut added = flagged("['mysite.polls']\nINSTALLED_APPS += ['django.contrib.auth']");
+    added.retain(|key| key.contains("admin.py"));
+    assert_eq!(added, ["CHK001:mysite/polls/admin.py"]);
     // The inherited config makes the package that defines it no app.
     let project = django_app_project("['mysite.apps.SiteAdminConfig', 'mysite.polls']");
     let keys = issue_keys(&json_issues(
