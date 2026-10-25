@@ -12,7 +12,7 @@ use ignore::{DirEntry, WalkBuilder};
 use crate::config::EntrySpec;
 use crate::path_util::{lowercase_extension, normalize_rel_path};
 
-use super::cache::{Ancestors, DirIgnore, RootLoad, SourcesCache, gitignore_skips};
+use super::cache::{Ancestors, DirIgnore, RootLoad, SourcesCache, WalkIgnore, gitignore_skips};
 use super::context::assign_file_context;
 use super::error::SourcesError;
 use super::types::{DiscoveredFile, FileContext, FileKind};
@@ -35,8 +35,6 @@ pub(super) struct CollectOptions<'a> {
     pub exclude_patterns: &'a [String],
     /// Whether to respect `.gitignore` files during the walk.
     pub respect_gitignore: bool,
-    /// Optional root `.gitignore` for post-filtering.
-    pub gitignore: Option<&'a DirIgnore>,
     /// Whether to drop non-runtime contexts.
     pub production: bool,
     /// Ignore files and globs parsed by earlier walks.
@@ -63,24 +61,14 @@ pub(super) struct Collected {
     pub warnings: Vec<SourcesWarning>,
 }
 
-/// Load `.gitignore` from the project root when present.
-pub(super) fn load_gitignore(
-    root: &Path,
-    cache: &SourcesCache,
-) -> (Option<Arc<DirIgnore>>, Option<SourcesWarning>) {
-    let dir = cache.dir(root);
-    match dir.root_load() {
-        RootLoad::Loaded => (Some(dir), None),
-        // The walk reports the lines that do not parse; its partial rules
-        // still apply there.
-        RootLoad::Missing | RootLoad::Unparsable => (None, None),
-        RootLoad::Unreadable => (
-            None,
-            Some(SourcesWarning::GitignoreUnreadable {
-                path: GITIGNORE_PATH.to_owned(),
-            }),
-        ),
-    }
+/// The warning for a root `.gitignore` the walk could not read. The walk
+/// reports the lines that do not parse; its partial rules still apply.
+pub(super) fn root_gitignore_warning(root: &Path, cache: &SourcesCache) -> Option<SourcesWarning> {
+    matches!(cache.dir(root).root_load(), RootLoad::Unreadable).then(|| {
+        SourcesWarning::GitignoreUnreadable {
+            path: GITIGNORE_PATH.to_owned(),
+        }
+    })
 }
 
 fn should_prune_dir(rel_str: &str, exclude_matcher: &GlobSet) -> bool {
@@ -208,7 +196,7 @@ fn configure_walker(
 
 /// Ignore file errors of a walked directory, as `ignore` attaches them to
 /// its entry, and a `.gitignore` below the walk root that `ignore` could not
-/// read and dropped (#915). The root's own is [`load_gitignore`]'s.
+/// read and dropped (#915). The root's own is [`root_gitignore_warning`]'s.
 fn dir_warnings(
     root: &Path,
     cache: &SourcesCache,
@@ -287,14 +275,14 @@ impl SkippedSymlinks {
         root: &Path,
         entry: &DirEntry,
         exclude_matcher: &GlobSet,
-        gitignored: &dyn Fn(&Path, bool) -> bool,
+        ignore: Option<&WalkIgnore>,
     ) {
         if entry
             .file_type()
             .is_some_and(|file_type| file_type.is_symlink())
         {
             self.0
-                .extend(skipped_symlink(root, entry, exclude_matcher, gitignored));
+                .extend(skipped_symlink(root, entry, exclude_matcher, ignore));
         }
     }
 
@@ -342,7 +330,7 @@ fn skipped_symlink(
     root: &Path,
     entry: &DirEntry,
     exclude_matcher: &GlobSet,
-    gitignored: &dyn Fn(&Path, bool) -> bool,
+    ignore: Option<&WalkIgnore>,
 ) -> Option<SourcesWarning> {
     let path = entry.path();
     if entry.depth() == 0 {
@@ -350,10 +338,10 @@ fn skipped_symlink(
     }
     let rel = path.strip_prefix(root).ok()?;
     let rel_str = normalize_rel_path(rel);
-    // A link to a directory (a symlinked `venv`) answers to `venv/` too.
+    // The walk dropped the ignored links, seeing each as a file; a link to a
+    // directory (a symlinked `venv`) answers to `venv/` too.
     if should_prune_dir(&rel_str, exclude_matcher)
-        || gitignored(rel, false)
-        || gitignored(rel, true)
+        || ignore.is_some_and(|ignore| ignore.skips(path, true))
     {
         return None;
     }
@@ -421,17 +409,12 @@ pub(crate) fn is_dockerfile(path: &Path) -> bool {
 
 /// `entry`, at `rel`, as a Dockerfile below the root that is neither excluded
 /// nor ignored (#1061).
-fn nested_dockerfile(
-    entry: &DirEntry,
-    rel: &Path,
-    exclude_matcher: &GlobSet,
-    gitignored: &dyn Fn(&Path, bool) -> bool,
-) -> Option<String> {
+fn nested_dockerfile(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Option<String> {
     if entry.depth() < 2 || !is_dockerfile(entry.path()) {
         return None;
     }
     let rel_str = normalize_rel_path(rel);
-    (!exclude_matcher.is_match(&rel_str) && !gitignored(rel, false)).then_some(rel_str)
+    (!exclude_matcher.is_match(&rel_str)).then_some(rel_str)
 }
 
 /// Whether `matcher` takes the source file at `rel_str`, also under its
@@ -484,7 +467,6 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let exclude_matcher = options.exclude_matcher;
     let test_matcher = options.test_matcher;
     let production = options.production;
-    let gitignore = options.gitignore;
     let cache = options.cache;
 
     let mut files = Vec::new();
@@ -493,8 +475,9 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
     let mut non_utf8 = NonUtf8Paths::default();
-    let gitignored =
-        |rel: &Path, is_dir| gitignore.is_some_and(|ignore| ignore.gitignore_ignores(rel, is_dir));
+    let ignore = options
+        .respect_gitignore
+        .then(|| WalkIgnore::new(cache, &root));
 
     let builder = walker(options, &mut warnings)?;
 
@@ -514,7 +497,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
         if options.respect_gitignore {
             dir_warnings(&root, cache, &entry, file_type, &mut warnings);
         }
-        symlinks.check(&root, &entry, exclude_matcher, &gitignored);
+        symlinks.check(&root, &entry, exclude_matcher, ignore.as_ref());
         if !file_type.is_file() {
             continue;
         }
@@ -523,7 +506,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         };
         let Some(kind) = source_kind(path) else {
-            dockerfiles.extend(nested_dockerfile(&entry, rel, exclude_matcher, &gitignored));
+            dockerfiles.extend(nested_dockerfile(&entry, rel, exclude_matcher));
             continue;
         };
         let rel_str = normalize_rel_path(rel);
@@ -532,7 +515,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        if gitignored(rel, false) || non_utf8.skips(rel, &rel_str) {
+        if non_utf8.skips(rel, &rel_str) {
             continue;
         }
 
@@ -721,7 +704,6 @@ mod tests {
             test_matcher: &GlobSet::empty(),
             exclude_patterns: &exclude_patterns,
             respect_gitignore: false,
-            gitignore: None,
             production: false,
             cache: &cache,
             dirs: None,
@@ -771,7 +753,6 @@ mod tests {
             test_matcher: &GlobSet::empty(),
             exclude_patterns: &exclude_patterns,
             respect_gitignore: false,
-            gitignore: None,
             production: true,
             cache: &cache,
             dirs: None,
@@ -818,7 +799,6 @@ mod tests {
             test_matcher: &GlobSet::empty(),
             exclude_patterns: &exclude_patterns,
             respect_gitignore: false,
-            gitignore: None,
             production: false,
             cache: &cache,
             dirs: None,

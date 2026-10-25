@@ -34,8 +34,8 @@ pub(crate) struct SourcesCache(Arc<Inner>);
 #[derive(Default)]
 struct Inner {
     dirs: Mutex<HashMap<OsString, Arc<DirIgnore>>>,
-    /// [`SourcesCache::gitignore_only_skips`]'s directory chains, by walk
-    /// root and the directory they end at.
+    /// [`WalkIgnore`]'s directory chains, by walk root and the directory
+    /// they end at.
     chains: Mutex<HashMap<PathBuf, HashMap<PathBuf, Arc<DirChain>>>>,
     /// Compiled rules by ignore file content, rooted at `.`.
     rules: Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
@@ -54,13 +54,13 @@ pub(super) struct DirIgnore {
     has_git: bool,
     /// Errors `ignore` attaches to the directory entry.
     errors: Vec<ignore::Error>,
-    /// `.gitignore` as [`super::walk::load_gitignore`] sees it, and as the
-    /// walk sees each directory below the root (#915).
+    /// `.gitignore` as [`super::walk::root_gitignore_warning`] sees it, and
+    /// as the walk sees each directory below the root (#915).
     root_load: RootLoad,
 }
 
-/// Whether [`super::walk::load_gitignore`] finds the `.gitignore`, finds
-/// none, finds one with lines that do not parse, or warns that it is
+/// Whether [`super::walk::root_gitignore_warning`] finds the `.gitignore`,
+/// finds none, finds one with lines that do not parse, or warns that it is
 /// unreadable.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum RootLoad {
@@ -154,24 +154,6 @@ impl SourcesCache {
         Some(Ancestors { base, dirs })
     }
 
-    /// Whether `.gitignore` files drop `path` for a walk with only
-    /// `git_ignore` on (no parents, no exclude, `require_git(false)`), as
-    /// `ignore`'s `matched_ignore` answers it: the directories from `root`
-    /// down to `path`'s parent, closest first. Without `require_git`,
-    /// `ignore` sees no `.git`, so a nested repository does not stop them.
-    pub(crate) fn gitignore_only_skips(&self, root: &Path, path: &Path, is_dir: bool) -> bool {
-        let Some(chain) = path.parent().and_then(|parent| self.chain(root, parent)) else {
-            return false;
-        };
-        for dir in chain.dirs.iter().rev() {
-            let matched = dir.gitignore.matched(path, is_dir);
-            if !matched.is_none() {
-                return matched.is_ignore();
-            }
-        }
-        false
-    }
-
     /// The ignore files from `root` down to `dir`, `None` when `dir` is not
     /// under `root`. Memoized per directory: the member scan asks for every
     /// entry of a parallel walk, and rebuilding the chain from the root each
@@ -216,6 +198,43 @@ impl SourcesCache {
     #[cfg(test)]
     pub(super) fn compiled_rules(&self) -> usize {
         lock(&self.0.rules).len()
+    }
+}
+
+/// The walk's gitignore decision ([`gitignore_skips`]) for any path below
+/// one walk root, for a walk that does not track its directory chain itself:
+/// the workspace member scan, and the symlinks the source walk names.
+pub(crate) struct WalkIgnore {
+    cache: SourcesCache,
+    root: PathBuf,
+    ancestors: Option<Ancestors>,
+}
+
+impl WalkIgnore {
+    pub(crate) fn new(cache: &SourcesCache, root: &Path) -> Self {
+        Self {
+            cache: cache.clone(),
+            root: root.to_path_buf(),
+            ancestors: cache.ancestors(root),
+        }
+    }
+
+    /// Whether the walk drops `path`, a path below the root as the walker
+    /// spells it.
+    pub(crate) fn skips(&self, path: &Path, is_dir: bool) -> bool {
+        let Some(chain) = path
+            .parent()
+            .and_then(|parent| self.cache.chain(&self.root, parent))
+        else {
+            return false;
+        };
+        gitignore_skips(
+            &chain.dirs,
+            self.ancestors.as_ref(),
+            &self.root,
+            path,
+            is_dir,
+        )
     }
 }
 
@@ -279,14 +298,6 @@ impl DirIgnore {
     pub(super) const fn root_load(&self) -> RootLoad {
         self.root_load
     }
-
-    /// Whether the directory's `.gitignore` ignores `path` or one of its
-    /// parents: `Gitignore::matched_path_or_any_parents`.
-    pub(super) fn gitignore_ignores(&self, path: &Path, is_dir: bool) -> bool {
-        self.gitignore
-            .matched_path_or_any_parents(path, is_dir)
-            .is_ignore()
-    }
 }
 
 /// One ignore file's rules, as `ignore` would build them for a directory.
@@ -345,16 +356,6 @@ impl Rules {
             Self::None => Match::None,
             Self::Shared { root, gitignore } => gitignore.matched(strip(root, path), is_dir),
             Self::Own(gitignore) => gitignore.matched(path, is_dir),
-        }
-    }
-
-    fn matched_path_or_any_parents<'a>(&'a self, path: &Path, is_dir: bool) -> Match<&'a Glob> {
-        match self {
-            Self::None => Match::None,
-            Self::Shared { root, gitignore } => {
-                gitignore.matched_path_or_any_parents(strip(root, path), is_dir)
-            },
-            Self::Own(gitignore) => gitignore.matched_path_or_any_parents(path, is_dir),
         }
     }
 }
@@ -606,7 +607,15 @@ pub(super) fn gitignore_skips(
     let ancestor_dirs = ancestors.map_or(&[][..], |ancestors| &ancestors.dirs[..]);
     let any_git = chain.iter().chain(ancestor_dirs).any(|dir| dir.has_git);
     if !any_git {
-        return false;
+        // No repository, so git reads nothing; a plain directory's
+        // `.gitignore` files still apply from the walk root down, the
+        // closest match winning as in git (#1220).
+        return chain
+            .iter()
+            .rev()
+            .map(|dir| dir.gitignore.matched(path, is_dir))
+            .find(|matched| !matched.is_none())
+            .is_some_and(|matched| matched.is_ignore());
     }
     let mut state = MatchState {
         gitignore: Match::None,
@@ -659,7 +668,7 @@ mod tests {
     /// The chains are memoized per walk root: the same directory under
     /// another root reads only the `.gitignore` files below that root.
     #[test]
-    fn gitignore_only_skips_reads_from_each_walk_root_down() {
+    fn walk_ignore_reads_from_each_walk_root_down() {
         let temp = tempfile::tempdir().expect("tempdir");
         let outer = temp.path();
         let inner = outer.join("a");
@@ -668,11 +677,13 @@ mod tests {
         fs::write(inner.join(".gitignore"), "x\n").expect("write");
         let cache = SourcesCache::default();
         for _ in 0..2 {
-            assert!(cache.gitignore_only_skips(outer, &inner.join("b/y"), false));
-            assert!(cache.gitignore_only_skips(outer, &inner.join("b/x"), false));
-            assert!(!cache.gitignore_only_skips(&inner, &inner.join("b/y"), false));
-            assert!(cache.gitignore_only_skips(&inner, &inner.join("b/x"), false));
-            assert!(!cache.gitignore_only_skips(&inner, &outer.join("y"), false));
+            let from_outer = WalkIgnore::new(&cache, outer);
+            let from_inner = WalkIgnore::new(&cache, &inner);
+            assert!(from_outer.skips(&inner.join("b/y"), false));
+            assert!(from_outer.skips(&inner.join("b/x"), false));
+            assert!(!from_inner.skips(&inner.join("b/y"), false));
+            assert!(from_inner.skips(&inner.join("b/x"), false));
+            assert!(!from_inner.skips(&outer.join("y"), false));
         }
     }
 

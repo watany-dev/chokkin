@@ -659,6 +659,46 @@ fn binary_gitignored_directory_symlink_is_silent() {
     assert!(!stderr.contains("did not follow symlink"), "{stderr}");
 }
 
+/// A deeper `.gitignore` re-includes what the root's ignores, as git does,
+/// in a repository and in a plain directory: the file's import counts
+/// (#1220).
+#[test]
+fn binary_nested_gitignore_negation_wins_over_the_root() {
+    for repository in [true, false] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        if repository {
+            fs::create_dir_all(root.join(".git")).expect("mkdir");
+        }
+        fs::create_dir_all(root.join("demo")).expect("mkdir");
+        fs::write(
+            root.join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n",
+        )
+        .expect("write pyproject");
+        fs::write(root.join(".gitignore"), "gen.py\n").expect("write");
+        fs::write(root.join("demo/.gitignore"), "!gen.py\n").expect("write");
+        fs::write(root.join("demo/__init__.py"), "from . import gen\n").expect("write");
+        fs::write(root.join("demo/gen.py"), "import requests\n").expect("write");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "compact"])
+            .arg(root)
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        assert!(
+            !stdout.contains("CHK002"),
+            "repository {repository}: {stdout}"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(ExitStatus::Success.code().into()),
+            "repository {repository}: {stdout}"
+        );
+    }
+}
+
 #[test]
 fn binary_baseline_update_then_suppresses_existing_issue() {
     let temp = tempfile::TempDir::new().expect("tempdir");
