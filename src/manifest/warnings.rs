@@ -102,6 +102,21 @@ pub enum ManifestWarning {
         /// The path as written.
         path: String,
     },
+    /// A `-r` / `-c` names a URL or a `${VAR}` path, which pip fetches or
+    /// expands from the environment and chokkin does not read (#1130). A
+    /// `-r` marks its file as partly read.
+    RequirementsIncludeNotRead {
+        /// Root-relative file path.
+        file: String,
+        /// 1-based line number.
+        line: u32,
+        /// `-r` or `-c`.
+        option: String,
+        /// The path as written.
+        path: String,
+        /// What pip would do with it, e.g. `a URL`.
+        reason: String,
+    },
     /// A `-c` constraints file reference could not be resolved.
     RequirementsConstraintMissing {
         /// Missing constraints file path as written.
@@ -197,6 +212,7 @@ impl ManifestWarning {
             | Self::InvalidRequirementLine { file, .. }
             | Self::SetupPyPartiallyStatic { file, .. }
             | Self::RequirementsOptionIgnored { file, .. }
+            | Self::RequirementsIncludeNotRead { file, .. }
             | Self::PathOutsideRoot { file, .. }
             | Self::PathSourceMissing { file, .. }
             | Self::PathSourceNotProject { file, .. }
