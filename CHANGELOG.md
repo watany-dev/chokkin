@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A baseline whose `schema_version` is neither `"0"` nor `"1"` (written by a
   newer chokkin, or edited by hand) warns that it may be misread; it is still
   applied, so the exit code does not change (#1131).
+- A `# chokkin:` comment that suppresses nothing now warns: a malformed
+  directive (`ignore[chk003]`, `ignore [CHK003]`, `ignore[CHK003,]`, bare
+  `ignore`), a code that is not CHK001-CHK010, a `file-ignore` after the
+  first statement, or an `ignore` before it. No new spelling is accepted
+  (#1132).
 
 ## [0.7.9] - 2026-10-24
 

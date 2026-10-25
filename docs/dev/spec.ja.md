@@ -1755,6 +1755,8 @@ file-level ignore。ファイル先頭のcomment block(最初のimport文・実�
 # chokkin: file-ignore[CHK006]
 ```
 
+`# chokkin:` で始まるのに何も抑止しない comment は、`` parse: `path:line`: … `` の warning にする (ADR 0005、#1132)。読めない書式 (`ignore[chk003]`、`ignore [CHK003]`、`ignore[CHK003,]`、角括弧の無い `ignore`、`chokkin :`)、CHK001–CHK010 でない code (`CHK03`、`CHK999`。他の code が正しければその code は効く)、最初の文より後の `file-ignore`、最初の文より前の `ignore` の 4 つを文面で分ける。利用者は抑止したつもりでいるが finding は残るため。config の `[tool.chokkin.ignore]` は不正な code を使用エラーにするが、source の comment は解析対象の file にあり直せない場合もあるので warning にとどめる。小文字や `ignore` の後の空白は受理しない。構文は Phase 3 で draft 凍結済み (§17) で、別の綴りを足すのは v0.8 で決める。comment かどうかは見ず source の文字列から探すので、文字列 literal の中の `# chokkin:` も warning になる。
+
 config ignore。keyはrule codeに統一する。値のpattern構文はruleの対象に依存し、dependency系ruleではdistribution名のglob、file系ruleではpath glob、symbol系ruleでは `path:symbol_glob` 形式とする。distribution名のglobは、glob記号を残したまま PEP 503 で正規化してから正規化済みの distribution 名と照合するので、manifest と同じ綴り (`typing_extensions`、`Boto3`) でも効く (#1106)。`[...]` の文字クラスは書いたとおりに残す (`[!A-Z]` を小文字にすると意味が反転する)。PEP 723 script の `script:<path>:<name>` は name の部分だけを正規化する。CHK008 の binary 名は書いたとおりに照合する。
 
 inline / file-level ignore と vendored は、複数の import site をまとめた finding (CHK010 の import 行、CHK005 の distribution ごとの runtime import) では、まとめた全 site が抑制されるときだけ抑制する。CHK005 は ignore された site を重み付けの前に除き、残った site のうち最も強いものを位置と confidence にする。ignore 済みの top-level import が、ignore していない関数内 import を certain に引き上げることはない。全 site が ignore されているときだけ finding は ignore 済みの site に立ち、抑制される (#1107)。

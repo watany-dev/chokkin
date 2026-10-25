@@ -112,7 +112,7 @@ fn parse_python_source(
         },
     };
 
-    parsed.ignores = extract_ignores_with(source, &lines);
+    parsed.ignores = extract_ignores_with(source, &lines, &mut parsed.diagnostics);
     parsed
 }
 
