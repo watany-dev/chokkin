@@ -1183,8 +1183,8 @@ fn flask_plugin_app_file_entries_keep_their_context() {
 }
 
 /// `celery -A pkg.mod` names the module Celery searches for `app` / `celery`,
-/// or the attribute `mod` of `pkg` (#851), or, when it is a package without
-/// either, its `celery` submodule (#865).
+/// or the attribute `mod` of `pkg` (#851).
+/// A package without either has Celery import its `celery` submodule (#865).
 #[test]
 fn celery_plugin_reads_bare_app_modules() {
     let hints = extract_fixture("celery_bare_module");
