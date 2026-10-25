@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pipx run [options] <path>.py` runs a script the way `python <path>.py`
+  does, so a script a workflow `run:` step or a local pre-commit hook runs
+  through pipx is no CHK001. `pipx run <app>` stays an app pipx installs in
+  its own venv and is no CHK008 usage (#956).
+
 ### Fixed
+- `celery -A pkg` that names a package whose `__init__.py` has no `app` /
+  `celery` reaches `pkg/celery.py`, which Celery imports to find the app, so
+  it is no longer CHK001 and its `app` is no CHK006 (#865).
+- The import names of `django-i18nfield`, `django-oauth-toolkit`,
+  `django-localflavor`, `django-hierarkey`, `paypal-checkout-serversdk`,
+  `django-bootstrap3`, `django-hijack`, `pycryptodome`, `pycrypto`,
+  `pycryptodomex`, `django-extensions`, `django-statici18n`, `libsass`,
+  `mt-940`, `django-formset-js-improved` and `pytest-xdist` are in the package
+  map, so their imports are no CHK010 and their declarations no CHK002
+  (#1223).
 - The release workflow publishes only a tag that names the `Cargo.toml` and
   `pyproject.toml` version and points at the release commit on `main` (v0.7.1
   and v0.7.4 would have failed), and the GitHub Release and its attestation
