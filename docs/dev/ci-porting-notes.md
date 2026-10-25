@@ -70,11 +70,18 @@ them when a maintainer, workflow, or job name changes.
   tests every target, so a regression on one of them shows up there before a
   tag.
 
-**`pypi-chokkin` environment** (Settings → Environments):
+**`pypi-chokkin` environment** (Settings → Environments). Both the
+`GitHub Release` and `Publish to PyPI` jobs of `release.yml` run in it, so its
+reviewer approves the attestation and the release as well as the upload:
 
 - Deployment branches and tags: selected tags only, pattern `v*`.
 - Required reviewers: the maintainer. "Prevent self-review" would block the
   only maintainer, so leave it off until there is a second one.
+
+**`v*` tag ruleset** (Settings → Rules → Rulesets, target tags `v*`): restrict
+creations, updates and deletions to the maintainer (bypass list), so only they
+can push a tag that starts a release. The `Release tag` job checks what the tag
+points at, not who pushed it.
 
 **Releases** (Settings → General → Releases): enable immutable releases.
 `release.yml` uploads every asset in the `gh release create` call, so it works
