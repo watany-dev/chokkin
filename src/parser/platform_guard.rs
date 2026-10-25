@@ -100,12 +100,15 @@ pub(super) fn imports_platform_alias(body: &[Stmt]) -> bool {
     })
 }
 
-/// Whether `source`, an ASCII one, can hold a platform test of `modules`;
+/// Whether `source`, an ASCII one, can hold a platform or `version_info`
+/// test of `modules`;
 /// most modules have none, and the per-scope binding scan can then be skipped.
 pub(super) fn mentions_platform_test(source: &str, modules: &PlatformModules) -> bool {
+    let mentions =
+        |needle: String| memchr::memmem::find(source.as_bytes(), needle.as_bytes()).is_some();
     modules.iter().any(|(name, module)| {
-        let needle = format!("{name}.{}", module.attribute());
-        memchr::memmem::find(source.as_bytes(), needle.as_bytes()).is_some()
+        mentions(format!("{name}.{}", module.attribute()))
+            || (*module == PlatformModule::Sys && mentions(format!("{name}.version_info")))
     })
 }
 
@@ -225,6 +228,19 @@ fn is_platform_value(expr: &Expr, modules: &PlatformModules) -> bool {
             Some(PlatformModule::Sys | PlatformModule::Os)
         ),
     }
+}
+
+/// Whether `expr` is `sys.<attribute>` with a receiver `modules` binds to
+/// `sys` (`sys.version_info`, #997).
+pub(super) fn is_sys_attribute(expr: &Expr, modules: &PlatformModules, attribute: &str) -> bool {
+    let Expr::Attribute(read) = expr else {
+        return false;
+    };
+    let Expr::Name(receiver) = &*read.value else {
+        return false;
+    };
+    read.attr.as_str() == attribute
+        && modules.get(receiver.id.as_str()) == Some(&PlatformModule::Sys)
 }
 
 /// The module whose platform attribute `expr` reads: `sys.platform` is

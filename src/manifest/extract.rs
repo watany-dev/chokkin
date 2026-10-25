@@ -511,7 +511,10 @@ pub(crate) fn infer_target_version_from_requires_python(specifier: &str) -> Opti
             )
         })
         .max()?;
-    TargetVersion::parse(&format!("py{major}{minor:02}"))
+    if major != 3 {
+        return None;
+    }
+    Some(TargetVersion::from_minor(u32::try_from(minor).ok()?))
 }
 
 /// Whether `requires-python` parses as a specifier set at all.
@@ -627,6 +630,56 @@ fn merge_optional_field(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn requirements_txt_is_dev_beside_any_manifest_with_runtime_deps() {
+        let runtime = DeclaredDependency {
+            name: "requests".to_owned(),
+            extras: Vec::new(),
+            marker: None,
+            specifier: None,
+            context: DependencyContext::Runtime,
+            origin: crate::manifest::DependencyOrigin {
+                file: "setup.py".to_owned(),
+                line: None,
+                label: "install_requires[0]".to_owned(),
+            },
+            opaque: false,
+            included_via: Vec::new(),
+            unportable_key: None,
+        };
+        let dev = DependencyContext::Group("dev".to_owned());
+        for flag in 0..3 {
+            let sources = ManifestSources {
+                pyproject_toml: flag == 0,
+                setup_cfg: flag == 1,
+                setup_py: flag == 2,
+                ..ManifestSources::default()
+            };
+            assert_eq!(
+                requirements_txt_context(&sources, std::slice::from_ref(&runtime)),
+                dev
+            );
+            assert_eq!(
+                requirements_txt_context(&sources, &[]),
+                DependencyContext::Runtime
+            );
+        }
+        assert_eq!(
+            requirements_txt_context(&ManifestSources::default(), &[runtime]),
+            DependencyContext::Runtime
+        );
+    }
+
+    #[test]
+    fn a_zero_patch_upper_bound_excludes_its_minor() {
+        assert_eq!(requires_python_max_minor("<3.9.0"), Some(8));
+        assert_eq!(requires_python_max_minor("<3.9.1"), Some(9));
+        assert_eq!(
+            infer_target_version_from_requires_python(">=3.5000000000"),
+            None
+        );
+    }
 
     /// An absolute path in an I/O error would make the warning differ by
     /// machine.
@@ -797,7 +850,8 @@ mod tests {
             #[test]
             fn infer_target_version_never_panics(specifier in "\\PC{0,80}") {
                 if let Some(version) = infer_target_version_from_requires_python(&specifier) {
-                    prop_assert!(TargetVersion::parse(version.as_str()).is_some());
+                    let expected = format!("py3{:02}", version.minor());
+                    prop_assert_eq!(version.as_str(), expected.as_str());
                 }
             }
 

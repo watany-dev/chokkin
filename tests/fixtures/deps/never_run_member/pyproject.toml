@@ -1,0 +1,17 @@
+[project]
+name = "app"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["acme-core"]
+
+[project.scripts]
+app = "app.main:main"
+
+[tool.uv.sources]
+acme-core = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.chokkin]
+project = ["src/**/*.py", "packages/**/*.py"]

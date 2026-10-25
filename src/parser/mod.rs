@@ -19,6 +19,7 @@ mod relative;
 mod server_app;
 mod type_checking;
 mod types;
+mod version_guard;
 mod visit;
 
 pub(crate) use depth::parse_walkable_module;
@@ -31,9 +32,10 @@ pub(crate) use module_guard::{guarded_roots, predicate_name_module};
 pub use parse::{parse_file, parse_project_sources_with_cache};
 pub(crate) use relative::resolve_relative_import;
 #[cfg(test)]
+pub(crate) use types::DynamicImport;
+pub(crate) use types::ImportRef;
+#[cfg(test)]
 pub(crate) use types::ParseDiagnostic;
 pub(crate) use types::import_context_for_file;
-#[cfg(test)]
-pub(crate) use types::{DynamicImport, ImportRef};
 pub use types::{Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule};
 pub(crate) use types::{IgnoreDirective, SymbolDef, SymbolKind};

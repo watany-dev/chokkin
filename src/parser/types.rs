@@ -61,6 +61,11 @@ pub struct ImportRef {
     /// the handler only runs when one of them is missing (#721).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallback_for: Vec<String>,
+    /// Under `sys.version_info` tests, the Python 3 minors they let the
+    /// import run on, as inclusive runs (`[[0, 8]]` for the `else` of
+    /// `>= (3, 9)`); `None` when no such test bounds it (#997).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_minors: Option<Vec<[u32; 2]>>,
 }
 
 impl ImportRef {
@@ -464,6 +469,7 @@ mod tests {
             deferred: false,
             relative_level: 0,
             fallback_for: Vec::new(),
+            version_minors: None,
         }
     }
 
