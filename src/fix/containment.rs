@@ -110,6 +110,63 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn rejects_missing_file_under_junction_to_outside_parent() {
+        let root = tempfile::TempDir::new().expect("root");
+        let outside = tempfile::TempDir::new().expect("outside");
+        crate::path_util::junction(outside.path(), &root.path().join("linked"));
+
+        let error = resolve_contained_path(root.path(), "linked/pyproject.toml")
+            .expect_err("junction target should escape root");
+
+        assert!(
+            error
+                .to_string()
+                .contains("resolves outside the project root"),
+            "{error}"
+        );
+        assert!(!outside.path().join("pyproject.toml").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_file_under_junction_inside_root() {
+        let root = tempfile::TempDir::new().expect("root");
+        std::fs::create_dir(root.path().join("dir")).expect("mkdir");
+        crate::path_util::junction(&root.path().join("dir"), &root.path().join("linked"));
+
+        let resolved =
+            resolve_contained_path(root.path(), "linked/pyproject.toml").expect("inside root");
+
+        let expected = root
+            .path()
+            .canonicalize()
+            .expect("canonical root")
+            .join("dir")
+            .join("pyproject.toml");
+        assert_eq!(resolved, expected);
+    }
+
+    /// A drive-letter or UNC target is absolute on Windows and refused
+    /// before any lookup (#1136).
+    #[cfg(windows)]
+    #[test]
+    fn rejects_drive_and_unc_targets() {
+        let root = tempfile::TempDir::new().expect("root");
+        for file in [
+            r"C:\outside\pyproject.toml",
+            r"\\server\share\x.toml",
+            "C:x.toml",
+        ] {
+            let error = resolve_contained_path(root.path(), file).expect_err(file);
+            assert!(
+                matches!(error, FixError::Unsupported { .. }),
+                "{file}: {error}"
+            );
+        }
+    }
+
     /// `--fix` targets (#1105): whatever `..`, absolute prefix or symlink a
     /// target holds, a write to the resolved path lands under the root.
     #[cfg(unix)]

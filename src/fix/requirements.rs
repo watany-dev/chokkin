@@ -284,8 +284,27 @@ mod tests {
                 n in name(),
                 sep in prop::sample::select(vec![" ", "\t", "  "]),
             ) {
-                let (result, _) = run(&format!("{n}{sep}>=1.0\nother\n"), &n, None);
+                prop_assume!(n != "other");
+                let (result, updated) = run(&format!("{n}{sep}>=1.0\nother\n"), &n, None);
                 prop_assert!(result.is_ok(), "{result:?}");
+                prop_assert_eq!(updated, "other\n");
+            }
+
+            /// A name spelled with capitals, `-` `_` `.` runs or extras is
+            /// removed by its normalized form, and only that line goes
+            /// (#1136).
+            #[test]
+            fn spelled_name_is_removed_by_its_normalized_name(
+                spelled in "[A-Za-z][A-Za-z0-9]{0,4}([-_.]{1,2}[A-Za-z0-9]{1,4}){0,2}",
+                extras in prop::sample::select(vec!["", "[security]", "[a,b]"]),
+                spec in prop::sample::select(vec!["", ">=1", " == 2.0", "\t~=3.0"]),
+            ) {
+                let normalized = normalize_distribution_name(&spelled);
+                prop_assume!(normalized != "zzz-other");
+                let contents = format!("{spelled}{extras}{spec}\nzzz_other\n");
+                let (result, updated) = run(&contents, &normalized, None);
+                prop_assert!(result.is_ok(), "{contents:?}: {result:?}");
+                prop_assert_eq!(updated, "zzz_other\n");
             }
 
             /// Removing by line number must not also drop other lines that
@@ -295,7 +314,10 @@ mod tests {
                 let contents = format!("{n}>=1 ; python_version < \"3.9\"\n{n}>=2 ; python_version >= \"3.9\"\n");
                 let (result, updated) = run(&contents, &n, Some(1));
                 prop_assert!(result.is_ok());
-                prop_assert!(!updated.trim().is_empty(), "over-removed: {:?}", updated);
+                prop_assert_eq!(updated, format!("{n}>=2 ; python_version >= \"3.9\"\n"));
+                let (result, updated) = run(&contents, &n, Some(2));
+                prop_assert!(result.is_ok());
+                prop_assert_eq!(updated, format!("{n}>=1 ; python_version < \"3.9\"\n"));
             }
 
             /// CRLF files keep CRLF endings for the untouched lines.
@@ -311,6 +333,7 @@ mod tests {
                 let (result, updated) = run(&contents, &lines[0], None);
                 prop_assert!(result.is_ok());
                 prop_assert!(!updated.replace("\r\n", "").contains('\n'), "bare LF introduced: {updated:?}");
+                prop_assert_eq!(updated, lines[1..].join("\r\n") + "\r\n");
             }
 
             /// A removal that empties the file must not leave a stray blank line.
