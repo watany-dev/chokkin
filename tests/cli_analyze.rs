@@ -7918,7 +7918,9 @@ fn binary_command_run_runtime_roots_keep_runtime_context() {
 /// scripts are entry roots, so only the control module is unused. The
 /// `*_bare_module` fixtures name a module without `:attr`, whose app the tool
 /// finds by name, so it is no unused export either (#851); `flask_app_paths`
-/// and `flask_root_app` name them by file path (#866).
+/// and `flask_root_app` name them by file path (#866). `celery_package_app`
+/// names a package whose `__init__.py` has no app, so Celery imports its
+/// `celery` submodule (#865).
 #[test]
 fn binary_shell_script_apps_are_entry_roots() {
     for (fixture, unused) in [
@@ -7926,6 +7928,7 @@ fn binary_shell_script_apps_are_entry_roots() {
         ("celery_shell_scripts", "src/worker/orphan.py"),
         ("flask_bare_module", "src/web/orphan.py"),
         ("celery_bare_module", "src/worker/orphan.py"),
+        ("celery_package_app", "src/worker/orphan.py"),
         ("flask_app_paths", "src/web/orphan.py"),
         ("flask_root_app", "orphan.py"),
     ] {
