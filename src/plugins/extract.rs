@@ -173,7 +173,7 @@ pub(crate) fn discover_plugin_entries(
     let contributions =
         crate::parallel::map_heavy_in_order(sources.files.len(), &enabled, |plugin| match plugin {
             PluginId::Django => Some(django::extract(&ctx).0),
-            PluginId::Sphinx => Some(doctools::extract(*plugin, &ctx)),
+            PluginId::Sphinx => Some(doctools::discover(*plugin, &ctx)),
             PluginId::Alembic => Some(alembic::extract(&ctx)),
             PluginId::Prefect => Some(prefect::extract(&ctx)),
             PluginId::Airflow => Some(airflow::extract(&ctx)),

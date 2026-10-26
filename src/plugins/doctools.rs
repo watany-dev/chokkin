@@ -30,6 +30,21 @@ const SPHINX_ROOT_DOCUMENTS: [&str; 2] = ["index.rst", "index.md"];
 /// Extract static Sphinx and `MkDocs` hints.
 #[must_use]
 pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
+    extract_with(plugin, ctx, true)
+}
+
+/// [`extract`] for the entries named before the inventory is parsed: an
+/// included source is a discovered file already, so its pages go unread.
+#[must_use]
+pub(super) fn discover(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContribution {
+    extract_with(plugin, ctx, false)
+}
+
+fn extract_with(
+    plugin: PluginId,
+    ctx: &PluginContext<'_>,
+    included_sources: bool,
+) -> PluginContribution {
     let mut contrib = PluginContribution::empty(plugin);
     match plugin {
         PluginId::Sphinx => {
@@ -38,7 +53,9 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
             for (conf, label) in &confs {
                 read_conf(ctx, conf, label, &modules, &mut contrib);
             }
-            push_included_sources(ctx, &confs, &mut contrib);
+            if included_sources {
+                push_included_sources(ctx, &confs, &mut contrib);
+            }
         },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
         _ => {},
