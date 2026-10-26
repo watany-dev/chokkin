@@ -47,6 +47,12 @@ pub(super) fn detect_misplaced_dependencies(
     let strengths = import_strengths(context.parse);
     let predicates = predicate_modules(context.parse, sources, reachable);
     let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules);
+    let integrations = integration_packages(
+        declared,
+        dependency,
+        workspace_declared,
+        reachable,
+    );
     let eager = file_paths(graph, &reachability.eager);
     let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
@@ -120,7 +126,9 @@ pub(super) fn detect_misplaced_dependencies(
             eager: eager.contains(import.file.as_str()),
             exposed: exposed.contains(import.file.as_str()),
             certain: certain.contains(import.file.as_str()),
-            opt_in: is_opt_in_import(&import.file, &import.import_root, &sources.layout),
+            opt_in: is_opt_in_import(&import.file, &import.import_root, &sources.layout)
+                || in_integration(&import.file, &sources.layout, &integrations),
+            command: is_management_command(&import.file),
             test_support: is_test_support(&import.file, &sources.layout),
             predicate: predicates.contains(&(member, import.import_root.as_str())),
             host_loaded: host_loaded.contains(&(import.file.as_str(), distribution.as_str())),
@@ -203,6 +211,9 @@ enum ImportStrength {
     /// In airflow's `example_dags/` or a subpackage named after the import
     /// (`mlflow/pyspark/`, `mlflow/langchain/` for `langchain_community`).
     OptIn,
+    /// In a Django management command, which runs only when invoked by name
+    /// (#1242).
+    Command,
     /// In test support the package ships (`django.test`,
     /// `django/contrib/admin/tests.py`): only a test suite loads it (#808).
     TestSupport,
@@ -231,6 +242,7 @@ impl ImportStrength {
             Self::Deferred | Self::Exposed => (Severity::Warning, Confidence::Likely),
             Self::HostLoaded
             | Self::OptIn
+            | Self::Command
             | Self::TestSupport
             | Self::Optional
             | Self::DeferredOptional => (Severity::Info, Confidence::Likely),
@@ -244,7 +256,10 @@ impl ImportStrength {
                 "imported only by modules it loads itself: a pytest plugin or an IPython extension"
             },
             Self::OptIn => {
-                "imported only by example DAGs or by a subpackage named after it, which load only when opted into"
+                "imported only by example DAGs or by a subpackage named after it or after a library it integrates, which load only when opted into"
+            },
+            Self::Command => {
+                "imported only by Django management commands, which load only when that command runs"
             },
             Self::TestSupport => {
                 "imported only by test support the package ships, which only a test suite loads"
@@ -291,6 +306,7 @@ struct ImportSignals {
     exposed: bool,
     certain: bool,
     opt_in: bool,
+    command: bool,
     test_support: bool,
     /// The file's workspace member defines an `is_x…` predicate naming the
     /// import root (#808).
@@ -330,6 +346,9 @@ impl ImportSignals {
         }
         if self.opt_in {
             strength = strength.min(ImportStrength::OptIn);
+        }
+        if self.command {
+            strength = strength.min(ImportStrength::Command);
         }
         // Test support the package loads itself is runtime code all the same.
         if strength < ImportStrength::TopLevel && self.test_support {
@@ -411,17 +430,131 @@ fn is_opt_in_import(file: &str, import_root: &str, layout: &LayoutInfo) -> bool 
     let Some(module) = path_to_module(file, layout) else {
         return false;
     };
-    let package = if file.ends_with("__init__.py") {
-        module.as_str()
-    } else {
-        module.rsplit_once('.').map_or("", |(package, _)| package)
-    };
-    package.split('.').skip(1).any(|name| {
+    package_of(file, &module).split('.').skip(1).any(|name| {
         name == "example_dags"
             || import_root
                 .strip_prefix(name)
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with('_'))
     })
+}
+
+/// Subpackages (`mlflow.genai.scorers.ragas`) named after a third-party
+/// library one of their runtime files imports, when the project declares
+/// that library only as dev or an extra: an integration with an opt-in library,
+/// so everything it imports is opt-in as well (#1242). The top-level package
+/// does not count, as in [`is_opt_in_import`], and neither does a subpackage
+/// holding all of its workspace member's runtime code: that distribution
+/// (the llama-index snowflake reader) is the integration, and installing it
+/// is the opt-in.
+fn integration_packages(
+    declared: &DeclaredIndex<'_>,
+    dependency: &DependencyRuleContext<'_>,
+    workspace_declared: &[WorkspaceDeclaredIndex<'_>],
+    reachable: &HashSet<&str>,
+) -> HashSet<String> {
+    let sources = dependency.rules.sources;
+    let member_of = |file: &str| {
+        sources
+            .layout
+            .member_for(file)
+            .map(|(member, _)| member.path.as_str())
+    };
+    let mut packages: HashMap<String, Option<&str>> = HashMap::new();
+    for import in &dependency.rules.resolution.imports {
+        if import.origin != ModuleOrigin::ThirdParty
+            || import.never_runs
+            || !reachable.contains(import.file.as_str())
+            || usage_context_for_import(&import.file, import.context, sources)
+                != UsageContext::Runtime
+        {
+            continue;
+        }
+        let Some(module) = path_to_module(&import.file, &sources.layout) else {
+            continue;
+        };
+        let names: Vec<&str> = package_of(&import.file, &module).split('.').collect();
+        let Some(depth) = names
+            .iter()
+            .skip(1)
+            .position(|name| *name == import.import_root)
+        else {
+            continue;
+        };
+        let Some(distribution) = import.distribution.as_ref() else {
+            continue;
+        };
+        // An undeclared library is missing (CHK003), not opted into.
+        let opt_in = ImportDeclarations::lookup(
+            declared,
+            workspace_declared,
+            import.workspace_member.as_deref(),
+            distribution,
+        )
+        .governing(dependency.strict)
+        .is_some_and(|declarations| {
+            declarations.iter().all(|&dep| {
+                !declaration_buckets(dep, &dependency.config.dependencies)
+                    .contains(&DeclarationBucket::Runtime)
+            })
+        });
+        if opt_in {
+            packages.insert(
+                names.get(..depth + 2).unwrap_or_default().join("."),
+                member_of(&import.file),
+            );
+        }
+    }
+    packages.retain(|package, member| {
+        sources.files.iter().any(|file| {
+            file.context == FileContext::Runtime
+                && member_of(&file.path) == *member
+                && path_to_module(&file.path, &sources.layout).is_some_and(|module| {
+                    !under_package(package_of(&file.path, &module), package)
+                })
+        })
+    });
+    packages.into_keys().collect()
+}
+
+/// Whether `package` is `ancestor` or below it.
+fn under_package(package: &str, ancestor: &str) -> bool {
+    package
+        .strip_prefix(ancestor)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+/// Whether `file` sits in one of the [`integration_packages`].
+fn in_integration(file: &str, layout: &LayoutInfo, integrations: &HashSet<String>) -> bool {
+    if integrations.is_empty() {
+        return false;
+    }
+    let Some(module) = path_to_module(file, layout) else {
+        return false;
+    };
+    let package = package_of(file, &module);
+    integrations
+        .iter()
+        .any(|integration| under_package(package, integration))
+}
+
+/// The package `file` (module `module`) belongs to: itself for an
+/// `__init__.py`.
+fn package_of<'a>(file: &str, module: &'a str) -> &'a str {
+    if file.ends_with("__init__.py") {
+        module
+    } else {
+        module.rsplit_once('.').map_or("", |(package, _)| package)
+    }
+}
+
+/// Whether `file` is in a Django app's `management/commands/`: Django imports
+/// a command module only to run that command, never at startup, so its
+/// top-level imports run no earlier than a function-local one (#1242).
+fn is_management_command(file: &str) -> bool {
+    let names: Vec<&str> = file.split('/').collect();
+    names
+        .windows(3)
+        .any(|window| matches!(window, ["management", "commands", _]))
 }
 
 /// Whether `file` is test support the package ships: a module or subpackage
@@ -565,6 +698,7 @@ mod verification {
             exposed,
             certain,
             opt_in: kani::any(),
+            command: kani::any(),
             test_support: kani::any(),
             predicate,
             host_loaded: kani::any(),
@@ -579,6 +713,9 @@ mod verification {
         }
         if signals.opt_in {
             return S::OptIn;
+        }
+        if signals.command {
+            return S::Command;
         }
         let position = match (
             signals.site,
@@ -631,10 +768,14 @@ mod verification {
         assert_eq!(origin.weigh().strength, weight.strength);
 
         // Certain, and so `--fix`'s MoveToRuntime, needs a top-level import
-        // in a file the package loads itself, outside opt-in and host-loaded
-        // modules.
+        // in a file the package loads itself, outside opt-in, command and
+        // host-loaded modules.
         let certain_site = |s: ImportSignals| {
-            s.site == ImportStrength::TopLevel && s.certain && !s.opt_in && !s.host_loaded
+            s.site == ImportStrength::TopLevel
+                && s.certain
+                && !s.opt_in
+                && !s.command
+                && !s.host_loaded
         };
         let (_, confidence) = strength.verdict();
         assert_eq!(
@@ -676,6 +817,7 @@ mod tests {
             exposed: true,
             certain: true,
             opt_in: false,
+            command: false,
             test_support: false,
             predicate: false,
             host_loaded: false,
@@ -702,6 +844,7 @@ mod tests {
         let details: std::collections::BTreeSet<_> = [
             S::HostLoaded,
             S::OptIn,
+            S::Command,
             S::TestSupport,
             S::DeferredOptional,
             S::Optional,
@@ -710,7 +853,7 @@ mod tests {
         ]
         .map(|strength| strength.detail().expect("a detail"))
         .into();
-        assert_eq!(details.len(), 7);
+        assert_eq!(details.len(), 8);
         assert!(
             details
                 .iter()
@@ -778,6 +921,16 @@ mod tests {
                 vec![import(|s| s.opt_in = true)],
                 S::OptIn,
             ),
+            (
+                "management command, even top level (#1242)",
+                vec![import(|s| s.command = true)],
+                S::Command,
+            ),
+            (
+                "a management command decides nothing against a top-level import",
+                vec![import(|s| s.command = true), top],
+                S::TopLevel,
+            ),
             ("test support (#808)", vec![support(false)], S::TestSupport),
             (
                 "test support the package loads itself",
@@ -812,6 +965,34 @@ mod tests {
         assert!(!opt_in("mlflow/pyspark.py", "pyspark"));
         assert!(!opt_in("dagster/core/run.py", "dagster_shared"));
         assert!(!opt_in("/abs/plugin.py", "_pytest"));
+    }
+
+    /// #1242: only the files of a Django app's `management/commands/`.
+    #[test]
+    fn management_commands_sit_in_an_apps_commands_directory() {
+        assert!(is_management_command("hc/api/management/commands/prune.py"));
+        assert!(is_management_command(
+            "wger/core/management/commands/dummy-generator-users.py"
+        ));
+        assert!(is_management_command("management/commands/__init__.py"));
+        assert!(!is_management_command("hc/api/management/commands"));
+        assert!(!is_management_command("hc/api/management/utils.py"));
+        assert!(!is_management_command("hc/commands/management/run.py"));
+    }
+
+    /// #1242: a subpackage named after a library one of its files imports
+    /// covers its subpackages, and only those.
+    #[test]
+    fn integration_packages_cover_their_subpackages() {
+        let layout = LayoutInfo::new("", vec!["mlflow".to_owned()]);
+        let integrations = HashSet::from(["mlflow.genai.scorers.ragas".to_owned()]);
+        let inside = |file: &str| in_integration(file, &layout, &integrations);
+        assert!(inside("mlflow/genai/scorers/ragas/models.py"));
+        assert!(inside("mlflow/genai/scorers/ragas/__init__.py"));
+        assert!(inside("mlflow/genai/scorers/ragas/sub/run.py"));
+        assert!(!inside("mlflow/genai/scorers/ragas.py"));
+        assert!(!inside("mlflow/genai/scorers/ragas_utils/run.py"));
+        assert!(!inside("mlflow/genai/scorers/base.py"));
     }
 
     /// #808: a `test`/`tests`/`testing` subpackage or module is test support,
