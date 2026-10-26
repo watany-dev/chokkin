@@ -1072,6 +1072,8 @@ mod tests {
             "include('a.py', scope=globals())",
             "include(*files)",
             "include(optional(name))",
+            "include(wrap('a.py'))",
+            "include(optional('a.py', strict=True))",
             "include(f'{ENV}.py')",
         ] {
             assert_eq!(patterns(code), None, "{code}");
