@@ -797,6 +797,38 @@ fn django_settings_module_from_the_environment_files() {
         ]
     );
 
+    // Without a Django dependency, a `manage.py` or another setter still
+    // makes a project whose environment files are read.
+    for (marker, text) in [
+        ("manage.py", "import django\n"),
+        (
+            "pytest.ini",
+            "[pytest]\nDJANGO_SETTINGS_MODULE = gone.settings\n",
+        ),
+    ] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        for (path, text) in [
+            (
+                "pyproject.toml",
+                "[project]\nname = \"site\"\nversion = \"0\"\n",
+            ),
+            (marker, text),
+            (".env", "DJANGO_SETTINGS_MODULE=acme.conf\n"),
+            ("acme/__init__.py", ""),
+            ("acme/conf.py", "INSTALLED_APPS = []\n"),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            std::fs::write(path, text).expect("write file");
+        }
+        let hints = extract_at(root);
+        assert!(
+            entry_paths(django_contrib(&hints)).contains(&"acme/conf.py"),
+            "{marker}"
+        );
+    }
+
     // An environment file alone does not make a reusable app a project.
     let hints = django_project(&[
         (".env.example", "DJANGO_SETTINGS_MODULE=\n"),
