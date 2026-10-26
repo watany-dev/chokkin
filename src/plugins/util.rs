@@ -149,6 +149,7 @@ pub(super) fn push_binary(contrib: &mut PluginContribution, binary: &str, origin
         binary: binary.to_owned(),
         origin,
         config_section: false,
+        inferred: false,
     });
 }
 

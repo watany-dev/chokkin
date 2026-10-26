@@ -2400,6 +2400,7 @@ django	CHK008	pre-commit	tp	-	.pre-commit-config.yaml present; docs/internals/co
 django	CHK008	pytest	fp	not-invoked	Django uses tests/runtests.py (unittest); no pytest config, conftest or `pytest` command anywhere; usage is pytest plugin's 'pytest defaults' from test_*.py names
 airflow	CHK008	bandit	fp	isolated-env	.pre-commit-config.yaml:1209-1216 repo: local hook, language: python, additional_dependencies ['bandit==1.7.6']: pre-commit builds an isolated env
 pdm	CHK008	pre-commit	fp	not-invoked	hooks are run by prek, not pre-commit: pyproject.toml:259 `lint = "prek run --all-files"`, CONTRIBUTING.md:115-122 install prek; pre-commit binary never invoked
+pdm	CHK008	prek	tp	-	pyproject.toml:259 `lint = "prek run --all-files"`; CONTRIBUTING.md:115-122 install prek 'with your preferred method'; not declared anywhere nor installed in CI (dev-global runner like django/anyio tox)
 sqlalchemy	CHK008	isort	fp	not-invoked	pyproject.toml:262-267 [tool.isort] skip_glob=['*'] exists only to DISABLE isort for IDEs; project uses zimports; isort never run
 sqlalchemy	CHK008	tox	tp	-	tox.ini still a supported runner (README.unittests.rst:13-17 `tox`); tox not declared anywhere; CI pip-installs nox only (run-test.yaml:117)
 healthchecks	CHK008	pytest	fp	not-invoked	tests run via `coverage run ... manage.py test` (.github/workflows/coverage.yml:30, tests.yml:59); no pytest config/conftest; usage is 'pytest defaults' from test_*.py names

@@ -22,6 +22,7 @@
     { "binary": "tox", "distribution": "tox" },
     { "binary": "nox", "distribution": "nox" },
     { "binary": "pre-commit", "distribution": "pre-commit" },
+    { "binary": "prek", "distribution": "prek" },
     { "binary": "maturin", "distribution": "maturin" },
     { "binary": "twine", "distribution": "twine" },
     { "binary": "wheel", "distribution": "wheel" },

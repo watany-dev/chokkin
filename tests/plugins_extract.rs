@@ -212,6 +212,39 @@ fn pytest_binary_usage() {
 }
 
 #[test]
+fn pytest_defaults_alone_are_an_inferred_pytest_usage() {
+    // django runs its `test_*.py` with unittest: without a pytest config or
+    // conftest.py, the default globs say nothing about the runner, so the
+    // usage keeps declared pytest plugins used but reports no CHK008 (#1241).
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, contents).expect("write file");
+    };
+    write(
+        "pyproject.toml",
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+    );
+    write("acme/__init__.py", "");
+    write("tests/test_acme.py", "");
+    let pytest_usages = || -> Vec<bool> {
+        let hints = extract_at(root);
+        pytest_contrib(&hints)
+            .binary_usages
+            .iter()
+            .filter(|usage| usage.binary == "pytest")
+            .map(|usage| usage.inferred)
+            .collect()
+    };
+
+    assert_eq!(pytest_usages(), [true]);
+    write("tests/conftest.py", "");
+    assert_eq!(pytest_usages(), [false]);
+}
+
+#[test]
 fn pytest_ini_fixture() {
     let hints = extract_fixture("pytest_ini");
     let contrib = pytest_contrib(&hints);
@@ -726,6 +759,118 @@ fn django_settings_module_from_the_pytest_config() {
         ("acme/conf.py", "INSTALLED_APPS = [\"acme\"]\n"),
     ]);
     assert_eq!(entry_paths(django_contrib(&hints)), ["acme/conf.py"]);
+}
+
+/// The environment Django starts in names the settings module: a dotenv
+/// file, a compose service and a Dockerfile `ENV` (#999, #1239). Each value
+/// is a module reference; a value with a variable in it is not read.
+#[test]
+fn django_settings_module_from_the_environment_files() {
+    let cases = [
+        (
+            ".env",
+            "SECRET_KEY=hunter2\nexport DJANGO_SETTINGS_MODULE=\"acme.conf\"\n",
+            2,
+        ),
+        (
+            "docker-compose.yml",
+            "services:\n  web:\n    environment:\n      - DJANGO_SETTINGS_MODULE=acme.conf\n",
+            4,
+        ),
+        (
+            "compose.yaml",
+            "services:\n  web:\n    environment:\n      DJANGO_SETTINGS_MODULE: acme.conf\n",
+            4,
+        ),
+        (
+            "Dockerfile",
+            "FROM python\nENV PYTHONUNBUFFERED=1 \\\n    DJANGO_SETTINGS_MODULE=acme.conf\n",
+            2,
+        ),
+    ];
+    for (file, text, line) in cases {
+        let hints = django_project(&[
+            (file, text),
+            ("acme/__init__.py", ""),
+            ("acme/conf.py", "INSTALLED_APPS = [\"acme\"]\n"),
+        ]);
+        let contrib = django_contrib(&hints);
+        assert_eq!(entry_paths(contrib), ["acme/conf.py"], "{file}");
+        let refs: Vec<(&str, &str, Option<u32>)> = contrib
+            .module_refs
+            .iter()
+            .filter(|reference| reference.origin.label == "DJANGO_SETTINGS_MODULE")
+            .map(|reference| {
+                (
+                    reference.module.as_str(),
+                    reference.origin.file.as_str(),
+                    reference.origin.line,
+                )
+            })
+            .collect();
+        assert_eq!(refs, [("acme.conf", file, Some(line))], "{file}");
+        assert_eq!(hints.warnings, [], "{file}");
+    }
+
+    // A variable is never expanded: with no settings found, it is the gap,
+    // and the warning names the file and line, not the rest of the file.
+    let hints = django_project(&[
+        ("manage.py", "import django\n"),
+        (
+            ".env",
+            "SECRET_KEY=hunter2\nDJANGO_SETTINGS_MODULE=${SETTINGS}\n",
+        ),
+        ("acme/__init__.py", ""),
+    ]);
+    let warnings: Vec<String> = hints.warnings.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        warnings,
+        [
+            "plugin: django: `.env:2` sets DJANGO_SETTINGS_MODULE in a form that could not be read, and no settings.py was found; unused files and dependencies are reported below certain"
+        ]
+    );
+
+    // An environment file alone does not make a reusable app a project.
+    let hints = django_project(&[
+        (".env.example", "DJANGO_SETTINGS_MODULE=\n"),
+        ("acme/__init__.py", ""),
+    ]);
+    assert_eq!(hints.warnings, []);
+}
+
+/// Without a Django dependency, a `manage.py` or another setter still makes
+/// a project whose environment files are read.
+#[test]
+fn django_settings_module_from_the_environment_without_a_django_dependency() {
+    for (marker, text) in [
+        ("manage.py", "import django\n"),
+        (
+            "pytest.ini",
+            "[pytest]\nDJANGO_SETTINGS_MODULE = gone.settings\n",
+        ),
+    ] {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        for (path, text) in [
+            (
+                "pyproject.toml",
+                "[project]\nname = \"site\"\nversion = \"0\"\n",
+            ),
+            (marker, text),
+            (".env", "DJANGO_SETTINGS_MODULE=acme.conf\n"),
+            ("acme/__init__.py", ""),
+            ("acme/conf.py", "INSTALLED_APPS = []\n"),
+        ] {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            std::fs::write(path, text).expect("write file");
+        }
+        let hints = extract_at(root);
+        assert!(
+            entry_paths(django_contrib(&hints)).contains(&"acme/conf.py"),
+            "{marker}"
+        );
+    }
 }
 
 /// A sample project under `examples/` and a `settings.py` that sets no

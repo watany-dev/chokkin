@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashSet};
 
 use crate::config::Confidence;
-use crate::manifest::LoadedManifest;
+use crate::manifest::{LoadedManifest, normalize_distribution_name};
 use crate::plugins::{BinaryUsage, PluginHints};
 use crate::resolver::ResolutionIndex;
 use crate::rules::types::{
@@ -47,8 +47,16 @@ pub(super) struct BinaryProviders<'a> {
     /// the fixed names, tox `deps` or nox `session.install(...)`, or pulled in
     /// directly by one of those.
     distributions: BTreeSet<&'a str>,
-    /// Installed by remote pre-commit hooks; they cover config-section usages.
+    /// The project's own distributions (root and workspace members): installing
+    /// the project installs its scripts, so a repo running its own CLI (black
+    /// formatting itself) provides it (#1241).
+    own_distributions: Vec<String>,
+    /// Installed by remote pre-commit hooks and local hooks with their own
+    /// `language` env; they cover config-section usages.
     hook_binaries: HashSet<&'a str>,
+    /// `prek` runs somewhere, so it, not `pre-commit`, runs the hooks of
+    /// `.pre-commit-config.yaml` (pdm's `prek run`, #1241).
+    prek_runs_hooks: bool,
 }
 
 impl<'a> BinaryProviders<'a> {
@@ -92,19 +100,36 @@ impl<'a> BinaryProviders<'a> {
             )
             .collect();
         distributions.extend(transitive);
+        let own_distributions = std::iter::once(manifest)
+            .chain(
+                workspace_boundaries
+                    .iter()
+                    .map(|boundary| boundary.manifest),
+            )
+            .filter_map(|manifest| manifest.metadata.name.as_deref())
+            .map(normalize_distribution_name)
+            .collect();
         Self {
             distributions,
+            own_distributions,
             hook_binaries: plugins
                 .config_provided_binaries
                 .iter()
                 .map(String::as_str)
                 .collect(),
+            prek_runs_hooks: plugins
+                .all_binary_usages()
+                .any(|usage| usage.binary == "prek"),
         }
     }
 
     fn provides(&self, usage: &BinaryUsage, distribution: &str) -> bool {
         self.distributions.contains(distribution)
+            || self.own_distributions.iter().any(|own| own == distribution)
             || (usage.config_section && self.hook_binaries.contains(usage.binary.as_str()))
+            || (self.prek_runs_hooks
+                && usage.binary == "pre-commit"
+                && usage.origin.file == ".pre-commit-config.yaml")
     }
 }
 
@@ -118,6 +143,9 @@ pub(super) fn detect_unlisted_binaries(
     let mut reported = HashSet::new();
 
     for usage in plugins.all_binary_usages() {
+        if usage.inferred {
+            continue;
+        }
         let Some(distribution) = resolution.binary_resolutions.get(&usage.binary) else {
             continue;
         };
@@ -212,6 +240,7 @@ mod tests {
                 label: "recipe".to_owned(),
             },
             config_section,
+            inferred: false,
         }
     }
 
@@ -272,6 +301,20 @@ mod tests {
             &command_hints(&["pytest"]),
         );
         assert_eq!(found, ["pytest"]);
+    }
+
+    #[test]
+    fn inferred_usage_emits_no_chk008() {
+        let found = detect(
+            &manifest(&[]),
+            &[],
+            &resolution(&[("pytest", "pytest")]),
+            &hints(vec![BinaryUsage {
+                inferred: true,
+                ..usage("pytest", false)
+            }]),
+        );
+        assert_eq!(found, Vec::<String>::new());
     }
 
     #[test]
@@ -357,6 +400,58 @@ mod tests {
             &command_hints(&["pre-commit", "coverage", "tox", "nox"]),
         );
         assert_eq!(found, ["nox"]);
+    }
+
+    #[test]
+    fn the_projects_own_distribution_provides_its_binary() {
+        let mut root = manifest(&[]);
+        root.metadata.name = Some("Black".to_owned());
+        let mut member = manifest(&[]);
+        member.metadata.name = Some("my_cli".to_owned());
+        let found = detect(
+            &root,
+            &[WorkspaceDependencyBoundary {
+                member_id: "cli",
+                manifest: &member,
+                files: &[],
+                imports: &[],
+            }],
+            &resolution(&[("black", "black"), ("my-cli", "my-cli"), ("nox", "nox")]),
+            &command_hints(&["black", "my-cli", "nox"]),
+        );
+        assert_eq!(found, ["nox"]);
+    }
+
+    #[test]
+    fn running_prek_provides_the_pre_commit_config_but_not_pre_commit_commands() {
+        let config = BinaryUsage {
+            origin: ReferenceOrigin {
+                file: ".pre-commit-config.yaml".to_owned(),
+                line: None,
+                label: ".pre-commit-config.yaml".to_owned(),
+            },
+            ..usage("pre-commit", false)
+        };
+        let resolution = resolution(&[("pre-commit", "pre-commit"), ("prek", "prek")]);
+        let only_config = hints(vec![config.clone()]);
+        assert_eq!(
+            detect(&manifest(&[]), &[], &resolution, &only_config),
+            ["pre-commit"]
+        );
+        let with_prek = hints(vec![config.clone(), usage("prek", false)]);
+        assert_eq!(
+            detect(&manifest(&[]), &[], &resolution, &with_prek),
+            ["prek"]
+        );
+        let with_command = hints(vec![
+            config,
+            usage("prek", false),
+            usage("pre-commit", false),
+        ]);
+        assert_eq!(
+            detect(&manifest(&[]), &[], &resolution, &with_command),
+            ["prek", "pre-commit"]
+        );
     }
 
     #[test]
