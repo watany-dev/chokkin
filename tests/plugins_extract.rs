@@ -950,9 +950,9 @@ fn django_settings_module_from_the_pytest_config() {
 }
 
 /// The environment Django starts in names the settings module: a dotenv
-/// file, a compose service, a Dockerfile `ENV` and a dev container
-/// (#999, #1239). Each value
+/// file, a compose service and a Dockerfile `ENV` (#999, #1239). Each value
 /// is a module reference; a value with a variable in it is not read.
+/// A dev container's JSON names it too (#1239).
 #[test]
 fn django_settings_module_from_the_environment_files() {
     let cases = [
