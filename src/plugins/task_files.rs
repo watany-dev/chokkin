@@ -575,7 +575,7 @@ mod tests {
 
     #[test]
     fn gitlab_ci_reads_script_lists_inline_values_and_blocks() {
-        let contents = "test:\n  before_script: [\"uv sync\", \"alembic upgrade head\"]\n  script:\n    - pytest -q\n    - !reference [.setup, script]\n    - |\n      celery -A app inspect ping\n  after_script: coverage report # tail\ndeploy:\n  script: >\n    gunicorn app:app\n  variables:\n    X: pytest\n";
+        let contents = "test:\n  before_script: [\"uv sync\", \"alembic upgrade head\"]\n  script:\n\n    # the suite\n    - pytest -q\n    - !reference [.setup, script]\n    - |\n      celery -A app inspect ping\n  after_script: coverage report # tail\ndeploy:\n  script: >\n    gunicorn app:app\n  variables:\n    X: pytest\n";
         let mut hits = SourceHits::default();
         GitlabScripts::new("ci", contents, &known, &mut hits).scan();
         let found: Vec<_> = hits
@@ -587,10 +587,10 @@ mod tests {
             found,
             [
                 ("alembic".to_owned(), Some(2)),
-                ("pytest".to_owned(), Some(4)),
-                ("celery".to_owned(), Some(6)),
-                ("coverage".to_owned(), Some(8)),
-                ("gunicorn".to_owned(), Some(10)),
+                ("pytest".to_owned(), Some(6)),
+                ("celery".to_owned(), Some(8)),
+                ("coverage".to_owned(), Some(10)),
+                ("gunicorn".to_owned(), Some(12)),
             ]
         );
     }
