@@ -25,7 +25,8 @@ use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::module_guard::{
     async_library_names, availability_test, first_availability_check, guarded_roots,
-    imported_module_guard, is_install_check, is_main_guard_test, raises_import_error, runs_as_main,
+    imported_module_guard, is_find_spec_value, is_install_check, is_main_guard_test,
+    raises_import_error, runs_as_main,
 };
 use super::platform_guard::{
     PlatformModules, imports_platform_alias, is_platform_guard_test, mentions_platform_test,
@@ -1041,14 +1042,17 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                             self.record_pytest_plugins(name.id.as_str(), &assign.value);
                         }
                     }
-                    // `has_x = find_spec("x")` is falsy without `x`, as a
-                    // `try` flag is (#1242).
-                    if let [Expr::Name(name)] = assign.targets.as_slice()
-                        && condition::excluded(&[], Some(&assign.value), &|expr| {
+                    // `has_x = is_x_available()` is falsy without `x`, as a
+                    // `try` flag is, and `spec = find_spec("x")` is `None`
+                    // as an `except` flag is (#1242).
+                    if let [Expr::Name(name)] = assign.targets.as_slice() {
+                        if is_find_spec_value(&assign.value) {
+                            self.none_flags.insert(name.id.to_string());
+                        } else if condition::excluded(&[], Some(&assign.value), &|expr| {
                             self.installed_leaf(expr)
-                        })
-                    {
-                        self.try_flags.insert(name.id.to_string());
+                        }) {
+                            self.try_flags.insert(name.id.to_string());
+                        }
                     }
                 }
                 for target in &assign.targets {
@@ -2619,6 +2623,14 @@ if either:
     import torch_either
 if not pandas_installed:
     import fallback
+spec = find_spec(\"yaml\")
+ok = find_spec(\"toml\") is not None
+if spec is not None:
+    import yaml
+if spec is None:
+    import yaml_fallback
+if ok is not None:
+    import toml
 ",
         );
         assert_eq!(
@@ -2630,6 +2642,9 @@ if not pandas_installed:
                 ("torch_both", true),
                 ("torch_either", false),
                 ("fallback", false),
+                ("yaml", true),
+                ("yaml_fallback", false),
+                ("toml", false),
             ]
         );
     }

@@ -538,7 +538,10 @@ pub(super) fn pytest_python_file_globs(root: &Path, layout: &LayoutInfo) -> Vec<
                     format!("{}/", globset::escape(root))
                 };
                 let glob = format!("{prefix}**/{pattern}");
-                if !globs.contains(&glob) {
+                // A pattern globset cannot compile (`check_[a.py`) gives no
+                // file test context rather than failing the analysis: its
+                // files keep the context their path gives them.
+                if globset::Glob::new(&glob).is_ok() && !globs.contains(&glob) {
                     globs.push(glob);
                 }
             }
@@ -989,11 +992,14 @@ mod tests {
         let temp = tree(&["weblate", "weblate/addons"]);
         fs::write(
             temp.path().join("pyproject.toml"),
-            "[tool.pytest.ini_options]\npython_files = [\"test_*.py\", \"tests.py\"]\n",
+            "[tool.pytest.ini_options]\npython_files = [\"test_*.py\", \"tests.py\", \"check_[a.py\"]\n",
         )
         .expect("write");
-        let (layout, _) =
-            infer_layout(temp.path(), &metadata("weblate"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("weblate"),
+            &UvToolSettings::default(),
+        );
         assert_eq!(
             pytest_python_file_globs(temp.path(), &layout),
             ["**/tests.py"]
@@ -1005,8 +1011,11 @@ mod tests {
         )
         .expect("write");
         fs::create_dir_all(temp.path().join("t")).expect("create dir");
-        let (layout, _) =
-            infer_layout(temp.path(), &metadata("weblate"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("weblate"),
+            &UvToolSettings::default(),
+        );
         assert_eq!(
             pytest_python_file_globs(temp.path(), &layout),
             ["t/**/check_*.py"]

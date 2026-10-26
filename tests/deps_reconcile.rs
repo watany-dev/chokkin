@@ -523,12 +523,17 @@ fn misplaced_integration_and_command_imports_are_info() {
 #[test]
 fn misplaced_imports_of_an_integration_member_stay_warnings() {
     let report = reconcile_fixture("misplaced_integration_member");
-    let candidate = candidate_for_distribution(&report, RuleId::Chk005, "sqlalchemy")
-        .expect("sqlalchemy misplaced");
-    assert_eq!(
-        (candidate.severity, candidate.confidence),
-        (Severity::Warning, Confidence::Certain)
-    );
+    // Member `acme` requires `ragas` itself, so `acme/scorers/ragas/` is its
+    // own code although the root lists `ragas` only as dev.
+    for name in ["sqlalchemy", "openai"] {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        assert_eq!(
+            (candidate.severity, candidate.confidence),
+            (Severity::Warning, Confidence::Certain),
+            "{name}"
+        );
+    }
 }
 
 /// #731: pytest and `IPython` load their plugins themselves, and a variable

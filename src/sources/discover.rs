@@ -11,8 +11,7 @@ use super::cache::SourcesCache;
 use super::error::SourcesError;
 use super::glob::{build_glob_set, effective_exclude};
 use super::layout::{
-    ENTRY_TREE_GLOBS, infer_layout, pytest_python_file_globs, pytest_testpaths,
-    unmatched_testpaths,
+    ENTRY_TREE_GLOBS, infer_layout, pytest_python_file_globs, pytest_testpaths, unmatched_testpaths,
 };
 use super::types::{DiscoveredFile, DiscoveredSources};
 use super::walk::{

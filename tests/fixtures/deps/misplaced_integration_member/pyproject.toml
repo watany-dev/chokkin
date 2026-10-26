@@ -3,10 +3,11 @@ name = "workspace-root"
 version = "0.1.0"
 
 [project.scripts]
+acme = "acme:main"
 snowflake-reader = "acme_readers.snowflake:main"
 
 [dependency-groups]
-dev = ["snowflake-sqlalchemy", "sqlalchemy"]
+dev = ["openai", "ragas", "snowflake-sqlalchemy", "sqlalchemy"]
 
 [tool.uv.workspace]
-members = ["readers/*"]
+members = ["libs/*", "readers/*"]

@@ -226,6 +226,28 @@ impl Visitor<'_> for AvailabilityCall {
     }
 }
 
+/// Whether `expr` is `None` without some package: `find_spec("x")`, or an
+/// `and` chain of them (`find_spec("a") and find_spec("b")`), unlike
+/// `find_spec("x") is not None` or `is_x_available()`, which are `False`
+/// (#1242).
+#[must_use]
+pub(super) fn is_find_spec_value(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call(call) => {
+            is_availability_call(&call.func)
+                && match &*call.func {
+                    Expr::Name(name) => name.id.as_str() == "find_spec",
+                    Expr::Attribute(attribute) => attribute.attr.as_str() == "find_spec",
+                    _ => false,
+                }
+        },
+        Expr::BoolOp(bool_op) if bool_op.op == BoolOp::And => {
+            bool_op.values.iter().all(is_find_spec_value)
+        },
+        _ => false,
+    }
+}
+
 /// `importlib.util.find_spec` (or a bare `find_spec` / `util.find_spec`), or an
 /// `is_<x>_available` function; a `self.` / `cls.` method checks the
 /// object's own feature, and another object's `find_spec` is an import-system
@@ -292,15 +314,15 @@ pub(super) fn is_install_check(stmt: &Stmt) -> bool {
         Expr::Attribute(attribute) if is_module_path(&attribute.value) => attribute.attr.as_str(),
         _ => return false,
     };
-    let Some(rest) = ["check_", "ensure_", "require_", "assert_"]
+    let name = name.trim_start_matches('_');
+    ["check_", "ensure_", "require_", "assert_"]
         .iter()
-        .find_map(|verb| name.trim_start_matches('_').strip_prefix(verb))
-    else {
-        return false;
-    };
-    ["_installed", "_available"]
-        .iter()
-        .any(|suffix| rest.strip_suffix(suffix).is_some_and(|package| !package.is_empty()))
+        .filter_map(|verb| name.strip_prefix(verb))
+        .filter_map(|rest| {
+            rest.strip_suffix("_installed")
+                .or_else(|| rest.strip_suffix("_available"))
+        })
+        .any(|package| !package.is_empty())
 }
 
 pub(super) fn string_literal(expr: &Expr) -> Option<&str> {

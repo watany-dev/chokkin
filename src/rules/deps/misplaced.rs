@@ -47,12 +47,7 @@ pub(super) fn detect_misplaced_dependencies(
     let strengths = import_strengths(context.parse);
     let predicates = predicate_modules(context.parse, sources, reachable);
     let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules);
-    let integrations = integration_packages(
-        declared,
-        dependency,
-        workspace_declared,
-        reachable,
-    );
+    let integrations = integration_packages(declared, dependency, workspace_declared, reachable);
     let eager = file_paths(graph, &reachability.eager);
     let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
@@ -483,20 +478,23 @@ fn integration_packages(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        // An undeclared library is missing (CHK003), not opted into.
-        let opt_in = ImportDeclarations::lookup(
+        let declarations = ImportDeclarations::lookup(
             declared,
             workspace_declared,
             import.workspace_member.as_deref(),
             distribution,
-        )
-        .governing(dependency.strict)
-        .is_some_and(|declarations| {
-            declarations.iter().all(|&dep| {
-                !declaration_buckets(dep, &dependency.config.dependencies)
-                    .contains(&DeclarationBucket::Runtime)
-            })
-        });
+        );
+        // A member requiring it itself makes the subpackage its own code, and
+        // an undeclared library is missing (CHK003), not opted into.
+        let opt_in = !declarations.member_satisfies(UsageContext::Runtime, dependency.config)
+            && declarations
+                .governing(dependency.strict)
+                .is_some_and(|declarations| {
+                    declarations.iter().all(|&dep| {
+                        !declaration_buckets(dep, &dependency.config.dependencies)
+                            .contains(&DeclarationBucket::Runtime)
+                    })
+                });
         if opt_in {
             packages.insert(
                 names.get(..depth + 2).unwrap_or_default().join("."),
@@ -508,9 +506,8 @@ fn integration_packages(
         sources.files.iter().any(|file| {
             file.context == FileContext::Runtime
                 && member_of(&file.path) == *member
-                && path_to_module(&file.path, &sources.layout).is_some_and(|module| {
-                    !under_package(package_of(&file.path, &module), package)
-                })
+                && path_to_module(&file.path, &sources.layout)
+                    .is_some_and(|module| !under_package(package_of(&file.path, &module), package))
         })
     });
     packages.into_keys().collect()
@@ -551,10 +548,7 @@ fn package_of<'a>(file: &str, module: &'a str) -> &'a str {
 /// a command module only to run that command, never at startup, so its
 /// top-level imports run no earlier than a function-local one (#1242).
 fn is_management_command(file: &str) -> bool {
-    let names: Vec<&str> = file.split('/').collect();
-    names
-        .windows(3)
-        .any(|window| matches!(window, ["management", "commands", _]))
+    file.starts_with("management/commands/") || file.contains("/management/commands/")
 }
 
 /// Whether `file` is test support the package ships: a module or subpackage
