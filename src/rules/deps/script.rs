@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use super::companions::companion_is_used;
+use super::companions::used_companions;
 use super::unused::is_conditional;
 use super::used::{sorted_paths, within};
 use crate::config::Confidence;
@@ -67,12 +67,20 @@ pub(super) fn detect_script_dependency_issues(
         // The block also installs what the helper modules next to the script
         // import, so their imports count as uses of the script's dependencies.
         let parsed = index.modules.get(script.path.as_str()).copied();
-        let mut used: BTreeSet<String> = local_files
+        let all_imports: Vec<_> = local_files
             .iter()
             .flat_map(|file| index.imports_of(file))
             .copied()
             .chain(imports.iter().copied())
+            .collect();
+        let mut used: BTreeSet<String> = all_imports
+            .iter()
             .filter_map(|import| used_distribution(import, &declared, import_map))
+            .collect();
+        let modules: BTreeSet<&str> = all_imports
+            .iter()
+            .filter(|import| import.origin == ModuleOrigin::ThirdParty)
+            .map(|import| import.full_module.as_str())
             .collect();
         imports.retain(|import| {
             import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some()
@@ -88,11 +96,12 @@ pub(super) fn detect_script_dependency_issues(
                 .map(normalize_distribution_name)
                 .filter(|name| declared.contains(name)),
         );
-        let companions: Vec<_> = declared
-            .iter()
-            .filter(|name| companion_is_used(name, |provider| used.contains(provider)))
-            .cloned()
-            .collect();
+        let names: Vec<&str> = declared.iter().map(String::as_str).collect();
+        let companions: Vec<String> =
+            used_companions(&names, |provider| used.contains(provider), &modules)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
         used.extend(companions);
         // A file run with `sys.executable` shares the block's environment, and
         // its imports cannot be followed.

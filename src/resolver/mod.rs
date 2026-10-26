@@ -12,6 +12,7 @@ mod types;
 mod venv;
 
 pub use apply::apply_resolution_to_graph;
+pub(crate) use bundled::runtime_peers::RUNTIME_PEERS;
 pub(crate) use first_party::is_first_party_import;
 pub use maps::{ImportMap, build_binary_map};
 pub(crate) use pytest_path::PytestImportPaths;

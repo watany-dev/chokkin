@@ -312,6 +312,8 @@ fn django_import_settings_read_known_nested_fields_and_origins() {
         "TEST_RUNNER = 'external.tests.Runner'\n",
         "FORM_RENDERER = 'external.forms.Renderer'\n",
         "CSRF_FAILURE_VIEW = 'external.csrf.failure'\n",
+        "DATABASES = {'default': {'ENGINE': 'external.db', 'NAME': 'external.ignore.Value'}}\n",
+        "CACHES = {'default': {'BACKEND': 'external.cache.Backend', 'LOCATION': 'external.ignore.Value'}}\n",
     );
     let hints = django_project(&[("mysite/settings.py", settings)]);
     let refs: Vec<_> = django_contrib(&hints)
@@ -338,6 +340,8 @@ fn django_import_settings_read_known_nested_fields_and_origins() {
         ("external.tests.Runner", 13),
         ("external.forms.Renderer", 14),
         ("external.csrf.failure", 15),
+        ("external.db", 16),
+        ("external.cache.Backend", 17),
     ] {
         assert!(
             refs.contains(&(module, Some(line))),
@@ -427,6 +431,38 @@ fn django_import_settings_keep_literals_and_report_unread_values() {
             );
         }
     }
+}
+
+#[test]
+fn django_unread_backend_settings_name_their_setting() {
+    for (field, backend) in [
+        (
+            "DATABASES = {'default': {'ENGINE': engine}}",
+            Some("DATABASES"),
+        ),
+        (
+            "DATABASES = {'default': dj_database_url.config()}",
+            Some("DATABASES"),
+        ),
+        ("DATABASES['default'] = config", Some("DATABASES")),
+        ("CACHES = {'default': {'BACKEND': backend}}", Some("CACHES")),
+        ("STORAGES = {'default': {'BACKEND': backend}}", None),
+    ] {
+        let settings = format!("INSTALLED_APPS = []\n{field}\n");
+        let hints = django_project(&[("mysite/settings.py", &settings)]);
+        let backends: Vec<_> = django_contrib(&hints)
+            .unread_settings
+            .iter()
+            .map(|unread| unread.backend.as_deref())
+            .collect();
+        assert_eq!(backends, [backend], "{field}");
+    }
+    // An omitted ENGINE is Django's default, not an unread value.
+    let hints = django_project(&[(
+        "mysite/settings.py",
+        "INSTALLED_APPS = []\nDATABASES = {'default': {'NAME': name}}\n",
+    )]);
+    assert!(django_contrib(&hints).unread_settings.is_empty());
 }
 
 #[test]
