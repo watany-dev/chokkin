@@ -797,8 +797,18 @@ fn django_settings_module_from_the_environment_files() {
         ]
     );
 
-    // Without a Django dependency, a `manage.py` or another setter still
-    // makes a project whose environment files are read.
+    // An environment file alone does not make a reusable app a project.
+    let hints = django_project(&[
+        (".env.example", "DJANGO_SETTINGS_MODULE=\n"),
+        ("acme/__init__.py", ""),
+    ]);
+    assert_eq!(hints.warnings, []);
+}
+
+/// Without a Django dependency, a `manage.py` or another setter still makes
+/// a project whose environment files are read.
+#[test]
+fn django_settings_module_from_the_environment_without_a_django_dependency() {
     for (marker, text) in [
         ("manage.py", "import django\n"),
         (
@@ -828,13 +838,6 @@ fn django_settings_module_from_the_environment_files() {
             "{marker}"
         );
     }
-
-    // An environment file alone does not make a reusable app a project.
-    let hints = django_project(&[
-        (".env.example", "DJANGO_SETTINGS_MODULE=\n"),
-        ("acme/__init__.py", ""),
-    ]);
-    assert_eq!(hints.warnings, []);
 }
 
 /// A sample project under `examples/` and a `settings.py` that sets no
