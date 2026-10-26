@@ -2,6 +2,7 @@
 
 mod apps;
 mod installed;
+mod settings_env;
 mod settings_refs;
 mod urls;
 
@@ -33,6 +34,7 @@ use super::types::{
 use super::util::{
     choose_settings_path, django_settings_module_set_line, extract_django_settings_module,
     find_settings_candidates, manifest_has_dependency, origin_for_file, parse_module_symbol,
+    project_dirs,
 };
 use super::warnings::{PluginsWarning, SettingsUnread};
 
@@ -241,7 +243,9 @@ fn django_declaration(manifest: &crate::manifest::LoadedManifest) -> Option<Refe
 
 /// Read `DJANGO_SETTINGS_MODULE` from the root `manage.py`, then from the
 /// discovered setters (runtime ones first), the root setters discovery did
-/// not take (`runtests.py`), and last pytest-django's ini option; each
+/// not take (`runtests.py`), pytest-django's `--ds` / ini option, and last
+/// the environment files of the root and each member (`.env`, compose files,
+/// Dockerfiles: #999, #1239); each
 /// literal value is a module reference. Setters under [`EXAMPLE_DIRS`] are
 /// skipped, and a value that is not a dotted module name (a project
 /// template's `{{ project_name }}.settings`) counts as set in a form not read.
@@ -313,6 +317,9 @@ fn read_settings_module(
         pytest_import_settings(root).and_then(|settings| settings.django_settings_module)
     {
         literal(&mut found, module, &file, None);
+    }
+    for setting in settings_env::read(root, project_dirs(ctx)) {
+        literal(&mut found, setting.value, &setting.file, Some(setting.line));
     }
     found
 }
