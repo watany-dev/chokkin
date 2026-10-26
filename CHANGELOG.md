@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CHK008 no longer reports a CLI that is provided another way (#1241): the
+  project's own script (black formatting itself); the `entry` and `id` of a
+  local pre-commit hook whose `language` (`python`, `node`, ...) and
+  `additional_dependencies` make pre-commit build its own env; `pre-commit` for `.pre-commit-config.yaml`
+  when `prek` runs the hooks (`prek` is now a known CLI); `pytest` when only
+  pytest's default `test_*.py` names match and no pytest config or
+  `conftest.py` exists (unittest suites use the same names); and isort for a `[tool.isort]` whose `skip_glob` skips every file.
+
 ### Changed
 - The corpus gate labels every CHK001 hit and samples app-mode CHK006 and
   CHK005 / CHK007 / CHK008. CHK001's precision floor rises from 45% to 50%

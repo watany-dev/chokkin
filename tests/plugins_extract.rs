@@ -212,6 +212,39 @@ fn pytest_binary_usage() {
 }
 
 #[test]
+fn pytest_defaults_alone_are_an_inferred_pytest_usage() {
+    // django runs its `test_*.py` with unittest: without a pytest config or
+    // conftest.py, the default globs say nothing about the runner, so the
+    // usage keeps declared pytest plugins used but reports no CHK008 (#1241).
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, contents).expect("write file");
+    };
+    write(
+        "pyproject.toml",
+        "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+    );
+    write("acme/__init__.py", "");
+    write("tests/test_acme.py", "");
+    let pytest_usages = || -> Vec<bool> {
+        let hints = extract_at(root);
+        pytest_contrib(&hints)
+            .binary_usages
+            .iter()
+            .filter(|usage| usage.binary == "pytest")
+            .map(|usage| usage.inferred)
+            .collect()
+    };
+
+    assert_eq!(pytest_usages(), [true]);
+    write("tests/conftest.py", "");
+    assert_eq!(pytest_usages(), [false]);
+}
+
+#[test]
 fn pytest_ini_fixture() {
     let hints = extract_fixture("pytest_ini");
     let contrib = pytest_contrib(&hints);
