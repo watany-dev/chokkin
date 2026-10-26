@@ -58,7 +58,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
-        command_files: &probe.command_files,
+        dockerfiles: &probe.dockerfiles,
     })
     .expect("plugin hints");
     let entry = build_entry_roots(

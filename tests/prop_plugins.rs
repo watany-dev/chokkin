@@ -159,7 +159,7 @@ fn extract(root: &ProjectRoot) -> PluginHints {
         manifest: &manifest,
         parse: &parse,
         cache: None,
-        command_files: &[],
+        dockerfiles: &[],
     })
     .expect("extract plugin hints")
 }

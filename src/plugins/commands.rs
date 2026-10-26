@@ -1161,7 +1161,28 @@ mod tests {
             uses("gunicorn -k egg:meinheld#gunicorn_worker app:app"),
             dist("meinheld")
         );
+        assert_eq!(uses("gunicorn -k egg:-bad#worker app:app"), none);
         assert_eq!(uses("echo celery flower && echo gunicorn -k gevent"), none);
+    }
+
+    /// The tool after `python -m` is found past interpreter flags, with
+    /// `-X` / `-W` taking a value; a script names no tool.
+    #[test]
+    fn python_flags_precede_the_module() {
+        let none = (Vec::new(), Vec::new());
+        let dist = |name: &str| (names(&[name]), Vec::new());
+        assert_eq!(uses("python -m celery flower"), dist("flower"));
+        assert_eq!(uses("python -mcelery flower"), dist("flower"));
+        assert_eq!(uses("python -X dev -m celery flower"), dist("flower"));
+        assert_eq!(uses("python -W ignore -m celery flower"), dist("flower"));
+        assert_eq!(
+            uses("python -u -m gunicorn -k gevent app:app"),
+            dist("gevent")
+        );
+        assert_eq!(uses("python -X -m celery flower"), none);
+        assert_eq!(uses("python manage.py -m celery flower"), none);
+        assert_eq!(uses("python -u"), none);
+        assert_eq!(uses("python -m"), none);
     }
 
     /// celery's `--scheduler` names a class and pytest-django's `--ds` a
@@ -1191,6 +1212,14 @@ mod tests {
         assert_eq!(
             uses("python -m pytest --ds app.settings").1,
             names(&["app.settings"])
+        );
+        assert_eq!(
+            uses("celery -A proj beat --scheduler 1bad.mod:Scheduler").1,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            uses("celery -A proj beat --scheduler pkg.mod:1bad").1,
+            Vec::<String>::new()
         );
         assert_eq!(uses("pytest --ds=$SETTINGS").1, Vec::<String>::new());
         assert_eq!(uses("tox -- --ds=app.settings").1, Vec::<String>::new());

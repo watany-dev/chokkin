@@ -69,7 +69,7 @@ fn bench_pipeline(c: &mut Criterion) {
             manifest,
             parse: &parse,
             cache: None,
-            command_files: &[],
+            dockerfiles: &[],
         })
         .expect("plugins");
         for warm in [false, true] {

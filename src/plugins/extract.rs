@@ -52,7 +52,8 @@ pub struct PluginExtractRequest<'a> {
     pub cache: Option<&'a CacheOptions>,
     /// Root-relative command files the walk found: Dockerfiles below the
     /// root (#1061), shell script and supervisor config candidates (#1240).
-    pub command_files: &'a [String],
+    /// The field keeps its first kind's name.
+    pub dockerfiles: &'a [String],
 }
 
 /// Extract framework hints, optionally caching generic config scan results.
@@ -66,7 +67,7 @@ pub fn extract_plugin_hints_with_parse(
         manifest,
         parse,
         cache,
-        command_files,
+        dockerfiles: command_files,
     } = *request;
     let ctx = PluginContext {
         root,
@@ -338,7 +339,7 @@ mod tests {
             manifest: &manifest,
             parse: &ParseSummary::default(),
             cache: None,
-            command_files: &[],
+            dockerfiles: &[],
         })
         .expect("extract hints");
         assert_eq!(hints.contributions, []);
@@ -395,7 +396,7 @@ mod tests {
             manifest: &manifest,
             parse: &ParseSummary::default(),
             cache: Some(cache),
-            command_files: &[],
+            dockerfiles: &[],
         })
         .expect("extract hints")
         .config_binary_usages
@@ -423,7 +424,7 @@ mod tests {
             manifest: &manifest,
             parse: &parse,
             cache: Some(&cache),
-            command_files: &[],
+            dockerfiles: &[],
         };
 
         let first = extract_plugin_hints_with_parse(&request).expect("first extract");

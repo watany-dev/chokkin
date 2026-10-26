@@ -59,8 +59,8 @@ pub struct ProbeReport {
     /// Command files the walk found, root-relative and sorted, outside
     /// nested projects: Dockerfiles below the root, whose server apps are
     /// entries (#1061), and shell script and supervisor config candidates
-    /// (#1240).
-    pub command_files: Vec<String>,
+    /// (#1240). The field keeps its first kind's name.
+    pub dockerfiles: Vec<String>,
     /// Resolved workspace members below the project root.
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
     /// Member-scoped manifest and source inventories.
@@ -287,7 +287,7 @@ pub(super) fn probe_project_with_cache(
         manifest,
         sources,
         production_tests: discovery.held_tests,
-        command_files,
+        dockerfiles: command_files,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,

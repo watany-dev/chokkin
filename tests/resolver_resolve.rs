@@ -50,7 +50,7 @@ fn resolve_path_scoped(
         manifest: &manifest,
         parse: &parse,
         cache: None,
-        command_files: &[],
+        dockerfiles: &[],
     })
     .expect("plugins");
     let plugin_refs: Vec<_> = plugins.module_refs().cloned().collect();

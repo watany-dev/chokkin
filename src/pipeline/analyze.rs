@@ -256,7 +256,7 @@ fn run_analysis_core(
         manifest: &probe.manifest,
         parse: &parse,
         cache: Some(&options.cache),
-        command_files: &probe.command_files,
+        dockerfiles: &probe.dockerfiles,
     })?;
     let mut warnings: Vec<ProbeWarning> = parse
         .modules
