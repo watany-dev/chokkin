@@ -1464,6 +1464,36 @@ fn dotted_strings_naming_symbols_are_not_chk006() {
     }
 }
 
+/// A loader call in a test fetches the class its name ends in, though the
+/// test's dotted strings name nothing (#493, #1238).
+#[test]
+fn loader_call_in_a_test_fetches_its_class() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "import app.backends\n\n\ndef main():\n    pass\n",
+        ),
+        (
+            "app/backends.py",
+            "class Redis:\n    pass\n\n\nclass Leftover:\n    pass\n",
+        ),
+        (
+            "tests/test_backends.py",
+            "from django.utils.module_loading import import_string\n\n\ndef test_redis():\n    assert import_string(\"app.backends.Redis\")\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk006, "app.backends", "Redis"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "app.backends", "Leftover"),
+        "{report:?}"
+    );
+}
+
 /// Flask's `config.from_object("pkg.settings")` copies the upper-case names
 /// of the module it loads, which extensions read by key (#1238).
 #[test]
