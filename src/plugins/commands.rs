@@ -46,6 +46,7 @@ impl SourceHits {
                 binary,
                 origin: origin.clone(),
                 config_section: false,
+                inferred: false,
             });
         }
         self.command_targets

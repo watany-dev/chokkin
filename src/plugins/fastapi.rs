@@ -49,6 +49,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
                         binary: "uvicorn".to_owned(),
                         origin,
                         config_section: false,
+                        inferred: false,
                     });
                 }
 
@@ -79,6 +80,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
                                     label: format!("project.scripts.{name}"),
                                 },
                                 config_section: false,
+                                inferred: false,
                             });
                         }
                     }

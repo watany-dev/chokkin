@@ -136,8 +136,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         });
     }
 
+    let mut has_conftest = false;
     for file in &ctx.sources.files {
         if file.path.ends_with("/conftest.py") || file.path == "conftest.py" {
+            has_conftest = true;
             contrib.entries.push(PluginEntry {
                 spec: crate::config::EntrySpec {
                     path: file.path.clone(),
@@ -166,10 +168,14 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         }
     }
 
+    // Test files matched by pytest's default globs alone are not evidence
+    // that pytest is the runner: django and other unittest suites use the
+    // same `test_*.py` names (#1241).
     contrib.binary_usages.push(BinaryUsage {
         binary: "pytest".to_owned(),
         origin,
         config_section: false,
+        inferred: !has_explicit_config && !has_conftest,
     });
 
     if !has_explicit_config
