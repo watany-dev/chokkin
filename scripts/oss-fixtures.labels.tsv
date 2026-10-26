@@ -1822,7 +1822,7 @@ transformers	CHK010	src/transformers/models/fastspeech2_conformer/tokenization_f
 airflow	CHK010	task-sdk/tests/task_sdk/io/test_path.py:upath	tp	-	task-sdk pyproject declares no universal-pathlib (only airflow-core does)
 llama_index	CHK010	llama-index-integrations/vector_stores/llama-index-vector-stores-txtai/llama_index/vector_stores/txtai/base.py:txtai	tp	-	optional import; txtai not declared by the member pyproject
 transformers	CHK010	tests/quantization/quanto_integration/test_quanto.py:optimum	tp	-	setup.py declares optimum-benchmark only; the optimum module ships in the optimum dist (transitive)
-mlflow	CHK010	mlflow/genai/scorers/phoenix/models.py:phoenix	tp	-	optional integration; phoenix not declared in pyproject or requirements/*.txt
+mlflow	CHK010	mlflow/genai/scorers/phoenix/models.py:phoenix	info-expected	optional-import	optional integration; phoenix not declared in pyproject or requirements/*.txt (info since #1242: check_phoenix_installed() runs before the import)
 mlflow	CHK010	tests/tracking/fluent/test_fluent_autolog.py:pytorch_lightning	tp	-	requirements list lightning, whose wheel ships only the lightning package; pytorch-lightning is not declared
 transformers	CHK010	src/transformers/utils/generic.py:mlx	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain	tp	-	optional langchain bridge; llama-index-core declares no langchain
@@ -1873,7 +1873,7 @@ transformers	CHK010	src/transformers/cache_utils.py:optimum	tp	-	setup.py declar
 mlflow	CHK010	mlflow/crewai/__init__.py:crewai	tp	-	optional integration; crewai not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/exporters/exporter_executorch.py:executorch	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 mlflow	CHK010	tests/smolagents/test_smolagents_autolog.py:smolagents	tp	-	optional integration; smolagents not declared in pyproject or requirements/*.txt
-transformers	CHK010	tests/models/pop2piano/test_processing_pop2piano.py:pretty_midi	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
+transformers	CHK010	tests/models/pop2piano/test_processing_pop2piano.py:pretty_midi	info-expected	optional-import	optional integration guarded by is_*_available; not declared in setup.py _deps (info since #1242: the requirements_available flag holds is_*_available() results)
 mlflow	CHK010	tests/langchain/test_langchain_databricks_integration.py:databricks_langchain	tp	-	optional integration; databricks-langchain not declared in pyproject or requirements/*.txt
 transformers	CHK010	src/transformers/quantizers/quantizer_quark.py:quark	tp	-	optional integration guarded by is_*_available; not declared in setup.py _deps
 airflow	CHK010	providers/common/ai/src/airflow/providers/common/ai/example_dags/example_langchain_10k.py:langchain_community	tp	-	example DAG import; common.ai provider declares langchain only, langchain-community is a separate dist
