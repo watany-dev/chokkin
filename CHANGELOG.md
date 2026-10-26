@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `redis`, and the python-lsp-server plugins by a use of
   `python-lsp-server` (#1240, #1002).
 
+### Fixed
+- CHK008 no longer reports a CLI that is provided another way (#1241): the
+  project's own script (black formatting itself); the `entry` and `id` of a
+  local pre-commit hook whose `language` (`python`, `node`, ...) and
+  `additional_dependencies` make pre-commit build its own env; `pre-commit` for `.pre-commit-config.yaml`
+  when `prek` runs the hooks (`prek` is now a known CLI); `pytest` when only
+  pytest's default `test_*.py` names match and no pytest config or
+  `conftest.py` exists (unittest suites use the same names); and isort for a `[tool.isort]` whose `skip_glob` skips every file.
+
 ### Changed
 - The runtime peer table moved from code to `data/package-map.seed.json`,
   with the reason for each peer beside it (#1002).

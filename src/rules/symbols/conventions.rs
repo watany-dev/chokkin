@@ -6,7 +6,9 @@ use std::path::Path;
 use crate::config::PluginId;
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::parser::{ImportContext, ParsedModule, SymbolKind};
-use crate::plugins::{DJANGO_SETTINGS_LABEL, PluginHints};
+use crate::plugins::{
+    DJANGO_INCLUDE_LABEL, DJANGO_SETTINGS_LABEL, DJANGO_STAR_IMPORT_LABEL, PluginHints,
+};
 use crate::reachability::ReachabilityReport;
 
 use super::exports::ReExport;
@@ -152,24 +154,44 @@ fn is_django_migration(module: &ParsedModule) -> bool {
             .any(|symbol| symbol.name == "Migration")
 }
 
-/// Entries whose module namespace the host reads as settings: Sphinx's
-/// `docs/conf.py` and Django's settings module.
-fn config_entry_files(plugins: &PluginHints) -> HashSet<&str> {
+/// Entries of `plugin` whose origin label is one of `labels`, or all of its
+/// entries when `labels` is empty.
+fn plugin_entry_files<'a>(
+    plugins: &'a PluginHints,
+    plugin: PluginId,
+    labels: &'a [&str],
+) -> impl Iterator<Item = &'a str> {
     plugins
         .contributions
         .iter()
-        .flat_map(|contrib| {
-            contrib
-                .entries
-                .iter()
-                .filter(move |entry| match contrib.plugin {
-                    PluginId::Sphinx => true,
-                    PluginId::Django => entry.origin.label == DJANGO_SETTINGS_LABEL,
-                    _ => false,
-                })
-        })
+        .filter(move |contrib| contrib.plugin == plugin)
+        .flat_map(|contrib| &contrib.entries)
+        .filter(move |entry| labels.is_empty() || labels.contains(&entry.origin.label.as_str()))
         .map(|entry| entry.spec.path.as_str())
+}
+
+/// Entries whose module namespace the host reads as settings: Sphinx's
+/// `docs/conf.py` and Django's settings module.
+fn config_entry_files(plugins: &PluginHints) -> HashSet<&str> {
+    plugin_entry_files(plugins, PluginId::Sphinx, &[])
+        .chain(plugin_entry_files(
+            plugins,
+            PluginId::Django,
+            &[DJANGO_SETTINGS_LABEL],
+        ))
         .collect()
+}
+
+/// Files whose own names land in Django's settings namespace: those its
+/// settings `include()` (#938) or star-import, which the plugin follows even
+/// where the import graph does not resolve the import (#1239).
+fn config_part_files(plugins: &PluginHints) -> HashSet<&str> {
+    plugin_entry_files(
+        plugins,
+        PluginId::Django,
+        &[DJANGO_INCLUDE_LABEL, DJANGO_STAR_IMPORT_LABEL],
+    )
+    .collect()
 }
 
 /// Names a config entry pulls into its namespace with `from m import *`,
@@ -183,6 +205,7 @@ pub(super) fn config_star_symbols(
     module_names: &HashMap<&str, String>,
 ) -> Vec<SymbolId> {
     let entries = config_entry_files(plugins);
+    let parts = config_part_files(plugins);
     let mut seeds = Vec::new();
     let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut exports = HashMap::new();
@@ -191,6 +214,9 @@ pub(super) fn config_star_symbols(
             seeds.extend(star_imports(module));
         }
         if let Some(name) = module_names.get(module.path.as_str()) {
+            if parts.contains(module.path.as_str()) {
+                seeds.push(name.as_str());
+            }
             star_targets
                 .entry(name.as_str())
                 .or_default()

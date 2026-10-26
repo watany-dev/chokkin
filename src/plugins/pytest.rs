@@ -136,8 +136,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         });
     }
 
+    let mut has_conftest = false;
     for file in &ctx.sources.files {
         if file.path.ends_with("/conftest.py") || file.path == "conftest.py" {
+            has_conftest = true;
             contrib.entries.push(PluginEntry {
                 spec: crate::config::EntrySpec {
                     path: file.path.clone(),
@@ -166,10 +168,14 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         }
     }
 
+    // Test files matched by pytest's default globs alone are not evidence
+    // that pytest is the runner: django and other unittest suites use the
+    // same `test_*.py` names (#1241).
     contrib.binary_usages.push(BinaryUsage {
         binary: "pytest".to_owned(),
         origin,
         config_section: false,
+        inferred: !has_explicit_config && !has_conftest,
     });
 
     if !has_explicit_config
@@ -192,8 +198,8 @@ pub(crate) struct PytestImportSettings {
     pub importlib: bool,
     /// `testpaths` entries, relative to the config file's directory.
     pub testpaths: Vec<String>,
-    /// pytest-django's `DJANGO_SETTINGS_MODULE` option, with the name of the
-    /// config file that sets it (#979).
+    /// pytest-django's `--ds` in `addopts`, else its `DJANGO_SETTINGS_MODULE`
+    /// option, with the name of the config file that sets it (#979, #1239).
     pub django_settings_module: Option<(String, String)>,
 }
 
@@ -256,10 +262,14 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&addopts),
         testpaths: words("testpaths"),
-        django_settings_module: options
-            .get(DJANGO_SETTINGS_KEY)
-            .and_then(toml::Value::as_str)
-            .map(|value| ("pyproject.toml".to_owned(), value.trim().to_owned())),
+        django_settings_module: ds_option(&addopts)
+            .or_else(|| {
+                options
+                    .get(DJANGO_SETTINGS_KEY)
+                    .and_then(toml::Value::as_str)
+                    .map(|value| value.trim().to_owned())
+            })
+            .map(|value| ("pyproject.toml".to_owned(), value)),
     })
 }
 
@@ -268,14 +278,36 @@ const DJANGO_SETTINGS_KEY: &str = "DJANGO_SETTINGS_MODULE";
 
 fn ini_import_settings(section: &IniSection, file: &str) -> PytestImportSettings {
     let words = |key: &str| section.get(key).map_or_else(Vec::new, |v| split_words(v));
+    let addopts = words("addopts");
     PytestImportSettings {
         pythonpath: words("pythonpath"),
-        importlib: has_importlib_mode(&words("addopts")),
+        importlib: has_importlib_mode(&addopts),
         testpaths: words("testpaths"),
-        django_settings_module: section
-            .get(DJANGO_SETTINGS_KEY)
-            .map(|value| (file.to_owned(), value.trim().to_owned())),
+        django_settings_module: ds_option(&addopts)
+            .or_else(|| {
+                section
+                    .get(DJANGO_SETTINGS_KEY)
+                    .map(|value| value.trim().to_owned())
+            })
+            .map(|value| (file.to_owned(), value)),
     }
+}
+
+/// pytest-django's `--ds` in `addopts`, which outranks the ini option as a
+/// command-line option does (#1239). The last one wins, as argparse's does.
+fn ds_option(addopts: &[String]) -> Option<String> {
+    addopts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, word)| match word.strip_prefix("--ds") {
+            Some(value) => match value.strip_prefix('=') {
+                Some(value) => Some(value.to_owned()),
+                None if value.is_empty() => addopts.get(index + 1).cloned(),
+                None => None,
+            },
+            None => None,
+        })
+        .next_back()
 }
 
 fn split_words(text: &str) -> Vec<String> {
@@ -371,6 +403,39 @@ mod tests {
                 testpaths: Vec::new(),
                 django_settings_module: None,
             })
+        );
+    }
+
+    #[test]
+    fn ds_option_outranks_the_ini_option() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        let ds = |addopts: &str| {
+            std::fs::write(
+                root.join("pytest.ini"),
+                format!("[pytest]\nDJANGO_SETTINGS_MODULE = acme.ini\naddopts = {addopts}\n"),
+            )
+            .expect("write pytest.ini");
+            import_settings(root)
+                .and_then(|settings| settings.django_settings_module)
+                .map(|(_, module)| module)
+        };
+        assert_eq!(ds("-q --ds=acme.ds").as_deref(), Some("acme.ds"));
+        assert_eq!(
+            ds("--ds acme.one --ds=acme.two").as_deref(),
+            Some("acme.two")
+        );
+        assert_eq!(ds("--dsx=acme.other -q").as_deref(), Some("acme.ini"));
+
+        std::fs::remove_file(root.join("pytest.ini")).expect("remove pytest.ini");
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[tool.pytest.ini_options]\naddopts = [\"--ds\", \"acme.ds\"]\n",
+        )
+        .expect("write pyproject");
+        assert_eq!(
+            import_settings(root).and_then(|settings| settings.django_settings_module),
+            Some(("pyproject.toml".to_owned(), "acme.ds".to_owned()))
         );
     }
 

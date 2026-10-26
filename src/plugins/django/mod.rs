@@ -2,6 +2,7 @@
 
 mod apps;
 mod installed;
+mod settings_env;
 mod settings_refs;
 mod urls;
 
@@ -33,6 +34,7 @@ use super::types::{
 use super::util::{
     choose_settings_path, django_settings_module_set_line, extract_django_settings_module,
     find_settings_candidates, manifest_has_dependency, origin_for_file, parse_module_symbol,
+    project_dirs,
 };
 use super::warnings::{PluginsWarning, SettingsUnread};
 
@@ -68,6 +70,11 @@ const MAX_SETTINGS_FILES: usize = 16;
 /// tell the settings entry from `manage.py` and `ROOT_URLCONF` (#729).
 pub(crate) const SETTINGS_LABEL: &str = "settings.py";
 
+/// Origin labels of the files the settings module star-imports or
+/// `include()`s, read as part of the settings (#938, #1239).
+pub(crate) const STAR_IMPORT_LABEL: &str = "settings star import";
+pub(crate) const INCLUDE_LABEL: &str = "settings include()";
+
 const MIGRATIONS_LABEL: &str = "Django migrations";
 
 /// How `DJANGO_SETTINGS_MODULE` was set across the files that set it.
@@ -79,6 +86,13 @@ struct SettingsModule {
     /// The first place it is set in a form that is not a literal, or a
     /// setter that could not be read.
     unread: Option<(String, Option<u32>)>,
+    /// The same for the environment files, which only explain a missing
+    /// settings module after `unread`.
+    env_unread: Option<(String, Option<u32>)>,
+    /// A setter or pytest config sets it: a Django project, not a reusable
+    /// app. An environment file alone does not say so, since a reusable app
+    /// may ship a `.env.example` for its demo.
+    in_setters: bool,
 }
 
 /// Where module names resolve: the discovered sources, and the directory the
@@ -120,8 +134,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let settings_module = read_settings_module(ctx, has_manage, &mut contrib);
     // A Django project, not a reusable app that only depends on Django: its
     // settings decide what runs, so failing to find them is a gap (#914).
-    let is_project =
-        has_manage || !settings_module.literals.is_empty() || settings_module.unread.is_some();
+    let is_project = has_manage || settings_module.in_setters;
     if !is_project && !manifest_has_dependency(ctx.manifest, "django") {
         return (contrib, warnings);
     }
@@ -241,7 +254,9 @@ fn django_declaration(manifest: &crate::manifest::LoadedManifest) -> Option<Refe
 
 /// Read `DJANGO_SETTINGS_MODULE` from the root `manage.py`, then from the
 /// discovered setters (runtime ones first), the root setters discovery did
-/// not take (`runtests.py`), and last pytest-django's ini option; each
+/// not take (`runtests.py`), pytest-django's `--ds` / ini option, and last
+/// the environment files of the root and each member (`.env`, compose files,
+/// Dockerfiles: #999, #1239); each
 /// literal value is a module reference. Setters under [`EXAMPLE_DIRS`] are
 /// skipped, and a value that is not a dotted module name (a project
 /// template's `{{ project_name }}.settings`) counts as set in a form not read.
@@ -314,6 +329,22 @@ fn read_settings_module(
     {
         literal(&mut found, module, &file, None);
     }
+    found.in_setters = !found.literals.is_empty() || found.unread.is_some();
+    // Nothing reads the environment files of a project Django is not in.
+    if !has_manage && !found.in_setters && !manifest_has_dependency(ctx.manifest, "django") {
+        return found;
+    }
+    let dirs =
+        project_dirs(ctx).filter(|dir| !dir.split('/').any(|part| EXAMPLE_DIRS.contains(&part)));
+    for setting in settings_env::read(root, dirs) {
+        if is_dotted_identifier(&setting.value) {
+            literal(&mut found, setting.value, &setting.file, Some(setting.line));
+        } else {
+            found
+                .env_unread
+                .get_or_insert((setting.file, Some(setting.line)));
+        }
+    }
     found
 }
 
@@ -330,7 +361,7 @@ fn missing_settings(found: &SettingsModule) -> (String, Option<u32>, SettingsUnr
             },
         );
     }
-    if let Some((file, line)) = &found.unread {
+    if let Some((file, line)) = found.unread.as_ref().or(found.env_unread.as_ref()) {
         return (
             file.clone(),
             *line,
@@ -390,8 +421,8 @@ fn push_unread(
     });
 }
 
-/// Read the settings module and the project modules it star-imports: each
-/// field is read from every file that sets it.
+/// Read the settings module and the project files it star-imports or
+/// `include()`s: each field is read from every file that sets it.
 #[expect(
     clippy::too_many_lines,
     reason = "reads each settings field from every file that sets it, one block per field"
@@ -411,6 +442,7 @@ fn read_settings(
     let mut called: Option<(String, String, u32)> = None;
     let mut urlconf_read = false;
     let mut installed = apps::Installed::default();
+    let mut parts: Vec<(String, ReferenceOrigin)> = Vec::new();
 
     while let Some(rel) = queue.pop_front() {
         let contents = read_to_string(&abs_path(root, &rel)).ok();
@@ -580,7 +612,33 @@ fn read_settings(
             }
         }
 
-        if let Some((call, start)) = settings_call(&stmts) {
+        let calls = settings_calls(&stmts);
+        let mut unread_call = calls.unread;
+        for (patterns, start) in calls.includes {
+            for (pattern, optional) in patterns {
+                // A missing file that is not `optional()` fails the import
+                // under split-settings; here it is a file not seen.
+                let files = include_files(root, &rel, &pattern)
+                    .filter(|files| optional || !files.is_empty());
+                let Some(files) = files else {
+                    unread_call.get_or_insert_with(|| ("include()".to_owned(), start));
+                    continue;
+                };
+                for path in files {
+                    if visited.contains(&path) {
+                        continue;
+                    }
+                    if visited.len() >= MAX_SETTINGS_FILES {
+                        unread_call.get_or_insert_with(|| ("include()".to_owned(), start));
+                        break;
+                    }
+                    visited.insert(path.clone());
+                    parts.push((path.clone(), origin(start, INCLUDE_LABEL)));
+                    queue.push_back(path);
+                }
+            }
+        }
+        if let Some((call, start)) = unread_call {
             installed.incomplete = true;
             called.get_or_insert_with(|| (call, rel.clone(), lines.line(start)));
         }
@@ -594,6 +652,7 @@ fn read_settings(
                 Some(path) if visited.contains(&path) => {},
                 Some(path) if visited.len() < MAX_SETTINGS_FILES => {
                     visited.insert(path.clone());
+                    parts.push((path.clone(), origin(start, STAR_IMPORT_LABEL)));
                     queue.push_back(path);
                 },
                 // Not a project file, or past the limit: either may set a field.
@@ -605,6 +664,17 @@ fn read_settings(
             }
         }
     }
+
+    // A file the settings star-import or include is read as settings too:
+    // an entry, though the import graph may not resolve the import (wger's
+    // relative import outside a package, #1239) and never sees an include.
+    contrib
+        .entries
+        .extend(parts.into_iter().map(|(path, origin)| PluginEntry {
+            spec: crate::config::EntrySpec { path, symbol: None },
+            context: FileContext::Runtime,
+            origin,
+        }));
 
     // What the settings did not set may come from a module they star-import
     // or a file they run.
@@ -648,48 +718,62 @@ fn application_target(target: &str) -> Option<(String, String)> {
     })
 }
 
-/// Calls that run other files into the settings namespace, which the plugin
-/// does not read: django-split-settings' `include()`, `exec()` and
-/// `runpy.run_path()`, by name or as an attribute.
+/// Calls that run other files into the settings namespace: django-split-settings'
+/// `include()`, `exec()` and `runpy.run_path()`, by name or as an attribute.
+/// Only an `include()` of string literals is read ([`include_patterns`]).
 const SETTINGS_CALLS: &[&str] = &["include", "exec", "run_path"];
 
 /// Builtins that return the settings namespace when called with no arguments;
 /// `.update()` on one adds names the plugin cannot see.
 const NAMESPACE_CALLS: &[&str] = &["globals", "vars", "locals"];
 
-/// The first [`SETTINGS_CALLS`] call or namespace `.update()` that runs when
-/// the settings are imported, shown as `name()` or `globals().update()`, and
-/// where it starts. Module-level blocks (`if`, `try`, `with`) count; function,
-/// class and lambda bodies do not run on import (#925, #937). `update()` on
-/// anything else, such as a dict or `vars(obj)`, is not the namespace and
-/// stays unread.
-fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
-    #[derive(Default)]
-    struct Calls(Option<(String, TextSize)>);
+/// The calls that run when the settings are imported and add to their
+/// namespace.
+#[derive(Default)]
+struct SettingsCalls {
+    /// The first [`SETTINGS_CALLS`] call not read or namespace `.update()`,
+    /// shown as `name()` or `globals().update()`, and where it starts.
+    unread: Option<(String, TextSize)>,
+    /// Each `include()` read: its patterns, whether each is `optional()`,
+    /// and where it starts (#938).
+    includes: Vec<(Vec<(String, bool)>, TextSize)>,
+}
+
+/// The [`SettingsCalls`] of `stmts`. Module-level blocks (`if`, `try`,
+/// `with`) count; function, class and lambda bodies do not run on import
+/// (#925, #937). `update()` on anything else, such as a dict or `vars(obj)`,
+/// is not the namespace and stays unread.
+fn settings_calls(stmts: &[Stmt]) -> SettingsCalls {
+    struct Calls(SettingsCalls);
 
     impl Visitor<'_> for Calls {
         fn visit_stmt(&mut self, stmt: &Stmt) {
-            if self.0.is_none() && !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
+            if !matches!(stmt, Stmt::FunctionDef(_) | Stmt::ClassDef(_)) {
                 walk_stmt(self, stmt);
             }
         }
 
         fn visit_expr(&mut self, expr: &Expr) {
-            if self.0.is_some() || matches!(expr, Expr::Lambda(_)) {
+            if matches!(expr, Expr::Lambda(_)) {
                 return;
             }
             if let Expr::Call(call) = expr {
-                let name = match &*call.func {
-                    Expr::Name(name) => Some(name.id.as_str()),
-                    Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
-                    _ => None,
-                };
+                let name = call_name(call);
                 if let Some(name) = name.filter(|name| SETTINGS_CALLS.contains(name)) {
-                    self.0 = Some((format!("{name}()"), call.start()));
+                    match include_patterns(call).filter(|_| name == "include") {
+                        Some(patterns) => self.0.includes.push((patterns, call.start())),
+                        None => {
+                            self.0
+                                .unread
+                                .get_or_insert_with(|| (format!("{name}()"), call.start()));
+                        },
+                    }
                     return;
                 }
                 if let Some(namespace) = namespace_update(call) {
-                    self.0 = Some((format!("{namespace}().update()"), call.start()));
+                    self.0
+                        .unread
+                        .get_or_insert_with(|| (format!("{namespace}().update()"), call.start()));
                     return;
                 }
             }
@@ -697,9 +781,101 @@ fn settings_call(stmts: &[Stmt]) -> Option<(String, TextSize)> {
         }
     }
 
-    let mut calls = Calls::default();
+    let mut calls = Calls(SettingsCalls::default());
     calls.visit_body(stmts);
     calls.0
+}
+
+/// The name a call is made by: `include` for `include(...)` and
+/// `split_settings.tools.include(...)`.
+fn call_name(call: &ExprCall) -> Option<&str> {
+    match &*call.func {
+        Expr::Name(name) => Some(name.id.as_str()),
+        Expr::Attribute(attribute) => Some(attribute.attr.as_str()),
+        _ => None,
+    }
+}
+
+/// The patterns an `include()` runs, each a string literal or one wrapped in
+/// `optional()`; `None` when any argument is another form or a keyword
+/// (`scope=` runs the files in another namespace), so the call stays a gap.
+fn include_patterns(call: &ExprCall) -> Option<Vec<(String, bool)>> {
+    if !call.arguments.keywords.is_empty() || call.arguments.args.is_empty() {
+        return None;
+    }
+    call.arguments
+        .args
+        .iter()
+        .map(|arg| {
+            if let Some(pattern) = string_value(arg) {
+                return Some((pattern, false));
+            }
+            let Expr::Call(inner) = arg else {
+                return None;
+            };
+            let [pattern] = &*inner.arguments.args else {
+                return None;
+            };
+            (call_name(inner) == Some("optional") && inner.arguments.keywords.is_empty())
+                .then(|| string_value(pattern))
+                .flatten()
+                .map(|pattern| (pattern, true))
+        })
+        .collect()
+}
+
+/// The files an `include()` pattern in `rel` runs, as django-split-settings
+/// finds them: `glob.glob` of the pattern joined to `rel`'s directory, in
+/// sorted order. `None` when the pattern climbs out of the root or is
+/// absolute.
+fn include_files(root: &Path, rel: &str, pattern: &str) -> Option<Vec<String>> {
+    let dir = rel.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let joined = super::util::join_lexical(dir, pattern)?;
+    let mut found = vec![String::new()];
+    let parts: Vec<&str> = joined.split('/').collect();
+    for (index, part) in parts.iter().enumerate() {
+        let last = index + 1 == parts.len();
+        let is_kind = |path: &Path| if last { path.is_file() } else { path.is_dir() };
+        let join = |base: &str, name: &str| {
+            if base.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{base}/{name}")
+            }
+        };
+        if !part.contains(['*', '?', '[']) {
+            found = found
+                .iter()
+                .map(|base| join(base, part))
+                .filter(|path| is_kind(&abs_path(root, path)))
+                .collect();
+            continue;
+        }
+        let matcher = globset::GlobBuilder::new(part)
+            .literal_separator(true)
+            .build()
+            .ok()?
+            .compile_matcher();
+        let mut next = Vec::new();
+        for base in &found {
+            let Ok(entries) = std::fs::read_dir(abs_path(root, base)) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                // `glob` leaves hidden names to a pattern that starts with a dot.
+                let hidden = name.starts_with('.') && !part.starts_with('.');
+                if !hidden && matcher.is_match(&name) && is_kind(&entry.path()) {
+                    next.push(join(base, &name));
+                }
+            }
+        }
+        found = next;
+    }
+    found.sort();
+    Some(found)
 }
 
 /// The [`NAMESPACE_CALLS`] builtin `call` updates, as in `globals().update(...)`.
@@ -809,14 +985,19 @@ fn module_path(
 /// The directory a nested setter imports the settings module from: Django
 /// puts the directory of `manage.py` on `sys.path`, as pytest does for a
 /// `conftest.py` and Python for a `runtests.py` script, and `wsgi.py` /
-/// `asgi.py` sit in the project package beside it. A root setter needs none.
+/// `asgi.py` sit in the project package beside it. An environment file
+/// (`.env`, a compose file, a Dockerfile) sits where the project starts, as
+/// `manage.py` does. A root setter needs none.
 fn setter_dir(setter: &str) -> Option<String> {
     let path = Path::new(setter);
     let dir = path.parent();
     let own_dir = path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "manage.py" | "conftest.py" | "runtests.py"));
+        .is_some_and(|name| {
+            matches!(name, "manage.py" | "conftest.py" | "runtests.py")
+                || Path::new(name).extension().is_none_or(|ext| ext != "py")
+        });
     let dir = if own_dir {
         dir
     } else {
@@ -847,11 +1028,85 @@ mod tests {
     }
 
     #[test]
+    fn include_files_expand_globs_beside_the_including_file() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        for path in [
+            "conf/settings/components/b.py",
+            "conf/settings/components/a.py",
+            "conf/settings/components/.hidden.py",
+            "conf/settings/components/sub/c.py",
+            "conf/local.py",
+        ] {
+            let path = abs_path(root, path);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+            std::fs::write(path, "").expect("write file");
+        }
+        let files = |pattern: &str| include_files(root, "conf/settings/__init__.py", pattern);
+        assert_eq!(
+            files("components/*.py").expect("pattern"),
+            [
+                "conf/settings/components/a.py",
+                "conf/settings/components/b.py"
+            ]
+        );
+        assert_eq!(
+            files("components/.*.py").expect("pattern"),
+            ["conf/settings/components/.hidden.py"]
+        );
+        assert_eq!(
+            files("components/[s]*/c.py").expect("pattern"),
+            ["conf/settings/components/sub/c.py"]
+        );
+        assert_eq!(files("../local.py").expect("pattern"), ["conf/local.py"]);
+        assert_eq!(files("missing.py").expect("pattern"), Vec::<String>::new());
+        assert_eq!(files("components"), Some(Vec::new()));
+        assert_eq!(files("../../../outside.py"), None);
+        assert_eq!(files("/etc/settings.py"), None);
+    }
+
+    #[test]
+    fn include_patterns_read_literals_and_optional_only() {
+        let patterns = |code: &str| {
+            let stmts = parse_module(code).expect("parse");
+            let Some(Stmt::Expr(expr)) = stmts.first() else {
+                panic!("{code}");
+            };
+            let Expr::Call(call) = &*expr.value else {
+                panic!("{code}");
+            };
+            include_patterns(call)
+        };
+        assert_eq!(
+            patterns("include('a.py', optional('b.py'), tools.optional('c.py'))"),
+            Some(vec![
+                ("a.py".to_owned(), false),
+                ("b.py".to_owned(), true),
+                ("c.py".to_owned(), true),
+            ])
+        );
+        for code in [
+            "include()",
+            "include(name)",
+            "include('a.py', scope=globals())",
+            "include(*files)",
+            "include(optional(name))",
+            "include(wrap('a.py'))",
+            "include(optional('a.py', strict=True))",
+            "include(f'{ENV}.py')",
+        ] {
+            assert_eq!(patterns(code), None, "{code}");
+        }
+    }
+
+    #[test]
     fn setter_dir_is_the_script_dir_or_the_package_parent() {
         assert_eq!(setter_dir("tests/conftest.py").as_deref(), Some("tests"));
         assert_eq!(setter_dir("tests/runtests.py").as_deref(), Some("tests"));
         assert_eq!(setter_dir("site/manage.py").as_deref(), Some("site"));
         assert_eq!(setter_dir("site/proj/wsgi.py").as_deref(), Some("site"));
         assert_eq!(setter_dir("proj/wsgi.py"), None);
+        assert_eq!(setter_dir("web/.env").as_deref(), Some("web"));
+        assert_eq!(setter_dir("web/Dockerfile").as_deref(), Some("web"));
     }
 }

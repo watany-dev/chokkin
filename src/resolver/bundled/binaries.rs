@@ -35,6 +35,7 @@ pub(crate) static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
     ("pip3", "pip"),
     ("pre-commit", "pre-commit"),
     ("prefect", "prefect"),
+    ("prek", "prek"),
     ("py.test", "pytest"),
     ("pylint", "pylint"),
     ("pytest", "pytest"),

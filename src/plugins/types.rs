@@ -143,10 +143,16 @@ pub struct BinaryUsage {
     /// Discovery origin.
     pub origin: ReferenceOrigin,
     /// The usage is a tool's config section (`[tool.ruff]`, `[mypy]`) or a
-    /// remote pre-commit hook rather than a command run in the project's
-    /// environment, so a remote hook providing the binary covers it (#680).
+    /// pre-commit hook in pre-commit's own env (remote, or local with its own
+    /// `language`) rather than a command run in the project's environment, so
+    /// such a hook providing the binary covers it (#680, #1241).
     #[serde(default)]
     pub config_section: bool,
+    /// The usage is inferred from file names alone (pytest's default
+    /// `test_*.py` globs): it marks the distribution used for CHK002 but is
+    /// no evidence of running the binary, so it never reports CHK008 (#1241).
+    #[serde(default)]
+    pub inferred: bool,
 }
 
 /// Glob of files treated as framework-used (excluded from unused-file candidates).

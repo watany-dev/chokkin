@@ -5627,6 +5627,100 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
     );
 }
 
+/// django-split-settings' `include()` of string literals is read as settings
+/// (#938): its files, globs expanded beside the including file, set the
+/// fields, are entries, and their names are Django's to read. An
+/// `optional()` file may be missing; any other form stays the gap.
+#[test]
+fn binary_django_split_settings_include_is_read() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nimport django\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings/__init__.py",
+            // `split_settings` is left unimported: the bundled package map
+            // does not name it.
+            "include(\"components/base.py\", \"components/*.py\", optional(\"local.py\"))\n",
+        ),
+        ("mysite/settings/components/__init__.py", ""),
+        (
+            "mysite/settings/components/base.py",
+            "from mysite.helpers import secret\n\nROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\nMIDDLEWARE = []\nSECRET_KEY = secret()\n",
+        ),
+        ("mysite/settings/components/database.py", "DATABASES = {}\n"),
+        ("mysite/helpers.py", "def secret():\n    return \"x\"\n"),
+        ("mysite/urls.py", "# URLconf\n"),
+        ("mysite/orphan.py", ""),
+    ]);
+    let levels = issue_levels(project.path());
+    assert_eq!(
+        levels,
+        [(
+            "CHK001".to_owned(),
+            "mysite/orphan.py".to_owned(),
+            "warning".to_owned(),
+            "certain".to_owned(),
+        )],
+        "{levels:?}"
+    );
+
+    // A missing file that is not `optional()` is a file not seen.
+    fs::write(
+        project.path().join("mysite/settings/__init__.py"),
+        "include(\"components/database.py\", \"local.py\")\n",
+    )
+    .expect("write settings");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--no-cache")
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains("plugin: django: settings `mysite/settings/__init__.py:1` calls `include()`, which was not read"),
+        "{stderr}"
+    );
+}
+
+/// A settings directory discovery does not take as a package star-imports
+/// its sibling by a relative import the import graph cannot resolve (wger,
+/// #1239): the sibling is read as settings and is an entry, so what it
+/// imports is used.
+#[test]
+fn binary_django_relative_star_import_outside_a_package_is_an_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"wger\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nimport django\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"settings.main\")\n",
+        ),
+        ("settings/main.py", "from .settings_global import *\n"),
+        (
+            "settings/settings_global.py",
+            "from wger.docs import schema\n\nROOT_URLCONF = \"wger.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\nMIDDLEWARE = []\nSCHEMA = schema\n",
+        ),
+        ("wger/__init__.py", ""),
+        ("wger/docs.py", "schema = {}\n"),
+        ("wger/urls.py", "# URLconf\n"),
+    ]);
+    let levels = issue_levels(project.path());
+    assert_eq!(
+        levels,
+        Vec::<(String, String, String, String)>::new(),
+        "{levels:?}"
+    );
+}
+
 /// A `manage.py` that names no settings still marks a Django project, whose
 /// missing settings are a gap; a reusable app that only depends on Django has
 /// no settings of its own, so it gets none (#914).

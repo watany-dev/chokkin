@@ -136,7 +136,10 @@ fn scan_pyproject_tools(
     let Some(tool) = doc.table("tool") else {
         return;
     };
-    for key in tool.keys() {
+    for (key, value) in tool {
+        if key == "isort" && isort_skips_every_file(value) {
+            continue;
+        }
         if let Some(binary) = tool_key_to_binary(key) {
             push_usage(
                 result,
@@ -145,10 +148,25 @@ fn scan_pyproject_tools(
                     binary: binary.to_owned(),
                     origin: doc.origin("tool", key),
                     config_section: true,
+                    inferred: false,
                 },
             );
         }
     }
+}
+
+/// `[tool.isort] skip_glob = ["*"]` keeps editors from running isort; the
+/// section disables the tool rather than configuring it (sqlalchemy, #1241).
+/// Any other `skip_glob` is a usage as before.
+fn isort_skips_every_file(section: &toml::Value) -> bool {
+    section
+        .get("skip_glob")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|globs| {
+            globs
+                .iter()
+                .any(|glob| matches!(glob.as_str(), Some("*" | "**" | "**/*")))
+        })
 }
 
 fn merge_hits(
@@ -312,57 +330,148 @@ fn scan_pre_commit_config(
         return;
     }
     let rel = rel_to_root(root, &path);
-    let origin = ReferenceOrigin {
-        file: rel.clone(),
-        line: None,
-        label: PRE_COMMIT_CONFIG.to_owned(),
-    };
-    push_binary(result, seen, "pre-commit", origin.clone());
+    push_binary(
+        result,
+        seen,
+        "pre-commit",
+        ReferenceOrigin {
+            file: rel.clone(),
+            line: None,
+            label: PRE_COMMIT_CONFIG.to_owned(),
+        },
+    );
 
     let Ok(contents) = std::fs::read_to_string(&path) else {
         return;
     };
-    // Only `repo: local` hooks run a command from the project's own
-    // environment; remote hooks install their tool into pre-commit's cache,
-    // which provides the binary their config sections refer to (#680).
-    let mut local_repo = false;
+    let mut hook = PreCommitHook::default();
     for (index, line) in contents.lines().enumerate() {
         let trimmed = strip_yaml_comment(line).trim();
         let item = trimmed.strip_prefix("- ").unwrap_or(trimmed).trim_start();
+        if trimmed.starts_with("- ") && starts_pre_commit_item(item) {
+            hook.flush(result, seen, known, &rel);
+        }
         if let Some(repo) = item.strip_prefix("repo:") {
-            local_repo = unquote_yaml_scalar(repo) == "local";
-            continue;
-        }
-        if let Some(hook_id) = item.strip_prefix("id:") {
-            if let Some(binary) = hook_id_to_binary(unquote_yaml_scalar(hook_id)) {
-                if !local_repo {
-                    result.provided_binaries.push(binary.to_owned());
-                }
-                push_usage(
-                    result,
-                    seen,
-                    BinaryUsage {
-                        binary: binary.to_owned(),
-                        origin: origin.clone(),
-                        config_section: !local_repo,
-                    },
-                );
-            }
-            continue;
-        }
-        if local_repo && let Some(entry) = item.strip_prefix("entry:") {
-            let entry = unquote_yaml_scalar(entry);
-            let origin = origin_at(&rel, index, "pre-commit entry");
-            push_command(result, seen, entry, known, &origin);
-            result
-                .script_entries
-                .extend(script_entries::command_entries(
-                    entry,
-                    &origin,
-                    script_entries::Fallback::None,
-                ));
+            hook.local_repo = unquote_yaml_scalar(repo) == "local";
+        } else if let Some(hook_id) = item.strip_prefix("id:") {
+            hook.binaries
+                .extend(hook_id_to_binary(unquote_yaml_scalar(hook_id)));
+        } else if let Some(entry) = item.strip_prefix("entry:") {
+            hook.entry = Some((unquote_yaml_scalar(entry).to_owned(), index));
+        } else if let Some(language) = item.strip_prefix("language:") {
+            hook.language = Some(unquote_yaml_scalar(language).to_owned());
+        } else if let Some(dependencies) = item.strip_prefix("additional_dependencies:") {
+            hook.additional_dependencies = dependencies.trim() != "[]";
         }
     }
+    hook.flush(result, seen, known, &rel);
+}
+
+/// pre-commit `language`s that run the hook in the project's own environment.
+/// With any other language and `additional_dependencies`, pre-commit builds
+/// the hook an env with those dependencies (airflow's `language: python`
+/// bandit, #1241). A local hook without `language` or without
+/// `additional_dependencies` is read as the project's env, which keeps its
+/// CHK008: a `language: python` env without them finds its entry on `PATH`.
+const PRE_COMMIT_PROJECT_ENV_LANGUAGES: &[&str] =
+    &["system", "script", "unsupported", "unsupported_script"];
+
+/// The fields of one `.pre-commit-config.yaml` hook, which may come in any
+/// order, and whether its repo is `local`.
+#[derive(Default)]
+struct PreCommitHook {
+    local_repo: bool,
+    /// The binary of a known hook `id`.
+    binaries: Vec<&'static str>,
+    /// `entry` with its 0-based line.
+    entry: Option<(String, usize)>,
+    language: Option<String>,
+    /// `additional_dependencies` is present and not `[]`.
+    additional_dependencies: bool,
+}
+
+impl PreCommitHook {
+    /// Record the hook and reset it. Remote hooks and local hooks with their
+    /// own env install their tool into pre-commit's cache, which provides
+    /// the binary their config sections refer to (#680); only the other
+    /// local hooks run a command from the project's environment, and only
+    /// local hooks have an `entry` the project wrote.
+    fn flush(
+        &mut self,
+        result: &mut ConfigScanResult,
+        seen: &mut HashSet<(String, String)>,
+        known: KnownBinary<'_>,
+        rel: &str,
+    ) {
+        let local_repo = self.local_repo;
+        let hook = std::mem::replace(
+            self,
+            Self {
+                local_repo,
+                ..Self::default()
+            },
+        );
+        let isolated = !local_repo
+            || (hook.additional_dependencies
+                && hook
+                    .language
+                    .as_deref()
+                    .is_some_and(|language| !PRE_COMMIT_PROJECT_ENV_LANGUAGES.contains(&language)));
+        let origin = ReferenceOrigin {
+            file: rel.to_owned(),
+            line: None,
+            label: PRE_COMMIT_CONFIG.to_owned(),
+        };
+        for binary in hook.binaries {
+            push_isolable(result, seen, binary, &origin, isolated);
+        }
+        let Some((entry, index)) = hook.entry.filter(|_| local_repo) else {
+            return;
+        };
+        let origin = origin_at(rel, index, "pre-commit entry");
+        push_hook_command(result, seen, &entry, known, &origin, isolated);
+        result
+            .script_entries
+            .extend(script_entries::command_entries(
+                &entry,
+                &origin,
+                script_entries::Fallback::None,
+            ));
+    }
+}
+
+/// A hook's binary usage; a hook in pre-commit's own env also provides it.
+fn push_isolable(
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    binary: &str,
+    origin: &ReferenceOrigin,
+    isolated: bool,
+) {
+    if isolated {
+        result.provided_binaries.push(binary.to_owned());
+    }
+    push_usage(
+        result,
+        seen,
+        BinaryUsage {
+            binary: binary.to_owned(),
+            origin: origin.clone(),
+            config_section: isolated,
+            inferred: false,
+        },
+    );
+}
+
+/// A `- key:` list item with a lowercase key (`id`, `repo`) starts the next
+/// hook, unlike a block list entry of `additional_dependencies` or `args`
+/// (`- bandit==1.7.6`, `- E501:ignore`). A hook written as a bare `-` line
+/// with its keys below does not start one, so its fields join the previous
+/// hook's.
+fn starts_pre_commit_item(item: &str) -> bool {
+    item.split_once(':').is_some_and(|(key, _)| {
+        !key.is_empty() && key.chars().all(|ch| ch.is_ascii_lowercase() || ch == '_')
+    })
 }
 
 fn scan_tox_config(
@@ -900,11 +1009,28 @@ fn push_command(
     known: KnownBinary<'_>,
     origin: &ReferenceOrigin,
 ) {
+    push_hook_command(result, seen, command, known, origin, false);
+}
+
+/// [`push_command`] for a pre-commit hook `entry`, which pre-commit's own env
+/// provides when `isolated`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "push_command's arguments plus the hook's env"
+)]
+fn push_hook_command(
+    result: &mut ConfigScanResult,
+    seen: &mut HashSet<(String, String)>,
+    command: &str,
+    known: KnownBinary<'_>,
+    origin: &ReferenceOrigin,
+    isolated: bool,
+) {
     for binary in command_binaries(command, known) {
         if binary == "sphinx-build" {
             push_distribution(result, "sphinx");
         }
-        push_binary(result, seen, &binary, origin.clone());
+        push_isolable(result, seen, &binary, origin, isolated);
     }
     result
         .command_targets
@@ -924,6 +1050,7 @@ fn push_binary(
             binary: binary.to_owned(),
             origin,
             config_section: false,
+            inferred: false,
         },
     );
 }
@@ -1479,6 +1606,64 @@ mod tests {
         assert!(sections.contains(&("black", false)));
         assert!(!sections.contains(&("black", true)));
         assert!(sections.contains(&("ruff", false)));
+    }
+
+    #[test]
+    fn local_hooks_with_their_own_language_env_provide_their_binaries() {
+        let result = scan_files(&[(
+            ".pre-commit-config.yaml",
+            // Block list items before `language` stay in the same hook.
+            "repos:\n  - repo: local\n    hooks:\n      - id: bandit\n        name: bandit\n\
+                         entry: bandit -r airflow\n        additional_dependencies:\n\
+                           - bandit==1.7.6\n        args:\n          - E501:ignore\n\
+                         language: python\n\
+                       - entry: ruff check\n        id: lint\n        language: system\n\
+                       - id: mypy\n        entry: mypy\n        language: python\n        \
+                         additional_dependencies: []\n",
+        )]);
+        assert_eq!(result.provided_binaries, ["bandit"]);
+        let sections: Vec<_> = result
+            .binary_usages
+            .iter()
+            .map(|usage| {
+                (
+                    usage.binary.as_str(),
+                    usage.origin.line,
+                    usage.config_section,
+                )
+            })
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                ("pre-commit", None, false),
+                ("bandit", None, true),
+                ("bandit", Some(6), true),
+                ("ruff", Some(12), false),
+                ("mypy", None, false),
+                ("mypy", Some(16), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn isort_section_that_skips_every_file_is_not_a_usage() {
+        let binaries = |pyproject: &str| -> Vec<String> {
+            let result = scan_files(&[("pyproject.toml", pyproject)]);
+            result
+                .binary_usages
+                .iter()
+                .map(|usage| usage.binary.clone())
+                .collect()
+        };
+        assert_eq!(
+            binaries("[tool.isort]\nskip_glob = [\"*\"]\n\n[tool.black]\n"),
+            ["black"]
+        );
+        assert_eq!(
+            binaries("[tool.isort]\nskip_glob = [\"docs/*\"]\n"),
+            ["isort"]
+        );
     }
 
     #[test]
