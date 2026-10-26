@@ -1,6 +1,6 @@
 //! Mark symbols as externally used (decorators, entry points, plugins).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexSet;
 
@@ -89,6 +89,56 @@ fn target_object(symbol: &str) -> &str {
         .split_once('.')
         .map_or(symbol, |(name, _)| name)
         .trim()
+}
+
+/// Symbols a string literal names by their full dotted path (#1238): Django's
+/// `MIDDLEWARE` and `STORAGES` values, a DRF or drf-spectacular hook, a class
+/// list a loader imports with `import_string`, or `pkg.mod:attr`. The literal
+/// is a parser [`crate::parser::ModuleRef`]; its longest module-name prefix
+/// names the segment after it, so `"pkg.mod.Cls.method"` names `pkg.mod:Cls`.
+/// Strings in `skip` (test files, whose `mock.patch("pkg.mod.name")` names a
+/// symbol without using it) and a module's strings that name its own symbols
+/// count for nothing.
+pub(super) fn string_named_symbols(
+    modules: &[&ParsedModule],
+    module_names: &HashMap<&str, String>,
+    skip: &HashSet<&str>,
+) -> Vec<SymbolId> {
+    let known: HashSet<&str> = module_names.values().map(String::as_str).collect();
+    let mut named = Vec::new();
+    for module in modules {
+        if skip.contains(module.path.as_str()) {
+            continue;
+        }
+        let own = module_names.get(module.path.as_str()).map(String::as_str);
+        for reference in &module.module_refs {
+            let text = reference
+                .text
+                .strip_prefix("python:")
+                .unwrap_or(&reference.text);
+            if let Some((owner, name)) = named_symbol(text, &known)
+                && Some(owner) != own
+            {
+                named.push(SymbolId::new(owner.to_owned(), name));
+            }
+        }
+    }
+    named
+}
+
+/// The `(module, name)` pair `text` names among the `known` modules: the
+/// attribute of `module:attr`, else the segment after the longest module-name
+/// prefix of a dotted name, where an import of the name would stop.
+fn named_symbol<'t>(text: &'t str, known: &HashSet<&str>) -> Option<(&'t str, &'t str)> {
+    if let Some((module, attr)) = text.split_once(':') {
+        return known
+            .contains(module)
+            .then(|| (module, target_object(attr)));
+    }
+    text.rmatch_indices('.')
+        .map(|(dot, _)| (&text[..dot], &text[dot + 1..]))
+        .find(|(module, _)| known.contains(module))
+        .map(|(module, rest)| (module, rest.split_once('.').map_or(rest, |(name, _)| name)))
 }
 
 /// Classes a loader may fetch by a computed name: `import_module("pkg." + x)`

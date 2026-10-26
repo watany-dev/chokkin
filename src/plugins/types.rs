@@ -211,6 +211,10 @@ pub struct PluginContribution {
     /// scripts, DAG files, a scrapy settings module, a Sphinx `conf.py`.
     /// Their names are no API surface (#667, #401, #814).
     pub scanned_files: Vec<String>,
+    /// Modules whose upper-case top-level names the framework reads as
+    /// settings: Django's settings module, and the one Flask's
+    /// `config.from_object` names (#1238).
+    pub settings_modules: Vec<String>,
 }
 
 impl PluginContribution {
@@ -229,6 +233,7 @@ impl PluginContribution {
             unread_settings: Vec::new(),
             command_targets: Vec::new(),
             scanned_files: Vec::new(),
+            settings_modules: Vec::new(),
         }
     }
 

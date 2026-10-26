@@ -420,15 +420,25 @@ const MODULE_LOADERS: [&str; 4] = [
     "load_object",
 ];
 
+/// Flask's `Config.from_object`, whose module the Flask plugin reads the
+/// upper-case names of as settings (#1238). It is no loader, as a method of
+/// the same name elsewhere would make the name an import edge.
+const CONFIG_OBJECT_CALL: &str = "from_object";
+
 /// Moves each named load whose callee is a loader into its module's dynamic
-/// imports: [`MODULE_LOADERS`], cyclopts' lazy `command("pkg.mod:app")` (a
-/// dotted `module:attr` only, as a click or typer command name may be
-/// `db:migrate`) and the names `module_loaders` configures (#493). Every
-/// other named load is dropped.
-pub(crate) fn apply_module_loaders(modules: &mut [ParsedModule], configured: &[String]) {
+/// imports, and drops the rest (#493).
+///
+/// The loaders are `MODULE_LOADERS`, cyclopts' lazy `command("pkg.mod:app")`
+/// (a dotted `module:attr` only, as a click or typer command name may be
+/// `db:migrate`) and the names `module_loaders` configures. A `from_object`
+/// load is also kept as a config object (#1238).
+pub fn apply_module_loaders(modules: &mut [ParsedModule], configured: &[String]) {
     for module in modules {
         for named in std::mem::take(&mut module.named_loads) {
             let call = named.call.as_str();
+            if call == CONFIG_OBJECT_CALL {
+                module.config_objects.push(named.load.clone());
+            }
             if MODULE_LOADERS.contains(&call)
                 || (named.lazy_command && call == "command")
                 || configured.iter().any(|name| name == call)
@@ -550,6 +560,7 @@ mod tests {
                 named("command", true),
                 named("command", false),
                 named("helper", true),
+                named("from_object", false),
             ],
             ..ParsedModule::default()
         }];
@@ -563,6 +574,12 @@ mod tests {
             kept,
             ["import_string.false", "LazyFeature.false", "command.true"]
         );
+        let objects: Vec<_> = modules[0]
+            .config_objects
+            .iter()
+            .map(|load| load.module.as_str())
+            .collect();
+        assert_eq!(objects, ["from_object.false"]);
         assert!(modules[0].named_loads.is_empty());
     }
 

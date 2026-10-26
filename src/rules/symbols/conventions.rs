@@ -237,6 +237,31 @@ pub(super) fn config_star_symbols(
         .collect()
 }
 
+/// Upper-case top-level names of a settings module (#1238): Django's
+/// `settings` and Flask's `config.from_object` copy each name whose letters
+/// are all upper case, so `settings.DEBUG` reads one without an import of it.
+/// Other names in the module stay ordinary symbols.
+pub(super) fn settings_symbols(plugins: &PluginHints, registry: &[RegistryEntry]) -> Vec<SymbolId> {
+    let modules: HashSet<&str> = plugins
+        .contributions
+        .iter()
+        .flat_map(|contrib| &contrib.settings_modules)
+        .map(String::as_str)
+        .collect();
+    registry
+        .iter()
+        .filter(|entry| {
+            modules.contains(entry.id.module.as_str()) && is_setting_name(&entry.id.name)
+        })
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+/// Python's `str.isupper()`: a cased character, and no lower-case one.
+fn is_setting_name(name: &str) -> bool {
+    name.chars().any(char::is_uppercase) && !name.chars().any(char::is_lowercase)
+}
+
 /// Functions a host calls by name (#777): a `pytest_*` hook in a module pytest
 /// loads as a plugin, the `setup` of a Sphinx extension, and the hooks of a
 /// build backend (#782), defined there or re-exported by a package (#873).

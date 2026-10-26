@@ -217,6 +217,19 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         },
     });
 
+    // Each value of `DJANGO_SETTINGS_MODULE` is a settings module in some
+    // deployment (`settings.dev`, `settings.prod`), though only one is read.
+    contrib.settings_modules.extend(
+        settings_module
+            .literals
+            .iter()
+            .map(|(module, _, _)| module.clone())
+            .chain(crate::sources::path_to_module(
+                &settings_rel,
+                &ctx.sources.layout,
+            )),
+    );
+
     let installed = read_settings(ctx, &settings_rel, &lookup, &mut contrib, &mut warnings);
     apps::extract(ctx, &lookup, &installed, &mut contrib);
 

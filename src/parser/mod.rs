@@ -23,7 +23,8 @@ mod version_guard;
 mod visit;
 
 pub(crate) use depth::parse_walkable_module;
-pub(crate) use dynamic::{apply_module_loaders, module_ref_name};
+pub use dynamic::apply_module_loaders;
+pub(crate) use dynamic::module_ref_name;
 pub(crate) use encoding::decode_python_source;
 pub(crate) use error::ParseError;
 pub(crate) use ignores::extract_ignores_with;
