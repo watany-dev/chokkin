@@ -35,8 +35,10 @@ pub(crate) struct Discovery {
     /// Under `production`, the test files left out of `sources`, sorted by
     /// path (#844).
     pub held_tests: Vec<DiscoveredFile>,
-    /// Dockerfiles below the root, root-relative and sorted (#1061).
-    pub dockerfiles: Vec<String>,
+    /// Command files the walk found, root-relative and sorted: Dockerfiles
+    /// below the root (#1061), shell script and supervisor config candidates
+    /// (#1240).
+    pub command_files: Vec<String>,
 }
 
 /// [`discover_sources`] reusing the ignore files and globs that earlier calls
@@ -131,7 +133,7 @@ pub(crate) fn discover_sources_cached(
             warnings,
         },
         held_tests: collected.held_tests,
-        dockerfiles: collected.dockerfiles,
+        command_files: collected.command_files,
     })
 }
 

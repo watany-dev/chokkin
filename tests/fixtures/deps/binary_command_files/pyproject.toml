@@ -1,0 +1,7 @@
+[project]
+name = "binary-command-files"
+version = "0.1.0"
+dependencies = ["celery", "flower", "gevent", "gunicorn", "supervisor"]
+
+[project.scripts]
+demo-cli = "acme.main:main"

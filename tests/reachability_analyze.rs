@@ -55,7 +55,7 @@ fn load_reachability(path: &Path, production: bool) -> ReachabilityInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
-        dockerfiles: &[],
+        command_files: &[],
     })
     .expect("plugin hints");
     let entry = build_entry_roots(

@@ -44,6 +44,8 @@ pub(crate) static BINARY_TO_DISTRIBUTION: &[(&str, &str)] = &[
     ("sphinx-build", "sphinx"),
     ("sqlfluff", "sqlfluff"),
     ("sqlformat", "sqlparse"),
+    ("supervisorctl", "supervisor"),
+    ("supervisord", "supervisor"),
     ("towncrier", "towncrier"),
     ("tox", "tox"),
     ("twine", "twine"),

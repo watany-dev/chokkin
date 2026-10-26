@@ -51,6 +51,8 @@
     { "binary": "dbt", "distribution": "dbt-core" },
     { "binary": "prefect", "distribution": "prefect" },
     { "binary": "scrapy", "distribution": "scrapy" },
-    { "binary": "sqlfluff", "distribution": "sqlfluff" }
+    { "binary": "sqlfluff", "distribution": "sqlfluff" },
+    { "binary": "supervisord", "distribution": "supervisor" },
+    { "binary": "supervisorctl", "distribution": "supervisor" }
   ]
 }

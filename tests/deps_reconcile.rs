@@ -58,7 +58,7 @@ fn load_deps(path: &Path, production: bool) -> DepsInputs {
         manifest: &manifest,
         parse: &parse,
         cache: None,
-        dockerfiles: &[],
+        command_files: &probe.command_files,
     })
     .expect("plugin hints");
     let entry = build_entry_roots(
@@ -771,6 +771,17 @@ fn dockerfiles_mark_run_cmd_and_entrypoint_binaries_used() {
 fn procfile_marks_process_binaries_used() {
     let report = reconcile_fixture("binary_procfile");
     assert_used(&report, &["alembic", "celery", "gunicorn", "uvicorn"]);
+}
+
+/// Shell scripts outside `scripts/` and `bin/`, a celery plugin
+/// subcommand and a gunicorn worker class (#1240).
+#[test]
+fn command_files_and_arguments_mark_distributions_used() {
+    let report = reconcile_fixture("binary_command_files");
+    assert_used(
+        &report,
+        &["celery", "flower", "gevent", "gunicorn", "supervisor"],
+    );
 }
 
 #[test]

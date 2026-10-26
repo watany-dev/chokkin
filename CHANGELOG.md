@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--scheduler` names a module and a used class, and pytest's `--ds` names
   the settings module. A distribution a command `pip install`s is no CHK008
   (#1240, #1241, #1239).
+- Shell scripts and supervisor configs outside `scripts/` and `bin/` are
+  read. One below the root only marks the distributions its commands name
+  used, with no CHK008 for an undeclared binary; `supervisord` maps to
+  supervisor (#1240).
 
 ## [0.7.10] - 2026-10-25
 
