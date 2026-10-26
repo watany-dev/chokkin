@@ -1466,7 +1466,7 @@ severity が `info` の finding (例: optional try-import の CHK003) はヒッ�
 ヒットを消す (#1065)。1 project が全体の precision を決めないようにするため。
 `report.md` は rule ごとの precision (tp / (tp + fp)) と、今回の findings に
 現れなくなった **stale** ラベル数を記録する (#656)。precision は info を除くヒットのうち `tp` / `fp` のラベルが付いたものだけで
-計算し、**CHK001 は 45%、CHK003 は 90%、CHK004 は 95%、CHK006 / CHK010 は 90% を
+計算し、**CHK001 は 50%、CHK003 は 90%、CHK004 は 95%、CHK006 は 70%、CHK010 は 90% を
 下限**として gate にかける (#701、#1065)。件数の gate では、件数を変えずに誤検知が増える精度低下を検出
 できないため。下限は計測時の precision を 5 の倍数に切り下げた値。CHK002 は上の
 FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の下限なので、
@@ -1476,7 +1476,11 @@ FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の
 慣習 (airflow の DAG file、#1062) で gate が決まらないようにするため。当初の下限 25% は、
 Django の URLconf の `include("pkg.urls")` が import edge にならず、app の module の
 多くが到達不能に見えたためで、`include()` を辿るようにして 30.2% から 48.1% になったので
-45% に上げた (#1094)。下の oracle でも測る (#1065)。`--fix --allow-remove-files` が
+45% に上げた (#1094)。すべてのヒットにラベルを付けると 53.5% なので 50% にした。CHK006 の
+90% は library project で測った値で、library mode の公開名は info でヒットに数えない。
+app mode の project ごとに 8 件ラベルを付けると 74.8% (app mode だけでは約 3 割。settings の
+名前、dotted string、登録 decorator) なので 70% にし、gate が app mode も測るようにした。
+下の oracle でも測る (#1065)。`--fix --allow-remove-files` が
 実際に消すのは severity によらず `certain` の CHK001 だけ (ADR 0003) なので、これは
 別の gate にする。`certain` の CHK001 はすべてラベルが付いていること (unknown /
 deferred が 1 件でもあれば失敗)、precision が 100% であること (`info-expected` も
