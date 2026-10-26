@@ -935,6 +935,37 @@ fn django_format_module_path_marks_the_locale_formats() {
     );
 }
 
+/// Only a `formats.py` under the `FORMAT_MODULE_PATH` prefix is a format
+/// module: another file there, or a `formats.py` elsewhere, is not (#1239).
+#[test]
+fn django_format_modules_are_the_formats_files_under_the_prefix() {
+    let hints = django_project(&[
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"acme.conf\")\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/conf.py",
+            "INSTALLED_APPS = [\"acme\"]\nFORMAT_MODULE_PATH = [\"acme.formats\"]\n",
+        ),
+        ("acme/formats/__init__.py", ""),
+        ("acme/formats/en/__init__.py", ""),
+        ("acme/formats/en/formats.py", "DATE_FORMAT = \"j N Y\"\n"),
+        ("acme/formats/en/helpers.py", "def pad():\n    pass\n"),
+        ("acme/reports/__init__.py", ""),
+        ("acme/reports/formats.py", "CSV = \"csv\"\n"),
+    ]);
+    let contrib = django_contrib(&hints);
+    let formats: Vec<&str> = contrib
+        .settings_modules
+        .iter()
+        .map(String::as_str)
+        .filter(|module| module.starts_with("acme.formats") || module.starts_with("acme.reports"))
+        .collect();
+    assert_eq!(formats, ["acme.formats.en.formats"]);
+}
+
 /// pytest-django's ini option names the settings module (#979).
 #[test]
 fn django_settings_module_from_the_pytest_config() {
