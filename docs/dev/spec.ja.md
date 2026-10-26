@@ -1462,10 +1462,10 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 誤検知の ground truth は `scripts/oss-fixtures.labels.tsv` に `fp`/`tp`/`deferred`
 で記録し、**CHK002** の未分類 (unknown + deferred) が残ると FP gate は通らない。
 manifest の app mode CHK001 corpus の節 (CHK001 を測るために足した Django app、
-#1065) の CHK002 は FP 率を記録するだけで gate に入れない。その誤検知の大半は、
-settings が文字列で名指す backend (`STORAGES`、`CACHES`、`DATABASES` の `ENGINE`、
-`PASSWORD_HASHERS`) と、docker や shell からだけ起動する CLI の依存で起きる。どちらも
-chokkin がまだ読まない形なので、gate に入れると既知の gap を測ることになるため。
+#1065) の CHK002 は FP 率を記録するだけで gate に入れない。settings が文字列で名指す
+backend の driver は runtime peer として読むようになった (#1240、46.0% → 34.1%) が、
+残る誤検知の大半は docker や shell からだけ起動する CLI の依存で、chokkin がまだ読まない
+形なので、gate に入れると既知の gap を測ることになるため。
 orchestration plugin の節 (Dagster / Prefect / Scrapy の利用側 project、#1057) も
 同じ理由で記録だけにする。誤検知は `profiles.yml` の `type:` が名指す dbt adapter と、
 `dg dev` が起動する `dagster-webserver` で、どちらも chokkin がまだ読まない。
