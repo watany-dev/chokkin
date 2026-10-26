@@ -33,8 +33,16 @@ const REGISTRATION_DECORATOR_SUFFIXES: &[&str] = &[
     // Celery.
     "shared_task",
     "task",
-    // click / typer.
+    // click / typer; `@cli.group()` nests a group under `cli`.
     "command",
+    "group",
+    // `@admin.register`, `@atexit.register`, `@functools.singledispatch`'s
+    // `.register`; `register_*` names are matched below.
+    "register",
+    // flask-restful `@api.representation("application/json")`.
+    "representation",
+    // SQLAlchemy `@event.listens_for(Engine, "after_execute")`.
+    "listens_for",
 ];
 
 /// Collect symbols that must be treated as used without import references.
@@ -166,8 +174,8 @@ pub(super) fn dynamically_fetched_classes<'a>(
 }
 
 /// Whether a normalized decorator name registers its target: any
-/// `pytest.mark.*`, a pluggy marker, or a listed suffix with or without a
-/// receiver.
+/// `pytest.mark.*`, a pluggy marker, a `register_*` or `*_handler` name, or a
+/// listed suffix with or without a receiver.
 fn is_registration_decorator(name: &str) -> bool {
     if name.starts_with("pytest.mark.") {
         return true;
@@ -178,6 +186,13 @@ fn is_registration_decorator(name: &str) -> bool {
     REGISTRATION_DECORATOR_SUFFIXES.contains(&suffix)
         || suffix.ends_with("hookimpl")
         || suffix.ends_with("hookspec")
+        // A project's own registry decorators (#1238, #1223): weblate's
+        // `@register_notification` and `@register_hook`, wger's
+        // `@register_handler`, netbox's `@register_search`.
+        || suffix.starts_with("register_")
+        // flask-login `@login_manager.unauthorized_handler`, FastAPI
+        // `@app.exception_handler(...)`.
+        || suffix.ends_with("_handler")
 }
 
 #[cfg(test)]
@@ -213,6 +228,15 @@ mod tests {
             "hookimpl",
             "pm.hookspec",
             "local_settings_hookspec",
+            "cli.group",
+            "admin.register",
+            "api.representation",
+            "event.listens_for",
+            "listens_for",
+            "register_notification",
+            "registry.register_search",
+            "login_manager.unauthorized_handler",
+            "app.exception_handler",
         ] {
             assert!(is_registration_decorator(name), "{name}");
         }
@@ -227,6 +251,11 @@ mod tests {
             "shared_task_wrapper",
             "app.tasks",
             "hookimpl_wrapper",
+            "registered",
+            "preregister_hook",
+            "handler",
+            "handlers",
+            "groups",
         ] {
             assert!(!is_registration_decorator(name), "{name}");
         }

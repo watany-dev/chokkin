@@ -216,6 +216,55 @@ fn pluggy_hooks_are_external() {
     );
 }
 
+/// Registry decorators hand the symbol to a framework or a project's own
+/// registry, which calls it without a name reference (#1238, #698, #1223).
+#[test]
+fn registration_decorators_are_external() {
+    let report = analyze_fixture("registration_decorators");
+    for (module, name) in [
+        ("acme.notifications", "ToDoNotification"),
+        ("acme.handlers", "admin"),
+        ("acme.handlers", "json_representation"),
+        ("acme.handlers", "after_execute"),
+        ("acme.handlers", "redirect_to_login"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    for (module, name) in [
+        ("acme.notifications", "UnusedNotification"),
+        ("acme.handlers", "dead_helper"),
+    ] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+}
+
+/// ansible reads a module's doc strings from its AST (#1223).
+#[test]
+fn ansible_module_doc_strings_are_external() {
+    let report = analyze_fixture("ansible_modules");
+    for name in ["DOCUMENTATION", "EXAMPLES", "RETURN"] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, "ansible.modules.ping", name),
+            "{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(
+            &report,
+            RuleId::Chk006,
+            "ansible.modules.ping",
+            "UNUSED_CONSTANT"
+        ),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn fastapi_route_and_websocket_handlers_are_external() {
     let report = analyze_fixture("fastapi_websocket");
