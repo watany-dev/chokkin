@@ -213,12 +213,10 @@ pub(super) fn config_star_symbols(
         if entries.contains(module.path.as_str()) {
             seeds.extend(star_imports(module));
         }
-        if parts.contains(module.path.as_str())
-            && let Some(name) = module_names.get(module.path.as_str())
-        {
-            seeds.push(name.as_str());
-        }
         if let Some(name) = module_names.get(module.path.as_str()) {
+            if parts.contains(module.path.as_str()) {
+                seeds.push(name.as_str());
+            }
             star_targets
                 .entry(name.as_str())
                 .or_default()

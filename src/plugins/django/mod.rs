@@ -86,6 +86,13 @@ struct SettingsModule {
     /// The first place it is set in a form that is not a literal, or a
     /// setter that could not be read.
     unread: Option<(String, Option<u32>)>,
+    /// The same for the environment files, which only explain a missing
+    /// settings module after `unread`.
+    env_unread: Option<(String, Option<u32>)>,
+    /// A setter or pytest config sets it: a Django project, not a reusable
+    /// app. An environment file alone does not say so, since a reusable app
+    /// may ship a `.env.example` for its demo.
+    in_setters: bool,
 }
 
 /// Where module names resolve: the discovered sources, and the directory the
@@ -127,8 +134,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let settings_module = read_settings_module(ctx, has_manage, &mut contrib);
     // A Django project, not a reusable app that only depends on Django: its
     // settings decide what runs, so failing to find them is a gap (#914).
-    let is_project =
-        has_manage || !settings_module.literals.is_empty() || settings_module.unread.is_some();
+    let is_project = has_manage || settings_module.in_setters;
     if !is_project && !manifest_has_dependency(ctx.manifest, "django") {
         return (contrib, warnings);
     }
@@ -323,8 +329,17 @@ fn read_settings_module(
     {
         literal(&mut found, module, &file, None);
     }
-    for setting in settings_env::read(root, project_dirs(ctx)) {
-        literal(&mut found, setting.value, &setting.file, Some(setting.line));
+    found.in_setters = !found.literals.is_empty() || found.unread.is_some();
+    let dirs =
+        project_dirs(ctx).filter(|dir| !dir.split('/').any(|part| EXAMPLE_DIRS.contains(&part)));
+    for setting in settings_env::read(root, dirs) {
+        if is_dotted_identifier(&setting.value) {
+            literal(&mut found, setting.value, &setting.file, Some(setting.line));
+        } else {
+            found
+                .env_unread
+                .get_or_insert((setting.file, Some(setting.line)));
+        }
     }
     found
 }
@@ -342,7 +357,7 @@ fn missing_settings(found: &SettingsModule) -> (String, Option<u32>, SettingsUnr
             },
         );
     }
-    if let Some((file, line)) = &found.unread {
+    if let Some((file, line)) = found.unread.as_ref().or(found.env_unread.as_ref()) {
         return (
             file.clone(),
             *line,
@@ -947,14 +962,19 @@ fn module_path(
 /// The directory a nested setter imports the settings module from: Django
 /// puts the directory of `manage.py` on `sys.path`, as pytest does for a
 /// `conftest.py` and Python for a `runtests.py` script, and `wsgi.py` /
-/// `asgi.py` sit in the project package beside it. A root setter needs none.
+/// `asgi.py` sit in the project package beside it. An environment file
+/// (`.env`, a compose file, a Dockerfile) sits where the project starts, as
+/// `manage.py` does. A root setter needs none.
 fn setter_dir(setter: &str) -> Option<String> {
     let path = Path::new(setter);
     let dir = path.parent();
     let own_dir = path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "manage.py" | "conftest.py" | "runtests.py"));
+        .is_some_and(|name| {
+            matches!(name, "manage.py" | "conftest.py" | "runtests.py")
+                || Path::new(name).extension().is_none_or(|ext| ext != "py")
+        });
     let dir = if own_dir {
         dir
     } else {
@@ -1061,5 +1081,7 @@ mod tests {
         assert_eq!(setter_dir("site/manage.py").as_deref(), Some("site"));
         assert_eq!(setter_dir("site/proj/wsgi.py").as_deref(), Some("site"));
         assert_eq!(setter_dir("proj/wsgi.py"), None);
+        assert_eq!(setter_dir("web/.env").as_deref(), Some("web"));
+        assert_eq!(setter_dir("web/Dockerfile").as_deref(), Some("web"));
     }
 }

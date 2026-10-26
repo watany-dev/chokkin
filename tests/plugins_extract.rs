@@ -782,6 +782,7 @@ fn django_settings_module_from_the_environment_files() {
     // A variable is never expanded: with no settings found, it is the gap,
     // and the warning names the file and line, not the rest of the file.
     let hints = django_project(&[
+        ("manage.py", "import django\n"),
         (
             ".env",
             "SECRET_KEY=hunter2\nDJANGO_SETTINGS_MODULE=${SETTINGS}\n",
@@ -795,6 +796,13 @@ fn django_settings_module_from_the_environment_files() {
             "plugin: django: `.env:2` sets DJANGO_SETTINGS_MODULE in a form that could not be read, and no settings.py was found; unused files and dependencies are reported below certain"
         ]
     );
+
+    // An environment file alone does not make a reusable app a project.
+    let hints = django_project(&[
+        (".env.example", "DJANGO_SETTINGS_MODULE=\n"),
+        ("acme/__init__.py", ""),
+    ]);
+    assert_eq!(hints.warnings, []);
 }
 
 /// A sample project under `examples/` and a `settings.py` that sets no

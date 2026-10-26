@@ -26,7 +26,6 @@ pub(super) struct EnvSetting {
     pub value: String,
 }
 
-/// The kinds of file read, each with its own line form.
 #[derive(Clone, Copy)]
 enum Kind {
     Dotenv,
@@ -36,23 +35,26 @@ enum Kind {
 
 /// Every value set in the dotenv files, compose files and Dockerfiles of
 /// each directory in `dirs` (root-relative, `""` for the root), in that
-/// order per directory.
+/// order per directory; a line that names the key in another form gives an
+/// empty value.
 pub(super) fn read<'a>(root: &Path, dirs: impl Iterator<Item = &'a str>) -> Vec<EnvSetting> {
     let mut found = Vec::new();
     for dir in dirs {
+        let listed = listed(root, dir);
         let files = DOTENV_NAMES
             .iter()
             .map(|name| ((*name).to_owned(), Kind::Dotenv))
-            .chain(
-                listed(root, dir, is_compose_file)
-                    .into_iter()
-                    .map(|name| (name, Kind::Compose)),
-            )
-            .chain(
-                listed(root, dir, is_dockerfile)
-                    .into_iter()
-                    .map(|name| (name, Kind::Dockerfile)),
-            );
+            .chain(listed.into_iter().filter_map(|name| {
+                let path = Path::new(&name);
+                let kind = if is_compose_file(path) {
+                    Kind::Compose
+                } else if is_dockerfile(path) {
+                    Kind::Dockerfile
+                } else {
+                    return None;
+                };
+                Some((name, kind))
+            }));
         for (name, kind) in files {
             let file = if dir.is_empty() {
                 name
@@ -76,6 +78,9 @@ pub(super) fn read<'a>(root: &Path, dirs: impl Iterator<Item = &'a str>) -> Vec<
                     Kind::Compose => compose_value(&line),
                     Kind::Dockerfile => dockerfile_value(&line),
                 };
+                // A line that names the key in a form not read is set in a
+                // way not read, never dropped (ADR 0005).
+                let value = value.or_else(|| names_key(&line).then(String::new));
                 if let Some(value) = value {
                     found.push(EnvSetting {
                         file: file.clone(),
@@ -89,15 +94,21 @@ pub(super) fn read<'a>(root: &Path, dirs: impl Iterator<Item = &'a str>) -> Vec<
     found
 }
 
-/// The files directly in `dir` that `keep` accepts, sorted.
-fn listed(root: &Path, dir: &str, keep: fn(&Path) -> bool) -> Vec<String> {
+/// Whether `line`, not a comment, names the key at all.
+fn names_key(line: &str) -> bool {
+    let line = line.trim_start();
+    !line.starts_with('#') && line.contains(KEY)
+}
+
+/// The files directly in `dir`, sorted.
+fn listed(root: &Path, dir: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
         return Vec::new();
     };
     let mut names: Vec<String> = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.is_file() && keep(path))
+        .filter(|path| path.is_file())
         .filter_map(|path| Some(path.file_name()?.to_str()?.to_owned()))
         .collect();
     names.sort();
@@ -268,6 +279,14 @@ mod tests {
         for (line, expected) in cases {
             assert_eq!(dockerfile_value(line).as_deref(), expected, "{line}");
         }
+    }
+
+    #[test]
+    fn other_lines_naming_the_key_are_set_in_a_form_not_read() {
+        assert!(names_key("export\tDJANGO_SETTINGS_MODULE=mysite.prod"));
+        assert!(names_key("      - DJANGO_SETTINGS_MODULE"));
+        assert!(!names_key("# DJANGO_SETTINGS_MODULE=mysite.old"));
+        assert!(!names_key("SECRET_KEY=x"));
     }
 
     #[test]
