@@ -489,6 +489,54 @@ fn misplaced_opt_in_imports_are_info() {
     assert_eq!(summary("pyspark"), (Severity::Warning, Confidence::Certain));
 }
 
+/// #1242: a subpackage named after a library the project does not require
+/// integrates it, a management command runs only when invoked, and a
+/// `find_spec` flag guards like `try`.
+#[test]
+fn misplaced_integration_and_command_imports_are_info() {
+    let report = reconcile_fixture("misplaced_integrations");
+    let summary = |name: &str| {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        (candidate.severity, candidate.confidence)
+    };
+    for name in ["ragas", "openai", "minio", "numpy"] {
+        assert_eq!(
+            summary(name),
+            (Severity::Info, Confidence::Likely),
+            "{name}"
+        );
+    }
+    // `requests` is a runtime dependency, so `clients/requests/` is the
+    // package's own code; `rich` is imported outside the flag too; and
+    // `scorers/base.py` is beside the `ragas` integration, not in it.
+    for name in ["instructor", "rich", "tqdm"] {
+        assert_eq!(
+            summary(name),
+            (Severity::Warning, Confidence::Certain),
+            "{name}"
+        );
+    }
+}
+
+/// #1242: a member that is all integration (the llama-index snowflake
+/// reader) is opted into by installing it, so what it imports is required.
+#[test]
+fn misplaced_imports_of_an_integration_member_stay_warnings() {
+    let report = reconcile_fixture("misplaced_integration_member");
+    // Member `acme` requires `ragas` itself, so `acme/scorers/ragas/` is its
+    // own code although the root lists `ragas` only as dev.
+    for name in ["sqlalchemy", "openai"] {
+        let candidate = candidate_for_distribution(&report, RuleId::Chk005, name)
+            .unwrap_or_else(|| panic!("{name} misplaced"));
+        assert_eq!(
+            (candidate.severity, candidate.confidence),
+            (Severity::Warning, Confidence::Certain),
+            "{name}"
+        );
+    }
+}
+
 /// #731: pytest and `IPython` load their plugins themselves, and a variable
 /// holding the sniffio result guards like the call.
 #[test]

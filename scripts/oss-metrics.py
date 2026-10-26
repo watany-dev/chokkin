@@ -195,8 +195,10 @@ FP_GATE_PCT = 5
 # measured on library projects, where a public name is info rather than a hit;
 # labelling 8 hits of each app-mode project measured 74.8% (app mode alone
 # about a third: settings names, dotted strings, registration decorators), so
-# the floor is now 70 and the gate covers app mode (#1238).
-PRECISION_FLOORS = {"CHK001": 50, "CHK003": 90, "CHK004": 95, "CHK006": 70, "CHK010": 90}
+# the floor is now 70 and the gate covers app mode (#1238). CHK010 measured
+# 90.0% with no margin; #1242 moved two guarded tp hits to info (89.8%), so its
+# floor is 89 rather than the multiple of 5 below, which would give up 5 points.
+PRECISION_FLOORS = {"CHK001": 50, "CHK003": 90, "CHK004": 95, "CHK006": 70, "CHK010": 89}
 # Floors over `certain` findings only (#1094), which --fix acts on. A file
 # --fix --allow-remove-files deletes while it is in use breaks the project, so
 # CHK001's floor is every one: a `certain` false positive is a bug to fix, not
