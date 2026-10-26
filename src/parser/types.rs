@@ -420,6 +420,10 @@ pub struct ParsedModule {
     /// `named_loads` after the cache, so it is never stored.
     #[serde(skip)]
     pub config_objects: Vec<DynamicImport>,
+    /// Top-level functions that store what they decorate in a container and
+    /// return it, directly or through the decorator they return (#1223).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub registry_decorators: Vec<String>,
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,

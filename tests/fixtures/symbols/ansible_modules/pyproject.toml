@@ -1,0 +1,9 @@
+[project]
+name = "ansible-modules"
+version = "0.1.0"
+
+[tool.setuptools.packages.find]
+where = ["lib"]
+
+[project.scripts]
+ansible-ping = "ansible.modules.ping:main"

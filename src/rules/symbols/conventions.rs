@@ -28,6 +28,10 @@ const ALEMBIC_NAMES: &[&str] = &[
     "downgrade",
 ];
 
+/// The string constants `ansible-doc` and the docs build read from a module
+/// file's AST (#1223): nothing imports a module for them.
+const ANSIBLE_DOC_NAMES: &[&str] = &["DOCUMENTATION", "EXAMPLES", "RETURN"];
+
 /// The PEP 517 and PEP 660 hooks a frontend calls on a build backend.
 const BUILD_BACKEND_HOOKS: &[&str] = &[
     "build_wheel",
@@ -71,7 +75,7 @@ pub(super) fn scanned_files(plugins: &PluginHints) -> HashSet<&str> {
 }
 
 /// Names a framework reads by convention from the modules it loads by path:
-/// alembic's revisions and Django's migrations.
+/// alembic's revisions, Django's migrations and ansible's modules.
 pub(super) fn convention_symbols(
     plugins: &PluginHints,
     modules: &[&ParsedModule],
@@ -79,7 +83,39 @@ pub(super) fn convention_symbols(
 ) -> Vec<SymbolId> {
     let mut symbols = alembic_symbols(plugins, modules, module_names);
     symbols.extend(django_migration_symbols(plugins, modules, module_names));
+    symbols.extend(ansible_doc_symbols(modules, module_names));
     symbols
+}
+
+/// `DOCUMENTATION` / `EXAMPLES` / `RETURN` in an ansible module: a file under
+/// `ansible/modules/` (ansible-core's `lib/ansible/modules/`) or
+/// `plugins/modules/` (a collection). ansible parses the file and reads the
+/// strings without importing it. Upper-case constants elsewhere stay reported.
+fn ansible_doc_symbols(
+    modules: &[&ParsedModule],
+    module_names: &HashMap<&str, String>,
+) -> Vec<SymbolId> {
+    modules
+        .iter()
+        .filter(|module| is_ansible_module(&module.path))
+        .filter_map(|module| module_names.get(module.path.as_str()))
+        .flat_map(|owner| {
+            ANSIBLE_DOC_NAMES
+                .iter()
+                .map(move |name| SymbolId::new(owner.clone(), *name))
+        })
+        .collect()
+}
+
+fn is_ansible_module(path: &str) -> bool {
+    let dirs: Vec<_> = Path::new(path)
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .map(std::path::Component::as_os_str)
+        .collect();
+    dirs.windows(2)
+        .any(|pair| pair[1] == "modules" && (pair[0] == "ansible" || pair[0] == "plugins"))
 }
 
 /// alembic's revision attributes and hooks in a module under `versions/`
@@ -434,6 +470,26 @@ mod tests {
             "db/versions/a1.py",
             &["down_revision", "upgrade"]
         )));
+    }
+
+    #[test]
+    fn ansible_module_is_under_ansible_or_plugins_modules() {
+        for path in [
+            "lib/ansible/modules/apt.py",
+            "ansible_collections/ns/col/plugins/modules/thing.py",
+            "plugins/modules/sub/thing.py",
+        ] {
+            assert!(is_ansible_module(path), "{path}");
+        }
+        for path in [
+            "lib/ansible/module_utils/basic.py",
+            "lib/ansible/plugins/lookup/file.py",
+            "pkg/modules/thing.py",
+            "plugins/modules.py",
+            "modules/plugins/thing.py",
+        ] {
+            assert!(!is_ansible_module(path), "{path}");
+        }
     }
 
     #[test]

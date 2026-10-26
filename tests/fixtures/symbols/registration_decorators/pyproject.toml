@@ -1,0 +1,7 @@
+[project]
+name = "registration-decorators"
+version = "0.1.0"
+dependencies = ["blinker", "click", "flask-login", "flask-restful", "sqlalchemy"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
