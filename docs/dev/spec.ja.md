@@ -594,7 +594,7 @@ INSTALLED_APPS の project app の apps.py / models / admin / templatetags / man
 
 settings を読めないことは gap にする (§11、#914)。Django project であること、つまり root に `manage.py` があるか、`DJANGO_SETTINGS_MODULE` を設定する file (environment の file を除く) があることを条件にする。django を依存に持つだけの reusable app は自分の settings を持たないので、settings が見つからなくても gap にしない。`migrations/**/*.py` の framework-used は settings の有無によらず置く。Django は INSTALLED_APPS にある app すべての migrations を読むので、reusable app (DRF の `authtoken/migrations/`) の migrations も使われる。settings が見つかった project では origin を settings file に、見つからなければ gap の file、reusable app なら Django を宣言した行にする。gap になるのは、settings module も `settings.py` も見つからないとき (`DJANGO_SETTINGS_MODULE` の literal が project の file でない、literal でない形で設定している、`manage.py` が何も設定していない、の順に理由を選ぶ)、settings module と辿った star import 先の file を読めないか、発見していない file で parse できないとき (発見した file の構文エラーは parse の skip が報告する)、そして `ROOT_URLCONF` / `INSTALLED_APPS` / `MIDDLEWARE` のどれかが辿った file のどこにもなく、かつ project の file に解決できないか 16 file の上限で辿らなかった star import があるか (`django-configurations` の基底 class のように、そこで設定しているかもしれない)、辿った file が `include()` / `exec()` / `run_path()` か名前空間の `.update()` を呼ぶとき (両方あれば star import を名指しする)。URLconf が実行時に作った文字列を `include()` するときも gap にする (#1094、最初の 1 件を名指しする)。3 つとも設定していれば、star import や呼び出しが値を足していても gap にしない。literal でない `DJANGO_SETTINGS_MODULE` でも `settings.py` の候補が見つかればそれを読むので gap にしない。literal が project の file でなくても候補があれば同じにする。理由は `` plugin: django: … ; unused files and dependencies are reported below certain `` の warning で出す。
 
-`MIDDLEWARE` は文字列 literal list として読み、literal list でなければ partial parse 警告を出す。`INSTALLED_APPS` は settings の file ごとに、代入 (`=`、型注釈付き)、`+=`、`.append()` / `.insert()` / `.extend()` で足した値をすべて読む (#1127)。関数や class の本体の中も読む (実行されるかを決めず、足しうる app として数える)。読む値は文字列、その list / tuple、`+` での連結、`*` での展開、`list()` / `tuple()`、同じ file で同じ形で組み立てた名前 (`INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS`、名前への `+=` なども辿る) で、`INSTALLED_APPS` 自身への言及はそこまでに足した値とみなす。別の名前を通した追加 (`apps = INSTALLED_APPS; apps.append(...)`) は辿らず、gap にもしない (settings でこう書く例を見ていない)。`.remove()` などの取り除きは辿らず、取り除かれた app も入っているとみなす (未使用 file を隠すだけで誤検出は出さない)。それ以外の形 (呼び出しの結果、同じ file に無い名前、`from .base import INSTALLED_APPS` のような名前の import、subscript への代入、unpacking、`*=` など) が残れば、読めた値は使い、最初の読めない行を `INSTALLED_APPS` の settings gap・warning にする (ADR 0005)。どの app を入れたか分からないので、どの project file の CHK001 も言い切れない。追加の import 設定は `src/plugins/django/settings_refs.rs` の `IMPORT_PATHS` で定義する (#1003)。`AUTHENTICATION_BACKENDS` / `PASSWORD_HASHERS` / `DATABASE_ROUTERS` の list・tuple、`DEFAULT_FILE_STORAGE` / `STATICFILES_STORAGE` / `EMAIL_BACKEND` / `SESSION_ENGINE` / `TEST_RUNNER` / `FORM_RENDERER` / `CSRF_FAILURE_VIEW` の文字列、`AUTH_PASSWORD_VALIDATORS[*].NAME`、`STORAGES.*.BACKEND`、`TEMPLATES[*].BACKEND` と `OPTIONS` の `context_processors` / `libraries` / `builtins`、`LOGGING` の handler の `class` と handler・filter・formatter の `()` を module reference にする。nested container は literal の値だけを読み、storage の bucket 名など他の option は third-party import とみなさない。値が計算式や名前、container の展開などで読み切れなければ、読めた literal は残し、その field と行を示す settings gap・warning を出す (ADR 0005)。省略された optional key は gap にしない。
+`MIDDLEWARE` は文字列 literal list として読み、literal list でなければ partial parse 警告を出す。`INSTALLED_APPS` は settings の file ごとに、代入 (`=`、型注釈付き)、`+=`、`.append()` / `.insert()` / `.extend()` で足した値をすべて読む (#1127)。関数や class の本体の中も読む (実行されるかを決めず、足しうる app として数える)。読む値は文字列、その list / tuple、`+` での連結、`*` での展開、`list()` / `tuple()`、同じ file で同じ形で組み立てた名前 (`INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS`、名前への `+=` なども辿る) で、`INSTALLED_APPS` 自身への言及はそこまでに足した値とみなす。別の名前を通した追加 (`apps = INSTALLED_APPS; apps.append(...)`) は辿らず、gap にもしない (settings でこう書く例を見ていない)。`.remove()` などの取り除きは辿らず、取り除かれた app も入っているとみなす (未使用 file を隠すだけで誤検出は出さない)。それ以外の形 (呼び出しの結果、同じ file に無い名前、`from .base import INSTALLED_APPS` のような名前の import、subscript への代入、unpacking、`*=` など) が残れば、読めた値は使い、最初の読めない行を `INSTALLED_APPS` の settings gap・warning にする (ADR 0005)。どの app を入れたか分からないので、どの project file の CHK001 も言い切れない。追加の import 設定は `src/plugins/django/settings_refs.rs` の `IMPORT_PATHS` で定義する (#1003)。`AUTHENTICATION_BACKENDS` / `PASSWORD_HASHERS` / `DATABASE_ROUTERS` の list・tuple、`DEFAULT_FILE_STORAGE` / `STATICFILES_STORAGE` / `EMAIL_BACKEND` / `SESSION_ENGINE` / `TEST_RUNNER` / `FORM_RENDERER` / `CSRF_FAILURE_VIEW` の文字列、`AUTH_PASSWORD_VALIDATORS[*].NAME`、`STORAGES.*.BACKEND`、`DATABASES.*.ENGINE`、`CACHES.*.BACKEND` (#1240)、`TEMPLATES[*].BACKEND` と `OPTIONS` の `context_processors` / `libraries` / `builtins`、`LOGGING` の handler の `class` と handler・filter・formatter の `()` を module reference にする。nested container は literal の値だけを読み、storage の bucket 名など他の option は third-party import とみなさない。値が計算式や名前、container の展開などで読み切れなければ、読めた literal は残し、その field と行を示す settings gap・warning を出す (ADR 0005)。省略された optional key は gap にしない。ただし `DATABASES` と `CACHES` の読めない値は、project 全体の settings gap ではなく、その設定の backend が読み込む driver だけを下げる gap にする (UnreadBackendSetting)。backend の文字列が選ぶのは driver (下の runtime peer の表で `settings` にその設定を持つ distribution) と、表に無い設定と同じく拾う first-party の backend だけで、app も URLconf も変えないため。`dj_database_url.config()` や環境変数で `ENGINE` を組む settings は多く (babybuddy、saleor、wger)、project 全体を下げると無関係な依存の certain まで消える。warning も driver だけを下げると書く (`` plugin: django: settings `mysite/settings.py:3` sets `DATABASES` in a form that could not be fully read; the drivers its backends load are reported below certain ``)。runtime peer の provider になる driver の peer (`CACHES` の redis に対する hiredis) も同じく下げる。`DATABASES["default"].update(...)` のような method 呼び出しによる変更は代入ではないので読まず、gap にもしない (`INSTALLED_APPS` 以外の field と同じ扱い)。
 
 表に無い設定も、代入の右辺にある dotted path の文字列 literal が発見した first-party module または `module.attr` (module が存在するもの) を指せば module reference にする。`BUILTIN_PLUGINS` / `PRIVATE_FILE_STORAGE` / `CELERY_BROKER_TRANSPORT` のような独自設定も `--production` で辿れる。module-level の `if` / `try` 等の block、型注釈付き代入、`+=`、`STORAGES['default']['BACKEND'] = ...` のような literal key・index による更新も読む。known field の key が計算式なら、右辺の first-party 文字列は拾うが、import slot を決められないので field の gap にする。関数・class・lambda 本体と dict の key は読まない。各 reference の origin は settings file・文字列の行・field 名にし、`--explain` の根拠にも使う。first-party に解決できない文字列は参照にしない。任意の設定は import を表すとは限らず、存在しない first-party module も隠さないため gap にもしない。表に無い field の計算式そのものは評価しない。これらの設定は、辿った star import 先からも同じように読む。
 
@@ -775,7 +775,21 @@ runtime peer (例: python-multipart)
      (accelerate は transformers。device_map="auto" で transformers が読む、#984)
      transformers の model/tokenizer/audio backend、evaluate の metric backend、
      datasets の archive backend、torchmetrics の COCO backend、inspect-ai の
-     provider/plugin も同じ表で扱う。project と PEP 723 の両 scope に適用する
+     provider/plugin、redis-py の hiredis parser、python-lsp-server の plugin
+     も同じ表で扱う。project と PEP 723 の両 scope に適用する
+  -> module が読み込む peer は、その module かその下の名前の使用で used 扱い
+     (#1240)。settings の文字列も import と同じく使用に数えるので、`DATABASES`
+     の `django.db.backends.postgresql` は psycopg / psycopg2 を、`CACHES` の
+     `django.core.cache.backends.redis.RedisCache` は redis を、`STORAGES` の
+     `storages.backends.s3boto3` は boto3 を、`PASSWORD_HASHERS` の
+     `Argon2PasswordHasher` は argon2-cffi を、`import lxml.cssselect` は
+     cssselect を使う。親 package (`django.db.backends`) と名前が前方一致する
+     だけの兄弟 module は使用にしない。peer が別の peer の provider なら
+     (CACHES の redis と hiredis) それも used にする
+  -> 表は `data/package-map.seed.json` の `runtime_peers` に 1 行ずつ出典と
+     置き、`make check-generated` で `src/resolver/bundled/runtime_peers.rs`
+     に生成する (#1002)。used にした理由は finding が無いので `--explain` に
+     出ない
   -> provider自体が未使用なら、peerも併せてunused報告する
 
 
@@ -998,6 +1012,7 @@ runtime 側の同じ行がある (ArchiveRuntimeRequirement) -> 上に加えて�
 PEP 723 script の import を distribution に解決できない (UnresolvedScriptImport) -> その script の CHK002 を likely 以下に
 task file / tool config の command が、どの entry も届かない Python code を実行する (UnreadCommandTarget) -> CHK001 を likely 以下に
 Django project の settings を見つけられないか読めない (UnreadDjangoSettings) -> CHK001 と distribution の CHK002 を likely 以下に
+Django の `DATABASES` / `CACHES` の値を読めない (UnreadBackendSetting) -> その設定の backend が読み込む driver の CHK002 を likely 以下に
 Sphinx の `extensions` を読み切れない (UnreadSphinxExtensions) -> CHK001 と distribution の CHK002 を likely 以下に
 root の uv path source の directory に `[project]` を持つ `pyproject.toml` が無い (UnreadPathSource) -> その directory の下の file の CHK001 を likely 以下に、その下の import の CHK003 / CHK004 と、その下から import された distribution の CHK005 を info / maybe に
 同じ directory の下の file が distribution を import する (UnreadPathSourceImport) -> その distribution の CHK002 を likely 以下に
@@ -1447,10 +1462,10 @@ exit   : 検証セットでunused dependencyの誤検知率 5%未満、
 誤検知の ground truth は `scripts/oss-fixtures.labels.tsv` に `fp`/`tp`/`deferred`
 で記録し、**CHK002** の未分類 (unknown + deferred) が残ると FP gate は通らない。
 manifest の app mode CHK001 corpus の節 (CHK001 を測るために足した Django app、
-#1065) の CHK002 は FP 率を記録するだけで gate に入れない。その誤検知の大半は、
-settings が文字列で名指す backend (`STORAGES`、`CACHES`、`DATABASES` の `ENGINE`、
-`PASSWORD_HASHERS`) と、docker や shell からだけ起動する CLI の依存で起きる。どちらも
-chokkin がまだ読まない形なので、gate に入れると既知の gap を測ることになるため。
+#1065) の CHK002 は FP 率を記録するだけで gate に入れない。settings が文字列で名指す
+backend の driver は runtime peer として読むようになった (#1240、46.0% → 34.1%) が、
+残る誤検知の大半は docker や shell からだけ起動する CLI の依存で、chokkin がまだ読まない
+形なので、gate に入れると既知の gap を測ることになるため。
 orchestration plugin の節 (Dagster / Prefect / Scrapy の利用側 project、#1057) も
 同じ理由で記録だけにする。誤検知は `profiles.yml` の `type:` が名指す dbt adapter と、
 `dg dev` が起動する `dagster-webserver` で、どちらも chokkin がまだ読まない。
