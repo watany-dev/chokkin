@@ -429,13 +429,10 @@ impl Gap {
                     |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, self.image_dir())),
                 )
             },
-            (GapKind::UnreadBackendSetting, IssueSubject::Distribution { name }) => {
-                self.target.as_deref().is_some_and(|setting| {
-                    RUNTIME_PEERS
-                        .iter()
-                        .any(|entry| entry.peer == name && entry.settings.contains(&setting))
-                })
-            },
+            (GapKind::UnreadBackendSetting, IssueSubject::Distribution { name }) => self
+                .target
+                .as_deref()
+                .is_some_and(|setting| setting_may_load(setting, name)),
             (GapKind::UnresolvedRelativeImport, IssueSubject::File { path }) => {
                 self.target.as_deref().is_some_and(|dir| is_under(path, dir))
             },
@@ -470,6 +467,20 @@ impl Gap {
             None => format!("`{}`", self.file),
         }
     }
+}
+
+/// Whether a backend `setting` may select `peer`, or a driver that provides
+/// it (`hiredis` for the cache backend's `redis`).
+fn setting_may_load(setting: &str, peer: &str) -> bool {
+    let selects = |peer: &str| {
+        RUNTIME_PEERS
+            .iter()
+            .any(|entry| entry.peer == peer && entry.settings.contains(&setting))
+    };
+    selects(peer)
+        || RUNTIME_PEERS.iter().any(|entry| {
+            entry.peer == peer && entry.providers.iter().any(|provider| selects(provider))
+        })
 }
 
 /// Gaps that can affect a finding.

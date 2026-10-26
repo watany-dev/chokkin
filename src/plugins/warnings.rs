@@ -38,6 +38,21 @@ pub enum PluginsWarning {
         /// What could not be found or read.
         reason: SettingsUnread,
     },
+    /// A Django backend setting (`DATABASES`, `CACHES`) is set in a form not
+    /// read, so the driver its backend loads is unknown (#1240).
+    #[error(
+        "plugin: django: settings `{site}` sets `{field}` in a form that could not be fully read; the drivers its backends load are reported below certain"
+    )]
+    DjangoBackendUnread {
+        /// Root-relative settings file.
+        path: String,
+        /// The line of the unread value.
+        line: Option<u32>,
+        /// The setting.
+        field: String,
+        /// Where, as `path:line`.
+        site: String,
+    },
     /// A Sphinx `conf.py`, or a module it star-imports, sets `extensions` in
     /// a form not read or star-imports a module not followed, so the
     /// extensions it loads are not all known (#1062).

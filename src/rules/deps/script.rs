@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use super::companions::used_companions;
+use super::companions::{used_companions, used_modules};
 use super::unused::is_conditional;
 use super::used::{sorted_paths, within};
 use crate::config::Confidence;
@@ -77,11 +77,7 @@ pub(super) fn detect_script_dependency_issues(
             .iter()
             .filter_map(|import| used_distribution(import, &declared, import_map))
             .collect();
-        let modules: BTreeSet<&str> = all_imports
-            .iter()
-            .filter(|import| import.origin == ModuleOrigin::ThirdParty)
-            .map(|import| import.full_module.as_str())
-            .collect();
+        let modules = used_modules(all_imports.iter().copied(), parsed);
         imports.retain(|import| {
             import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some()
         });

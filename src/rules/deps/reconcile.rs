@@ -316,7 +316,7 @@ pub(crate) fn member_indexes(
 
 fn mark_companion_distributions(
     declared: &DeclaredIndex<'_>,
-    modules: &BTreeSet<&str>,
+    modules: &BTreeSet<String>,
     used: &mut IndexSet<String>,
 ) {
     let declared: Vec<&str> = declared.keys().map(String::as_str).collect();

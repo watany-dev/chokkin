@@ -456,6 +456,11 @@ fn django_unread_backend_settings_name_their_setting() {
             .map(|unread| unread.backend.as_deref())
             .collect();
         assert_eq!(backends, [backend], "{field}");
+        let backend_warning = hints.warnings.iter().any(|warning| {
+            matches!(warning, PluginsWarning::DjangoBackendUnread { path, line: Some(2), .. }
+                if path == "mysite/settings.py")
+        });
+        assert_eq!(backend_warning, backend.is_some(), "{field}");
     }
     // An omitted ENGINE is Django's default, not an unread value.
     let hints = django_project(&[(

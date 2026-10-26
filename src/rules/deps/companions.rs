@@ -1,9 +1,34 @@
 //! Dependencies consumed by an imported library rather than by its caller.
 
 use std::collections::BTreeSet;
+use std::ops::Bound;
 
+use crate::graph::ModuleOrigin;
 use crate::manifest::normalize_distribution_name;
-use crate::resolver::RUNTIME_PEERS;
+use crate::parser::ParsedModule;
+use crate::resolver::{RUNTIME_PEERS, ResolvedImport};
+
+/// Modules a scope uses, whose runtime peers they load: each third-party
+/// import's module and, for a `from` import of one, the name below it, which
+/// may be a submodule (`from lxml import cssselect`) or a backend class.
+pub(super) fn used_modules<'a>(
+    imports: impl IntoIterator<Item = &'a ResolvedImport>,
+    parsed: impl IntoIterator<Item = &'a ParsedModule>,
+) -> BTreeSet<String> {
+    let mut modules: BTreeSet<String> = imports
+        .into_iter()
+        .filter(|import| import.origin == ModuleOrigin::ThirdParty)
+        .map(|import| import.full_module.clone())
+        .collect();
+    let names: Vec<String> = parsed
+        .into_iter()
+        .flat_map(|module| &module.imports)
+        .filter(|import| modules.contains(&import.module))
+        .filter_map(|import| Some(format!("{}.{}", import.module, import.name.as_ref()?)))
+        .collect();
+    modules.extend(names);
+    modules
+}
 
 /// The `declared` distributions used as a companion of a used one, shared by
 /// project and PEP 723 scopes. A peer can be a provider itself (a cache
@@ -11,7 +36,7 @@ use crate::resolver::RUNTIME_PEERS;
 pub(super) fn used_companions<'a>(
     declared: &[&'a str],
     used: impl Fn(&str) -> bool,
-    modules: &BTreeSet<&str>,
+    modules: &BTreeSet<String>,
 ) -> Vec<&'a str> {
     let mut found: Vec<&str> = Vec::new();
     loop {
@@ -38,7 +63,7 @@ pub(super) fn used_companions<'a>(
 /// third-party modules the scope uses, so a peer a module loads is used with
 /// it: Django's Postgres backend named in `DATABASES` uses `psycopg`, an
 /// import of `lxml.cssselect` uses `cssselect`.
-fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet<&str>) -> bool {
+fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet<String>) -> bool {
     name.strip_prefix("types-")
         .or_else(|| name.strip_suffix("-stubs"))
         .is_some_and(|runtime| used(&normalize_distribution_name(runtime)))
@@ -53,9 +78,9 @@ fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet
 }
 
 /// Whether `modules` has `module` or a name below it.
-fn uses_module(modules: &BTreeSet<&str>, module: &str) -> bool {
+fn uses_module(modules: &BTreeSet<String>, module: &str) -> bool {
     modules
-        .range(module..)
+        .range::<str, _>((Bound::Included(module), Bound::Unbounded))
         .take_while(|used| used.starts_with(module))
         .any(|used| used.len() == module.len() || used[module.len()..].starts_with('.'))
 }
@@ -93,7 +118,8 @@ mod tests {
     #[test]
     fn a_used_module_uses_the_peers_it_loads() {
         let used = |modules: &[&'static str], name: &str| {
-            companion_is_used(name, |_| false, &modules.iter().copied().collect())
+            let modules = modules.iter().map(|module| (*module).to_owned()).collect();
+            companion_is_used(name, |_| false, &modules)
         };
         assert!(used(&["django.db.backends.postgresql"], "psycopg"));
         assert!(used(&["django.db.backends.postgresql"], "psycopg2-binary"));
@@ -115,7 +141,7 @@ mod tests {
 
     #[test]
     fn a_peer_a_module_loads_uses_its_own_peers() {
-        let modules = BTreeSet::from(["django.core.cache.backends.redis"]);
+        let modules = BTreeSet::from(["django.core.cache.backends.redis".to_owned()]);
         assert_eq!(
             used_companions(&["hiredis", "redis", "rich"], |_| false, &modules),
             ["redis", "hiredis"]

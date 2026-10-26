@@ -4556,7 +4556,7 @@ fn binary_django_backend_settings_use_their_drivers() {
         "CACHES = {'default': {'BACKEND': 'django.core.cache.backends.redis.RedisCache'}}\n",
         "STORAGES = {'default': {'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage'}}\n",
         "PASSWORD_HASHERS = ['django.contrib.auth.hashers.Argon2PasswordHasher']\n",
-        "from lxml.cssselect import CSSSelector\n",
+        "from lxml import cssselect\n",
     );
     assert_eq!(
         django_backend_chk002(
@@ -4592,6 +4592,20 @@ fn binary_django_unread_backend_setting_lowers_only_its_drivers() {
             ("psycopg2-binary".to_owned(), "likely".to_owned()),
             ("pymemcache".to_owned(), "certain".to_owned()),
             ("rich".to_owned(), "certain".to_owned()),
+        ]
+    );
+    // The cache backend may select `redis`, which loads `hiredis`.
+    let settings = concat!(
+        "import os\n",
+        "INSTALLED_APPS = ['django.contrib.admin']\n",
+        "CACHES = {'default': {'BACKEND': os.environ['CACHE']}}\n",
+    );
+    assert_eq!(
+        django_backend_chk002(settings, &["redis", "hiredis", "psycopg"]),
+        [
+            ("hiredis".to_owned(), "likely".to_owned()),
+            ("psycopg".to_owned(), "certain".to_owned()),
+            ("redis".to_owned(), "likely".to_owned()),
         ]
     );
 }

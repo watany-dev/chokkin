@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use indexmap::IndexSet;
 
+use super::companions::used_modules;
 use crate::graph::{FileId, ModuleOrigin, ProjectGraph};
 use crate::manifest::{LoadedManifest, LockfileGraph, normalize_distribution_name};
 use crate::plugins::PluginHints;
@@ -135,22 +136,26 @@ pub(super) fn collect_used_distributions(
     used
 }
 
-/// Third-party modules the reachable imports and plugin refs use, whose
-/// runtime peers they load (`DATABASES` naming Django's Postgres backend).
-pub(super) fn used_third_party_modules<'a>(
-    context: &RuleContext<'a>,
+/// Modules the reachable imports and plugin refs use, whose runtime peers
+/// they load (`DATABASES` naming Django's Postgres backend).
+pub(super) fn used_third_party_modules(
+    context: &RuleContext<'_>,
     reachable: &HashSet<&str>,
-) -> BTreeSet<&'a str> {
-    context
-        .resolution
-        .imports
-        .iter()
-        .filter(|import| {
-            import.origin == ModuleOrigin::ThirdParty
-                && counts_as_use(import.file.as_str(), reachable, context.graph)
-        })
-        .map(|import| import.full_module.as_str())
-        .collect()
+) -> BTreeSet<String> {
+    let counts = |file: &str| counts_as_use(file, reachable, context.graph);
+    used_modules(
+        context
+            .resolution
+            .imports
+            .iter()
+            .map(AsRef::as_ref)
+            .filter(|import| counts(&import.file)),
+        context
+            .parse
+            .modules
+            .iter()
+            .filter(|module| counts(&module.path)),
+    )
 }
 
 /// Whether an import in `file` is a use: the file is reachable, or it is a
