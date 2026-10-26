@@ -274,6 +274,35 @@ pub(super) fn raises_import_error(body: &[Stmt]) -> bool {
     matches!(exc, Expr::Name(name) if matches!(name.id.as_str(), "ImportError" | "ModuleNotFoundError"))
 }
 
+/// Whether `stmt` calls a function named as raising unless a package is
+/// installed: `_check_dspy_installed()`, `utils.require_torch_available()`
+/// (#1242). The statements after it run only with the package, as after
+/// `if not is_x_available(): raise ImportError(...)`. A `self.` / `cls.`
+/// method checks the object's own feature, as for `is_x_available`.
+#[must_use]
+pub(super) fn is_install_check(stmt: &Stmt) -> bool {
+    let Stmt::Expr(expr) = stmt else {
+        return false;
+    };
+    let Expr::Call(call) = &*expr.value else {
+        return false;
+    };
+    let name = match &*call.func {
+        Expr::Name(name) => name.id.as_str(),
+        Expr::Attribute(attribute) if is_module_path(&attribute.value) => attribute.attr.as_str(),
+        _ => return false,
+    };
+    let Some(rest) = ["check_", "ensure_", "require_", "assert_"]
+        .iter()
+        .find_map(|verb| name.trim_start_matches('_').strip_prefix(verb))
+    else {
+        return false;
+    };
+    ["_installed", "_available"]
+        .iter()
+        .any(|suffix| rest.strip_suffix(suffix).is_some_and(|package| !package.is_empty()))
+}
+
 pub(super) fn string_literal(expr: &Expr) -> Option<&str> {
     match expr {
         Expr::StringLiteral(literal) => Some(literal.value.to_str()),
@@ -504,6 +533,35 @@ mod tests {
     }
 
     /// #713: a method checks the object's own feature, and a finder's
+    /// #1242: mlflow's `_check_dspy_installed()` before `import dspy`.
+    #[test]
+    fn install_checks_are_named_calls_statements() {
+        let check = |source: &str| {
+            let module = ruff_python_parser::parse_module(source).expect("parse");
+            is_install_check(&module.suite()[0])
+        };
+        for source in [
+            "_check_dspy_installed()",
+            "check_torch_available()",
+            "ensure_pandas_installed()",
+            "utils.require_torch_available()",
+            "assert_x_installed(strict=True)",
+        ] {
+            assert!(check(source), "{source}");
+        }
+        for source in [
+            "check_installed()",
+            "check__installed()",
+            "self._check_dspy_installed()",
+            "x = check_dspy_installed()",
+            "check_dspy_version()",
+            "is_dspy_installed()",
+            "check_dspy_installed",
+        ] {
+            assert!(!check(source), "{source}");
+        }
+    }
+
     /// `find_spec` is not `importlib.util.find_spec`.
     #[test]
     fn rejects_methods_and_other_find_specs() {

@@ -25,7 +25,7 @@ use super::exports::extract_exports;
 use super::lines::LineIndex;
 use super::module_guard::{
     async_library_names, availability_test, first_availability_check, guarded_roots,
-    imported_module_guard, is_main_guard_test, raises_import_error, runs_as_main,
+    imported_module_guard, is_install_check, is_main_guard_test, raises_import_error, runs_as_main,
 };
 use super::platform_guard::{
     PlatformModules, imports_platform_alias, is_platform_guard_test, mentions_platform_test,
@@ -971,10 +971,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             self.visit_stmt(stmt);
             // The statements after run only when the test was false, which
             // it cannot be with the package missing (#695, #958).
-            if let Stmt::If(if_stmt) = stmt
-                && raises_import_error(&if_stmt.body)
-                && condition::excluded(&[&*if_stmt.test], None, &|expr| self.installed_leaf(expr))
-            {
+            let raise_guard = matches!(stmt, Stmt::If(if_stmt)
+                if raises_import_error(&if_stmt.body)
+                    && condition::excluded(&[&*if_stmt.test], None, &|expr| self.installed_leaf(expr)));
+            if raise_guard || is_install_check(stmt) {
                 self.gated_depth = gated_depth.saturating_add(1);
             }
         }
@@ -2630,6 +2630,34 @@ if not pandas_installed:
                 ("torch_both", true),
                 ("torch_either", false),
                 ("fallback", false),
+            ]
+        );
+    }
+
+    /// #1242: mlflow's `optimizers/dspy.py` calls `_check_dspy_installed()`
+    /// at top level before `import dspy`; only the statements after it count.
+    #[test]
+    fn install_check_calls_gate_the_statements_after_them() {
+        let parsed = visit_source(
+            "import before
+def checked():
+    import early
+    utils.require_torch_available()
+    import torch
+_check_dspy_installed()
+import dspy
+def run():
+    import inner
+",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("before", false),
+                ("early", false),
+                ("torch", true),
+                ("dspy", true),
+                ("inner", true),
             ]
         );
     }
