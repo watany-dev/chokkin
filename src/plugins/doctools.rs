@@ -117,20 +117,17 @@ fn push_included_sources(
         .python_files()
         .map(|file| (file.path.as_str(), file.context))
         .collect();
-    // Each page once, under the innermost source directory holding it.
+    // Each page once, under the innermost source directory holding it:
+    // outer directories go first, so an inner one overwrites them.
+    let mut source_dirs: Vec<&Path> = confs.iter().filter_map(|(conf, _)| conf.parent()).collect();
+    source_dirs.sort_by_key(|dir| dir.components().count());
     let mut pages: std::collections::BTreeMap<PathBuf, String> = std::collections::BTreeMap::new();
-    for (conf, _) in confs {
-        let Some(source_dir) = conf.parent() else {
-            continue;
-        };
+    for source_dir in source_dirs {
         let source_rel = rel_to_root(root, source_dir);
         let mut found = Vec::new();
         collect_pages(source_dir, &mut found);
         for page in found {
-            let held = pages.entry(page).or_insert_with(|| source_rel.clone());
-            if source_rel.len() > held.len() {
-                held.clone_from(&source_rel);
-            }
+            pages.insert(page, source_rel.clone());
         }
     }
     let mut seen = std::collections::HashSet::new();

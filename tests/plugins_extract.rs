@@ -1867,6 +1867,40 @@ fn sphinx_included_sources_are_entries_in_their_own_context() {
     );
 }
 
+/// A page is a `.rst` or `.md` file outside hidden directories and `_build`,
+/// and a nested source directory resolves its pages' `/` paths: the inner
+/// `conf.py` holds `docs/guide/` (#1239).
+#[test]
+fn sphinx_pages_are_read_under_their_innermost_source_dir() {
+    let include = |target: &str| format!(".. literalinclude:: {target}\n");
+    let hints = project_hints(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("demo/__init__.py", ""),
+        ("demo/guide.py", ""),
+        ("demo/built.py", ""),
+        ("demo/hidden.py", ""),
+        ("demo/text.py", ""),
+        ("docs/conf.py", ""),
+        ("docs/index.rst", "Docs\n====\n"),
+        ("docs/guide/conf.py", ""),
+        ("docs/guide/index.rst", &include("/../../demo/guide.py")),
+        ("docs/_build/index.rst", &include("../../demo/built.py")),
+        ("docs/.cache/index.rst", &include("../../demo/hidden.py")),
+        ("docs/notes.txt", &include("../demo/text.py")),
+    ]);
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let included: Vec<(&str, &str)> = contrib
+        .entries
+        .iter()
+        .filter(|entry| entry.origin.label.starts_with("literalinclude"))
+        .map(|entry| (entry.spec.path.as_str(), entry.origin.file.as_str()))
+        .collect();
+    assert_eq!(included, [("demo/guide.py", "docs/guide/index.rst")]);
+}
+
 /// A `conf.py` that sets `extensions` and another Sphinx setting is the
 /// directory `sphinx-build -c` names, with no root document beside it; a
 /// `conf.py` setting only one of them is some other module (#1239).
