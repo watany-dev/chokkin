@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Django: a database or cache backend named in `DATABASES` (`ENGINE`) or
+  `CACHES` (`BACKEND`), a `STORAGES` backend and a `PASSWORD_HASHERS` entry
+  use the driver they load, so `psycopg` for the PostgreSQL backend, `redis`
+  for `RedisCache`, `boto3` for `storages.backends.s3boto3` and `argon2-cffi`
+  for `Argon2PasswordHasher` are no CHK002. A `DATABASES` / `CACHES` value
+  that is not a literal lowers only those drivers below certain (#1240).
+- `cssselect` is used by an import of `lxml.cssselect`, `hiredis` by a use
+  of `redis`, and the python-lsp-server plugins by a use of
+  `python-lsp-server` (#1240, #1002).
+
 ### Fixed
 - CHK008 no longer reports a CLI that is provided another way (#1241): the
   project's own script (black formatting itself); the `entry` and `id` of a
@@ -17,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `conftest.py` exists (unittest suites use the same names); and isort for a `[tool.isort]` whose `skip_glob` skips every file.
 
 ### Changed
+- The runtime peer table moved from code to `data/package-map.seed.json`,
+  with the reason for each peer beside it (#1002).
 - The corpus gate labels every CHK001 hit and samples app-mode CHK006 and
   CHK005 / CHK007 / CHK008. CHK001's precision floor rises from 45% to 50%
   (measured 53.5%); CHK006's falls from 90% to 70% (measured 74.8%): its 90%

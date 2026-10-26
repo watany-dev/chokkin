@@ -391,14 +391,33 @@ fn push_unread(
         SettingsUnread::UnreadInclude { .. } => Some("include()".to_owned()),
         SettingsUnread::NoSettings | SettingsUnread::Unreadable { .. } => None,
     };
+    let backend = match &reason {
+        SettingsUnread::UnreadField { field, .. }
+            if settings_refs::BACKEND_FIELDS.contains(&field.as_str()) =>
+        {
+            Some(field.clone())
+        },
+        _ => None,
+    };
     contrib.unread_settings.push(UnreadSettings {
         file: file.clone(),
         site: what.map(|what| (what, line)),
+        backend: backend.clone(),
     });
-    warnings.push(PluginsWarning::DjangoSettingsUnread {
-        path: file,
-        line,
-        reason,
+    warnings.push(match (backend, reason) {
+        (Some(field), SettingsUnread::UnreadField { site, .. }) => {
+            PluginsWarning::DjangoBackendUnread {
+                path: file,
+                line,
+                field,
+                site,
+            }
+        },
+        (_, reason) => PluginsWarning::DjangoSettingsUnread {
+            path: file,
+            line,
+            reason,
+        },
     });
 }
 

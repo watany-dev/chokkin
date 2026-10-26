@@ -284,6 +284,7 @@ fn push_unread(contrib: &mut PluginContribution, file: String, what: String, lin
     let unread = UnreadSettings {
         file,
         site: Some((what, Some(line))),
+        backend: None,
     };
     if !contrib.unread_settings.contains(&unread) {
         contrib.unread_settings.push(unread);

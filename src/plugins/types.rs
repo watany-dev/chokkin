@@ -177,6 +177,9 @@ pub struct UnreadSettings {
     /// import, `DJANGO_SETTINGS_MODULE` set in a form not read, or an
     /// `extensions` value.
     pub site: Option<(String, Option<u32>)>,
+    /// The backend setting (`DATABASES`, `CACHES`) whose value was not read:
+    /// it may select any driver the setting loads, and nothing else (#1240).
+    pub backend: Option<String>,
 }
 
 /// Output from one enabled plugin extractor.
