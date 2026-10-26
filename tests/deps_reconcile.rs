@@ -508,8 +508,9 @@ fn misplaced_integration_and_command_imports_are_info() {
         );
     }
     // `requests` is a runtime dependency, so `clients/requests/` is the
-    // package's own code; and `rich` is imported outside the flag too.
-    for name in ["instructor", "rich"] {
+    // package's own code; `rich` is imported outside the flag too; and
+    // `scorers/base.py` is beside the `ragas` integration, not in it.
+    for name in ["instructor", "rich", "tqdm"] {
         assert_eq!(
             summary(name),
             (Severity::Warning, Confidence::Certain),

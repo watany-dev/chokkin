@@ -584,6 +584,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn find_spec_values_are_find_spec_calls_or_their_conjunction() {
+        let value = |source: &str| {
+            let module = ruff_python_parser::parse_module(source).expect("parse");
+            let Stmt::Expr(expr) = &module.suite()[0] else {
+                panic!("{source}")
+            };
+            is_find_spec_value(&expr.value)
+        };
+        for source in [
+            "find_spec('a')",
+            "importlib.util.find_spec('a')",
+            "util.find_spec('a')",
+            "find_spec('a') and importlib.util.find_spec('b')",
+        ] {
+            assert!(value(source), "{source}");
+        }
+        for source in [
+            "find_spec('a') or find_spec('b')",
+            "find_spec('a') and is_b_available()",
+            "is_a_available()",
+            "importlib.util.is_a_available()",
+            "find_spec('a') is not None",
+            "finder.find_spec('a')",
+            "find_spec",
+        ] {
+            assert!(!value(source), "{source}");
+        }
+    }
+
     /// `find_spec` is not `importlib.util.find_spec`.
     #[test]
     fn rejects_methods_and_other_find_specs() {

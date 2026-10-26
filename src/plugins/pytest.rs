@@ -451,7 +451,7 @@ mod tests {
         let root = temp.path();
         std::fs::write(
             root.join("pyproject.toml"),
-            "[tool.pytest]\npythonpath = [\"src\"]\ntestpaths = [\"tests\"]\npython_files = [\"tests.py\"]\naddopts = [\"--import-mode=importlib\"]\n",
+            "[tool.pytest]\npythonpath = [\"src\"]\ntestpaths = [\"tests\"]\naddopts = [\"--import-mode=importlib\"]\n",
         )
         .expect("write pyproject");
         assert_eq!(
@@ -460,9 +460,34 @@ mod tests {
                 pythonpath: vec!["src".to_owned()],
                 importlib: true,
                 testpaths: vec!["tests".to_owned()],
-                python_files: vec!["tests.py".to_owned()],
+                python_files: Vec::new(),
                 django_settings_module: None,
             })
+        );
+    }
+
+    #[test]
+    fn import_settings_read_python_files() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(
+            root.join("pytest.ini"),
+            "[pytest]\npython_files = tests.py check_*.py\n",
+        )
+        .expect("write pytest.ini");
+        assert_eq!(
+            import_settings(root).expect("config").python_files,
+            ["tests.py", "check_*.py"]
+        );
+        std::fs::remove_file(root.join("pytest.ini")).expect("remove pytest.ini");
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[tool.pytest.ini_options]\npython_files = [\"tests.py\"]\n",
+        )
+        .expect("write pyproject");
+        assert_eq!(
+            import_settings(root).expect("config").python_files,
+            ["tests.py"]
         );
     }
 }

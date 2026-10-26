@@ -4,4 +4,4 @@ version = "0.1.0"
 dependencies = ["requests"]
 
 [dependency-groups]
-dev = ["instructor", "minio", "numpy", "openai", "ragas", "rich"]
+dev = ["instructor", "minio", "numpy", "openai", "ragas", "rich", "tqdm"]

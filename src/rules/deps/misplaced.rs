@@ -57,20 +57,13 @@ pub(super) fn detect_misplaced_dependencies(
     let mut reported: HashMap<(String, String), usize> = HashMap::new();
 
     for import in &resolution.imports {
-        if import.origin != ModuleOrigin::ThirdParty || import.never_runs {
+        if !is_runtime_third_party(import, reachable, sources) {
             continue;
         }
+        let usage = UsageContext::Runtime;
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !reachable.contains(import.file.as_str()) {
-            continue;
-        }
-
-        let usage = usage_context_for_import(&import.file, import.context, sources);
-        if usage != UsageContext::Runtime {
-            continue;
-        }
 
         let workspace_member = import.workspace_member.as_deref();
         let declarations = ImportDeclarations::lookup(
@@ -194,6 +187,19 @@ pub(super) fn detect_misplaced_dependencies(
         .into_iter()
         .map(|(candidate, weight, _)| weight.settle().apply(candidate))
         .collect()
+}
+
+/// The imports CHK005 weighs: third-party, able to run, in a reachable file
+/// and used from runtime code.
+fn is_runtime_third_party(
+    import: &ResolvedImport,
+    reachable: &HashSet<&str>,
+    sources: &DiscoveredSources,
+) -> bool {
+    import.origin == ModuleOrigin::ThirdParty
+        && !import.never_runs
+        && reachable.contains(import.file.as_str())
+        && usage_context_for_import(&import.file, import.context, sources) == UsageContext::Runtime
 }
 
 /// How firmly the runtime code needs a dev-only distribution. `--fix` moves it
@@ -456,12 +462,7 @@ fn integration_packages(
     };
     let mut packages: HashMap<String, Option<&str>> = HashMap::new();
     for import in &dependency.rules.resolution.imports {
-        if import.origin != ModuleOrigin::ThirdParty
-            || import.never_runs
-            || !reachable.contains(import.file.as_str())
-            || usage_context_for_import(&import.file, import.context, sources)
-                != UsageContext::Runtime
-        {
+        if !is_runtime_third_party(import, reachable, sources) {
             continue;
         }
         let Some(module) = path_to_module(&import.file, &sources.layout) else {
