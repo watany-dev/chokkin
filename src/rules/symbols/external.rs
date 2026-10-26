@@ -167,12 +167,6 @@ pub(super) fn registered_by(
         .iter()
         .filter_map(|module| Some((module_names.get(module.path.as_str())?.as_str(), *module)))
         .collect();
-    if !by_name
-        .values()
-        .any(|module| !module.registry_decorators.is_empty())
-    {
-        return Vec::new();
-    }
     registry
         .iter()
         .filter(|entry| {

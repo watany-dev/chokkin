@@ -181,6 +181,32 @@ def hook(name, /):
     if name:
         HOOKS.setdefault(name.__name__, name)
     return name
+
+def queued(cls):
+    while not QUEUE:
+        QUEUE.insert(0, cls)
+    return cls
+
+def locked(cls):
+    with LOCK:
+        HANDLERS[cls.name] = cls
+    return cls
+
+def tried(cls):
+    try:
+        CHECKS.add(cls)
+    except KeyError:
+        pass
+    return cls
+
+def tried_else(cls):
+    try:
+        name = cls.name
+    except AttributeError:
+        name = None
+    else:
+        BY_NAME[name] = cls
+    return cls
 "#;
         assert_eq!(
             found(source),
@@ -189,14 +215,18 @@ def hook(name, /):
                 "notification",
                 "register_handler",
                 "register_perm",
-                "hook"
+                "hook",
+                "queued",
+                "locked",
+                "tried",
+                "tried_else",
             ]
         );
     }
 
     #[test]
     fn rejects_wrappers_and_other_shapes() {
-        let source = r"
+        let source = r#"
 def cached(fn):
     @functools.wraps(fn)
     def inner(*args):
@@ -205,6 +235,25 @@ def cached(fn):
 
 def logged(cls):
     logger.info(cls)
+    return cls
+
+def plain_assign(cls):
+    last = cls
+    return cls
+
+def stores_other(cls):
+    REGISTRY[cls.name] = cls.label
+    return cls
+
+def mutates_item(cls):
+    cls.hooks["x"].append(cls)
+    return cls
+
+def in_handler(cls):
+    try:
+        pass
+    except KeyError:
+        FAILED.append(cls)
     return cls
 
 def mutates(cls):
@@ -232,7 +281,7 @@ class Registry:
     def register(self, cls):
         self.items[cls.name] = cls
         return cls
-";
+"#;
         assert!(found(source).is_empty(), "{:?}", found(source));
     }
 }
