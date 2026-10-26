@@ -15,6 +15,7 @@ mod lines;
 mod module_guard;
 mod parse;
 mod platform_guard;
+mod registry;
 mod relative;
 mod server_app;
 mod type_checking;

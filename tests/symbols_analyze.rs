@@ -217,16 +217,21 @@ fn pluggy_hooks_are_external() {
 }
 
 /// Registry decorators hand the symbol to a framework or a project's own
-/// registry, which calls it without a name reference (#1238, #698, #1223).
+/// registry, which calls it without a name reference (#1238, #698, #1223);
+/// a first-party decorator counts when its body stores what it decorates.
 #[test]
 fn registration_decorators_are_external() {
     let report = analyze_fixture("registration_decorators");
     for (module, name) in [
         ("acme.notifications", "ToDoNotification"),
+        ("acme.notifications", "LockNotification"),
+        ("acme.notifications", "check_unit_edit"),
         ("acme.handlers", "admin"),
         ("acme.handlers", "json_representation"),
         ("acme.handlers", "after_execute"),
         ("acme.handlers", "redirect_to_login"),
+        ("acme.handlers", "load_user"),
+        ("acme.handlers", "on_ready"),
     ] {
         assert!(
             !has_symbol_rule(&report, RuleId::Chk006, module, name),
@@ -235,6 +240,7 @@ fn registration_decorators_are_external() {
     }
     for (module, name) in [
         ("acme.notifications", "UnusedNotification"),
+        ("acme.notifications", "traced_but_dead"),
         ("acme.handlers", "dead_helper"),
     ] {
         assert!(

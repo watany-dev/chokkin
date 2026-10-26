@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use indexmap::IndexSet;
 
 use crate::entry::EntryPlan;
-use crate::parser::{ParsedModule, SymbolKind};
+use crate::parser::{ImportRef, ParsedModule, SymbolKind};
 use crate::plugins::PluginHints;
 use crate::sources::{LayoutInfo, path_to_module};
 
@@ -43,6 +43,10 @@ const REGISTRATION_DECORATOR_SUFFIXES: &[&str] = &[
     "representation",
     // SQLAlchemy `@event.listens_for(Engine, "after_execute")`.
     "listens_for",
+    // Celery / blinker signals: `@app.on_after_finalize.connect`.
+    "connect",
+    // flask-login `@login_manager.user_loader`.
+    "user_loader",
 ];
 
 /// Collect symbols that must be treated as used without import references.
@@ -149,6 +153,107 @@ fn named_symbol<'t>(text: &'t str, known: &HashSet<&str>) -> Option<(&'t str, &'
         .map(|(module, rest)| (module, rest.split_once('.').map_or(rest, |(name, _)| name)))
 }
 
+/// Symbols a first-party registry decorator stores (#1223): the decorator
+/// resolves, through the decorated module's imports and up to
+/// [`MAX_REEXPORT_HOPS`] re-exports, to a function the parser recognized as
+/// one ([`ParsedModule::registry_decorators`]). A decorator that resolves to
+/// nothing or to another function leaves the symbol to the other checks.
+pub(super) fn registered_by(
+    registry: &[RegistryEntry],
+    modules: &[&ParsedModule],
+    module_names: &HashMap<&str, String>,
+) -> Vec<SymbolId> {
+    let by_name: HashMap<&str, &ParsedModule> = modules
+        .iter()
+        .filter_map(|module| Some((module_names.get(module.path.as_str())?.as_str(), *module)))
+        .collect();
+    if !by_name
+        .values()
+        .any(|module| !module.registry_decorators.is_empty())
+    {
+        return Vec::new();
+    }
+    registry
+        .iter()
+        .filter(|entry| {
+            let Some(module) = by_name.get(entry.id.module.as_str()) else {
+                return false;
+            };
+            entry.def.decorators.iter().any(|decorator| {
+                decorator_target(&entry.id.module, module, decorator)
+                    .is_some_and(|(owner, name)| is_registrar(&by_name, owner, name))
+            })
+        })
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+/// Re-exports followed from where a decorator is imported to where it is
+/// defined (`from .base import register`).
+const MAX_REEXPORT_HOPS: usize = 3;
+
+/// The `(module, name)` a decorator written in `module` names: a function the
+/// module defines, a `from m import name [as alias]` binding, or an attribute
+/// of a module binding (`@search.register_search`, `@pkg.search.register`).
+fn decorator_target(own: &str, module: &ParsedModule, decorator: &str) -> Option<(String, String)> {
+    if decorator.contains('[') {
+        return None;
+    }
+    let (head, rest) = match decorator.split_once('.') {
+        Some((head, rest)) => (head, Some(rest)),
+        None => (decorator, None),
+    };
+    let import = module
+        .imports
+        .iter()
+        .rev()
+        .find(|import| import.bound_name() == Some(head));
+    let Some(rest) = rest else {
+        return match import.and_then(ImportRef::import_target) {
+            Some((owner, name)) => Some((owner.to_owned(), name.to_owned())),
+            None => module
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == head && symbol.kind == SymbolKind::Function)
+                .then(|| (own.to_owned(), head.to_owned())),
+        };
+    };
+    let import = import?;
+    let base = match (import.import_target(), &import.alias) {
+        (Some((package, name)), _) => format!("{package}.{name}"),
+        (None, Some(_)) => import.module.clone(),
+        (None, None) => head.to_owned(),
+    };
+    let path = format!("{base}.{rest}");
+    let (owner, name) = path.rsplit_once('.')?;
+    Some((owner.to_owned(), name.to_owned()))
+}
+
+/// Whether `owner.name` is a registry decorator, following `from m import
+/// name` re-exports in `owner`.
+fn is_registrar(by_name: &HashMap<&str, &ParsedModule>, owner: String, name: String) -> bool {
+    let (mut owner, mut name) = (owner, name);
+    for _ in 0..=MAX_REEXPORT_HOPS {
+        let Some(module) = by_name.get(owner.as_str()) else {
+            return false;
+        };
+        if module.registry_decorators.contains(&name) {
+            return true;
+        }
+        let Some((next_owner, next_name)) = module
+            .imports
+            .iter()
+            .rev()
+            .filter(|import| import.bound_name() == Some(name.as_str()))
+            .find_map(ImportRef::import_target)
+        else {
+            return false;
+        };
+        (owner, name) = (next_owner.to_owned(), next_name.to_owned());
+    }
+    false
+}
+
 /// Classes a loader may fetch by a computed name: `import_module("pkg." + x)`
 /// reaches every module under `pkg`, and a `getattr(module, <expr>)` on the
 /// result in the same scope can return any class they define (#728).
@@ -197,7 +302,126 @@ fn is_registration_decorator(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_registration_decorator, target_object};
+    use std::collections::HashMap;
+
+    use super::{decorator_target, is_registrar, is_registration_decorator, target_object};
+    use crate::parser::{
+        ImportContext, ImportKind, ImportRef, ParsedModule, SymbolDef, SymbolKind,
+    };
+
+    fn import(
+        kind: ImportKind,
+        module: &str,
+        name: Option<&str>,
+        alias: Option<&str>,
+    ) -> ImportRef {
+        ImportRef {
+            module: module.to_owned(),
+            name: name.map(str::to_owned),
+            alias: alias.map(str::to_owned),
+            line: 1,
+            kind,
+            context: ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            deferred: false,
+            relative_level: 0,
+            fallback_for: Vec::new(),
+            version_minors: None,
+        }
+    }
+
+    fn function(name: &str) -> SymbolDef {
+        SymbolDef {
+            name: name.to_owned(),
+            kind: SymbolKind::Function,
+            line: 1,
+            is_public: true,
+            decorators: Vec::new(),
+            in_type_checking: false,
+            used_in_module: false,
+        }
+    }
+
+    #[test]
+    fn decorator_targets_follow_the_module_bindings() {
+        let module = ParsedModule {
+            imports: vec![
+                import(
+                    ImportKind::ImportFrom,
+                    "app.reg",
+                    Some("register"),
+                    Some("reg"),
+                ),
+                import(ImportKind::ImportFrom, "app", Some("search"), None),
+                import(ImportKind::Import, "app.hooks", None, None),
+                import(ImportKind::Import, "app.perms", None, Some("perms")),
+            ],
+            symbols: vec![function("local"), function("Other")],
+            ..ParsedModule::default()
+        };
+        for (decorator, target) in [
+            ("reg", Some(("app.reg", "register"))),
+            (
+                "search.register_search",
+                Some(("app.search", "register_search")),
+            ),
+            ("app.hooks.hook", Some(("app.hooks", "hook"))),
+            ("perms.perm", Some(("app.perms", "perm"))),
+            ("local", Some(("app.views", "local"))),
+            ("unknown", None),
+            ("unknown.attr", None),
+            ("apps[].route", None),
+        ] {
+            let found = decorator_target("app.views", &module, decorator);
+            assert_eq!(
+                found.as_ref().map(|(m, n)| (m.as_str(), n.as_str())),
+                target,
+                "{decorator}"
+            );
+        }
+    }
+
+    #[test]
+    fn registrars_are_found_through_reexports() {
+        let defining = ParsedModule {
+            registry_decorators: vec!["register".to_owned()],
+            ..ParsedModule::default()
+        };
+        let reexporting = ParsedModule {
+            imports: vec![import(
+                ImportKind::ImportFrom,
+                "app.base",
+                Some("register"),
+                None,
+            )],
+            ..ParsedModule::default()
+        };
+        let by_name: HashMap<&str, &ParsedModule> =
+            [("app.base", &defining), ("app", &reexporting)]
+                .into_iter()
+                .collect();
+        assert!(is_registrar(
+            &by_name,
+            "app.base".to_owned(),
+            "register".to_owned()
+        ));
+        assert!(is_registrar(
+            &by_name,
+            "app".to_owned(),
+            "register".to_owned()
+        ));
+        assert!(!is_registrar(
+            &by_name,
+            "app".to_owned(),
+            "other".to_owned()
+        ));
+        assert!(!is_registrar(
+            &by_name,
+            "missing".to_owned(),
+            "register".to_owned()
+        ));
+    }
 
     #[test]
     fn target_object_drops_the_attribute_path_and_extras() {
@@ -237,6 +461,8 @@ mod tests {
             "registry.register_search",
             "login_manager.unauthorized_handler",
             "app.exception_handler",
+            "app.on_after_finalize.connect",
+            "login_manager.user_loader",
         ] {
             assert!(is_registration_decorator(name), "{name}");
         }

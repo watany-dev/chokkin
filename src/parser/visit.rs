@@ -31,6 +31,7 @@ use super::platform_guard::{
     PlatformModules, imports_platform_alias, is_platform_guard_test, mentions_platform_test,
     platform_modules,
 };
+use super::registry::registry_decorators;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
 use super::server_app::ServerNames;
 use super::type_checking::is_type_checking_test;
@@ -302,6 +303,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     pub(super) fn visit_module(&mut self, source: &str, stmts: &'ast [Stmt]) {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
+        self.parsed.registry_decorators = registry_decorators(stmts);
         self.async_library_names = self.scope_async_library_names(None, stmts);
         // Without a plain `sys.platform`-style mention, only an aliased
         // import (`import sys as s`) can make a platform test, so most

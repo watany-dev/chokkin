@@ -25,7 +25,7 @@ use super::conventions::{
 };
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
 use super::external::{
-    collect_external_symbols, dynamically_fetched_classes, string_named_symbols,
+    collect_external_symbols, dynamically_fetched_classes, registered_by, string_named_symbols,
 };
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
 use super::public::{PublicApi, exports_reexport, is_public_module};
@@ -111,6 +111,7 @@ pub fn analyze_with_context(
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
     external_symbols.extend(convention_symbols(plugins, &surface_modules, &module_names));
     external_symbols.extend(dynamically_fetched_classes(&registry, &reachable_modules));
+    external_symbols.extend(registered_by(&registry, &reachable_modules, &module_names));
     external_symbols.extend(string_named_symbols(
         &reachable_modules,
         &module_names,
