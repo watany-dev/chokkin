@@ -125,7 +125,7 @@ pub enum SysPathImporter {
 }
 
 /// `module:symbol` reference (uvicorn, gunicorn, etc.).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolReference {
     /// Dotted module name.
     pub module: String,
@@ -256,6 +256,10 @@ pub struct PluginHints {
     pub config_provided_binaries: Vec<String>,
     /// Module references from generic config scanning (pytest `-p`, mypy plugins, PDM `call`).
     pub config_module_refs: Vec<ModuleReference>,
+    /// Classes command options name by path, such as celery's `--scheduler`
+    /// (#1239); like [`PluginContribution::used_symbols`], the module
+    /// reference is the entry root.
+    pub config_used_symbols: Vec<SymbolReference>,
     /// Scripts CI workflows, local pre-commit hooks and agent skill docs run
     /// by path (#797).
     pub config_script_entries: Vec<ScriptReference>,
@@ -301,6 +305,7 @@ impl PluginHints {
         self.contributions
             .iter()
             .flat_map(|contrib| contrib.used_symbols.iter())
+            .chain(self.config_used_symbols.iter())
     }
 
     /// Iterate all imports whose `sys.path` edits the importer sees.

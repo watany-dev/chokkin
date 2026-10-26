@@ -12,13 +12,14 @@ use crate::manifest::{DependencyContext, normalize_distribution_name};
 use crate::path_util::rel_to_root;
 use crate::resolver::{VenvIndex, build_binary_map};
 
-use super::commands::{KnownBinary, SourceHits, command_binaries, command_target_refs};
+use super::commands::{KnownBinary, SourceHits};
 use super::config_text::{
     PyprojectDoc, leading_spaces, logical_lines, origin_at, read_root_file, toml_key_line,
 };
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, CommandTargetRef, ModuleReference, ReferenceOrigin, ScriptReference,
+    SymbolReference,
 };
 use super::{ci_installs, script_entries, task_files, tool_plugins};
 
@@ -48,6 +49,9 @@ pub(super) struct ConfigScanResult {
     /// Python code task files and tool configs run (#913).
     #[serde(default)]
     pub command_targets: Vec<CommandTargetRef>,
+    /// Classes command options name by path (#1239).
+    #[serde(default)]
+    pub used_symbols: Vec<SymbolReference>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
@@ -164,6 +168,8 @@ fn merge_hits(
     }
     result.module_refs.extend(hits.module_refs);
     result.command_targets.extend(hits.command_targets);
+    result.declared_distributions.extend(hits.installed);
+    result.used_symbols.extend(hits.used_symbols);
 }
 
 fn scan_mkdocs_config(
@@ -859,7 +865,7 @@ fn scan_shell_scripts(
 
 /// Python and other non-shell files under `scripts/` / `bin/` are read by the
 /// parser or not at all; their words are not commands (#494).
-fn is_shell_script(path: &Path, contents: &str) -> bool {
+pub(super) fn is_shell_script(path: &Path, contents: &str) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("sh" | "bash" | "zsh" | "ksh") => true,
         Some(_) => false,
@@ -900,15 +906,16 @@ fn push_command(
     known: KnownBinary<'_>,
     origin: &ReferenceOrigin,
 ) {
-    for binary in command_binaries(command, known) {
-        if binary == "sphinx-build" {
-            push_distribution(result, "sphinx");
-        }
-        push_binary(result, seen, &binary, origin.clone());
+    let mut hits = SourceHits::default();
+    hits.push_command(command, known, origin);
+    if hits
+        .binaries
+        .iter()
+        .any(|usage| usage.binary == "sphinx-build")
+    {
+        push_distribution(result, "sphinx");
     }
-    result
-        .command_targets
-        .extend(command_target_refs(command, origin));
+    merge_hits(result, seen, hits);
 }
 
 fn push_binary(

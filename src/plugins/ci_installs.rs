@@ -72,7 +72,7 @@ pub(super) fn scan(root: &Path) -> Vec<String> {
 
 /// Distributions a shell command installs with `pip install`, `uv pip
 /// install`, `python -m pip install`, `pipx install` or `uv tool install`.
-fn installed_distributions(command: &str) -> Vec<String> {
+pub(super) fn installed_distributions(command: &str) -> Vec<String> {
     let command = without_expressions(command).replace("\\\n", " ");
     let mut found = Vec::new();
     let lines = command.lines().map(strip_shell_comment);

@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (measured 53.5%); CHK006's falls from 90% to 70% (measured 74.8%): its 90%
   was measured on library projects, where public names are only info.
 
+### Fixed
+- Commands read their arguments where they load code: `celery flower`
+  uses flower, `celery worker -P gevent` and `gunicorn -k gevent` use
+  gevent (a dotted worker class is a module and a used class), celery's
+  `--scheduler` names a module and a used class, and pytest's `--ds` names
+  the settings module. A distribution a command `pip install`s is no CHK008
+  (#1240, #1241, #1239).
+
 ## [0.7.10] - 2026-10-25
 
 ### Added

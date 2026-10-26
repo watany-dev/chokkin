@@ -139,6 +139,7 @@ pub fn extract_plugin_hints_with_parse(
         config_declared_distributions: scan.declared_distributions,
         config_provided_binaries: scan.provided_binaries,
         config_module_refs: module_refs,
+        config_used_symbols: scan.used_symbols,
         config_script_entries: scan.script_entries,
         config_command_targets: command_targets,
         warnings,
