@@ -100,8 +100,8 @@ const INCLUDE_DIRECTIVES: [&str; 2] = ["literalinclude", "include"];
 /// a page may show a slice of a runtime module (`:pyobject:`), which stays
 /// runtime code.
 ///
-/// The pages are the `.rst`, `.md` and `.txt` files under each `conf.py`'s
-/// directory, walked as git sees them. A path is relative to the page, or
+/// The pages are the `.rst` and `.md` files under each `conf.py`'s
+/// directory ([`collect_pages`]). A path is relative to the page, or
 /// with a leading `/` to the source directory, as Sphinx resolves it. A
 /// target that is no discovered `.py` file (a data file, a path outside the
 /// project) adds nothing and lowers nothing: the directive only shows text,
@@ -117,27 +117,19 @@ fn push_included_sources(
         .python_files()
         .map(|file| (file.path.as_str(), file.context))
         .collect();
-    let mut pages = std::collections::BTreeSet::new();
+    // Each page once, under the innermost source directory holding it.
+    let mut pages: std::collections::BTreeMap<PathBuf, String> = std::collections::BTreeMap::new();
     for (conf, _) in confs {
         let Some(source_dir) = conf.parent() else {
             continue;
         };
-        for entry in ignore::WalkBuilder::new(source_dir)
-            .follow_links(false)
-            .build()
-            .flatten()
-        {
-            let path = entry.path();
-            let is_page = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| {
-                    ["rst", "md", "txt"]
-                        .iter()
-                        .any(|page| ext.eq_ignore_ascii_case(page))
-                });
-            if is_page && entry.file_type().is_some_and(|kind| kind.is_file()) {
-                pages.insert((path.to_path_buf(), rel_to_root(root, source_dir)));
+        let source_rel = rel_to_root(root, source_dir);
+        let mut found = Vec::new();
+        collect_pages(source_dir, &mut found);
+        for page in found {
+            let held = pages.entry(page).or_insert_with(|| source_rel.clone());
+            if source_rel.len() > held.len() {
+                held.clone_from(&source_rel);
             }
         }
     }
@@ -146,6 +138,10 @@ fn push_included_sources(
         let Ok(text) = std::fs::read_to_string(&page) else {
             continue;
         };
+        // Most pages include nothing; skip their lines unread.
+        if memchr::memmem::find(text.as_bytes(), b"include").is_none() {
+            continue;
+        }
         let page_rel = rel_to_root(root, &page);
         let page_dir = page_rel.rsplit_once('/').map_or("", |(dir, _)| dir);
         for (index, line) in text.lines().enumerate() {
@@ -174,6 +170,41 @@ fn push_included_sources(
                     label: format!("{directive} in {page_rel}"),
                 },
             });
+        }
+    }
+}
+
+/// The `.rst` and `.md` files under `dir`, skipping hidden
+/// directories and Sphinx's `_build` output. A plain listing rather than a
+/// git-aware walk: a source directory holds few files, and ~100 airflow
+/// providers each re-reading their parents' ignore files cost a measurable
+/// share of the run.
+fn collect_pages(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if kind.is_dir() {
+            if !name.starts_with('.') && name != "_build" {
+                collect_pages(&path, out);
+            }
+        } else if kind.is_file()
+            && path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    ["rst", "md"]
+                        .iter()
+                        .any(|page| ext.eq_ignore_ascii_case(page))
+                })
+        {
+            out.push(path);
         }
     }
 }
