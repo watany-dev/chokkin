@@ -1497,6 +1497,12 @@
       "imports": [
         "xdist"
       ]
+    },
+    {
+      "distribution": "django-split-settings",
+      "imports": [
+        "split_settings"
+      ]
     }
   ],
   "auto_packages": [
@@ -1659,5 +1665,397 @@
     "xlsxwriter",
     "xmltodict",
     "zstandard"
+  ],
+  "runtime_peers": [
+    {
+      "peer": "python-multipart",
+      "providers": [
+        "starlette",
+        "fastapi"
+      ],
+      "source": "starlette Request.form() imports python_multipart"
+    },
+    {
+      "peer": "accelerate",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers device_map=\"auto\" imports accelerate (#984)"
+    },
+    {
+      "peer": "torch",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers model backend"
+    },
+    {
+      "peer": "sentencepiece",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers slow tokenizers"
+    },
+    {
+      "peer": "protobuf",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers sentencepiece tokenizer conversion"
+    },
+    {
+      "peer": "timm",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers vision backbones"
+    },
+    {
+      "peer": "librosa",
+      "providers": [
+        "transformers",
+        "datasets"
+      ],
+      "source": "transformers / datasets audio decoding"
+    },
+    {
+      "peer": "torchaudio",
+      "providers": [
+        "transformers",
+        "datasets"
+      ],
+      "source": "transformers / datasets audio decoding"
+    },
+    {
+      "peer": "torchvision",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers image processors"
+    },
+    {
+      "peer": "kernels",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers hub kernels"
+    },
+    {
+      "peer": "huggingface-hub",
+      "providers": [
+        "transformers"
+      ],
+      "source": "transformers from_pretrained downloads"
+    },
+    {
+      "peer": "scikit-learn",
+      "providers": [
+        "transformers",
+        "evaluate"
+      ],
+      "source": "transformers / evaluate metrics"
+    },
+    {
+      "peer": "scipy",
+      "providers": [
+        "evaluate"
+      ],
+      "source": "evaluate metric backends"
+    },
+    {
+      "peer": "pycocotools",
+      "providers": [
+        "torchmetrics"
+      ],
+      "source": "torchmetrics COCO mAP backend"
+    },
+    {
+      "peer": "py7zr",
+      "providers": [
+        "datasets"
+      ],
+      "source": "datasets 7z archive extraction"
+    },
+    {
+      "peer": "jiwer",
+      "providers": [
+        "evaluate"
+      ],
+      "source": "evaluate wer/cer metrics"
+    },
+    {
+      "peer": "rouge-score",
+      "providers": [
+        "evaluate"
+      ],
+      "source": "evaluate rouge metric"
+    },
+    {
+      "peer": "seqeval",
+      "providers": [
+        "evaluate"
+      ],
+      "source": "evaluate seqeval metric"
+    },
+    {
+      "peer": "sacrebleu",
+      "providers": [
+        "evaluate"
+      ],
+      "source": "evaluate bleu metrics"
+    },
+    {
+      "peer": "openai",
+      "providers": [
+        "inspect-ai"
+      ],
+      "source": "inspect-ai openai model provider"
+    },
+    {
+      "peer": "inspect-evals",
+      "providers": [
+        "inspect-ai"
+      ],
+      "source": "inspect-ai task registry plugin"
+    },
+    {
+      "peer": "hiredis",
+      "providers": [
+        "redis"
+      ],
+      "source": "redis-py picks the hiredis parser when it is installed"
+    },
+    {
+      "peer": "python-lsp-ruff",
+      "providers": [
+        "python-lsp-server"
+      ],
+      "source": "pylsp loads plugins from the pylsp entry point group"
+    },
+    {
+      "peer": "pylsp-mypy",
+      "providers": [
+        "python-lsp-server"
+      ],
+      "source": "pylsp loads plugins from the pylsp entry point group"
+    },
+    {
+      "peer": "python-lsp-black",
+      "providers": [
+        "python-lsp-server"
+      ],
+      "source": "pylsp loads plugins from the pylsp entry point group"
+    },
+    {
+      "peer": "pylsp-rope",
+      "providers": [
+        "python-lsp-server"
+      ],
+      "source": "pylsp loads plugins from the pylsp entry point group"
+    },
+    {
+      "peer": "python-lsp-isort",
+      "providers": [
+        "python-lsp-server"
+      ],
+      "source": "pylsp loads plugins from the pylsp entry point group"
+    },
+    {
+      "peer": "cssselect",
+      "modules": [
+        "lxml.cssselect"
+      ],
+      "source": "lxml.cssselect imports cssselect"
+    },
+    {
+      "peer": "psycopg",
+      "modules": [
+        "django.db.backends.postgresql",
+        "django.db.backends.postgresql_psycopg2",
+        "django.contrib.gis.db.backends.postgis",
+        "django.contrib.postgres",
+        "django_prometheus.db.backends.postgresql",
+        "django_prometheus.db.backends.postgis"
+      ],
+      "source": "Django's PostgreSQL backend and django.contrib.postgres import psycopg or psycopg2",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "psycopg-binary",
+      "modules": [
+        "django.db.backends.postgresql",
+        "django.db.backends.postgresql_psycopg2",
+        "django.contrib.gis.db.backends.postgis",
+        "django.contrib.postgres",
+        "django_prometheus.db.backends.postgresql",
+        "django_prometheus.db.backends.postgis"
+      ],
+      "source": "Django's PostgreSQL backend and django.contrib.postgres import psycopg or psycopg2",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "psycopg2",
+      "modules": [
+        "django.db.backends.postgresql",
+        "django.db.backends.postgresql_psycopg2",
+        "django.contrib.gis.db.backends.postgis",
+        "django.contrib.postgres",
+        "django_prometheus.db.backends.postgresql",
+        "django_prometheus.db.backends.postgis"
+      ],
+      "source": "Django's PostgreSQL backend and django.contrib.postgres import psycopg or psycopg2",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "psycopg2-binary",
+      "modules": [
+        "django.db.backends.postgresql",
+        "django.db.backends.postgresql_psycopg2",
+        "django.contrib.gis.db.backends.postgis",
+        "django.contrib.postgres",
+        "django_prometheus.db.backends.postgresql",
+        "django_prometheus.db.backends.postgis"
+      ],
+      "source": "Django's PostgreSQL backend and django.contrib.postgres import psycopg or psycopg2",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "mysqlclient",
+      "modules": [
+        "django.db.backends.mysql",
+        "django.contrib.gis.db.backends.mysql",
+        "django_prometheus.db.backends.mysql"
+      ],
+      "source": "Django's MySQL backend imports MySQLdb",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "oracledb",
+      "modules": [
+        "django.db.backends.oracle",
+        "django.contrib.gis.db.backends.oracle"
+      ],
+      "source": "Django's Oracle backend imports oracledb or cx_Oracle",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "cx-oracle",
+      "modules": [
+        "django.db.backends.oracle",
+        "django.contrib.gis.db.backends.oracle"
+      ],
+      "source": "Django's Oracle backend imports oracledb or cx_Oracle",
+      "settings": [
+        "DATABASES"
+      ]
+    },
+    {
+      "peer": "redis",
+      "modules": [
+        "django.core.cache.backends.redis",
+        "django_prometheus.cache.backends.redis"
+      ],
+      "source": "Django's RedisCache imports redis",
+      "settings": [
+        "CACHES"
+      ]
+    },
+    {
+      "peer": "pymemcache",
+      "modules": [
+        "django.core.cache.backends.memcached.PyMemcacheCache"
+      ],
+      "source": "Django's PyMemcacheCache imports pymemcache",
+      "settings": [
+        "CACHES"
+      ]
+    },
+    {
+      "peer": "pylibmc",
+      "modules": [
+        "django.core.cache.backends.memcached.PyLibMCCache"
+      ],
+      "source": "Django's PyLibMCCache imports pylibmc",
+      "settings": [
+        "CACHES"
+      ]
+    },
+    {
+      "peer": "argon2-cffi",
+      "modules": [
+        "django.contrib.auth.hashers.Argon2PasswordHasher"
+      ],
+      "source": "Django's Argon2PasswordHasher imports argon2"
+    },
+    {
+      "peer": "bcrypt",
+      "modules": [
+        "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+        "django.contrib.auth.hashers.BCryptPasswordHasher"
+      ],
+      "source": "Django's bcrypt hashers import bcrypt"
+    },
+    {
+      "peer": "jinja2",
+      "modules": [
+        "django.template.backends.jinja2"
+      ],
+      "source": "Django's Jinja2 template backend imports jinja2"
+    },
+    {
+      "peer": "boto3",
+      "modules": [
+        "storages.backends.s3",
+        "storages.backends.s3boto3"
+      ],
+      "source": "django-storages S3 backend imports boto3"
+    },
+    {
+      "peer": "google-cloud-storage",
+      "modules": [
+        "storages.backends.gcloud"
+      ],
+      "source": "django-storages gcloud backend imports google.cloud.storage"
+    },
+    {
+      "peer": "azure-storage-blob",
+      "modules": [
+        "storages.backends.azure_storage"
+      ],
+      "source": "django-storages Azure backend imports azure.storage.blob"
+    },
+    {
+      "peer": "paramiko",
+      "modules": [
+        "storages.backends.sftpstorage"
+      ],
+      "source": "django-storages SFTP backend imports paramiko"
+    },
+    {
+      "peer": "dropbox",
+      "modules": [
+        "storages.backends.dropbox"
+      ],
+      "source": "django-storages Dropbox backend imports dropbox"
+    },
+    {
+      "peer": "apache-libcloud",
+      "modules": [
+        "storages.backends.apache_libcloud"
+      ],
+      "source": "django-storages libcloud backend imports libcloud"
+    }
   ]
 }

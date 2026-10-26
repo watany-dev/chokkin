@@ -195,7 +195,8 @@ impl ProbeWarning {
             Self::Plugin(warning) => match warning {
                 PluginsWarning::PartialSettingsParse { path, .. }
                 | PluginsWarning::PytestConfigUnreadable { path } => (Some(path), None),
-                PluginsWarning::DjangoSettingsUnread { path, line, .. } => (Some(path), *line),
+                PluginsWarning::DjangoSettingsUnread { path, line, .. }
+                | PluginsWarning::DjangoBackendUnread { path, line, .. } => (Some(path), *line),
                 PluginsWarning::SphinxExtensionsUnread { path, line, .. } => {
                     (Some(path), Some(*line))
                 },

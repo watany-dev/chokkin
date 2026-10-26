@@ -20,7 +20,7 @@ use crate::path_util::join_rel;
 use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{
-    ResolveWarning, ResolvedImport, StdlibRange, import_root, is_first_party_import,
+    RUNTIME_PEERS, ResolveWarning, ResolvedImport, StdlibRange, import_root, is_first_party_import,
 };
 use crate::rules::RuleContext;
 use crate::rules::deps::{
@@ -144,6 +144,10 @@ pub enum GapKind {
     /// a module that is not a project file (#914): the apps, middleware and
     /// URL configuration they name are unknown.
     UnreadDjangoSettings,
+    /// A Django backend setting (`DATABASES`, `CACHES`) has a value not read
+    /// (#1240): it may select any driver the setting's backends load, which
+    /// `target` names by setting, and loads no project file.
+    UnreadBackendSetting,
     /// A Sphinx `conf.py`, or a module it star-imports, sets `extensions`
     /// in a form not read, or star-imports a module not followed where
     /// neither assigns `extensions` (#1062): the extensions it loads are
@@ -240,9 +244,11 @@ impl GapKind {
             | (Self::UnknownExtras, RuleId::Chk003 | RuleId::Chk004, IssueSubject::Import { .. })
             | (Self::UnknownExtras, RuleId::Chk005, IssueSubject::Distribution { .. })
             | (Self::UnreadPathSource, RuleId::Chk001, IssueSubject::File { .. })
-            | (Self::UnreadPathSourceImport, RuleId::Chk002, IssueSubject::Distribution { .. }) => {
-                Some(Lowering::Cap(Confidence::Likely))
-            },
+            | (
+                Self::UnreadPathSourceImport | Self::UnreadBackendSetting,
+                RuleId::Chk002,
+                IssueSubject::Distribution { .. },
+            ) => Some(Lowering::Cap(Confidence::Likely)),
             (
                 Self::RuntimeDependenciesUnknown
                 | Self::InvalidRequirement
@@ -334,6 +340,9 @@ impl GapKind {
                  were not read"
             },
             Self::UnreadDjangoSettings => "the Django settings could not be found or read",
+            Self::UnreadBackendSetting => {
+                "a Django backend setting that may select the distribution could not be read"
+            },
             Self::UnreadSphinxExtensions => "the Sphinx `extensions` could not all be read",
             Self::AssumedTargetVersion => {
                 "`requires-python` could not be read, so py311 decided the module is not stdlib"
@@ -420,6 +429,10 @@ impl Gap {
                     |origin| matches!(origin, Origin::Import { file, .. } if is_under(file, self.image_dir())),
                 )
             },
+            (GapKind::UnreadBackendSetting, IssueSubject::Distribution { name }) => self
+                .target
+                .as_deref()
+                .is_some_and(|setting| setting_may_load(setting, name)),
             (GapKind::UnresolvedRelativeImport, IssueSubject::File { path }) => {
                 self.target.as_deref().is_some_and(|dir| is_under(path, dir))
             },
@@ -454,6 +467,20 @@ impl Gap {
             None => format!("`{}`", self.file),
         }
     }
+}
+
+/// Whether a backend `setting` may select `peer`, or a driver that provides
+/// it (`hiredis` for the cache backend's `redis`).
+fn setting_may_load(setting: &str, peer: &str) -> bool {
+    let selects = |peer: &str| {
+        RUNTIME_PEERS
+            .iter()
+            .any(|entry| entry.peer == peer && entry.settings.contains(&setting))
+    };
+    selects(peer)
+        || RUNTIME_PEERS.iter().any(|entry| {
+            entry.peer == peer && entry.providers.iter().any(|provider| selects(provider))
+        })
 }
 
 /// Gaps that can affect a finding.
@@ -935,15 +962,16 @@ fn path_source_gaps(imports: &[Arc<ResolvedImport>], dirs: &[String]) -> Vec<Gap
 /// `sphinx-build` loads may be any module on its path, so the gap lowers the
 /// whole project's findings.
 fn settings_gap(plugin: PluginId, unread: &UnreadSettings) -> Gap {
-    let kind = match plugin {
-        PluginId::Sphinx => GapKind::UnreadSphinxExtensions,
-        _ => GapKind::UnreadDjangoSettings,
+    let kind = match (plugin, &unread.backend) {
+        (PluginId::Sphinx, _) => GapKind::UnreadSphinxExtensions,
+        (_, Some(_)) => GapKind::UnreadBackendSetting,
+        (_, None) => GapKind::UnreadDjangoSettings,
     };
     Gap {
         file: unread.file.clone(),
         kind,
         member: None,
-        target: None,
+        target: unread.backend.clone(),
         site: unread.site.clone(),
     }
 }
@@ -2394,7 +2422,7 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 26] = [
+        const KINDS: [GapKind; 27] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
@@ -2416,6 +2444,7 @@ mod tests {
             GapKind::UnreadPathSourceImport,
             GapKind::UnreadImageTree,
             GapKind::UnreadDjangoSettings,
+            GapKind::UnreadBackendSetting,
             GapKind::UnreadSphinxExtensions,
             GapKind::AssumedTargetVersion,
             GapKind::InvalidScriptRequirement,
@@ -2442,7 +2471,8 @@ mod tests {
                 | GapKind::UnresolvedImport
                 | GapKind::UnresolvedPublicImport
                 | GapKind::UnresolvedScriptImport
-                | GapKind::UnreadPathSourceImport => &[RuleId::Chk002],
+                | GapKind::UnreadPathSourceImport
+                | GapKind::UnreadBackendSetting => &[RuleId::Chk002],
                 GapKind::UnknownExtras
                 | GapKind::RuntimeDependenciesUnknown
                 | GapKind::InvalidRuntimeRequirement => {

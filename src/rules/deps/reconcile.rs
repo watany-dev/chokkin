@@ -17,7 +17,7 @@ use crate::rules::{DependencyRuleContext, RuleContext};
 use crate::sources::PublicSurface;
 
 use super::binary::{BinaryProviders, detect_unlisted_binaries};
-use super::companions::companion_is_used;
+use super::companions::used_companions;
 use super::duplicate::detect_duplicate_dependencies;
 use super::misplaced::{detect_misplaced_dependencies, pytest11_modules};
 use super::missing::{WorkspaceDeclaredIndex, detect_missing_dependencies};
@@ -26,7 +26,7 @@ use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
     DeclaredIndex, build_declared_index, build_import_declared_index, collect_used_distributions,
     has_lockfile, mark_pytest_plugin_distributions, mark_self_referential_distribution,
-    mark_workspace_source_distributions, reachable_paths, usage_paths,
+    mark_workspace_source_distributions, reachable_paths, usage_paths, used_third_party_modules,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -110,7 +110,11 @@ fn reconcile_project(
         &mut used,
     );
 
-    mark_companion_distributions(&declared, &mut used);
+    mark_companion_distributions(
+        &declared,
+        &used_third_party_modules(context, &usage),
+        &mut used,
+    );
 
     let mut candidates = Vec::new();
     let evidence = UnusedEvidenceContext {
@@ -310,12 +314,17 @@ pub(crate) fn member_indexes(
         .contains_key(distribution)
 }
 
-fn mark_companion_distributions(declared: &DeclaredIndex<'_>, used: &mut IndexSet<String>) {
-    let companions: Vec<_> = declared
-        .keys()
-        .filter(|name| companion_is_used(name, |provider| used.contains(provider)))
-        .cloned()
-        .collect();
+fn mark_companion_distributions(
+    declared: &DeclaredIndex<'_>,
+    modules: &BTreeSet<String>,
+    used: &mut IndexSet<String>,
+) {
+    let declared: Vec<&str> = declared.keys().map(String::as_str).collect();
+    let companions: Vec<String> =
+        used_companions(&declared, |provider| used.contains(provider), modules)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
     used.extend(companions);
 }
 

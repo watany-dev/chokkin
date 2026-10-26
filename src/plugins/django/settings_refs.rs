@@ -13,7 +13,11 @@ use super::{LIST_FIELDS, Lookup};
 
 // `*` selects container values, never dict keys. Non-import options such as
 // storage bucket names must not become third-party import evidence (#1003).
+// A database or cache backend loads its driver, a runtime peer of the
+// backend module (#1240).
 const IMPORT_PATHS: &[(&str, &[&str])] = &[
+    ("DATABASES", &["*", "ENGINE"]),
+    ("CACHES", &["*", "BACKEND"]),
     ("AUTHENTICATION_BACKENDS", &["*"]),
     ("PASSWORD_HASHERS", &["*"]),
     ("DATABASE_ROUTERS", &["*"]),
@@ -35,6 +39,10 @@ const IMPORT_PATHS: &[(&str, &[&str])] = &[
     ("LOGGING", &["filters", "*", "()"]),
     ("LOGGING", &["formatters", "*", "()"]),
 ];
+
+/// Fields whose backend only selects runtime peers: a value not read hides
+/// only the drivers it may select, not the project's apps (#1240).
+pub(super) const BACKEND_FIELDS: &[&str] = &["DATABASES", "CACHES"];
 
 pub(super) fn extract(
     lookup: &Lookup,

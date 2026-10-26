@@ -4512,6 +4512,104 @@ fn django_settings_package(manage: &str) -> tempfile::TempDir {
     ])
 }
 
+/// CHK002 `(distribution, confidence)` of an app-mode Django project whose
+/// settings are `settings` and which declares `deps` beside `django`.
+fn django_backend_chk002(settings: &str, deps: &[&str]) -> Vec<(String, String)> {
+    let deps: Vec<_> = deps.iter().map(|dep| format!("'{dep}'")).collect();
+    let pyproject = format!(
+        "[project]\nname = 'mysite'\nversion = '0'\ndependencies = ['django', {}]\n\n[tool.chokkin]\nmode = 'app'\n",
+        deps.join(", ")
+    );
+    let project = write_project(&[
+        ("pyproject.toml", &pyproject),
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n",
+        ),
+        ("mysite/__init__.py", ""),
+        ("mysite/settings.py", settings),
+    ]);
+    let mut found: Vec<_> = json_issues(project.path(), &["--no-cache", "--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            (
+                issue["distribution"]
+                    .as_str()
+                    .expect("distribution")
+                    .to_owned(),
+                issue["confidence"].as_str().expect("confidence").to_owned(),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// A backend a Django setting names loads its driver, which the project
+/// declares without importing (#1240).
+#[test]
+fn binary_django_backend_settings_use_their_drivers() {
+    let settings = concat!(
+        "INSTALLED_APPS = []\n",
+        "DATABASES = {'default': {'ENGINE': 'django.db.backends.postgresql'}}\n",
+        "CACHES = {'default': {'BACKEND': 'django.core.cache.backends.redis.RedisCache'}}\n",
+        "STORAGES = {'default': {'BACKEND': 'storages.backends.s3boto3.S3Boto3Storage'}}\n",
+        "PASSWORD_HASHERS = ['django.contrib.auth.hashers.Argon2PasswordHasher']\n",
+        "from lxml import cssselect\n",
+    );
+    assert_eq!(
+        django_backend_chk002(
+            settings,
+            &[
+                "psycopg",
+                "redis",
+                "hiredis",
+                "django-storages",
+                "boto3",
+                "argon2-cffi",
+                "lxml",
+                "cssselect",
+                "rich",
+            ],
+        ),
+        [("rich".to_owned(), "certain".to_owned())]
+    );
+}
+
+/// A backend setting not read may select any driver it loads, and only those:
+/// other unused dependencies stay certain (#1240).
+#[test]
+fn binary_django_unread_backend_setting_lowers_only_its_drivers() {
+    let settings = concat!(
+        "import os\n",
+        "INSTALLED_APPS = ['django.contrib.admin']\n",
+        "DATABASES = {'default': {'ENGINE': os.environ['DB_ENGINE']}}\n",
+    );
+    assert_eq!(
+        django_backend_chk002(settings, &["psycopg2-binary", "pymemcache", "rich"]),
+        [
+            ("psycopg2-binary".to_owned(), "likely".to_owned()),
+            ("pymemcache".to_owned(), "certain".to_owned()),
+            ("rich".to_owned(), "certain".to_owned()),
+        ]
+    );
+    // The cache backend may select `redis`, which loads `hiredis`.
+    let settings = concat!(
+        "import os\n",
+        "INSTALLED_APPS = ['django.contrib.admin']\n",
+        "CACHES = {'default': {'BACKEND': os.environ['CACHE']}}\n",
+    );
+    assert_eq!(
+        django_backend_chk002(settings, &["redis", "hiredis", "psycopg"]),
+        [
+            ("hiredis".to_owned(), "likely".to_owned()),
+            ("psycopg".to_owned(), "certain".to_owned()),
+            ("redis".to_owned(), "likely".to_owned()),
+        ]
+    );
+}
+
 #[test]
 fn binary_django_import_settings_reach_files_in_production() {
     for setting in [
