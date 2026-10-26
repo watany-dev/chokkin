@@ -1497,6 +1497,12 @@
       "imports": [
         "xdist"
       ]
+    },
+    {
+      "distribution": "django-split-settings",
+      "imports": [
+        "split_settings"
+      ]
     }
   ],
   "auto_packages": [

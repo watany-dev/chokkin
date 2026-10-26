@@ -130,6 +130,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("django-phonenumber-field", &["phonenumber_field"]),
     ("django-simple-history", &["simple_history"]),
     ("django-sortedm2m", &["sortedm2m"]),
+    ("django-split-settings", &["split_settings"]),
     ("django-statici18n", &["statici18n"]),
     ("django-storages", &["storages"]),
     ("django-taggit", &["taggit"]),
