@@ -470,7 +470,12 @@ impl PytestImportPaths {
         let local = if self.search.contains_key(file) {
             self.root_namespaces.contains(root)
         } else {
-            self.scripts.contains(file) && self.has_module(parent_dir(file), root)
+            self.scripts.contains(file)
+                && (self.has_module(parent_dir(file), root)
+                    || self.own_package_top(file) == Some(root)
+                    // A namespace directory there (mlflow's `examples/crewai/`)
+                    // loses to the installed `crewai` package.
+                    || examples_dir(file).is_some_and(|dir| self.find_module(dir, root).is_some()))
         };
         let in_hinted = |dir: &str| {
             self.has_module(dir, root)
@@ -502,6 +507,10 @@ impl PytestImportPaths {
             .then(|| self.find_module(parent_dir(file), module))
             .flatten()
             .or_else(|| self.resolve_in_own_package(file, module))
+            .or_else(|| {
+                let dir = examples_dir(file).filter(|_| self.scripts.contains(file))?;
+                self.find_module(dir, module)
+            })
             .or_else(|| {
                 self.in_root_namespace(file, import_root(module))
                     .then(|| self.find_module("", module))
@@ -549,11 +558,18 @@ impl PytestImportPaths {
             return None;
         }
         let base = basedir(file, &self.files);
-        let inner = parent_dir(file).strip_prefix(base.as_str())?;
-        let top = inner.trim_start_matches('/').split('/').next()?;
-        (import_root(module) == top)
+        (self.own_package_top(file) == Some(import_root(module)))
             .then(|| self.find_module(&base, module))
             .flatten()
+    }
+
+    /// The outermost package around `file`, as its top-level name: werkzeug's
+    /// `examples/coolmagic/views/static.py` sits in `coolmagic` (#1091).
+    fn own_package_top<'f>(&self, file: &'f str) -> Option<&'f str> {
+        let base = basedir(file, &self.files);
+        let inner = parent_dir(file).strip_prefix(base.as_str())?;
+        let top = inner.trim_start_matches('/').split('/').next()?;
+        (!top.is_empty()).then_some(top)
     }
 
     /// The hinted directories of the conftests above `file`, searched after
@@ -630,6 +646,22 @@ fn basedir(path: &str, files: &HashMap<String, String>) -> String {
         dir = parent_dir(dir);
     }
     dir.to_owned()
+}
+
+/// The outermost `examples` directory around `file`, which a demo is run
+/// from (`python examples/manage-coolmagic.py`, or with `examples/` as the
+/// working directory), so the packages in it import by their own names
+/// (#1091).
+fn examples_dir(file: &str) -> Option<&str> {
+    let mut end = 0;
+    for dir in parent_dir(file).split('/') {
+        end += dir.len();
+        if dir == "examples" {
+            return Some(&file[..end]);
+        }
+        end += 1;
+    }
+    None
 }
 
 fn parent_dir(path: &str) -> &str {
@@ -1075,6 +1107,46 @@ mod tests {
             paths.resolve_fallback("tests/pkg/test_y.py", "helpers"),
             None
         );
+    }
+
+    #[test]
+    fn examples_import_their_own_packages_from_the_examples_dir() {
+        let files = [
+            "src/acme/__init__.py",
+            "examples/manage-coolmagic.py",
+            "examples/coolmagic/__init__.py",
+            "examples/coolmagic/utils.py",
+            "examples/coolmagic/views/__init__.py",
+            "examples/coolmagic/views/static.py",
+            "examples/shared/__init__.py",
+            "examples/demo/run.py",
+            "scripts/demo/run.py",
+            "examples/crewai/tracing.py",
+        ];
+        let paths =
+            PytestImportPaths::with_settings(&sources(&files), &PytestImportSettings::default());
+        let view = "examples/coolmagic/views/static.py";
+        assert!(paths.provides_fallback(view, "coolmagic"));
+        assert_eq!(
+            paths.resolve_fallback(view, "coolmagic.utils"),
+            Some("examples/coolmagic/utils.py")
+        );
+        assert!(paths.provides_fallback("examples/demo/run.py", "shared"));
+        assert_eq!(
+            paths.resolve_fallback("examples/demo/run.py", "shared"),
+            Some("examples/shared/__init__.py")
+        );
+        // Outside an examples tree only the script's own directory counts.
+        assert!(!paths.provides_fallback("scripts/demo/run.py", "shared"));
+        assert!(!paths.provides_fallback(view, "other"));
+        // A directory without `__init__.py` is no package to import there.
+        assert!(!paths.provides_fallback("examples/crewai/tracing.py", "crewai"));
+        assert_eq!(
+            examples_dir("a/examples/b/examples/c.py"),
+            Some("a/examples")
+        );
+        assert_eq!(examples_dir("examples.py"), None);
+        assert_eq!(examples_dir("my_examples/x.py"), None);
     }
 
     #[test]

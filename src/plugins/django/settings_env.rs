@@ -1,5 +1,6 @@
 //! `DJANGO_SETTINGS_MODULE` set in the environment Django starts in: dotenv
-//! files, docker-compose `environment:` and Dockerfile `ENV` (#999, #1239).
+//! files, docker-compose `environment:`, Dockerfile `ENV` and a dev
+//! container's `containerEnv` / `remoteEnv` (#999, #1239).
 //!
 //! Only the lines that set `DJANGO_SETTINGS_MODULE` are read; a dotenv file
 //! may hold secrets, so no other line's text leaves this module. Variables
@@ -18,6 +19,10 @@ const KEY: &str = "DJANGO_SETTINGS_MODULE";
 /// example after the real one.
 const DOTENV_NAMES: &[&str] = &[".env", ".env.example"];
 
+/// The files a dev container reads its environment from (babybuddy's
+/// `.devcontainer.json`).
+const DEVCONTAINER_NAMES: &[&str] = &[".devcontainer.json", ".devcontainer/devcontainer.json"];
+
 /// A value set for `DJANGO_SETTINGS_MODULE`: the root-relative file, its
 /// 1-based line and the value as written, quotes dropped.
 pub(super) struct EnvSetting {
@@ -26,11 +31,12 @@ pub(super) struct EnvSetting {
     pub value: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Dotenv,
     Compose,
     Dockerfile,
+    DevContainer,
 }
 
 /// Every value set in the dotenv files, compose files and Dockerfiles of
@@ -43,44 +49,91 @@ pub(super) fn read<'a>(root: &Path, dirs: impl Iterator<Item = &'a str>) -> Vec<
         let files = DOTENV_NAMES
             .iter()
             .map(|name| ((*name).to_owned(), Kind::Dotenv))
-            .chain(listed(root, dir));
-        for (name, kind) in files {
-            let file = if dir.is_empty() {
-                name
-            } else {
-                format!("{dir}/{name}")
-            };
-            let Ok(contents) = std::fs::read_to_string(root.join(&file)) else {
+            .chain(listed(root, dir))
+            .chain(
+                DEVCONTAINER_NAMES
+                    .iter()
+                    .map(|name| ((*name).to_owned(), Kind::DevContainer)),
+            );
+        read_files(root, dir, files, &mut found);
+    }
+    found
+}
+
+/// Every value set in the compose files of the directories directly below
+/// the root that `skip` does not name and that are not hidden: a dev stack
+/// kept beside the code (weblate's `dev-docker/docker-compose.yml`, #1239).
+/// Their dotenv files and Dockerfiles are not read: a directory's `.env`
+/// may belong to anything, and its Dockerfile builds an image the command
+/// scanner already reads.
+pub(super) fn read_subdir_compose(root: &Path, skip: &dyn Fn(&str) -> bool) -> Vec<EnvSetting> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<String> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+        .filter(|name| !name.starts_with('.') && !skip(name))
+        .collect();
+    dirs.sort();
+    let mut found = Vec::new();
+    for dir in &dirs {
+        let files = listed(root, dir)
+            .into_iter()
+            .filter(|(_, kind)| *kind == Kind::Compose);
+        read_files(root, dir, files, &mut found);
+    }
+    found
+}
+
+/// The values `files` in `dir` set.
+fn read_files(
+    root: &Path,
+    dir: &str,
+    files: impl Iterator<Item = (String, Kind)>,
+    found: &mut Vec<EnvSetting>,
+) {
+    for (name, kind) in files {
+        let file = if dir.is_empty() {
+            name
+        } else {
+            format!("{dir}/{name}")
+        };
+        let Ok(contents) = std::fs::read_to_string(root.join(&file)) else {
+            continue;
+        };
+        let lines = match kind {
+            Kind::Dockerfile => logical_lines(&contents),
+            Kind::Dotenv | Kind::Compose | Kind::DevContainer => contents
+                .lines()
+                .enumerate()
+                .map(|(index, line)| (index, line.to_owned()))
+                .collect(),
+        };
+        for (index, line) in lines {
+            // A `//` comment in a dev container's JSON sets nothing.
+            if kind == Kind::DevContainer && line.trim_start().starts_with("//") {
                 continue;
+            }
+            let value = match kind {
+                Kind::Dotenv => dotenv_value(&line),
+                Kind::Compose => compose_value(&line),
+                Kind::Dockerfile => dockerfile_value(&line),
+                Kind::DevContainer => json_value(&line),
             };
-            let lines = match kind {
-                Kind::Dockerfile => logical_lines(&contents),
-                Kind::Dotenv | Kind::Compose => contents
-                    .lines()
-                    .enumerate()
-                    .map(|(index, line)| (index, line.to_owned()))
-                    .collect(),
-            };
-            for (index, line) in lines {
-                let value = match kind {
-                    Kind::Dotenv => dotenv_value(&line),
-                    Kind::Compose => compose_value(&line),
-                    Kind::Dockerfile => dockerfile_value(&line),
-                };
-                // A line that names the key in a form not read is set in a
-                // way not read, never dropped (ADR 0005).
-                let value = value.or_else(|| names_key(&line).then(String::new));
-                if let Some(value) = value {
-                    found.push(EnvSetting {
-                        file: file.clone(),
-                        line: u32::try_from(index + 1).unwrap_or(u32::MAX),
-                        value,
-                    });
-                }
+            // A line that names the key in a form not read is set in a
+            // way not read, never dropped (ADR 0005).
+            let value = value.or_else(|| names_key(&line).then(String::new));
+            if let Some(value) = value {
+                found.push(EnvSetting {
+                    file: file.clone(),
+                    line: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                    value,
+                });
             }
         }
     }
-    found
 }
 
 /// Whether `line`, not a comment, names the key at all.
@@ -160,6 +213,21 @@ fn compose_value(line: &str) -> Option<String> {
     (yaml_scalar(key) == KEY).then(|| yaml_scalar(value).to_owned())
 }
 
+/// `"DJANGO_SETTINGS_MODULE": "value"` wherever it sits on the line, as a
+/// dev container's environment object writes it.
+fn json_value(line: &str) -> Option<String> {
+    let line = line.trim();
+    let quoted = format!("\"{KEY}\"");
+    let rest = line.split_once(&quoted)?.1.trim_start();
+    let value = rest.strip_prefix(':')?.trim_start();
+    let value = value
+        .strip_prefix('"')?
+        .split('"')
+        .next()
+        .unwrap_or_default();
+    Some(value.to_owned())
+}
+
 /// `ENV DJANGO_SETTINGS_MODULE=value` among other `KEY=VALUE` pairs, or the
 /// legacy `ENV DJANGO_SETTINGS_MODULE value`.
 fn dockerfile_value(line: &str) -> Option<String> {
@@ -191,6 +259,27 @@ fn unquote(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn devcontainer_lines_read_the_environment_entry() {
+        let cases = [
+            (
+                r#"    "DJANGO_SETTINGS_MODULE": "acme.settings.dev","#,
+                Some("acme.settings.dev"),
+            ),
+            (r#""DJANGO_SETTINGS_MODULE":"acme.conf""#, Some("acme.conf")),
+            (
+                r#""containerEnv": { "DJANGO_SETTINGS_MODULE": "acme.conf" }"#,
+                Some("acme.conf"),
+            ),
+            (r#""PIPENV_VENV_IN_PROJECT": "1""#, None),
+            (r#""containerEnv": {"#, None),
+            (r#""DJANGO_SETTINGS_MODULE": value,"#, None),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(json_value(line).as_deref(), expected, "{line}");
+        }
+    }
 
     #[test]
     fn dotenv_lines_read_only_the_settings_key() {

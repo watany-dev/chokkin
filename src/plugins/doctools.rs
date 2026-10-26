@@ -20,7 +20,7 @@ use super::types::{
     ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin, SysPathImport,
     SysPathImporter, UnreadSettings,
 };
-use super::util::{origin_for_file, push_binary};
+use super::util::{join_lexical, origin_for_file, push_binary};
 use super::warnings::PluginsWarning;
 
 /// The root documents `sphinx-build` starts from, one of which marks a
@@ -34,9 +34,11 @@ pub(super) fn extract(plugin: PluginId, ctx: &PluginContext<'_>) -> PluginContri
     match plugin {
         PluginId::Sphinx => {
             let modules = ConfModules::new(ctx.root.path.as_path());
-            for (conf, label) in sphinx_confs(ctx) {
-                read_conf(ctx, &conf, &label, &modules, &mut contrib);
+            let confs = sphinx_confs(ctx);
+            for (conf, label) in &confs {
+                read_conf(ctx, conf, label, &modules, &mut contrib);
             }
+            push_included_sources(ctx, &confs, &mut contrib);
         },
         PluginId::MkDocs => extract_mkdocs(ctx.root.path.as_path(), &mut contrib),
         _ => {},
@@ -80,9 +82,155 @@ fn sphinx_confs(ctx: &PluginContext<'_>) -> Vec<(PathBuf, String)> {
         });
         if let Some(document) = document {
             confs.push((path, format!("conf.py beside {document}")));
+        } else if read_module(&path).is_some_and(|(_, stmts)| sets_sphinx_config(&stmts)) {
+            confs.push((path, "conf.py with Sphinx settings".to_owned()));
         }
     }
     confs
+}
+
+/// The directives that copy a file into a Sphinx page: `literalinclude`,
+/// and `include` with `:literal:` or `:code:`.
+const INCLUDE_DIRECTIVES: [&str; 2] = ["literalinclude", "include"];
+
+/// Discovered `.py` files a page of a Sphinx source directory shows with an
+/// include directive, as entries in their own context (#1239): weblate's
+/// `weblate/examples/check_foo.py` exists to be shown in `checks.rst` and
+/// copied by users, so nothing imports it. The file keeps its context, since
+/// a page may show a slice of a runtime module (`:pyobject:`), which stays
+/// runtime code.
+///
+/// The pages are the `.rst`, `.md` and `.txt` files under each `conf.py`'s
+/// directory, walked as git sees them. A path is relative to the page, or
+/// with a leading `/` to the source directory, as Sphinx resolves it. A
+/// target that is no discovered `.py` file (a data file, a path outside the
+/// project) adds nothing and lowers nothing: the directive only shows text,
+/// so an unresolved one hides no import (ADR 0005).
+fn push_included_sources(
+    ctx: &PluginContext<'_>,
+    confs: &[(PathBuf, String)],
+    contrib: &mut PluginContribution,
+) {
+    let root = ctx.root.path.as_path();
+    let known: HashMap<&str, FileContext> = ctx
+        .sources
+        .python_files()
+        .map(|file| (file.path.as_str(), file.context))
+        .collect();
+    let mut pages = std::collections::BTreeSet::new();
+    for (conf, _) in confs {
+        let Some(source_dir) = conf.parent() else {
+            continue;
+        };
+        for entry in ignore::WalkBuilder::new(source_dir)
+            .follow_links(false)
+            .build()
+            .flatten()
+        {
+            let path = entry.path();
+            let is_page = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    ["rst", "md", "txt"]
+                        .iter()
+                        .any(|page| ext.eq_ignore_ascii_case(page))
+                });
+            if is_page && entry.file_type().is_some_and(|kind| kind.is_file()) {
+                pages.insert((path.to_path_buf(), rel_to_root(root, source_dir)));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    for (page, source_dir) in pages {
+        let Ok(text) = std::fs::read_to_string(&page) else {
+            continue;
+        };
+        let page_rel = rel_to_root(root, &page);
+        let page_dir = page_rel.rsplit_once('/').map_or("", |(dir, _)| dir);
+        for (index, line) in text.lines().enumerate() {
+            let Some((directive, target)) = include_target(line) else {
+                continue;
+            };
+            let (base, target) = match target.strip_prefix('/') {
+                Some(rest) => (source_dir.as_str(), rest),
+                None => (page_dir, target),
+            };
+            let Some(path) = join_lexical(base, target) else {
+                continue;
+            };
+            let Some(&context) = known.get(path.as_str()) else {
+                continue;
+            };
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            contrib.entries.push(PluginEntry {
+                spec: EntrySpec { path, symbol: None },
+                context,
+                origin: ReferenceOrigin {
+                    file: page_rel.clone(),
+                    line: u32::try_from(index + 1).ok(),
+                    label: format!("{directive} in {page_rel}"),
+                },
+            });
+        }
+    }
+}
+
+/// The directive and path of an include directive line: reST
+/// `.. literalinclude:: p` or a `MyST` fence `` ```{literalinclude} p ``.
+fn include_target(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim_start();
+    let (name, rest) = if let Some(rest) = line.strip_prefix("..") {
+        rest.trim_start().split_once("::")?
+    } else {
+        let rest = line.trim_start_matches(['`', '~']);
+        if rest.len() == line.len() {
+            return None;
+        }
+        let (name, rest) = rest.strip_prefix('{')?.split_once('}')?;
+        (name, rest)
+    };
+    let name = name.trim();
+    let target = rest.trim();
+    (INCLUDE_DIRECTIVES.contains(&name) && !target.is_empty()).then_some((name, target))
+}
+
+/// Names only a Sphinx `conf.py` sets beside `extensions` at its top level.
+const SPHINX_CONFIG_NAMES: [&str; 8] = [
+    "project",
+    "exclude_patterns",
+    "templates_path",
+    "html_theme",
+    "master_doc",
+    "root_doc",
+    "source_suffix",
+    "html_static_path",
+];
+
+/// Whether a module assigns `extensions` and another Sphinx setting at its
+/// top level: a configuration directory `sphinx-build -c` names, wherever a
+/// command or the project's own code builds that path (weblate's
+/// `addons/extractors/sphinx/conf.py`, #1239). Another tool's `conf.py`
+/// (`django/urls/conf.py`) sets neither.
+fn sets_sphinx_config(stmts: &[Stmt]) -> bool {
+    let assigned: Vec<&str> = stmts
+        .iter()
+        .flat_map(|stmt| match stmt {
+            Stmt::Assign(assign) => assign.targets.iter().collect(),
+            Stmt::AnnAssign(assign) => vec![&*assign.target],
+            _ => Vec::new(),
+        })
+        .filter_map(|target| match target {
+            Expr::Name(name) => Some(name.id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assigned.contains(&"extensions")
+        && SPHINX_CONFIG_NAMES
+            .iter()
+            .any(|name| assigned.contains(name))
 }
 
 /// Record a `conf.py` as a docs entry `sphinx-build` runs, and the
@@ -557,6 +705,34 @@ fn push_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn include_target_reads_rest_and_myst_directives() {
+        let cases = [
+            (
+                ".. literalinclude:: ../../pkg/examples/check.py",
+                Some(("literalinclude", "../../pkg/examples/check.py")),
+            ),
+            (
+                "   .. literalinclude::  /../src/a.py  ",
+                Some(("literalinclude", "/../src/a.py")),
+            ),
+            (".. include:: snippet.py", Some(("include", "snippet.py"))),
+            (
+                "```{literalinclude} ../a.py",
+                Some(("literalinclude", "../a.py")),
+            ),
+            ("~~~{include} b.py", Some(("include", "b.py"))),
+            (".. code-block:: python", None),
+            (".. literalinclude::", None),
+            ("{literalinclude} a.py", None),
+            ("```python", None),
+            ("see literalinclude:: a.py", None),
+        ];
+        for (line, want) in cases {
+            assert_eq!(include_target(line), want, "{line}");
+        }
+    }
 
     fn read(source: &str) -> (Vec<(String, u32)>, Vec<u32>, bool) {
         let stmts = parse_module(source).expect("valid python");

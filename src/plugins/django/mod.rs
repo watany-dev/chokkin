@@ -44,6 +44,10 @@ use super::warnings::{PluginsWarning, SettingsUnread};
 /// import settings by `settings_refs`.
 const LIST_FIELDS: &[&str] = &["MIDDLEWARE"];
 
+/// The settings field naming the packages Django's format loader reads
+/// `<prefix>.<locale>.formats` from (#1239).
+const FORMAT_MODULE_PATH: &str = "FORMAT_MODULE_PATH";
+
 /// Fields whose absence from the settings read leaves project files or
 /// distributions unexplained, so an unfollowed star import may hide them.
 const EXPLAINING_FIELDS: &[&str] = &["ROOT_URLCONF", "INSTALLED_APPS", "MIDDLEWARE"];
@@ -76,6 +80,12 @@ pub(crate) const STAR_IMPORT_LABEL: &str = "settings star import";
 pub(crate) const INCLUDE_LABEL: &str = "settings include()";
 
 const MIGRATIONS_LABEL: &str = "Django migrations";
+
+/// Origin label of a module unittest discovery imports (#1239).
+const TEST_DISCOVERY_LABEL: &str = "manage.py test discovery";
+
+/// Origin label of a settings module another deployment selects (#1239).
+const SETTINGS_VARIANT_LABEL: &str = "settings variant";
 
 /// How `DJANGO_SETTINGS_MODULE` was set across the files that set it.
 #[derive(Default)]
@@ -137,6 +147,41 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let is_project = has_manage || settings_module.in_setters;
     if !is_project && !manifest_has_dependency(ctx.manifest, "django") {
         return (contrib, warnings);
+    }
+
+    // `manage.py test` runs unittest discovery, which imports every
+    // `test*.py` by name, so nothing else reaches them (#1239): `tests.py`
+    // of an app and babybuddy's `tests_views.py`, which pytest's
+    // `test_*.py` does not match. A name that only starts with `test`
+    // (`testing.py`, `testutils.py`) is left out: it is as likely to be a
+    // helper module, and taking it would hide a real orphan. The entry is
+    // a test root, so the classes in an app's `tests.py` the runner
+    // collects are no unused exports, as a pytest suite's are not.
+    let discovered_tests: Vec<String> = if is_project {
+        ctx.sources
+            .python_files()
+            .filter(|file| is_discovered_test(&file.path))
+            .filter(|file| {
+                crate::sources::path_to_module(&file.path, &ctx.sources.layout).is_some()
+            })
+            .map(|file| file.path.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for path in discovered_tests {
+        contrib.entries.push(PluginEntry {
+            spec: crate::config::EntrySpec {
+                path: path.clone(),
+                symbol: None,
+            },
+            context: FileContext::Test,
+            origin: ReferenceOrigin {
+                file: path,
+                line: None,
+                label: TEST_DISCOVERY_LABEL.to_owned(),
+            },
+        });
     }
 
     // The first value that names a project file wins: a template's
@@ -203,6 +248,30 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         return (contrib, warnings);
     };
 
+    // The other settings modules beside the one that is read are the
+    // deployment's variants, named by `--settings` or another environment
+    // (babybuddy's `settings/ci.py`), so they are entries too (#1239).
+    let variants = settings_variants(root, &settings_rel, ctx);
+    contrib.settings_modules.extend(
+        variants
+            .iter()
+            .filter_map(|path| crate::sources::path_to_module(path, &ctx.sources.layout)),
+    );
+    for path in variants {
+        contrib.entries.push(PluginEntry {
+            spec: crate::config::EntrySpec {
+                path: path.clone(),
+                symbol: None,
+            },
+            context: FileContext::Runtime,
+            origin: ReferenceOrigin {
+                file: path,
+                line: None,
+                label: SETTINGS_VARIANT_LABEL.to_owned(),
+            },
+        });
+    }
+
     let settings_path_abs = abs_path(root, &settings_rel);
     contrib.entries.push(PluginEntry {
         spec: crate::config::EntrySpec {
@@ -253,6 +322,77 @@ fn migrations_glob(origin: ReferenceOrigin) -> FrameworkUsedGlob {
 }
 
 /// Where the manifest declares Django, for a reusable app's migrations.
+/// Whether `path` is a module unittest discovery imports as a test:
+/// `tests.py`, `test.py`, or a name starting with `test_` / `tests_`.
+fn is_discovered_test(path: &str) -> bool {
+    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
+    let Some(stem) = name.strip_suffix(".py") else {
+        return false;
+    };
+    matches!(stem, "test" | "tests") || stem.starts_with("test_") || stem.starts_with("tests_")
+}
+
+/// The discovered modules beside `settings_rel` that another deployment
+/// selects: a module that star-imports one of its siblings (wger's
+/// `settings/ci.py` takes `settings/settings_global.py`, babybuddy's
+/// `settings/ci.py` takes `settings/base.py`), or one that sets
+/// `INSTALLED_APPS` / `ROOT_URLCONF` as the settings module does. A star
+/// import of something else (`from .models import *`) is ordinary code, so
+/// the looser settings shape is not enough here. `settings_rel` itself and
+/// `__init__.py` are not variants.
+fn settings_variants(root: &Path, settings_rel: &str, ctx: &PluginContext<'_>) -> Vec<String> {
+    let Some((dir, _)) = settings_rel.rsplit_once('/') else {
+        return Vec::new();
+    };
+    let siblings: BTreeSet<&str> = ctx
+        .sources
+        .python_files()
+        .filter_map(|file| {
+            let (parent, name) = file.path.rsplit_once('/')?;
+            (parent == dir).then_some(name.trim_end_matches(".py"))
+        })
+        .collect();
+    let mut variants: Vec<String> = ctx
+        .sources
+        .python_files()
+        .map(|file| file.path.clone())
+        .filter(|path| {
+            path.rsplit_once('/')
+                .is_some_and(|(parent, name)| parent == dir && name != "__init__.py")
+        })
+        .filter(|path| path != settings_rel && is_settings_variant(root, path, &siblings))
+        .collect();
+    variants.sort();
+    variants
+}
+
+/// Whether the file at `path` star-imports one of the `siblings` beside it,
+/// or assigns the fields a settings module assigns.
+fn is_settings_variant(root: &Path, path: &str, siblings: &BTreeSet<&str>) -> bool {
+    let Ok(contents) = read_to_string(&abs_path(root, path)) else {
+        // Unreadable here means the parser reports it; the plugin does not
+        // guess what it holds.
+        return false;
+    };
+    let Some(stmts) = parse_module(&contents) else {
+        return false;
+    };
+    stmts.iter().any(|stmt| match stmt {
+        Stmt::ImportFrom(import) => {
+            import.names.iter().any(|alias| &alias.name == "*")
+                && import.module.as_ref().is_some_and(|module| {
+                    module
+                        .split('.')
+                        .next_back()
+                        .is_some_and(|name| siblings.contains(name))
+                })
+        },
+        _ => false,
+    }) || ["INSTALLED_APPS", "ROOT_URLCONF"]
+        .into_iter()
+        .any(|field| assigned_value(&stmts, field).is_some())
+}
+
 fn django_declaration(manifest: &crate::manifest::LoadedManifest) -> Option<ReferenceOrigin> {
     manifest
         .dependencies
@@ -286,25 +426,7 @@ fn read_settings_module(
             .is_some_and(|name| SETTER_NAMES.contains(&name))
             && !path.split('/').any(|part| EXAMPLE_DIRS.contains(&part))
     };
-    let mut setters: Vec<(bool, &str)> = ctx
-        .sources
-        .files
-        .iter()
-        .filter(|file| file.path != "manage.py" && is_setter(&file.path))
-        .map(|file| (file.context != FileContext::Runtime, file.path.as_str()))
-        .collect();
-    setters.sort_unstable();
-    let discovered: BTreeSet<&str> = setters.iter().map(|(_, path)| *path).collect();
-    let undiscovered_root = SETTER_NAMES
-        .iter()
-        .copied()
-        .filter(|name| *name != "manage.py" && !discovered.contains(name))
-        .filter(|name| root.join(name).is_file());
-    let setters = has_manage
-        .then_some("manage.py")
-        .into_iter()
-        .chain(setters.into_iter().map(|(_, path)| path))
-        .chain(undiscovered_root);
+    let setters = setter_paths(ctx, root, has_manage, &is_setter);
 
     let mut found = SettingsModule::default();
     let mut literal = |found: &mut SettingsModule, module: String, file: &str, line| {
@@ -347,9 +469,15 @@ fn read_settings_module(
     if !has_manage && !found.in_setters && !manifest_has_dependency(ctx.manifest, "django") {
         return found;
     }
-    let dirs =
-        project_dirs(ctx).filter(|dir| !dir.split('/').any(|part| EXAMPLE_DIRS.contains(&part)));
-    for setting in settings_env::read(root, dirs) {
+    let members: Vec<&str> = project_dirs(ctx).collect();
+    let dirs = members
+        .iter()
+        .copied()
+        .filter(|dir| !dir.split('/').any(|part| EXAMPLE_DIRS.contains(&part)));
+    let nested = settings_env::read_subdir_compose(root, &|name| {
+        members.contains(&name) || EXAMPLE_DIRS.contains(&name)
+    });
+    for setting in settings_env::read(root, dirs).into_iter().chain(nested) {
         if is_dotted_identifier(&setting.value) {
             literal(&mut found, setting.value, &setting.file, Some(setting.line));
         } else {
@@ -359,6 +487,38 @@ fn read_settings_module(
         }
     }
     found
+}
+
+/// The files that may set `DJANGO_SETTINGS_MODULE`, in read order:
+/// `manage.py`, then the discovered setters (runtime context first), then
+/// the root files of the same names discovery left out (wagtail's
+/// `runtests.py`).
+fn setter_paths<'a>(
+    ctx: &'a PluginContext<'a>,
+    root: &Path,
+    has_manage: bool,
+    is_setter: &dyn Fn(&str) -> bool,
+) -> Vec<&'a str> {
+    let mut setters: Vec<(bool, &str)> = ctx
+        .sources
+        .files
+        .iter()
+        .filter(|file| file.path != "manage.py" && is_setter(&file.path))
+        .map(|file| (file.context != FileContext::Runtime, file.path.as_str()))
+        .collect();
+    setters.sort_unstable();
+    let discovered: BTreeSet<&str> = setters.iter().map(|(_, path)| *path).collect();
+    let undiscovered_root = SETTER_NAMES
+        .iter()
+        .copied()
+        .filter(|name| *name != "manage.py" && !discovered.contains(name))
+        .filter(|name| root.join(name).is_file());
+    has_manage
+        .then_some("manage.py")
+        .into_iter()
+        .chain(setters.into_iter().map(|(_, path)| path))
+        .chain(undiscovered_root)
+        .collect()
 }
 
 /// Why no settings module was found, and the file and line it points to.
@@ -537,6 +697,45 @@ fn read_settings(
                     module: module.clone(),
                     origin: origin(*start, field),
                 });
+            }
+        }
+
+        // Django's format loader imports `<prefix>.<locale>.formats` for
+        // the active locale, so every `formats.py` under the prefix is used
+        // (babybuddy's `babybuddy/formats/en/formats.py`, #1239). A prefix
+        // that is no string literal names no package to mark.
+        if let Some(value) = assigned_value(&stmts, FORMAT_MODULE_PATH) {
+            let prefixes = string_value(value)
+                .map(|prefix| vec![prefix])
+                .or_else(|| string_list(value).map(|scan| scan.values))
+                .unwrap_or_default();
+            for prefix in prefixes {
+                let Some(dir) = module_path(root, &prefix, ctx, lookup)
+                    .as_deref()
+                    .and_then(|path| path.strip_suffix("/__init__.py"))
+                    .map(str::to_owned)
+                else {
+                    continue;
+                };
+                contrib.framework_used_globs.push(FrameworkUsedGlob {
+                    pattern: format!("{dir}/**/formats.py"),
+                    origin: origin(value.start(), FORMAT_MODULE_PATH),
+                });
+                // The loader reads the format names from each module's
+                // namespace, as Django reads the settings', so no importer
+                // names them.
+                let format_modules: Vec<String> = ctx
+                    .sources
+                    .python_files()
+                    .filter(|file| {
+                        file.path.starts_with(&format!("{dir}/"))
+                            && file.path.ends_with("/formats.py")
+                    })
+                    .filter_map(|file| {
+                        crate::sources::path_to_module(&file.path, &ctx.sources.layout)
+                    })
+                    .collect();
+                contrib.settings_modules.extend(format_modules);
             }
         }
 

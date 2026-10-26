@@ -788,6 +788,153 @@ fn django_settings_module_reads_each_root_setter_once() {
     );
 }
 
+/// A compose file in a directory directly below the root names the settings
+/// module too (weblate's `dev-docker/`); that directory's dotenv files, an
+/// examples directory and deeper directories are not read (#1239).
+#[test]
+fn django_settings_module_from_a_compose_file_below_the_root() {
+    let compose =
+        "services:\n  web:\n    environment:\n      DJANGO_SETTINGS_MODULE: acme.docker\n";
+    let hints = django_project(&[
+        ("manage.py", "import django\n"),
+        ("dev-docker/docker-compose.yml", compose),
+        ("dev-docker/.env", "DJANGO_SETTINGS_MODULE=acme.dotenv\n"),
+        (
+            "examples/docker-compose.yml",
+            compose.replace("docker", "example").as_str(),
+        ),
+        (
+            "deploy/stack/compose.yaml",
+            compose.replace("docker", "deep").as_str(),
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/docker.py", "INSTALLED_APPS = [\"acme\"]\n"),
+    ]);
+    let refs: Vec<(&str, &str)> = django_contrib(&hints)
+        .module_refs
+        .iter()
+        .filter(|reference| reference.origin.label == "DJANGO_SETTINGS_MODULE")
+        .map(|reference| (reference.module.as_str(), reference.origin.file.as_str()))
+        .collect();
+    assert_eq!(refs, [("acme.docker", "dev-docker/docker-compose.yml")]);
+    assert_eq!(
+        entry_paths(django_contrib(&hints)),
+        ["manage.py", "acme/docker.py"]
+    );
+}
+
+/// `manage.py test` discovery imports every `test*.py` by name, so each is a
+/// test entry; a name that only starts with `test` is not. The other settings
+/// modules beside the one read are entries too, and settings modules for
+/// CHK006 (#1239).
+#[test]
+fn django_test_discovery_and_settings_variants_are_entries() {
+    let settings = "INSTALLED_APPS = [\"acme\"]\n";
+    let hints = django_project(&[
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"acme.settings.base\")\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/settings/__init__.py", ""),
+        ("acme/settings/base.py", settings),
+        ("acme/settings/ci.py", "from .base import *\n"),
+        ("acme/settings/notes.py", "from .helpers import *\n"),
+        ("acme/tests.py", ""),
+        ("acme/tests_views.py", ""),
+        ("acme/test_api.py", ""),
+        ("acme/testing.py", ""),
+    ]);
+    let contrib = django_contrib(&hints);
+    let entries: Vec<(&str, FileContext, &str)> = contrib
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.spec.path.as_str(),
+                entry.context,
+                entry.origin.label.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            ("manage.py", FileContext::Runtime, "manage.py"),
+            (
+                "acme/test_api.py",
+                FileContext::Test,
+                "manage.py test discovery"
+            ),
+            (
+                "acme/tests.py",
+                FileContext::Test,
+                "manage.py test discovery"
+            ),
+            (
+                "acme/tests_views.py",
+                FileContext::Test,
+                "manage.py test discovery"
+            ),
+            (
+                "acme/settings/ci.py",
+                FileContext::Runtime,
+                "settings variant"
+            ),
+            ("acme/settings/base.py", FileContext::Runtime, "settings.py"),
+        ]
+    );
+    assert_eq!(
+        contrib.settings_modules,
+        [
+            "acme.settings.ci",
+            "acme.settings.base",
+            "acme.settings.base"
+        ]
+    );
+}
+
+/// `FORMAT_MODULE_PATH` makes every `formats.py` under the prefix used, and
+/// a settings-like namespace, since Django's format loader reads the names
+/// of the active locale's module (#1239).
+#[test]
+fn django_format_module_path_marks_the_locale_formats() {
+    let hints = django_project(&[
+        (
+            "manage.py",
+            "import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"acme.conf\")\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/conf.py",
+            "INSTALLED_APPS = [\"acme\"]\nFORMAT_MODULE_PATH = [\"acme.formats\"]\n",
+        ),
+        ("acme/formats/__init__.py", ""),
+        ("acme/formats/en/__init__.py", ""),
+        ("acme/formats/en/formats.py", "DATE_FORMAT = \"j N Y\"\n"),
+    ]);
+    let contrib = django_contrib(&hints);
+    let globs: Vec<(&str, &str)> = contrib
+        .framework_used_globs
+        .iter()
+        .map(|glob| (glob.pattern.as_str(), glob.origin.label.as_str()))
+        .collect();
+    assert_eq!(
+        globs,
+        [
+            ("acme/formats/**/formats.py", "FORMAT_MODULE_PATH"),
+            ("**/migrations/**/*.py", "Django migrations")
+        ]
+    );
+    assert!(
+        contrib
+            .settings_modules
+            .contains(&"acme.formats.en.formats".to_owned()),
+        "{:?}",
+        contrib.settings_modules
+    );
+}
+
 /// pytest-django's ini option names the settings module (#979).
 #[test]
 fn django_settings_module_from_the_pytest_config() {
@@ -803,7 +950,8 @@ fn django_settings_module_from_the_pytest_config() {
 }
 
 /// The environment Django starts in names the settings module: a dotenv
-/// file, a compose service and a Dockerfile `ENV` (#999, #1239). Each value
+/// file, a compose service, a Dockerfile `ENV` and a dev container
+/// (#999, #1239). Each value
 /// is a module reference; a value with a variable in it is not read.
 #[test]
 fn django_settings_module_from_the_environment_files() {
@@ -827,6 +975,11 @@ fn django_settings_module_from_the_environment_files() {
             "Dockerfile",
             "FROM python\nENV PYTHONUNBUFFERED=1 \\\n    DJANGO_SETTINGS_MODULE=acme.conf\n",
             2,
+        ),
+        (
+            ".devcontainer.json",
+            "{\n  \"containerEnv\": {\n    \"DJANGO_SETTINGS_MODULE\": \"acme.conf\",\n    \"X\": \"1\"\n  }\n}\n",
+            3,
         ),
     ];
     for (file, text, line) in cases {
@@ -1633,6 +1786,106 @@ fn project_hints(files: &[(&str, &str)]) -> chokkin::internals::PluginHints {
         std::fs::write(path, text).expect("write file");
     }
     extract_at(root)
+}
+
+/// A `.py` file a page under a Sphinx source directory shows with an include
+/// directive is an entry in its own context, from the page's line; a target
+/// that is no discovered `.py` file adds nothing (#1239).
+#[test]
+fn sphinx_included_sources_are_entries_in_their_own_context() {
+    let hints = project_hints(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("demo/__init__.py", ""),
+        ("demo/examples/check_foo.py", ""),
+        ("demo/core.py", ""),
+        ("docs/conf.py", ""),
+        ("docs/index.rst", "Docs\n====\n"),
+        (
+            "docs/admin/checks.rst",
+            "Checks\n======\n\n.. literalinclude:: ../../demo/examples/check_foo.py\n   :language: python\n\n.. literalinclude:: ../../demo/data.json\n.. literalinclude:: ../../demo/examples/check_foo.py\n",
+        ),
+        (
+            "docs/api.md",
+            "# API\n\n```{literalinclude} /../demo/core.py\n:pyobject: run\n```\n",
+        ),
+    ]);
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let entries: Vec<(&str, FileContext, &str, Option<u32>)> = contrib
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.spec.path.as_str(),
+                entry.context,
+                entry.origin.label.as_str(),
+                entry.origin.line,
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [
+            ("docs/conf.py", FileContext::Docs, "docs/conf.py", None),
+            (
+                "demo/examples/check_foo.py",
+                FileContext::Runtime,
+                "literalinclude in docs/admin/checks.rst",
+                Some(4)
+            ),
+            (
+                "demo/core.py",
+                FileContext::Runtime,
+                "literalinclude in docs/api.md",
+                Some(3)
+            ),
+        ]
+    );
+}
+
+/// A `conf.py` that sets `extensions` and another Sphinx setting is the
+/// directory `sphinx-build -c` names, with no root document beside it; a
+/// `conf.py` setting only one of them is some other module (#1239).
+#[test]
+fn sphinx_conf_with_sphinx_settings_is_a_docs_entry() {
+    let hints = project_hints(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.1.0\"\ndependencies = [\"sphinx\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("demo/__init__.py", ""),
+        (
+            "demo/extractors/sphinx/conf.py",
+            "project = \"Documentation\"\nextensions: list[str] = []\n",
+        ),
+        ("demo/extractors/sphinx/__init__.py", ""),
+        ("demo/urls/conf.py", "extensions = []\n"),
+        ("demo/urls/__init__.py", ""),
+        ("demo/other/conf.py", "project = \"x\"\n"),
+        ("demo/other/__init__.py", ""),
+    ]);
+    let contrib = plugin_contrib(&hints, PluginId::Sphinx);
+    let entries: Vec<(&str, FileContext, &str)> = contrib
+        .entries
+        .iter()
+        .map(|entry| {
+            (
+                entry.spec.path.as_str(),
+                entry.context,
+                entry.origin.label.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        entries,
+        [(
+            "demo/extractors/sphinx/conf.py",
+            FileContext::Docs,
+            "conf.py with Sphinx settings"
+        )]
+    );
 }
 
 /// `docs/conf.py` beside a root document is one entry, and another module
