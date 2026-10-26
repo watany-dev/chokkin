@@ -1041,6 +1041,15 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                             self.record_pytest_plugins(name.id.as_str(), &assign.value);
                         }
                     }
+                    // `has_x = find_spec("x")` is falsy without `x`, as a
+                    // `try` flag is (#1242).
+                    if let [Expr::Name(name)] = assign.targets.as_slice()
+                        && condition::excluded(&[], Some(&assign.value), &|expr| {
+                            self.installed_leaf(expr)
+                        })
+                    {
+                        self.try_flags.insert(name.id.to_string());
+                    }
                 }
                 for target in &assign.targets {
                     self.visit_expr(target);
@@ -2586,6 +2595,41 @@ g = lambda x=utils.G: x
                 ("simplejson", true),
                 ("json", false),
                 ("other_lib", false),
+            ]
+        );
+    }
+
+    /// #1242: redash's `utils/pandas.py` keeps `find_spec` results in a
+    /// module-level flag and imports behind `if pandas_installed:`.
+    #[test]
+    fn availability_flags_guard_imports_like_try_flags() {
+        let parsed = visit_source(
+            "from importlib.util import find_spec
+pandas_installed = find_spec(\"pandas\") and find_spec(\"numpy\")
+has_torch = is_torch_available()
+both = has_torch and other
+either = has_torch or other
+if pandas_installed:
+    import numpy
+if has_torch:
+    import torch
+if both:
+    import torch_both
+if either:
+    import torch_either
+if not pandas_installed:
+    import fallback
+",
+        );
+        assert_eq!(
+            optional_by_module(&parsed),
+            [
+                ("importlib.util", false),
+                ("numpy", true),
+                ("torch", true),
+                ("torch_both", true),
+                ("torch_either", false),
+                ("fallback", false),
             ]
         );
     }
