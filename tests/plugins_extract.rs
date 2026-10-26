@@ -1032,6 +1032,28 @@ fn django_settings_module_from_the_environment_files() {
     assert_eq!(hints.warnings, []);
 }
 
+/// A `//` comment in a dev container's JSON sets nothing, though it names
+/// the key in the form read (#1239).
+#[test]
+fn django_settings_module_in_a_dev_container_comment_is_not_read() {
+    let hints = django_project(&[
+        (
+            ".devcontainer/devcontainer.json",
+            "{\n  \"containerEnv\": {\n    // \"DJANGO_SETTINGS_MODULE\": \"acme.old\",\n    \"DJANGO_SETTINGS_MODULE\": \"acme.conf\"\n  }\n}\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/conf.py", "INSTALLED_APPS = [\"acme\"]\n"),
+    ]);
+    let contrib = django_contrib(&hints);
+    let refs: Vec<(&str, Option<u32>)> = contrib
+        .module_refs
+        .iter()
+        .filter(|reference| reference.origin.label == "DJANGO_SETTINGS_MODULE")
+        .map(|reference| (reference.module.as_str(), reference.origin.line))
+        .collect();
+    assert_eq!(refs, [("acme.conf", Some(4))]);
+}
+
 /// Without a Django dependency, a `manage.py` or another setter still makes
 /// a project whose environment files are read.
 #[test]
