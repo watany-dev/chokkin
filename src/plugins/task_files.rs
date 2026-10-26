@@ -545,12 +545,12 @@ mod tests {
 
     #[test]
     fn procfile_reads_process_commands() {
-        let contents = "web: gunicorn app:app\n# worker: pytest\nworker: celery -A app worker\n";
+        let contents = "web: gunicorn app:app\n# worker: pytest\n#beat: mypy\n: alembic\nmy job: uvicorn\nworker: celery -A app worker\n";
         assert_eq!(
             scanned(scan_procfile, contents),
             [
                 ("gunicorn".to_owned(), Some(1)),
-                ("celery".to_owned(), Some(3))
+                ("celery".to_owned(), Some(6))
             ]
         );
     }
@@ -592,6 +592,38 @@ mod tests {
                 ("coverage".to_owned(), Some(8)),
                 ("gunicorn".to_owned(), Some(10)),
             ]
+        );
+    }
+
+    #[test]
+    fn just_recipe_headers_are_names_before_a_colon() {
+        assert!(is_just_recipe_header("test arg=\"x\": build"));
+        assert!(!is_just_recipe_header("# note: not a recipe"));
+        assert!(!is_just_recipe_header("[group: 'ci']"));
+        assert!(!is_just_recipe_header("version := \"1\""));
+        assert!(!is_just_recipe_header("echo done"));
+    }
+
+    #[test]
+    fn input_paths_are_the_task_files_present() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        // Names no other candidate matches on a case-insensitive file system.
+        for name in [
+            "GNUmakefile",
+            ".justfile",
+            "Procfile",
+            "Dockerfile",
+            "README.md",
+        ] {
+            std::fs::write(temp.path().join(name), "").expect("write");
+        }
+        let names: Vec<_> = input_paths(temp.path())
+            .iter()
+            .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            names,
+            ["GNUmakefile", ".justfile", "Procfile", "Dockerfile"]
         );
     }
 
