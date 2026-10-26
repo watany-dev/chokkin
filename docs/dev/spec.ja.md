@@ -621,6 +621,10 @@ Python sourceのmodule-level pytest_plugins = "..." / [...] / (...) の文字列
 workspace member 内の test context の file には testpaths に関係なく python_files を
   適用する (member の suite はディレクトリを明示して pytest に渡すため。airflow の
   providers/*/tests/**/example_*.py)
+pytest の既定以外の python_files (weblate の tests.py) に当たる file は、path が
+  test を示さなくても test context とする (#1242)。testpaths があればその配下、
+  なければ config のディレクトリ配下を見る。既定の test_*.py / *_test.py は
+  もともと path で test なので足さない
 pytest command usageをbinary usageにする
 ```
 

@@ -198,6 +198,9 @@ pub(crate) struct PytestImportSettings {
     pub importlib: bool,
     /// `testpaths` entries, relative to the config file's directory.
     pub testpaths: Vec<String>,
+    /// `python_files` patterns, which replace pytest's `test_*.py` /
+    /// `*_test.py` defaults (weblate's `tests.py`, #1242).
+    pub python_files: Vec<String>,
     /// pytest-django's `--ds` in `addopts`, else its `DJANGO_SETTINGS_MODULE`
     /// option, with the name of the config file that sets it (#979, #1239).
     pub django_settings_module: Option<(String, String)>,
@@ -262,6 +265,7 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&addopts),
         testpaths: words("testpaths"),
+        python_files: words("python_files"),
         django_settings_module: ds_option(&addopts)
             .or_else(|| {
                 options
@@ -283,6 +287,7 @@ fn ini_import_settings(section: &IniSection, file: &str) -> PytestImportSettings
         pythonpath: words("pythonpath"),
         importlib: has_importlib_mode(&addopts),
         testpaths: words("testpaths"),
+        python_files: words("python_files"),
         django_settings_module: ds_option(&addopts)
             .or_else(|| {
                 section
@@ -401,6 +406,7 @@ mod tests {
                 pythonpath: Vec::new(),
                 importlib: true,
                 testpaths: Vec::new(),
+                python_files: Vec::new(),
                 django_settings_module: None,
             })
         );
@@ -445,7 +451,7 @@ mod tests {
         let root = temp.path();
         std::fs::write(
             root.join("pyproject.toml"),
-            "[tool.pytest]\npythonpath = [\"src\"]\ntestpaths = [\"tests\"]\naddopts = [\"--import-mode=importlib\"]\n",
+            "[tool.pytest]\npythonpath = [\"src\"]\ntestpaths = [\"tests\"]\npython_files = [\"tests.py\"]\naddopts = [\"--import-mode=importlib\"]\n",
         )
         .expect("write pyproject");
         assert_eq!(
@@ -454,6 +460,7 @@ mod tests {
                 pythonpath: vec!["src".to_owned()],
                 importlib: true,
                 testpaths: vec!["tests".to_owned()],
+                python_files: vec!["tests.py".to_owned()],
                 django_settings_module: None,
             })
         );
