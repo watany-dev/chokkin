@@ -1,5 +1,5 @@
 //! Commands in shell scripts and supervisor configs anywhere in the tree
-//! (#1240), and the server apps of Dockerfiles below the root (#1061).
+//! (#1240), and in Dockerfiles below the root (#1061).
 //!
 //! The walk lists the candidates and this reads them on every run, outside
 //! the config-scan cache. A file at the root runs in the project's own tree,
@@ -11,8 +11,8 @@
 //! usages (an undeclared one is no CHK008), and its scripts, modules,
 //! classes, opaque commands and installs are dropped.
 //!
-//! A candidate that is neither a shell script (`.sh` / `.bash`, or a
-//! sh-family shebang) nor a supervisor config (a `[program:x]`,
+//! A candidate that is neither a shell script (`.sh` / `.bash` / `.zsh` /
+//! `.ksh`, or a sh-family shebang) nor a supervisor config (a `[program:x]`,
 //! `[eventlistener:x]` or `[fcgi-program:x]` section) adds nothing, and so
 //! does an unreadable one.
 
@@ -28,7 +28,7 @@ use crate::sources::is_dockerfile;
 use super::commands::{KnownBinary, SourceHits};
 use super::config_scan::{ConfigScanResult, is_shell_script, strip_shell_comment};
 use super::config_text::{logical_lines, origin_at};
-use super::task_files::nested_dockerfile_apps;
+use super::task_files::scan_dockerfile;
 use super::types::CommandTarget;
 
 /// Sections whose `command` supervisord runs.
@@ -37,26 +37,18 @@ const SUPERVISOR_SECTIONS: [&str; 3] = ["program:", "eventlistener:", "fcgi-prog
 /// Hits of the command files at `paths` (root-relative). `binaries` maps a
 /// binary to its distribution, for the files below the root.
 fn scan(root: &Path, paths: &[String], binaries: &BTreeMap<String, String>) -> SourceHits {
-    let dockerfiles: Vec<String> = paths
-        .iter()
-        .filter(|rel| is_dockerfile(Path::new(rel)))
-        .cloned()
-        .collect();
     let mut hits = SourceHits::default();
-    hits.command_targets
-        .extend(nested_dockerfile_apps(root, &dockerfiles));
     let known = |name: &str| binaries.contains_key(name);
-    for rel in paths.iter().filter(|rel| !is_dockerfile(Path::new(rel))) {
+    for rel in paths {
         let Some(contents) = read_candidate(&root.join(rel)) else {
             continue;
         };
-        let at_root = !rel.contains('/');
-        let mut file_hits = SourceHits::default();
-        scan_file(rel, &contents, &known, &mut file_hits);
-        if at_root {
-            merge(&mut hits, file_hits);
-        } else {
+        if rel.contains('/') {
+            let mut file_hits = SourceHits::default();
+            scan_file(rel, &contents, &known, &mut file_hits);
             merge_below_root(&mut hits, file_hits, binaries);
+        } else {
+            scan_file(rel, &contents, &known, &mut hits);
         }
     }
     hits
@@ -66,7 +58,7 @@ fn scan(root: &Path, paths: &[String], binaries: &BTreeMap<String, String>) -> S
 /// not start with a shebang: such a file (`LICENSE`, a compiled binary) is
 /// not read past its first two bytes.
 fn read_candidate(path: &Path) -> Option<String> {
-    if path.extension().is_none() {
+    if path.extension().is_none() && !is_dockerfile(path) {
         let mut head = [0_u8; 2];
         std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
         if &head != b"#!" {
@@ -82,7 +74,9 @@ fn scan_file(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut Sourc
         .extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("conf"));
-    if conf {
+    if is_dockerfile(path) {
+        scan_dockerfile(rel, contents, known, hits);
+    } else if conf {
         scan_supervisor_config(rel, contents, known, hits);
     } else if is_shell_script(path, contents) {
         let label = path
@@ -100,8 +94,9 @@ fn scan_file(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut Sourc
 }
 
 /// `command` of each program, event listener and `FastCGI` program, with its
-/// indented continuation lines; supervisord runs it without a shell, and a
-/// `;` after whitespace starts a comment.
+/// indented continuation lines (a blank line does not end them, as in
+/// supervisord's parser); supervisord runs it without a shell, and a `;`
+/// that starts a line or follows whitespace starts a comment.
 fn scan_supervisor_config(
     rel: &str,
     contents: &str,
@@ -116,11 +111,14 @@ fn scan_supervisor_config(
         }
     };
     for (index, line) in contents.lines().enumerate() {
-        let text = line.find(" ;").map_or(line, |end| &line[..end]);
-        let trimmed = text.trim();
+        let trimmed = without_comment(line).trim();
+        let trimmed = if trimmed.starts_with('#') {
+            ""
+        } else {
+            trimmed
+        };
         if let Some((_, _, value)) = command.as_mut()
-            && line.starts_with([' ', '\t'])
-            && !trimmed.is_empty()
+            && (trimmed.is_empty() || line.starts_with([' ', '\t']))
         {
             value.push(' ');
             value.push_str(trimmed);
@@ -152,13 +150,11 @@ fn scan_supervisor_config(
     flush(&mut command, hits);
 }
 
-fn merge(hits: &mut SourceHits, file: SourceHits) {
-    hits.binaries.extend(file.binaries);
-    hits.distributions.extend(file.distributions);
-    hits.module_refs.extend(file.module_refs);
-    hits.command_targets.extend(file.command_targets);
-    hits.installed.extend(file.installed);
-    hits.used_symbols.extend(file.used_symbols);
+/// `line` up to a `;` that starts it or follows whitespace.
+fn without_comment(line: &str) -> &str {
+    line.match_indices(';')
+        .find(|(at, _)| line[..*at].trim().is_empty() || line[..*at].ends_with(char::is_whitespace))
+        .map_or(line, |(at, _)| &line[..at])
 }
 
 /// The hits of the command files at `paths` added to the config scan's
@@ -304,7 +300,7 @@ mod tests {
         write(
             root,
             "worker.conf",
-            "[supervisord]\nlogfile=/dev/null ; no log\n\n[program:worker]\ncommand=celery -A app worker\n  -P eventlet\nnumprocs=%(ENV_N)s\n\n[eventlistener:check]\ncommand = pytest --ds=app.settings ; health\n[unix_http_server]\ncommand=gunicorn app:app\n",
+            "[supervisord]\nlogfile=/dev/null ; no log\n\n[program:worker]\ncommand=celery -A app worker\n\n  -P eventlet\t; pytest runs elsewhere\n; numprocs=2\nnumprocs=%(ENV_N)s\n\n[eventlistener:check]\ncommand = pytest --ds=app.settings ; health\n[unix_http_server]\ncommand=gunicorn app:app\n",
         );
         write(root, "nginx.conf", "server { listen 80; }\n");
         write(
@@ -324,7 +320,7 @@ mod tests {
         assert_eq!(binaries, ["supervisord", "celery", "pytest"]);
         assert_eq!(
             labels(hits.binaries.iter().map(|usage| usage.origin.clone())),
-            ["entrypoint.sh:2", "worker.conf:5", "worker.conf:10"]
+            ["entrypoint.sh:2", "worker.conf:5", "worker.conf:12"]
         );
         assert_eq!(hits.binaries[1].origin.label, "supervisor program:worker");
         assert_eq!(hits.distributions, ["eventlet"]);
@@ -335,6 +331,38 @@ mod tests {
             hits.command_targets
                 .iter()
                 .all(|command| command.deploy || command.origin.file == "entrypoint.sh")
+        );
+    }
+
+    /// A Dockerfile below the root keeps its server apps (#1061) and, like
+    /// a script there, the distributions its commands name.
+    #[test]
+    fn nested_dockerfiles_keep_apps_and_distributions() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write(
+            root,
+            "svc/Dockerfile",
+            "FROM python\nRUN pip install -r requirements.txt && pytest\n\
+             CMD [\"python\", \"run.py\"]\nCMD [\"gunicorn\", \"-k\", \"gevent\", \"app.main:app\"]\n",
+        );
+        let paths = ["svc/Dockerfile".to_owned(), "gone/Dockerfile".to_owned()];
+        let hits = scan(root, &paths, &known_map());
+        assert_eq!(hits.distributions, ["pytest", "gunicorn", "gevent"]);
+        assert!(hits.binaries.is_empty() && hits.installed.is_empty());
+        let found: Vec<_> = hits
+            .command_targets
+            .iter()
+            .map(|command| {
+                format!(
+                    "{:?} {}:{:?} {}",
+                    command.target, command.origin.file, command.origin.line, command.origin.label
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [r#"App { module: "app.main", symbol: Some("app") } svc/Dockerfile:Some(4) CMD"#]
         );
     }
 }

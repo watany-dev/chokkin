@@ -410,24 +410,23 @@ pub(crate) fn is_dockerfile(path: &Path) -> bool {
 }
 
 /// `entry`, at `rel`, as a command file that is neither excluded nor ignored:
-/// a Dockerfile below the root (#1061), or a file named like a shell script
-/// (`.sh` / `.bash`, or no extension) or a supervisor config (`.conf`)
-/// outside the root's `scripts/` and `bin/`, which the config scan reads.
+/// a Dockerfile below the root (#1061), a file named like a shell script
+/// (`.sh` / `.bash` / `.zsh` / `.ksh`, or no extension) outside the root's
+/// `scripts/` and `bin/`, which the config scan reads, or a supervisor config
+/// (`.conf`).
 /// The plugins read the contents and drop what is neither (#1240).
 fn command_file(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Option<String> {
     let path = entry.path();
     let wanted = if is_dockerfile(path) {
         entry.depth() >= 2
     } else {
-        let named = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_none_or(|ext| {
-                ["sh", "bash", "conf"]
-                    .iter()
-                    .any(|wanted| ext.eq_ignore_ascii_case(wanted))
-            });
-        let config_scanned = entry.depth() == 2
+        let extension = path.extension().and_then(|ext| ext.to_str());
+        let is = |wanted: &[&str]| {
+            extension.is_some_and(|ext| wanted.iter().any(|name| ext.eq_ignore_ascii_case(name)))
+        };
+        let named = extension.is_none() || is(&["sh", "bash", "zsh", "ksh", "conf"]);
+        let config_scanned = !is(&["conf"])
+            && entry.depth() == 2
             && rel
                 .parent()
                 .is_some_and(|dir| dir == Path::new("scripts") || dir == Path::new("bin"));
@@ -713,6 +712,7 @@ mod tests {
             "svc/start-worker",
             "svc/notes.md",
             "scripts/release.sh",
+            "bin/supervisord.conf",
             "src/acme/generated/run.sh",
         ] {
             write_file(&root.join(file), "#!/bin/sh\n");
@@ -758,6 +758,7 @@ mod tests {
         assert_eq!(
             collected.command_files,
             [
+                "bin/supervisord.conf",
                 "entrypoint.sh",
                 "local/api.dockerfile",
                 "svc/Dockerfile",

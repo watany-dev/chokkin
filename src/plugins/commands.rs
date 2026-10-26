@@ -160,7 +160,8 @@ pub(super) fn command_uses(command: &str) -> CommandUses {
         };
         match tool {
             "celery" => {
-                if let Some(distribution) = celery_subcommand(args).and_then(|name| {
+                let subcommand = celery_subcommand(args);
+                if let Some(distribution) = subcommand.and_then(|name| {
                     CELERY_PLUGIN_COMMANDS
                         .into_iter()
                         .find_map(|(command, dist)| (command == name).then_some(dist))
@@ -171,7 +172,7 @@ pub(super) fn command_uses(command: &str) -> CommandUses {
                     uses.push_class(pool);
                 }
                 // `-S` is `--scheduler` for `beat` only; the worker's is `--statedb`.
-                let short = (celery_subcommand(args) == Some("beat")).then_some("-S");
+                let short = (subcommand == Some("beat")).then_some("-S");
                 if let Some(scheduler) = option_value(args, short, "--scheduler") {
                     uses.symbols.extend(symbol_path(scheduler));
                 }

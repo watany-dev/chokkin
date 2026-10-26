@@ -867,8 +867,9 @@ fn scan_shell_scripts(
 /// parser or not at all; their words are not commands (#494).
 pub(super) fn is_shell_script(path: &Path, contents: &str) -> bool {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("sh" | "bash" | "zsh" | "ksh") => true,
-        Some(_) => false,
+        Some(ext) => ["sh", "bash", "zsh", "ksh"]
+            .iter()
+            .any(|shell| ext.eq_ignore_ascii_case(shell)),
         None => shebang_interpreter(contents).is_none_or(|interpreter| interpreter.ends_with("sh")),
     }
 }
