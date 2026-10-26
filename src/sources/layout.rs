@@ -512,6 +512,44 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
     testpaths
 }
 
+/// Root-relative globs for the files pytest collects as tests only because
+/// of `python_files` (weblate's `tests.py`), under the config's `testpaths`
+/// when it sets them and its whole directory otherwise (#1242). The default
+/// patterns are left out: `test_*.py` / `*_test.py` are test files by path
+/// already.
+pub(super) fn pytest_python_file_globs(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+    let mut globs = Vec::new();
+    for dir in testpath_config_dirs(layout) {
+        let patterns = pytest_import_settings(&root.join(dir))
+            .unwrap_or_default()
+            .python_files;
+        let patterns = patterns
+            .iter()
+            .filter(|pattern| !matches!(pattern.as_str(), "test_*.py" | "*_test.py"));
+        let mut roots = testpath_entries(root, dir);
+        if roots.is_empty() {
+            roots.push(dir.to_owned());
+        }
+        for pattern in patterns {
+            for root in &roots {
+                let prefix = if root.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}/", globset::escape(root))
+                };
+                let glob = format!("{prefix}**/{pattern}");
+                // A pattern globset cannot compile (`check_[a.py`) gives no
+                // file test context rather than failing the analysis: its
+                // files keep the context their path gives them.
+                if globset::Glob::new(&glob).is_ok() && !globs.contains(&glob) {
+                    globs.push(glob);
+                }
+            }
+        }
+    }
+    globs
+}
+
 /// Root-relative `testpaths` entries of the pytest configs
 /// [`pytest_testpaths`] reads that name no file or directory, literally or as
 /// a glob: pytest collects nothing from them, and the tests they meant get no
@@ -944,6 +982,60 @@ mod tests {
         assert_eq!(
             path_to_module("t/integration/test_app.py", &layout),
             Some("t.integration.test_app".to_owned())
+        );
+    }
+
+    /// #1242: weblate collects `tests.py` through `python_files`, so those
+    /// files get test context although their path does not say so.
+    #[test]
+    fn python_files_glob_the_non_default_patterns_under_the_testpaths() {
+        let temp = tree(&["weblate", "weblate/addons"]);
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\npython_files = [\"test_*.py\", \"tests.py\", \"check_[a.py\"]\n",
+        )
+        .expect("write");
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("weblate"),
+            &UvToolSettings::default(),
+        );
+        assert_eq!(
+            pytest_python_file_globs(temp.path(), &layout),
+            ["**/tests.py"]
+        );
+
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\ntestpaths = \"t\"\npython_files = \"check_*.py\"\n",
+        )
+        .expect("write");
+        fs::create_dir_all(temp.path().join("t")).expect("create dir");
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("weblate"),
+            &UvToolSettings::default(),
+        );
+        assert_eq!(
+            pytest_python_file_globs(temp.path(), &layout),
+            ["t/**/check_*.py"]
+        );
+    }
+
+    /// A project with no `python_files` keeps pytest's defaults, which the
+    /// path already makes test.
+    #[test]
+    fn python_files_globs_are_empty_without_the_option() {
+        let temp = tree(&["acme"]);
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\ntestpaths = \"tests\"\n",
+        )
+        .expect("write");
+        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        assert_eq!(
+            pytest_python_file_globs(temp.path(), &layout),
+            Vec::<String>::new()
         );
     }
 
