@@ -40,21 +40,10 @@ enum Kind {
 pub(super) fn read<'a>(root: &Path, dirs: impl Iterator<Item = &'a str>) -> Vec<EnvSetting> {
     let mut found = Vec::new();
     for dir in dirs {
-        let listed = listed(root, dir);
         let files = DOTENV_NAMES
             .iter()
             .map(|name| ((*name).to_owned(), Kind::Dotenv))
-            .chain(listed.into_iter().filter_map(|name| {
-                let path = Path::new(&name);
-                let kind = if is_compose_file(path) {
-                    Kind::Compose
-                } else if is_dockerfile(path) {
-                    Kind::Dockerfile
-                } else {
-                    return None;
-                };
-                Some((name, kind))
-            }));
+            .chain(listed(root, dir));
         for (name, kind) in files {
             let file = if dir.is_empty() {
                 name
@@ -100,19 +89,30 @@ fn names_key(line: &str) -> bool {
     !line.starts_with('#') && line.contains(KEY)
 }
 
-/// The files directly in `dir`, sorted.
-fn listed(root: &Path, dir: &str) -> Vec<String> {
+/// The compose files and Dockerfiles directly in `dir`, sorted. Names are
+/// matched before the file type is read, so a large directory costs one
+/// listing.
+fn listed(root: &Path, dir: &str) -> Vec<(String, Kind)> {
     let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
         return Vec::new();
     };
-    let mut names: Vec<String> = entries
+    let mut files: Vec<(String, Kind)> = entries
         .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .filter_map(|path| Some(path.file_name()?.to_str()?.to_owned()))
+        .filter_map(|entry| {
+            let name = entry.file_name().to_str()?.to_owned();
+            let path = Path::new(&name);
+            let kind = if is_compose_file(path) {
+                Kind::Compose
+            } else if is_dockerfile(path) {
+                Kind::Dockerfile
+            } else {
+                return None;
+            };
+            entry.path().is_file().then_some((name, kind))
+        })
         .collect();
-    names.sort();
-    names
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files
 }
 
 /// `docker-compose.yml`, `compose.yaml` and their override files

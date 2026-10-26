@@ -330,6 +330,10 @@ fn read_settings_module(
         literal(&mut found, module, &file, None);
     }
     found.in_setters = !found.literals.is_empty() || found.unread.is_some();
+    // Nothing reads the environment files of a project Django is not in.
+    if !has_manage && !found.in_setters && !manifest_has_dependency(ctx.manifest, "django") {
+        return found;
+    }
     let dirs =
         project_dirs(ctx).filter(|dir| !dir.split('/').any(|part| EXAMPLE_DIRS.contains(&part)));
     for setting in settings_env::read(root, dirs) {
