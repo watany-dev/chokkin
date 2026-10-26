@@ -1612,12 +1612,14 @@ mod tests {
     fn local_hooks_with_their_own_language_env_provide_their_binaries() {
         let result = scan_files(&[(
             ".pre-commit-config.yaml",
+            // Block list items before `language` stay in the same hook.
             "repos:\n  - repo: local\n    hooks:\n      - id: bandit\n        name: bandit\n\
-                         entry: bandit -r airflow\n        language: python\n        \
-                         additional_dependencies:\n          - bandit==1.7.6\n\
+                         entry: bandit -r airflow\n        additional_dependencies:\n\
+                           - bandit==1.7.6\n        args:\n          - E501:ignore\n\
+                         language: python\n\
                        - entry: ruff check\n        id: lint\n        language: system\n\
                        - id: mypy\n        entry: mypy\n        language: python\n        \
-                         args:\n          - E501:ignore\n        additional_dependencies: []\n",
+                         additional_dependencies: []\n",
         )]);
         assert_eq!(result.provided_binaries, ["bandit"]);
         let sections: Vec<_> = result
@@ -1637,9 +1639,9 @@ mod tests {
                 ("pre-commit", None, false),
                 ("bandit", None, true),
                 ("bandit", Some(6), true),
-                ("ruff", Some(10), false),
+                ("ruff", Some(12), false),
                 ("mypy", None, false),
-                ("mypy", Some(14), false),
+                ("mypy", Some(16), false),
             ]
         );
     }
