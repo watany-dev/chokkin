@@ -17,7 +17,7 @@ use super::config_text::{
     PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, origin_at, read_root_file,
     toml_words, yaml_block_body,
 };
-use super::types::{CommandTarget, CommandTargetRef, ReferenceOrigin};
+use super::types::ReferenceOrigin;
 
 /// Candidates in the order make / just search them; only the first found is read.
 const MAKEFILE_NAMES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
@@ -94,24 +94,6 @@ fn dockerfile_paths(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
-/// The server apps the Dockerfiles at `paths` (root-relative, below the root)
-/// run (#1061). The rest of such a file is not read: its commands run in the
-/// image's own tree, which the root's import roots and manifest do not
-/// describe, so its binaries, scripts and opaque commands would be findings
-/// or gaps about the wrong project. An unreadable file adds nothing.
-pub(super) fn nested_dockerfile_apps(root: &Path, paths: &[String]) -> Vec<CommandTargetRef> {
-    let mut hits = SourceHits::default();
-    for rel in paths {
-        if let Ok(contents) = std::fs::read_to_string(root.join(rel)) {
-            scan_dockerfile(rel, &contents, &|_| false, &mut hits);
-        }
-    }
-    hits.command_targets
-        .into_iter()
-        .filter(|command| matches!(command.target, CommandTarget::App { .. }))
-        .collect()
-}
-
 fn scan_makefile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut SourceHits) {
     for (index, line) in logical_lines(contents) {
         let Some(recipe) = line.strip_prefix('\t') else {
@@ -174,7 +156,12 @@ fn is_just_recipe_header(line: &str) -> bool {
     !trimmed.starts_with(['#', '[']) && trimmed.contains(':') && !trimmed.contains(":=")
 }
 
-fn scan_dockerfile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut SourceHits) {
+pub(super) fn scan_dockerfile(
+    rel: &str,
+    contents: &str,
+    known: KnownBinary<'_>,
+    hits: &mut SourceHits,
+) {
     for (index, line) in logical_lines(contents) {
         let Some((instruction, rest)) = line.trim_start().split_once(char::is_whitespace) else {
             continue;
@@ -558,12 +545,12 @@ mod tests {
 
     #[test]
     fn procfile_reads_process_commands() {
-        let contents = "web: gunicorn app:app\n# worker: pytest\nworker: celery -A app worker\n";
+        let contents = "web: gunicorn app:app\n# worker: pytest\n#beat: mypy\n: alembic\nmy job: uvicorn\nworker: celery -A app worker\n";
         assert_eq!(
             scanned(scan_procfile, contents),
             [
                 ("gunicorn".to_owned(), Some(1)),
-                ("celery".to_owned(), Some(3))
+                ("celery".to_owned(), Some(6))
             ]
         );
     }
@@ -588,7 +575,7 @@ mod tests {
 
     #[test]
     fn gitlab_ci_reads_script_lists_inline_values_and_blocks() {
-        let contents = "test:\n  before_script: [\"uv sync\", \"alembic upgrade head\"]\n  script:\n    - pytest -q\n    - !reference [.setup, script]\n    - |\n      celery -A app inspect ping\n  after_script: coverage report # tail\ndeploy:\n  script: >\n    gunicorn app:app\n  variables:\n    X: pytest\n";
+        let contents = "test:\n  before_script: [\"uv sync\", \"alembic upgrade head\"]\n  script:\n\n    # the suite\n    - pytest -q\n    - !reference [.setup, script]\n    - |\n      celery -A app inspect ping\n  after_script: coverage report # tail\ndeploy:\n  script: >\n    gunicorn app:app\n  variables:\n    X: pytest\n";
         let mut hits = SourceHits::default();
         GitlabScripts::new("ci", contents, &known, &mut hits).scan();
         let found: Vec<_> = hits
@@ -600,41 +587,43 @@ mod tests {
             found,
             [
                 ("alembic".to_owned(), Some(2)),
-                ("pytest".to_owned(), Some(4)),
-                ("celery".to_owned(), Some(6)),
-                ("coverage".to_owned(), Some(8)),
-                ("gunicorn".to_owned(), Some(10)),
+                ("pytest".to_owned(), Some(6)),
+                ("celery".to_owned(), Some(8)),
+                ("coverage".to_owned(), Some(10)),
+                ("gunicorn".to_owned(), Some(12)),
             ]
         );
     }
 
-    /// Only the server apps of a nested Dockerfile count, under its own path.
     #[test]
-    fn nested_dockerfiles_add_server_apps_only() {
+    fn just_recipe_headers_are_names_before_a_colon() {
+        assert!(is_just_recipe_header("test arg=\"x\": build"));
+        assert!(!is_just_recipe_header("# note: not a recipe"));
+        assert!(!is_just_recipe_header("[group: 'ci']"));
+        assert!(!is_just_recipe_header("version := \"1\""));
+        assert!(!is_just_recipe_header("echo done"));
+    }
+
+    #[test]
+    fn input_paths_are_the_task_files_present() {
         let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(temp.path().join("svc")).expect("mkdir");
-        std::fs::write(
-            temp.path().join("svc/Dockerfile"),
-            "FROM python\nRUN pip install -r requirements.txt && pytest\n\
-             CMD [\"python\", \"run.py\"]\nCMD [\"uvicorn\", \"app.main:app\"]\n",
-        )
-        .expect("write");
-        let apps = nested_dockerfile_apps(
-            temp.path(),
-            &["svc/Dockerfile".to_owned(), "gone/Dockerfile".to_owned()],
-        );
-        let found: Vec<_> = apps
+        // Names no other candidate matches on a case-insensitive file system.
+        for name in [
+            "GNUmakefile",
+            ".justfile",
+            "Procfile",
+            "Dockerfile",
+            "README.md",
+        ] {
+            std::fs::write(temp.path().join(name), "").expect("write");
+        }
+        let names: Vec<_> = input_paths(temp.path())
             .iter()
-            .map(|command| {
-                format!(
-                    "{:?} {}:{:?} {}",
-                    command.target, command.origin.file, command.origin.line, command.origin.label
-                )
-            })
+            .filter_map(|path| path.file_name()?.to_str().map(str::to_owned))
             .collect();
         assert_eq!(
-            found,
-            [r#"App { module: "app.main", symbol: Some("app") } svc/Dockerfile:Some(4) CMD"#]
+            names,
+            ["GNUmakefile", ".justfile", "Procfile", "Dockerfile"]
         );
     }
 

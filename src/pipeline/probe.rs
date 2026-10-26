@@ -56,8 +56,10 @@ pub struct ProbeReport {
     /// name is called from outside (#588). Kept from the one walk rather
     /// than walking again (#844).
     pub production_tests: Vec<DiscoveredFile>,
-    /// Dockerfiles below the root, root-relative and sorted, outside nested
-    /// projects: their server apps are entries (#1061).
+    /// Command files the walk found, root-relative and sorted, outside
+    /// nested projects: Dockerfiles below the root, whose server apps are
+    /// entries (#1061), and shell script and supervisor config candidates
+    /// (#1240). The field keeps its first kind's name.
     pub dockerfiles: Vec<String>,
     /// Resolved workspace members below the project root.
     pub workspace_members: Vec<ResolvedWorkspaceMember>,
@@ -234,8 +236,8 @@ pub(super) fn probe_project_with_cache(
         )
     };
     drop_nested_projects(&root.path, &mut sources, &nested);
-    let mut dockerfiles = discovery.dockerfiles;
-    dockerfiles.retain(|path| !under_any(path, &nested));
+    let mut command_files = discovery.command_files;
+    command_files.retain(|path| !under_any(path, &nested));
     let member_count = loaded.workspace_members.len();
     if loaded.effective.production {
         drop_dev_only_members(
@@ -285,7 +287,7 @@ pub(super) fn probe_project_with_cache(
         manifest,
         sources,
         production_tests: discovery.held_tests,
-        dockerfiles,
+        dockerfiles: command_files,
         workspace_members: loaded.workspace_members,
         workspace_inputs,
         auto_workspace: loaded.auto_workspace,

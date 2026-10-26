@@ -53,10 +53,12 @@ pub(super) struct Collected {
     /// path: a library's tests still show which public names are called
     /// (#588), and keeping them spares a second walk (#844).
     pub held_tests: Vec<DiscoveredFile>,
-    /// Root-relative Dockerfiles below the root, sorted: their server apps are
-    /// entries (#1061). The project globs do not apply; the exclusions and
-    /// ignore rules do.
-    pub dockerfiles: Vec<String>,
+    /// Root-relative files whose commands the plugins read outside the
+    /// config-scan cache, sorted: Dockerfiles below the root, whose server
+    /// apps are entries (#1061), and shell script and supervisor config
+    /// candidates (#1240). The project globs do not apply; the exclusions
+    /// and ignore rules do.
+    pub command_files: Vec<String>,
     /// What the walk could not read.
     pub warnings: Vec<SourcesWarning>,
 }
@@ -407,10 +409,30 @@ pub(crate) fn is_dockerfile(path: &Path) -> bool {
         || lower.starts_with("containerfile.")
 }
 
-/// `entry`, at `rel`, as a Dockerfile below the root that is neither excluded
-/// nor ignored (#1061).
-fn nested_dockerfile(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Option<String> {
-    if entry.depth() < 2 || !is_dockerfile(entry.path()) {
+/// `entry`, at `rel`, as a command file that is neither excluded nor ignored:
+/// a Dockerfile below the root (#1061), a file named like a shell script
+/// (`.sh` / `.bash` / `.zsh` / `.ksh`, or no extension) outside the root's
+/// `scripts/` and `bin/`, which the config scan reads, or a supervisor config
+/// (`.conf`).
+/// The plugins read the contents and drop what is neither (#1240).
+fn command_file(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Option<String> {
+    let path = entry.path();
+    let wanted = if is_dockerfile(path) {
+        entry.depth() >= 2
+    } else {
+        let extension = path.extension().and_then(|ext| ext.to_str());
+        let is = |wanted: &[&str]| {
+            extension.is_some_and(|ext| wanted.iter().any(|name| ext.eq_ignore_ascii_case(name)))
+        };
+        let named = extension.is_none() || is(&["sh", "bash", "zsh", "ksh", "conf"]);
+        let config_scanned = !is(&["conf"])
+            && entry.depth() == 2
+            && rel
+                .parent()
+                .is_some_and(|dir| dir == Path::new("scripts") || dir == Path::new("bin"));
+        named && !config_scanned
+    };
+    if !wanted {
         return None;
     }
     let rel_str = normalize_rel_path(rel);
@@ -471,7 +493,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
 
     let mut files = Vec::new();
     let mut held_tests = Vec::new();
-    let mut dockerfiles = Vec::new();
+    let mut command_files = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
     let mut non_utf8 = NonUtf8Paths::default();
@@ -506,7 +528,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         };
         let Some(kind) = source_kind(path) else {
-            dockerfiles.extend(nested_dockerfile(&entry, rel, exclude_matcher));
+            command_files.extend(command_file(&entry, rel, exclude_matcher));
             continue;
         };
         let rel_str = normalize_rel_path(rel);
@@ -540,13 +562,13 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
-    dockerfiles.sort();
+    command_files.sort();
     non_utf8.finish(&mut warnings);
     symlinks.finish(&mut warnings);
     Ok(Collected {
         files,
         held_tests,
-        dockerfiles,
+        command_files,
         warnings,
     })
 }
@@ -684,6 +706,17 @@ mod tests {
         ] {
             write_file(&root.join(dockerfile), "FROM python\n");
         }
+        for file in [
+            "entrypoint.sh",
+            "svc/supervisord.conf",
+            "svc/start-worker",
+            "svc/notes.md",
+            "scripts/release.sh",
+            "bin/supervisord.conf",
+            "src/acme/generated/run.sh",
+        ] {
+            write_file(&root.join(file), "#!/bin/sh\n");
+        }
 
         let layout = LayoutInfo {
             inferred_globs: vec![
@@ -719,10 +752,19 @@ mod tests {
         assert!(!paths.contains(&"local/extra.py"));
         assert!(!paths.contains(&"src/acme/generated/models.py"));
         // Dockerfiles below the root ignore the project globs, not the
-        // exclusions (#1061); the root's own are read by `task_files`.
+        // exclusions (#1061); the root's own are read by `task_files`. So do
+        // shell script and supervisor config candidates, but for the ones
+        // the config scan reads under `scripts/` and `bin/` (#1240).
         assert_eq!(
-            collected.dockerfiles,
-            ["local/api.dockerfile", "svc/Dockerfile"]
+            collected.command_files,
+            [
+                "bin/supervisord.conf",
+                "entrypoint.sh",
+                "local/api.dockerfile",
+                "svc/Dockerfile",
+                "svc/start-worker",
+                "svc/supervisord.conf",
+            ]
         );
     }
 

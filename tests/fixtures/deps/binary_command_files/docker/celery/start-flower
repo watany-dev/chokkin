@@ -1,0 +1,3 @@
+#!/bin/bash
+set -o errexit
+celery --app acme --broker="${BROKER}" flower

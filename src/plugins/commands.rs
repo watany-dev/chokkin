@@ -7,9 +7,11 @@
 
 use crate::parser::ParseSummary;
 
+use super::ci_installs::installed_distributions;
+use super::config_scan::is_distribution_name;
 use super::plugin_map::plugin_module_distribution;
 use super::types::{
-    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
+    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin, SymbolReference,
 };
 
 /// Predicate for binary names worth reporting (the binary map plus known tools).
@@ -32,6 +34,12 @@ pub(super) struct SourceHits {
     pub(super) distributions: Vec<String>,
     pub(super) module_refs: Vec<ModuleReference>,
     pub(super) command_targets: Vec<CommandTargetRef>,
+    /// Distributions the commands `pip install`, which provide their
+    /// binaries the way a manifest declaration does (#1241).
+    pub(super) installed: Vec<String>,
+    /// Classes command options name by path; their modules are in
+    /// `module_refs` (#1239).
+    pub(super) used_symbols: Vec<SymbolReference>,
 }
 
 impl SourceHits {
@@ -51,6 +59,20 @@ impl SourceHits {
         }
         self.command_targets
             .extend(command_target_refs(command, origin));
+        let uses = command_uses(command);
+        self.distributions.extend(uses.distributions);
+        for module in uses.modules {
+            self.push_module(&module, origin);
+        }
+        for (module, symbol) in uses.symbols {
+            self.push_module(&module, origin);
+            self.used_symbols.push(SymbolReference {
+                module,
+                symbol,
+                origin: origin.clone(),
+            });
+        }
+        self.installed.extend(installed_distributions(command));
     }
 
     /// [`Self::push_command`] for a command the deployed image or process
@@ -87,6 +109,174 @@ impl SourceHits {
         }
         self.push_module(module, origin);
     }
+}
+
+/// What a command's arguments make used beyond its command word: the
+/// distributions a worker or pool name loads, and the modules and classes
+/// an option names (#1240, #1239).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct CommandUses {
+    pub(super) distributions: Vec<String>,
+    pub(super) modules: Vec<String>,
+    /// `(module, name)` of a class named by path; the tool imports the
+    /// module and looks the name up in it.
+    pub(super) symbols: Vec<(String, String)>,
+}
+
+/// Celery subcommands a plugin distribution registers under
+/// `celery.commands`.
+const CELERY_PLUGIN_COMMANDS: [(&str, &str); 1] = [("flower", "flower")];
+
+/// Pool (`celery worker -P`) and worker class (`gunicorn -k`) names that load
+/// a distribution. A built-in name (`prefork`, `sync`, `gthread`) loads none,
+/// and a name in neither list nor dotted is unknown and adds nothing.
+const CONCURRENCY_DISTRIBUTIONS: [(&str, &str); 3] = [
+    ("gevent", "gevent"),
+    ("eventlet", "eventlet"),
+    ("tornado", "tornado"),
+];
+
+/// Celery's global options whose value is the next word, so it is not the
+/// subcommand.
+const CELERY_VALUE_OPTIONS: [&str; 8] = [
+    "-A",
+    "--app",
+    "-b",
+    "--broker",
+    "--result-backend",
+    "--loader",
+    "--config",
+    "--workdir",
+];
+
+/// [`CommandUses`] of each segment of `command`. Only the tool at the
+/// command word (or after `python -m`) is read, so `echo celery flower`
+/// names nothing; a computed value (`-k $WORKER`) is skipped, as the class
+/// it loads is unknown and the command word already counts as a usage.
+pub(super) fn command_uses(command: &str) -> CommandUses {
+    let mut uses = CommandUses::default();
+    for_each_segment(command, |words| {
+        let Some((tool, args)) = segment_tool(words) else {
+            return;
+        };
+        match tool {
+            "celery" => {
+                let subcommand = celery_subcommand(args);
+                if let Some(distribution) = subcommand.and_then(|name| {
+                    CELERY_PLUGIN_COMMANDS
+                        .into_iter()
+                        .find_map(|(command, dist)| (command == name).then_some(dist))
+                }) {
+                    uses.distributions.push(distribution.to_owned());
+                }
+                if let Some(pool) = option_value(args, Some("-P"), "--pool") {
+                    uses.push_class(pool);
+                }
+                // `-S` is `--scheduler` for `beat` only; the worker's is `--statedb`.
+                let short = (subcommand == Some("beat")).then_some("-S");
+                if let Some(scheduler) = option_value(args, short, "--scheduler") {
+                    uses.symbols.extend(symbol_path(scheduler));
+                }
+            },
+            "gunicorn" => {
+                if let Some(worker) = option_value(args, Some("-k"), "--worker-class") {
+                    uses.push_class(worker);
+                }
+            },
+            "pytest" | "py.test" => {
+                // pytest-django's settings module.
+                if let Some(settings) = option_value(args, None, "--ds")
+                    && !is_computed(settings)
+                    && is_dotted_identifier(settings)
+                {
+                    uses.modules.push(settings.to_owned());
+                }
+            },
+            _ => {},
+        }
+    });
+    uses
+}
+
+impl CommandUses {
+    /// A pool or worker class: a known name's distribution, the distribution
+    /// of gunicorn's `egg:dist#name`, or the module of a dotted class
+    /// (`uvicorn.workers.UvicornWorker`).
+    fn push_class(&mut self, class: &str) {
+        if let Some(spec) = class.strip_prefix("egg:") {
+            let distribution = spec.split('#').next().unwrap_or(spec);
+            if !is_computed(distribution) && is_distribution_name(distribution) {
+                self.distributions.push(distribution.to_owned());
+            }
+        } else if let Some(distribution) = CONCURRENCY_DISTRIBUTIONS
+            .into_iter()
+            .find_map(|(name, dist)| (name == class).then_some(dist))
+        {
+            self.distributions.push(distribution.to_owned());
+        } else if class.contains(['.', ':']) {
+            self.symbols.extend(symbol_path(class));
+        }
+    }
+}
+
+/// The tool a segment runs and its arguments: the command word, or the
+/// module `python -m` runs.
+fn segment_tool<'w, 'a>(words: &'w [&'a str]) -> Option<(&'a str, &'w [&'a str])> {
+    let (first, args) = words.get(command_start(words)..)?.split_first()?;
+    if !is_python_word(first) {
+        return Some((command_name(first), args));
+    }
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        index += 1;
+        match arg.strip_prefix("-m") {
+            Some("") => return Some((args.get(index)?, args.get(index + 1..)?)),
+            Some(module) => return Some((module, args.get(index..)?)),
+            None if matches!(*arg, "-X" | "-W") => index += 1,
+            None if arg.starts_with('-') => {},
+            None => return None,
+        }
+    }
+    None
+}
+
+/// The first word that is neither an option nor a global option's value.
+fn celery_subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if CELERY_VALUE_OPTIONS.contains(arg) {
+            args.next();
+        } else if !arg.starts_with('-') {
+            return Some(arg);
+        }
+    }
+    None
+}
+
+/// The value of `short` / `long` as `-k v`, `-kv`, `--long v` or `--long=v`.
+fn option_value<'a>(args: &[&'a str], short: Option<&str>, long: &str) -> Option<&'a str> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        if *arg == long || Some(*arg) == short {
+            return args.get(index + 1).copied();
+        }
+        arg.strip_prefix(long)
+            .and_then(|value| value.strip_prefix('='))
+            .or_else(|| short.and_then(|short| arg.strip_prefix(short)))
+            .filter(|value| !value.is_empty())
+    })
+}
+
+/// The module and top-level name of a `module:attr` or `module.attr` path,
+/// as celery's and gunicorn's `symbol_by_name` / `load_class` split it. A
+/// computed path or one that is no name path names nothing.
+fn symbol_path(path: &str) -> Option<(String, String)> {
+    if is_computed(path) {
+        return None;
+    }
+    let (module, attr) = path.split_once(':').or_else(|| path.rsplit_once('.'))?;
+    let name = attr.split('.').next().unwrap_or(attr);
+    (is_dotted_identifier(module) && is_dotted_identifier(name))
+        .then(|| (module.to_owned(), name.to_owned()))
 }
 
 /// [`command_targets`] as records the gap stage reads (#913). A script's
@@ -916,6 +1106,139 @@ mod tests {
     fn backslash_continuations_stay_in_one_segment() {
         assert_eq!(binaries("echo start \\\n  pytest"), Vec::<String>::new());
         assert_eq!(binaries("pytest \\\r\n  --cov"), ["pytest"]);
+    }
+
+    fn uses(command: &str) -> (Vec<String>, Vec<String>) {
+        let uses = command_uses(command);
+        let symbols = uses
+            .symbols
+            .into_iter()
+            .map(|(module, name)| format!("{module}:{name}"));
+        (
+            uses.distributions,
+            uses.modules.into_iter().chain(symbols).collect(),
+        )
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    /// A celery plugin subcommand, a pool or worker class, and the class a
+    /// dotted worker name loads (#1240).
+    #[test]
+    fn command_arguments_name_worker_distributions() {
+        let none = (Vec::new(), Vec::new());
+        let dist = |name: &str| (names(&[name]), Vec::new());
+        assert_eq!(
+            uses("celery --app wger --broker=\"${B}\" flower --basic_auth=a:b"),
+            dist("flower")
+        );
+        assert_eq!(uses("celery -A proj -b redis:// flower"), dist("flower"));
+        assert_eq!(uses("celery -A flower worker"), none);
+        assert_eq!(
+            uses("exec celery --app wger worker --pool=gevent -c 4"),
+            dist("gevent")
+        );
+        assert_eq!(
+            uses("python -m celery -A app worker -P eventlet"),
+            dist("eventlet")
+        );
+        assert_eq!(uses("celery -A app worker -Pgevent"), dist("gevent"));
+        assert_eq!(uses("celery -A app worker -P prefork"), none);
+        assert_eq!(uses("celery -A app worker -P $POOL"), none);
+        assert_eq!(uses("gunicorn -k gevent app:app"), dist("gevent"));
+        assert_eq!(
+            uses("uv run gunicorn --worker-class=eventlet app:app"),
+            dist("eventlet")
+        );
+        assert_eq!(
+            uses("gunicorn -k uvicorn.workers.UvicornWorker main:app"),
+            (Vec::new(), names(&["uvicorn.workers:UvicornWorker"]))
+        );
+        assert_eq!(uses("gunicorn -k gthread app:app"), none);
+        assert_eq!(
+            uses("gunicorn -k egg:meinheld#gunicorn_worker app:app"),
+            dist("meinheld")
+        );
+        assert_eq!(uses("gunicorn -k egg:-bad#worker app:app"), none);
+        assert_eq!(uses("echo celery flower && echo gunicorn -k gevent"), none);
+    }
+
+    /// The tool after `python -m` is found past interpreter flags, with
+    /// `-X` / `-W` taking a value; a script names no tool.
+    #[test]
+    fn python_flags_precede_the_module() {
+        let none = (Vec::new(), Vec::new());
+        let dist = |name: &str| (names(&[name]), Vec::new());
+        assert_eq!(uses("python -m celery flower"), dist("flower"));
+        assert_eq!(uses("python -mcelery flower"), dist("flower"));
+        assert_eq!(uses("python -X dev -m celery flower"), dist("flower"));
+        assert_eq!(uses("python -W ignore -m celery flower"), dist("flower"));
+        assert_eq!(
+            uses("python -u -m gunicorn -k gevent app:app"),
+            dist("gevent")
+        );
+        assert_eq!(uses("python -X -m celery flower"), none);
+        assert_eq!(uses("python manage.py -m celery flower"), none);
+        assert_eq!(uses("python -u"), none);
+        assert_eq!(uses("python -m"), none);
+    }
+
+    /// celery's `--scheduler` names a class and pytest-django's `--ds` a
+    /// module (#1239); `-S` is the scheduler only for `beat`.
+    #[test]
+    fn command_options_name_modules() {
+        assert_eq!(
+            uses(
+                "celery --app saleor.celeryconf:app beat --scheduler \
+                 saleor.schedulers.schedulers.DatabaseScheduler"
+            )
+            .1,
+            names(&["saleor.schedulers.schedulers:DatabaseScheduler"])
+        );
+        assert_eq!(
+            uses("celery -A proj beat -S django_celery_beat.schedulers:DatabaseScheduler").1,
+            names(&["django_celery_beat.schedulers:DatabaseScheduler"])
+        );
+        assert_eq!(
+            uses("celery -A proj worker -S worker.state").1,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            uses("pytest --ds=saleor.tests.settings -n auto").1,
+            names(&["saleor.tests.settings"])
+        );
+        assert_eq!(
+            uses("python -m pytest --ds app.settings").1,
+            names(&["app.settings"])
+        );
+        assert_eq!(
+            uses("celery -A proj beat --scheduler 1bad.mod:Scheduler").1,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            uses("celery -A proj beat --scheduler pkg.mod:1bad").1,
+            Vec::<String>::new()
+        );
+        assert_eq!(uses("pytest --ds=$SETTINGS").1, Vec::<String>::new());
+        assert_eq!(uses("tox -- --ds=app.settings").1, Vec::<String>::new());
+    }
+
+    /// requests' publish recipe installs twine right before `twine upload`
+    /// (#1241).
+    #[test]
+    fn installs_in_commands_provide_distributions() {
+        let origin = ReferenceOrigin {
+            file: "Makefile".to_owned(),
+            line: Some(20),
+            label: "make recipe".to_owned(),
+        };
+        let mut hits = SourceHits::default();
+        hits.push_command("python -m pip install 'twine>=1.5.0'", &known, &origin);
+        hits.push_command("twine upload dist/*", &known, &origin);
+        hits.push_command("pip install -r requirements-dev.txt", &known, &origin);
+        assert_eq!(hits.installed, ["twine"]);
     }
 
     #[test]

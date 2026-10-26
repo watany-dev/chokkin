@@ -4,6 +4,7 @@ mod airflow;
 mod alembic;
 mod celery;
 mod ci_installs;
+mod command_files;
 mod commands;
 mod config_scan;
 mod config_text;

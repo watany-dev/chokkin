@@ -18,6 +18,7 @@ use crate::sources::DiscoveredSources;
 use super::airflow;
 use super::alembic;
 use super::celery;
+use super::command_files;
 use super::commands;
 use super::config_scan;
 use super::context::PluginContext;
@@ -31,7 +32,6 @@ use super::flask;
 use super::prefect;
 use super::pytest;
 use super::scrapy;
-use super::task_files;
 use super::tool_plugins;
 use super::types::{PluginContribution, PluginEntry, PluginHints};
 
@@ -50,7 +50,9 @@ pub struct PluginExtractRequest<'a> {
     pub parse: &'a ParseSummary,
     /// Disk cache used for the generic config scan.
     pub cache: Option<&'a CacheOptions>,
-    /// Dockerfiles below the root, root-relative (#1061).
+    /// Root-relative command files the walk found: Dockerfiles below the
+    /// root (#1061), shell script and supervisor config candidates (#1240).
+    /// The field keeps its first kind's name.
     pub dockerfiles: &'a [String],
 }
 
@@ -65,7 +67,7 @@ pub fn extract_plugin_hints_with_parse(
         manifest,
         parse,
         cache,
-        dockerfiles,
+        dockerfiles: command_files,
     } = *request;
     let ctx = PluginContext {
         root,
@@ -116,13 +118,13 @@ pub fn extract_plugin_hints_with_parse(
         contributions.push(contrib);
     }
 
-    let scan = cached_config_scan(&ctx, config, manifest, cache)?;
+    let mut scan = cached_config_scan(&ctx, config, manifest, cache)?;
     // From the parse, the walk, and member pyprojects, which the config scan
     // cache does not key on.
+    command_files::scan_into(&mut scan, &root.path, command_files, ctx.config);
     let formatters = tool_plugins::datamodel_codegen_formatters(&ctx);
     let mut command_targets = scan.command_targets;
     command_targets.extend(commands::parsed_server_apps(parse));
-    command_targets.extend(task_files::nested_dockerfile_apps(&root.path, dockerfiles));
     command_targets.extend(formatters.command_targets);
     command_targets.extend(
         contributions
@@ -139,6 +141,7 @@ pub fn extract_plugin_hints_with_parse(
         config_declared_distributions: scan.declared_distributions,
         config_provided_binaries: scan.provided_binaries,
         config_module_refs: module_refs,
+        config_used_symbols: scan.used_symbols,
         config_script_entries: scan.script_entries,
         config_command_targets: command_targets,
         warnings,
@@ -273,7 +276,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v8".to_owned(),
+            unit_version: "config-scan-v9".to_owned(),
         },
         inputs,
     })
