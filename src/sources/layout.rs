@@ -292,14 +292,9 @@ fn heuristic_layout(
         .map(|base| (base, packages_with_init(&root.join(base), true)))
         .filter(|(_, packages)| !packages.is_empty())
         .collect();
-    for (base, packages) in &candidates {
-        if let Some(package) = project_package(packages, metadata) {
-            return (LayoutInfo::new(base, vec![package]), None);
-        }
-    }
     // A guess skips a package `testpaths` names, or one an entry widens to
     // that holds only subpackages (`t/` of `t/unit`); a package named after
-    // the project above still wins, as pandas' `testpaths = "pandas"` does
+    // the project below still wins, as pandas' `testpaths = "pandas"` does
     // (#978). A widened top with modules of its own (`core/api.py` beside
     // `core/tests`) stays a candidate: it may be the runtime package.
     let mut suites = testpath_entries(root, "");
@@ -308,6 +303,14 @@ fn heuristic_layout(
             .into_iter()
             .filter(|top| !holds_own_modules(&root.join(top))),
     );
+    if let Some(apps) = django_root_apps(root, &candidates, &suites) {
+        return (LayoutInfo::new("", apps), None);
+    }
+    for (base, packages) in &candidates {
+        if let Some(package) = project_package(packages, metadata) {
+            return (LayoutInfo::new(base, vec![package]), None);
+        }
+    }
     let guessable: Vec<(&str, Vec<String>)> = candidates
         .iter()
         .filter_map(|(base, packages)| {
@@ -333,6 +336,27 @@ fn heuristic_layout(
     };
     let (package, warning) = guess_package(base, packages, metadata);
     (LayoutInfo::new(base, vec![package]), warning)
+}
+
+/// Every root package of a Django project run from the root: `manage.py`
+/// puts the root on `sys.path`, so the apps beside it (babybuddy's `api/`
+/// next to `babybuddy/`) are all first-party, not one guessed package
+/// (#1239). Suites `testpaths` names stay out, as they do for a guess.
+fn django_root_apps(
+    root: &Path,
+    candidates: &[(&str, Vec<String>)],
+    suites: &[String],
+) -> Option<Vec<String>> {
+    if !root.join("manage.py").is_file() {
+        return None;
+    }
+    let (_, packages) = candidates.iter().find(|(base, _)| base.is_empty())?;
+    let apps: Vec<String> = packages
+        .iter()
+        .filter(|package| !suites.contains(package))
+        .cloned()
+        .collect();
+    (!apps.is_empty()).then_some(apps)
 }
 
 fn project_package(candidates: &[String], metadata: &ProjectMetadata) -> Option<String> {
@@ -1348,6 +1372,38 @@ mod tests {
             &UvToolSettings::default(),
         );
         assert_eq!(layout.layout, ProjectLayout::Unknown);
+    }
+
+    #[test]
+    fn django_root_manage_py_takes_every_root_app() {
+        let temp = tree(&["api", "babybuddy", "core", "tests", "suite"]);
+        fs::write(temp.path().join("manage.py"), "").expect("write");
+        fs::write(
+            temp.path().join("pytest.ini"),
+            "[pytest]\ntestpaths = suite\n",
+        )
+        .expect("write");
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("babybuddy"),
+            &UvToolSettings::default(),
+        );
+        assert_eq!(layout.layout, ProjectLayout::Flat);
+        assert_eq!(layout.packages, ["api", "babybuddy", "core"]);
+        assert_eq!(warning, None);
+        assert_eq!(
+            path_to_module("api/views.py", &layout),
+            Some("api.views".to_owned())
+        );
+
+        // Without `manage.py` the project package alone is taken.
+        fs::remove_file(temp.path().join("manage.py")).expect("remove");
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("babybuddy"),
+            &UvToolSettings::default(),
+        );
+        assert_eq!(layout.packages, ["babybuddy"]);
     }
 
     #[test]

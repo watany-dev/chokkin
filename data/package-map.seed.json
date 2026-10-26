@@ -1003,6 +1003,30 @@
       ]
     },
     {
+      "distribution": "django-imagekit",
+      "imports": [
+        "imagekit"
+      ]
+    },
+    {
+      "distribution": "django-import-export",
+      "imports": [
+        "import_export"
+      ]
+    },
+    {
+      "distribution": "django-qr-code",
+      "imports": [
+        "qr_code"
+      ]
+    },
+    {
+      "distribution": "django-widget-tweaks",
+      "imports": [
+        "widget_tweaks"
+      ]
+    },
+    {
       "distribution": "django-taggit",
       "imports": [
         "taggit"

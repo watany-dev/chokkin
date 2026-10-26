@@ -207,9 +207,12 @@ fn plugin_entry_files<'a>(
 }
 
 /// Entries whose module namespace the host reads as settings: Sphinx's
-/// `docs/conf.py` and Django's settings module.
+/// `conf.py`, wherever it is, and Django's settings module. Sphinx's other
+/// entries are the `.py` files a page shows (#1239), which are ordinary
+/// modules.
 fn config_entry_files(plugins: &PluginHints) -> HashSet<&str> {
     plugin_entry_files(plugins, PluginId::Sphinx, &[])
+        .filter(|path| path.ends_with("conf.py"))
         .chain(plugin_entry_files(
             plugins,
             PluginId::Django,

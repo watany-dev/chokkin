@@ -5571,11 +5571,11 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
         let project = discovered_manage_django_project();
         fs::write(project.path().join("mysite/settings/dev.py"), settings).expect("write settings");
         // `ROOT_URLCONF = "mysite.urls"` in `base.py` names the URLconf by
-        // its dotted name, so that file falls to info (#1026).
+        // its dotted name, so that file falls to info (#1026); `base.py` is
+        // a settings variant beside the one read, so it is an entry (#1239).
         assert_eq!(
             levels(project.path()),
             [
-                level("CHK001", "mysite/settings/base.py", "likely"),
                 (
                     "CHK001".to_owned(),
                     "mysite/urls.py".to_owned(),
@@ -5611,10 +5611,8 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
         "from split_settings.tools import include\n\nROOT_URLCONF = \"mysite.urls\"\nINSTALLED_APPS = [\"django.contrib.admin\"]\nMIDDLEWARE = []\ninclude(\"local.py\")\n",
     )
     .expect("write settings");
-    assert_eq!(
-        levels(project.path()),
-        [level("CHK001", "mysite/settings/base.py", "certain")]
-    );
+    // `base.py` is a settings variant, so it is an entry (#1239).
+    assert_eq!(levels(project.path()), []);
     fs::write(
         project.path().join("mysite/settings/dev.py"),
         "from .base import *\n\ndef load():\n    exec(\"X = 1\")\n    globals().update({})\n\nclass Local:\n    include(\"local.py\")\n\nrun = lambda: exec(\"X = 1\")\nCACHES = {}\nCACHES.update({})\nvars(Local).update({})\n",
