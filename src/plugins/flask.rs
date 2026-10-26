@@ -23,6 +23,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> PluginContribution {
 
     extract_flaskenv(root, ctx.sources, &mut contrib);
     extract_scripts(root, ctx.sources, &mut contrib);
+    extract_config_objects(ctx, &mut contrib);
     push_decorated_modules(
         ctx,
         &mut contrib,
@@ -90,6 +91,22 @@ fn extract_scripts(root: &Path, sources: &DiscoveredSources, contrib: &mut Plugi
             }
         }
     }
+}
+
+/// The modules `app.config.from_object("pkg.settings")` loads (#1238): Flask
+/// copies their upper-case names into the config, which extensions read by
+/// key. A name that is no module (`"pkg.settings.Config"`, a class) matches
+/// no module's symbols; the string names the class as any dotted path does.
+/// A module object or a variable argument is not read, so its settings stay
+/// reported.
+fn extract_config_objects(ctx: &PluginContext<'_>, contrib: &mut PluginContribution) {
+    contrib.settings_modules.extend(
+        ctx.parse
+            .modules
+            .iter()
+            .flat_map(|module| &module.config_objects)
+            .map(|load| load.module.clone()),
+    );
 }
 
 /// Push the app a `FLASK_APP` / `--app` value names. A module name goes to

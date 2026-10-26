@@ -415,6 +415,11 @@ pub struct ParsedModule {
     /// moves the loader calls among them into `dynamic_imports` (#493).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub named_loads: Vec<NamedLoad>,
+    /// Names `config.from_object("pkg.settings")` loads, which Flask copies
+    /// the upper-case names of (#1238). `apply_module_loaders` fills it from
+    /// `named_loads` after the cache, so it is never stored.
+    #[serde(skip)]
+    pub config_objects: Vec<DynamicImport>,
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,

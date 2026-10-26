@@ -63,8 +63,8 @@ pub mod internals {
         extract_manifest_with_cache, resolve_target_version,
     };
     pub use crate::parser::{
-        Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule, parse_file,
-        parse_project_sources_with_cache,
+        Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule,
+        apply_module_loaders, parse_file, parse_project_sources_with_cache,
     };
     pub use crate::pipeline::{
         AnalyzeOptions, ProbeWarning, SkipReason, WorkspaceMemberInputs, diagnostic_lines,

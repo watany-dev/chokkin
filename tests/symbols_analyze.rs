@@ -45,7 +45,9 @@ fn load_symbols(path: &Path, production: bool) -> SymbolInputs {
     let manifest = extract_manifest(&root, &loaded).expect("extract manifest");
     let sources = discover_sources(&root, &loaded, &manifest).expect("discover sources");
     let target = resolve_target_version(&loaded.effective, &manifest);
-    let parse = parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
+    let mut parse =
+        parse_project_sources_with_cache(&root, &sources, &target, None).expect("parse");
+    chokkin::internals::apply_module_loaders(&mut parse.modules, &loaded.effective.module_loaders);
     let plugins = extract_plugin_hints_with_parse(&PluginExtractRequest {
         root: &root,
         config: &loaded,
@@ -1348,6 +1350,175 @@ fn names_star_imported_into_django_settings_are_not_chk006() {
     }
     assert!(
         has_symbol_rule(&report, RuleId::Chk006, "mysite.views", "index"),
+        "{report:?}"
+    );
+}
+
+/// Django's `settings` copies the upper-case names of the settings module,
+/// which code reads as `settings.DEBUG`; other names there stay symbols
+/// (#1238).
+#[test]
+fn upper_case_names_of_django_settings_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.0.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "DEBUG = False\nS3_SECURE = True\nHTTP_IP_FILTER_ENABLED = 1\n\n\ndef env_flag(name):\n    return name\n\n\nCamelCase = 1\n",
+        ),
+        // Another deployment's settings module, which the plugin does not read.
+        (
+            "mysite/wsgi.py",
+            "import os\n\nimport mysite.settings_prod\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings_prod\")\n",
+        ),
+        ("mysite/settings_prod.py", "SECURE_SSL_REDIRECT = True\n"),
+    ]);
+    for (module, name) in [
+        ("mysite.settings", "DEBUG"),
+        ("mysite.settings", "S3_SECURE"),
+        ("mysite.settings", "HTTP_IP_FILTER_ENABLED"),
+        ("mysite.settings_prod", "SECURE_SSL_REDIRECT"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    for name in ["env_flag", "CamelCase"] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, "mysite.settings", name),
+            "{name}: {report:?}"
+        );
+    }
+}
+
+/// A string spelling a symbol's dotted path names it: Django's `MIDDLEWARE`
+/// and `STORAGES`, a class list a loader imports, `pkg.mod:attr` (#1238).
+/// A test's `mock.patch` target and a module naming its own symbol do not.
+#[test]
+fn dotted_strings_naming_symbols_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.0.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "MIDDLEWARE = [\"mysite.middleware.TeamAccess\"]\nSTORAGES = {\"default\": {\"BACKEND\": \"mysite.storages.Media\"}}\nREST_FRAMEWORK = {\"HOOKS\": [\"mysite.hooks:simplify\"]}\n",
+        ),
+        (
+            "mysite/middleware.py",
+            "class TeamAccess:\n    pass\n\n\nclass Leftover:\n    pass\n",
+        ),
+        ("mysite/storages.py", "class Media:\n    pass\n"),
+        (
+            "mysite/hooks.py",
+            "def simplify(result):\n    return result\n",
+        ),
+        (
+            "mysite/checks.py",
+            "CHECKS = (\"mysite.checks.Format.run\", \"mysite.formats.Json\")\n\n\nclass Format:\n    pass\n",
+        ),
+        ("mysite/formats.py", "class Json:\n    pass\n"),
+        (
+            "mysite/tracing.py",
+            "import mysite.checks\n\ntracer = None\n",
+        ),
+        (
+            "tests/test_tracing.py",
+            "from unittest import mock\n\nimport mysite.tracing\n\n\ndef test_tracer():\n    with mock.patch(\"mysite.tracing.tracer\"):\n        pass\n",
+        ),
+    ]);
+    for (module, name) in [
+        ("mysite.middleware", "TeamAccess"),
+        ("mysite.storages", "Media"),
+        ("mysite.hooks", "simplify"),
+        ("mysite.formats", "Json"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    for (module, name) in [
+        ("mysite.middleware", "Leftover"),
+        ("mysite.checks", "Format"),
+        ("mysite.tracing", "tracer"),
+    ] {
+        assert!(
+            has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+}
+
+/// A loader call in a test fetches the class its name ends in, though the
+/// test's dotted strings name nothing (#493, #1238).
+#[test]
+fn loader_call_in_a_test_fetches_its_class() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "import app.backends\n\n\ndef main():\n    pass\n",
+        ),
+        (
+            "app/backends.py",
+            "class Redis:\n    pass\n\n\nclass Leftover:\n    pass\n",
+        ),
+        (
+            "tests/test_backends.py",
+            "from django.utils.module_loading import import_string\n\n\ndef test_redis():\n    assert import_string(\"app.backends.Redis\")\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk006, "app.backends", "Redis"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "app.backends", "Leftover"),
+        "{report:?}"
+    );
+}
+
+/// Flask's `config.from_object("pkg.settings")` copies the upper-case names
+/// of the module it loads, which extensions read by key (#1238).
+#[test]
+fn upper_case_names_flask_loads_with_from_object_are_not_chk006() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.0.0\"\ndependencies = [\"flask\"]\n\n[project.scripts]\nacme = \"acme.app:main\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.chokkin.plugins]\nflask = true\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/app.py",
+            "from flask import Flask\n\nimport acme.settings\n\n\ndef main():\n    app = Flask(__name__)\n    app.config.from_object(\"acme.settings\")\n    return app\n",
+        ),
+        (
+            "acme/settings.py",
+            "MAIL_USE_TLS = True\n\n\ndef parse_boolean(value):\n    return value\n",
+        ),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk006, "acme.settings", "MAIL_USE_TLS"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "acme.settings", "parse_boolean"),
         "{report:?}"
     );
 }

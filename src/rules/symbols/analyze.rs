@@ -21,9 +21,12 @@ use crate::sources::{DiscoveredSources, FileContext, PublicSurface, member_ships
 
 use super::conventions::{
     config_star_symbols, convention_symbols, host_hook_symbols, is_codegen_file, scanned_files,
+    settings_symbols,
 };
 use super::exports::{ReExport, collect_reexports, is_reexport_used};
-use super::external::{collect_external_symbols, dynamically_fetched_classes};
+use super::external::{
+    collect_external_symbols, dynamically_fetched_classes, string_named_symbols,
+};
 use super::graph::{ReferenceIndex, RegistryEntry, SymbolId, build_registry};
 use super::public::{PublicApi, exports_reexport, is_public_module};
 
@@ -31,13 +34,12 @@ use super::public::{PublicApi, exports_reexport, is_public_module};
 fn surface_modules<'m>(
     reachable_modules: &[&'m ParsedModule],
     sources: &DiscoveredSources,
-    entry: &EntryPlan,
+    test_files: &HashSet<&str>,
     plugins: &PluginHints,
 ) -> Vec<&'m ParsedModule> {
     // Test code and root `tests/`-style packages are importable but not an
     // API surface: pytest calls their functions, so their symbols would all
     // read as unused. They still reference the symbols they import.
-    let test_files = test_file_paths(sources, entry);
     let all_files: HashSet<&str> = sources
         .files
         .iter()
@@ -85,7 +87,8 @@ pub fn analyze_with_context(
         .filter(|module| reachable.contains(module.path.as_str()))
         .collect();
     let module_names = build_module_names(&reachable_modules, sources);
-    let surface_modules = surface_modules(&reachable_modules, sources, entry, plugins);
+    let test_files = test_file_paths(sources, entry);
+    let surface_modules = surface_modules(&reachable_modules, sources, &test_files, plugins);
 
     // The reference index is the costly part and reads only the reachable
     // modules; the registry and re-exports build beside it.
@@ -108,6 +111,12 @@ pub fn analyze_with_context(
         collect_external_symbols(&registry, entry, plugins, &module_names, &sources.layout);
     external_symbols.extend(convention_symbols(plugins, &surface_modules, &module_names));
     external_symbols.extend(dynamically_fetched_classes(&registry, &reachable_modules));
+    external_symbols.extend(string_named_symbols(
+        &reachable_modules,
+        &module_names,
+        &test_files,
+    ));
+    external_symbols.extend(settings_symbols(plugins, &registry));
     external_symbols.extend(host_hook_symbols(
         &registry,
         &reexports,
