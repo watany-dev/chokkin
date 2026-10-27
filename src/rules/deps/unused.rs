@@ -591,6 +591,7 @@ mod tests {
                 max_confidence: Confidence::Certain,
                 mode: crate::config::ProjectMode::App,
                 confidence_reason: None,
+                test_fixture: false,
             });
 
         let mut resolution = ResolutionIndex::default();

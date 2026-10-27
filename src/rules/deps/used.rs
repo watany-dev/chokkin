@@ -1083,6 +1083,7 @@ mod tests {
             max_confidence,
             mode,
             confidence_reason: None,
+            test_fixture: false,
         };
         let mut report = ReachabilityReport::default();
         report.unreachable = vec![
