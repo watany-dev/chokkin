@@ -381,6 +381,7 @@ mod tests {
                     fallback_for: Vec::new(),
                     version_minors: None,
                     called_before: Vec::new(),
+                    tested_before: Vec::new(),
                 })
                 .collect(),
             has_opaque_dynamic_import: opaque,

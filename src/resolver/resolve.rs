@@ -144,6 +144,7 @@ pub fn resolve_imports_for_analysis(
                     context: ImportContext::Runtime,
                     optional: false,
                     never_runs: false,
+                    version_minors: None,
                     platform_guarded: false,
                     relative_level: 0,
                     stdlib,
@@ -197,6 +198,8 @@ struct Site<'s> {
     context: ImportContext,
     optional: bool,
     never_runs: bool,
+    /// The Python 3 minors `sys.version_info` tests let the import run on.
+    version_minors: Option<&'s [[u32; 2]]>,
     platform_guarded: bool,
     relative_level: u8,
     stdlib: StdlibRange,
@@ -358,6 +361,7 @@ impl Resolver<'_> {
                     context: import.context,
                     optional: import.optional,
                     never_runs,
+                    version_minors: import.version_minors.as_deref(),
                     platform_guarded: import.platform_guarded,
                     relative_level: import.relative_level,
                     stdlib,
@@ -376,6 +380,7 @@ impl Resolver<'_> {
                     context: ImportContext::Runtime,
                     optional: dynamic.optional,
                     never_runs: false,
+                    version_minors: None,
                     platform_guarded: dynamic.platform_guarded,
                     relative_level: 0,
                     stdlib,
@@ -398,6 +403,7 @@ impl Resolver<'_> {
                     context: plugin_context,
                     optional: false,
                     never_runs: false,
+                    version_minors: None,
                     platform_guarded: false,
                     relative_level: 0,
                     stdlib,
@@ -441,6 +447,7 @@ impl Resolver<'_> {
                                 context: ImportContext::Runtime,
                                 optional: false,
                                 never_runs: false,
+                                version_minors: None,
                                 platform_guarded: false,
                                 relative_level: 0,
                                 stdlib,
@@ -484,6 +491,7 @@ impl Resolver<'_> {
             context,
             optional,
             never_runs,
+            version_minors,
             platform_guarded,
             relative_level,
             stdlib,
@@ -626,7 +634,9 @@ impl Resolver<'_> {
                 line,
                 reference: reference.map(str::to_owned),
                 context,
-                optional: optional || never_runs,
+                // The stdlib table is Python 3's: a module only Python 2
+                // runs may well be one of its standard modules (#1272).
+                optional: optional || never_runs || version_minors.is_some_and(<[_]>::is_empty),
             }));
         }
 

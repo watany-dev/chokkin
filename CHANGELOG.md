@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a test harness loads by path, such as fixture projects and plugins (#1268).
 
 ### Fixed
+- An import that runs only when some package is installed is optional
+  whatever it imports: in the body of `"x" in sys.modules` (or
+  `sys.modules.get("x")`), after `if <x is missing>: return` or a `raise` of
+  any kind, and after a first-party install check of another package.
+  Module-level flags guard imports inside functions that do not rebind the
+  name, and a first-party function returning `None` / `False` when its
+  import fails counts as a check where a branch needs its result truthy
+  (`if has_x():`). The pandas, tenacity and langchain shapes leave
+  `certain` CHK003 / CHK005 (#1272).
+- A module-level name bound once to a version test (`PY2 =
+  sys.version_info[0] == 2`) reads as the test, and `sys.version_info[0]` /
+  `.major` comparisons are read. An unresolved import only Python 2 runs is
+  reported at info, as it may be Python 2's stdlib (six's `StringIO`,
+  #1272).
 - A `setup.py` with a value it cannot read (`long_description=fp.read()`)
   keeps the name, `packages`, `py_modules` and `package_dir` it can read;
   literal ones become wheel targets, so a single-module distribution such

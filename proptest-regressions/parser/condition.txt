@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 4d03ed57e64c596c002de69f81692b63facd8bae9df16675e67c532566c63e3f # shrinks to blocks = [If([(Not(Atom(Main)), [Import(0)]), (Atom(Platform), [Import(0)])], None)]
+cc 9e8a8d6afe8bf901db7113cce08b46e99520c8ca5182ff1da96c2f3ffa567008 # shrinks to blocks = [If([(Atom(Missing), [If([(And([Atom(TypeChecking), Atom(Loaded(0))]), [Import(1)])], None)])], None)]

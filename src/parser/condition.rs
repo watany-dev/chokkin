@@ -45,6 +45,16 @@ fn can(expr: &Expr, value: bool, leaf: &dyn Fn(&Expr) -> Leaf) -> bool {
     }
 }
 
+/// The value the leaves the guard knows give `expr` whatever the opaque ones
+/// are, or `None` when they leave it open.
+pub(super) fn fixed(expr: &Expr, leaf: &dyn Fn(&Expr) -> Leaf) -> Option<bool> {
+    match (can(expr, true, leaf), can(expr, false, leaf)) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    }
+}
+
 /// Whether the branch tested by `test` (`None` for `else`) never runs where
 /// the guard applies: an `earlier` test of its chain can be true there, or its
 /// own can be false.
@@ -141,17 +151,30 @@ if is_psycopg3 and settings.DEBUG:
         );
     }
 
-    /// A flag means nothing inside a function, where a local of the same
-    /// name may shadow it.
+    /// A module-level flag guards a function's imports too, unless the
+    /// function binds the name itself (#1272).
     #[test]
-    fn function_level_flags_guard_nothing() {
+    fn function_level_flags_guard_unless_shadowed() {
         let got = optional_by_module(
             "try:\n    import yaml\n    has_yaml = True\nexcept ImportError:\n    has_yaml = False\n\
-             def load():\n    if not has_yaml:\n        return None\n    else:\n        import yaml.nodes\n",
+             def load():\n    if not has_yaml:\n        return None\n    else:\n        import yaml.nodes\n\
+             def early():\n    if not has_yaml:\n        return None\n    import yaml.events\n\
+             def local():\n    has_yaml = probe()\n    if has_yaml:\n        import yaml.tokens\n\
+             def param(has_yaml):\n    if has_yaml:\n        import yaml.error\n\
+             class Loader:\n    has_yaml = True\n    if has_yaml:\n        import yaml.reader\n\
+             class Dumper:\n    def dump(self):\n        if has_yaml:\n            import yaml.emitter\n",
         );
         assert_eq!(
             got,
-            [("yaml".to_owned(), true), ("yaml.nodes".to_owned(), false)]
+            [
+                ("yaml".to_owned(), true),
+                ("yaml.nodes".to_owned(), true),
+                ("yaml.events".to_owned(), true),
+                ("yaml.tokens".to_owned(), false),
+                ("yaml.error".to_owned(), false),
+                ("yaml.reader".to_owned(), false),
+                ("yaml.emitter".to_owned(), true),
+            ]
         );
     }
 
@@ -554,7 +577,7 @@ if is_psycopg3 and settings.DEBUG:
                 let none = |_: Atom| false;
                 self.imports
                     .iter()
-                    .map(|(root, path)| {
+                    .map(|(_, path)| {
                         let type_only = self.never_runs_on_path(path, &runtime, &none);
                         let main_only = self.never_runs_on_path(
                             path,
@@ -574,9 +597,10 @@ if is_psycopg3 and settings.DEBUG:
                         let optional = self.never_runs_on_path(
                             path,
                             &|atom| match atom {
-                                Atom::Installed => Some(false),
+                                // A loaded-module check gates whatever the
+                                // branch imports (#1272).
+                                Atom::Installed | Atom::Loaded(_) => Some(false),
                                 Atom::Missing => Some(true),
-                                Atom::Loaded(at) if at == *root => Some(false),
                                 _ => None,
                             },
                             &none,

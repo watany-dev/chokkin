@@ -1555,6 +1555,7 @@ mod tests {
             fallback_for: Vec::new(),
             version_minors: None,
             called_before: Vec::new(),
+            tested_before: Vec::new(),
         };
         let unplaced = |line: u32| ParseDiagnostic {
             line,
