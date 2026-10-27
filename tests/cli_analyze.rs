@@ -10730,3 +10730,54 @@ fn binary_import_after_a_first_party_install_check_is_optional() {
         "{summary:?}"
     );
 }
+
+/// A console script into a second package the build backend declares,
+/// under another `where` directory or by an `include` at the root, is a CLI
+/// shipped with the library, not an app outside it (#1271).
+#[test]
+fn binary_console_script_into_a_declared_second_package_stays_a_library() {
+    let several_wheres = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[project.scripts]\nacme-test = \"acme_test.cli:main\"\n\n[tool.setuptools.packages.find]\nwhere = [\"lib\", \"test/lib\"]\n",
+        ),
+        ("lib/acme/__init__.py", "def api():\n    pass\n"),
+        ("test/lib/acme_test/__init__.py", ""),
+        (
+            "test/lib/acme_test/cli.py",
+            "from acme_test import runner\n\n\ndef main():\n    runner.run()\n",
+        ),
+        ("test/lib/acme_test/runner.py", "def run():\n    pass\n"),
+    ]);
+    let root_include = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[project.scripts]\nacmec = \"acmec.__main__:main\"\n\n[tool.setuptools.packages.find]\ninclude = [\"acme*\"]\n",
+        ),
+        ("acme/__init__.py", "def api():\n    pass\n"),
+        ("acmec/__init__.py", ""),
+        ("acmec/__main__.py", "def main():\n    pass\n"),
+    ]);
+    for project in [&several_wheres, &root_include] {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--reporter", "json", "--no-cache"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let report: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+        assert_eq!(report["mode"], "library", "{stdout}");
+        assert!(!stderr.contains("could not map"), "{stderr}");
+    }
+    let probe = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(several_wheres.path())
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(probe.stdout).expect("utf8");
+    assert!(
+        stdout.contains("package-root (root: lib, packages: acme, test/lib/acme_test)"),
+        "{stdout}"
+    );
+}

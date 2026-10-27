@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer makes the project an app. When the layout places no module of the
   target's package, it lowers CHK001 to likely for the files in directories
   named after that package (#1275).
+- Every package the build backend declares is a package of the project: one
+  under a second `packages.find` `where` directory (`["lib", "test/lib"]`)
+  keeps that directory, and a root `where` counts when its `include` names
+  packages (`["acme*"]`). A console script into such a package is a CLI
+  shipped with the library, so the project no longer turns app mode (#1271).
 - CHK001: a string naming a first-party package, in a file that lists a
   directory or a package's modules (`pkgutil.iter_modules`, `glob`,
   `os.listdir`), lowers the modules in that package and its direct

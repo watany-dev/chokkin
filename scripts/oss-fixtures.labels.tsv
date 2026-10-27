@@ -2452,6 +2452,7 @@ scikit-learn	CHK010	sklearn/ensemble/_hist_gradient_boosting/utils.py:catboost	t
 scikit-learn	CHK010	sklearn/ensemble/_hist_gradient_boosting/utils.py:lightgbm	tp	-	undeclared third-party: lightgbm; declared nowhere
 scikit-learn	CHK010	sklearn/utils/_testing.py:numpydoc	tp	-	undeclared in pyproject: numpydoc only in sklearn/_min_dependencies.py
 six	CHK010	six.py:StringIO	fp	stdlib	Python 2 stdlib StringIO in the PY2 branch of six.py
+ansible	CHK010	lib/ansible/module_utils/six/__init__.py:StringIO	fp	stdlib	Python 2 stdlib StringIO in the PY2 branch of the vendored six; reported since #1271 puts the module in the library's reach (conditional execution, #1272)
 sphinx	CHK010	tests/roots/test-ext-apidoc-toc/mypackage/main.py:mod_something	tp	-	no mod_something module anywhere in the repo; apidoc test root is documented, never run
 sphinx	CHK010	tests/roots/test-ext-apidoc-toc/mypackage/main.py:mod_resource	tp	-	no mod_resource module in the repo (mypackage/resource is a package named resource)
 sphinx	CHK010	tests/test_ext_autosummary/test_ext_autosummary.py:autosummary_dummy_module	fp	first-party-missed	tests/roots/test-ext-autosummary/autosummary_dummy_module.py, put on sys.path by the testroot fixture
@@ -2466,7 +2467,7 @@ ansible	CHK001	test/integration/targets/plugin_loader/normal/action_plugins/self
 mypy	CHK001	mypy/plugins/proper_plugin.py	fp	external-reference	mypy_self_check.ini:17 plugins = mypy.plugins.proper_plugin (the self-check config passed with --config-file)
 mypy	CHK001	mypyc/test-data/driver/driver.py	fp	external-reference	mypyc/test/test_run.py:370 copies test-data/driver/driver.py as the default run driver
 mypy	CHK001	mypyc/test-data/fixtures/ir.py	fp	external-reference	mypyc/test/testutil.py:32 ICODE_GEN_BUILTINS = test-data/fixtures/ir.py, the builtins stub for IR tests
-mypy	CHK001	mypy/gclogger.py	tp	-	no reference to mypy.gclogger or GcLogger anywhere in the repo
+mypy	CHK001	mypy/gclogger.py	info-expected	library-public-api	no reference to mypy.gclogger or GcLogger anywhere in the repo; library mode since #1271 (the build backend declares the second package the console script targets) reports the package's unimported modules at maybe, below the default floor
 mypy	CHK001	mypyc/test-data/fixtures/testutil.py	fp	external-reference	mypyc/test/test_run.py:191 shutil.copyfile(TESTUTIL_PATH, "testutil.py") into each run test
 six	CHK001	documentation/conf.py	fp	framework-loaded	Sphinx config: documentation/Makefile:40 runs $(SPHINXBUILD) -b html in that directory
 aiohttp	CHK003	aiohttp/worker.py:gunicorn.config	info-expected	optional-import	aiohttp.worker is the Gunicorn worker class, loaded only by gunicorn (-k aiohttp.GunicornWebWorker), so gunicorn is always present
@@ -2497,12 +2498,12 @@ ansible	CHK006	lib/ansible/modules/group.py:Linux	fp	dynamic-import	platform sub
 ansible	CHK006	lib/ansible/module_utils/distro/_distro.py:version_parts	fp	library-public-api	vendored distro library's public function (module_utils.distro re-exports the distro API)
 ansible	CHK006	lib/ansible/module_utils/_internal/_patches/_dataclass_annotation_patch.py:ClassVar	fp	dynamic-import	read as _ts.ClassVar through _ts = sys.modules[__name__] (:12, :28)
 ansible	CHK006	lib/ansible/modules/group.py:AIX	fp	dynamic-import	platform subclass of Group, chosen at runtime by its `platform` attribute
-mypy	CHK006	mypy/stubgen.py:NOT_IN_ALL	tp	-	defined at :273 and referenced nowhere
+mypy	CHK006	mypy/stubgen.py:NOT_IN_ALL	info-expected	library-public-api	defined at :273 and referenced nowhere; library mode since #1271 (the build backend declares the second package the console script targets) keeps the package's public API at info
 mypy	CHK006	mypy/dmypy/client.py:do_kill	fp	framework-loaded	registered by @action(kill_parser) (:452) as the subcommand's handler
 mypy	CHK006	mypy/dmypy/client.py:do_recheck	fp	framework-loaded	registered by the @action(...) subcommand decorator
 mypy	CHK006	mypy/dmypy/client.py:do_daemon	fp	framework-loaded	registered by the @action(...) subcommand decorator
 mypy	CHK006	mypy/dmypy/client.py:do_check	fp	framework-loaded	registered by @action(check_parser) (:464)
-mypy	CHK006	mypy/test/helpers.py:run_mypy	tp	-	no caller of mypy.test.helpers.run_mypy (misc/ defines its own run_mypy)
+mypy	CHK006	mypy/test/helpers.py:run_mypy	info-expected	library-public-api	no caller of mypy.test.helpers.run_mypy (misc/ defines its own run_mypy); library mode since #1271 (the build backend declares the second package the console script targets) keeps the package's public API at info
 ansible	CHK008	pytest	fp	isolated-env	ansible-test installs pytest into its units venv from test/lib/ansible_test/_data/requirements/units.txt
 boto3	CHK008	tox	tp	-	tox.ini drives the test envs; tox is declared nowhere (setup.py, setup.cfg, requirements-dev.txt)
 more-itertools	CHK008	tox	tp	-	tox.ini present and used; tox not in pyproject or requirements files

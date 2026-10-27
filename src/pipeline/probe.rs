@@ -839,7 +839,16 @@ fn format_layout(sources: &DiscoveredSources) -> String {
     if info.packages.is_empty() {
         layout.to_owned()
     } else {
-        format!("{layout} ({root}packages: {})", info.packages.join(", "))
+        // A package shipped from its own directory names it (#1271).
+        let packages: Vec<String> = info
+            .packages
+            .iter()
+            .map(|package| match info.package_roots.get(package) {
+                Some(_) => info.package_dir(package),
+                None => package.clone(),
+            })
+            .collect();
+        format!("{layout} ({root}packages: {})", packages.join(", "))
     }
 }
 
