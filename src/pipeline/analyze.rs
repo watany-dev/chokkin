@@ -30,8 +30,8 @@ use crate::resolver::{
 use crate::rules::deps::local_source_member;
 use crate::rules::emit::compute_exit_status;
 use crate::rules::{
-    DependencyRuleContext, Gap, GapKind, Issue, IssueReport, MemberManifest, RuleContext,
-    WorkspaceDependencyBoundary, collect_gaps, emit_issues,
+    DependencyRuleContext, Gap, GapKind, Issue, IssueCandidate, IssueReport, IssueSubject,
+    MemberManifest, RuleContext, RuleId, WorkspaceDependencyBoundary, collect_gaps, emit_issues,
 };
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning,
@@ -475,6 +475,7 @@ fn run_analysis_core(
     warnings.extend(archive_requirement_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));
     warnings.extend(string_module_ref_warning(&gaps));
+    warnings.extend(string_distribution_ref_warning(&gaps, &deps.candidates));
     let issues = emit_issues(
         &reachability,
         &deps,
@@ -608,6 +609,47 @@ fn string_module_ref_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
         line,
         text: text.to_owned(),
         target: target.to_owned(),
+        more: sites.len() - 1,
+    })
+}
+
+/// A string naming a distribution's module has no warning of its own
+/// either: one per run, at the first literal by file and line, counting only
+/// the distributions it lowers an unused-dependency finding of (#1266), since
+/// one an import uses is no news.
+fn string_distribution_ref_warning(
+    gaps: &[Gap],
+    candidates: &[IssueCandidate],
+) -> Option<ProbeWarning> {
+    let unused: BTreeSet<&str> = candidates
+        .iter()
+        .filter(|candidate| candidate.rule == RuleId::Chk002)
+        .filter_map(|candidate| match &candidate.subject {
+            IssueSubject::Distribution { name } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut sites: Vec<(&str, u32, &str, &str)> = gaps
+        .iter()
+        .filter(|gap| gap.kind == GapKind::StringDistributionRef)
+        .filter_map(|gap| {
+            let (module, line) = gap.site.as_ref()?;
+            let distribution = gap.target.as_deref()?;
+            unused.contains(distribution).then_some((
+                gap.file.as_str(),
+                (*line)?,
+                module.as_str(),
+                distribution,
+            ))
+        })
+        .collect();
+    sites.sort_unstable();
+    let (path, line, module, distribution) = *sites.first()?;
+    Some(ProbeWarning::StringDistributionRef {
+        path: path.to_owned(),
+        line,
+        module: module.to_owned(),
+        distribution: distribution.to_owned(),
         more: sites.len() - 1,
     })
 }

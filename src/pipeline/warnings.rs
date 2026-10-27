@@ -105,6 +105,22 @@ pub enum ProbeWarning {
         /// How many other such literals there are in the project.
         more: usize,
     },
+    /// A string literal in a reachable module names a module of a declared
+    /// distribution no import uses, which may be loaded by that name, so the
+    /// distribution's unused-dependency finding is an info note (#1266). One
+    /// per run, at the first such literal.
+    StringDistributionRef {
+        /// Root-relative path of the file with the literal.
+        path: String,
+        /// Line of the literal.
+        line: u32,
+        /// The module the literal names.
+        module: String,
+        /// The distribution that provides it.
+        distribution: String,
+        /// How many other distributions are named so.
+        more: usize,
+    },
     /// The baseline's `schema_version` is none this chokkin reads; its
     /// fingerprints were applied anyway (#1131).
     BaselineSchemaUnknown {
@@ -167,6 +183,7 @@ impl ProbeWarning {
             | Self::ArchiveRequirement { .. }
             | Self::UnreadCommandTarget { .. }
             | Self::StringModuleRef { .. }
+            | Self::StringDistributionRef { .. }
             | Self::BaselineSchemaUnknown { .. } => {},
         }
         hasher.finish()
@@ -227,7 +244,8 @@ impl ProbeWarning {
             },
             Self::ArchiveRequirement { path, line, .. }
             | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
-            Self::StringModuleRef { path, line, .. } => (Some(path), Some(*line)),
+            Self::StringModuleRef { path, line, .. }
+            | Self::StringDistributionRef { path, line, .. } => (Some(path), Some(*line)),
             Self::ParseDiagnostic { path, line, .. } => (
                 Some(path),
                 source_line(path, Some(*line).filter(|line| *line > 0)),
@@ -290,6 +308,10 @@ fn manifest_location(warning: &ManifestWarning) -> (Option<&str>, Option<u32>) {
 }
 
 impl fmt::Display for ProbeWarning {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per warning kind, each handing its fields to its writer"
+    )]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Manifest(warning) => write_manifest_warning(formatter, warning),
@@ -367,6 +389,13 @@ impl fmt::Display for ProbeWarning {
                 target,
                 more,
             } => write_string_module_ref(formatter, (path, *line), text, target, *more),
+            Self::StringDistributionRef {
+                path,
+                line,
+                module,
+                distribution,
+                more,
+            } => write_string_distribution_ref(formatter, (path, *line), module, distribution, *more),
             Self::BaselineSchemaUnknown { path, version } => {
                 write_baseline_schema_unknown(formatter, path, version)
             },
@@ -390,6 +419,27 @@ fn write_string_module_ref(
         more => write!(
             formatter,
             "parse: `{site}` names `{text}` and {more} more module{} in strings that may load files no entry reaches; those files are reported as unused at info, if at all",
+            if more == 1 { "" } else { "s" }
+        ),
+    }
+}
+
+fn write_string_distribution_ref(
+    formatter: &mut fmt::Formatter<'_>,
+    (path, line): (&str, u32),
+    module: &str,
+    distribution: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, Some(line));
+    match more {
+        0 => write!(
+            formatter,
+            "parse: `{site}` names `{module}` in a string that may load it from `{distribution}`, which no import uses; that dependency is reported as unused at info"
+        ),
+        more => write!(
+            formatter,
+            "parse: `{site}` names `{module}` of `{distribution}` and modules of {more} more distribution{} in strings that may load them, which no import uses; those dependencies are reported as unused at info",
             if more == 1 { "" } else { "s" }
         ),
     }

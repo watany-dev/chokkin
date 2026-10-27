@@ -10,7 +10,7 @@ use crate::parser::{
     ImportContext, ImportRef, ParseSummary, ParsedModule, import_context_for_file,
 };
 use crate::plugins::{ModuleReference, SysPathImport};
-use crate::sources::{DiscoveredSources, LocalTrees, path_to_module};
+use crate::sources::{DiscoveredSources, FileContext, LocalTrees, path_to_module};
 
 use super::first_party::is_first_party_import;
 use super::maps::{ImportMap, build_binary_map};
@@ -158,8 +158,11 @@ pub fn resolve_imports_for_analysis(
         merge.replay(log, &mut warnings);
     }
 
+    let string_refs = resolver.string_refs(parse, stdlib);
+
     ResolutionIndex {
         imports,
+        string_refs,
         warnings,
         transitive: manifest.lockfile.clone(),
         binary_resolutions,
@@ -403,6 +406,53 @@ impl Resolver<'_> {
             );
         }
         outcomes
+    }
+
+    /// The dotted-name string literals of runtime modules that resolve to a
+    /// third-party module (#1266), resolved as runtime imports of the module
+    /// they name. A name is no import, so nothing it resolves to or fails to
+    /// resolve to raises a warning; a first-party, stdlib or unresolved name
+    /// is dropped, since it names no distribution.
+    fn string_refs(&self, parse: &ParseSummary, stdlib: StdlibRange) -> Vec<ResolvedImport> {
+        let runtime: HashSet<&str> = self
+            .sources
+            .files
+            .iter()
+            .filter(|file| file.context == FileContext::Runtime)
+            .map(|file| file.path.as_str())
+            .collect();
+        let per_module =
+            crate::parallel::map_in_order_with(&parse.modules, RootCache::new, |cache, module| {
+                if !runtime.contains(module.path.as_str()) {
+                    return Vec::new();
+                }
+                module
+                    .module_refs
+                    .iter()
+                    .filter_map(|reference| {
+                        let name = crate::parser::module_ref_name(&reference.text);
+                        let import = self.site(
+                            &Site {
+                                full_module: name,
+                                imported: name,
+                                file: &module.path,
+                                line: Some(reference.line),
+                                reference: None,
+                                context: ImportContext::Runtime,
+                                optional: false,
+                                never_runs: false,
+                                platform_guarded: false,
+                                relative_level: 0,
+                                stdlib,
+                            },
+                            cache,
+                            &mut Vec::new(),
+                        );
+                        (import.origin == ModuleOrigin::ThirdParty).then_some(import)
+                    })
+                    .collect()
+            });
+        per_module.into_iter().flatten().collect()
     }
 
     fn plugin_context(&self, module: &ParsedModule) -> ImportContext {

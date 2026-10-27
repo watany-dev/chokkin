@@ -172,6 +172,12 @@ pub enum GapKind {
     /// to an info note at likely: a name is weaker evidence than a command
     /// that runs the file.
     StringModuleRef,
+    /// A string literal in a reachable runtime module is the dotted name of a
+    /// module a distribution provides (#1266): code may load it by that name
+    /// (a list of extensions handed to `importlib.import_module`), which no
+    /// import shows. `target` holds the distribution, whose CHK002 alone it
+    /// lowers to an info note at likely, as [`Self::StringModuleRef`] does.
+    StringDistributionRef,
 }
 
 /// How a gap changes a finding in its scope.
@@ -287,7 +293,8 @@ impl GapKind {
                 RuleId::Chk003,
                 IssueSubject::ScriptDistribution { .. },
             ) => Some(Lowering::Hint(Confidence::Maybe)),
-            (Self::StringModuleRef, RuleId::Chk001, IssueSubject::File { .. }) => {
+            (Self::StringModuleRef, RuleId::Chk001, IssueSubject::File { .. })
+            | (Self::StringDistributionRef, RuleId::Chk002, IssueSubject::Distribution { .. }) => {
                 Some(Lowering::Hint(Confidence::Likely))
             },
             _ => None,
@@ -356,6 +363,10 @@ impl GapKind {
             },
             Self::StringModuleRef => {
                 "a string literal names the module or its listed package, which may be loaded by name"
+            },
+            Self::StringDistributionRef => {
+                "a string literal in a reachable module names a module of the distribution, which \
+                 may be loaded by name"
             },
         }
     }
@@ -438,6 +449,9 @@ impl Gap {
             },
             (GapKind::StringModuleRef, subject) => {
                 matches!(subject, IssueSubject::File { path } if self.target.as_deref() == Some(path))
+            },
+            (GapKind::StringDistributionRef, subject) => {
+                matches!(subject, IssueSubject::Distribution { name } if self.target.as_deref() == Some(name))
             },
             _ => true,
         };
@@ -531,6 +545,7 @@ pub fn collect_gaps(
     ));
     gaps.extend(image_tree_gaps(context, &plugins.config_command_targets));
     gaps.extend(string_module_ref_gaps(context));
+    gaps.extend(string_distribution_ref_gaps(context));
     gaps.extend(
         plugins
             .unread_settings()
@@ -901,6 +916,49 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         gaps
     });
     per_module.into_iter().flatten().collect()
+}
+
+/// One gap per distribution a dotted-name string literal in a reachable
+/// runtime module names, at its first literal by file and line (#1266). The
+/// resolver keeps only the literals that resolve to a third-party module,
+/// so a first-party, stdlib or unknown name is none, and one with no
+/// distribution names none; a literal in a public module
+/// of a library counts as its imports do for CHK002 (#501). A name that no
+/// declaration provides lowers nothing, as no CHK002 names it.
+fn string_distribution_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
+    let public_orphans: BTreeSet<&str> = context
+        .reachability
+        .unreachable
+        .iter()
+        .filter(|orphan| orphan.callers_may_import())
+        .map(|orphan| orphan.path.as_str())
+        .collect();
+    let mut first: BTreeMap<&str, (&str, Option<u32>, &str)> = BTreeMap::new();
+    for reference in &context.resolution.string_refs {
+        let Some(distribution) = reference.distribution.as_deref() else {
+            continue;
+        };
+        let file = reference.file.as_str();
+        if !is_reached(file, context.graph, context.reachability) && !public_orphans.contains(file)
+        {
+            continue;
+        }
+        let site = (file, reference.line, reference.full_module.as_str());
+        first
+            .entry(distribution)
+            .and_modify(|kept| *kept = std::cmp::min(*kept, site))
+            .or_insert(site);
+    }
+    first
+        .into_iter()
+        .map(|(distribution, (file, line, module))| Gap {
+            file: file.to_owned(),
+            kind: GapKind::StringDistributionRef,
+            member: None,
+            site: Some((module.to_owned(), line)),
+            target: Some(distribution.to_owned()),
+        })
+        .collect()
 }
 
 /// The project file `module` names, or else the one its longest prefix of
@@ -1513,6 +1571,32 @@ mod tests {
                 candidate(RuleId::Chk001, file("acme/commands/cheat_sheet.py")),
                 candidate(RuleId::Chk001, file("acme/orphan.py")),
                 candidate(RuleId::Chk002, distribution("requests")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+    }
+
+    /// A string naming a distribution's module turns only that
+    /// distribution's CHK002 into a likely hint; files and other
+    /// distributions keep their level (#1266).
+    #[test]
+    fn string_distribution_ref_lowers_only_the_named_distribution() {
+        let mut gap = gap("acme/app.py", GapKind::StringDistributionRef);
+        gap.target = Some("acme-ext-help".to_owned());
+        gap.site = Some(("acme_ext.help".to_owned(), Some(3)));
+        let found = lowered(
+            &[gap],
+            vec![
+                candidate(RuleId::Chk002, distribution("acme-ext-help")),
+                candidate(RuleId::Chk002, distribution("requests")),
+                candidate(RuleId::Chk001, file("acme/app.py")),
             ],
         );
         assert_eq!(
@@ -2457,7 +2541,7 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 27] = [
+        const KINDS: [GapKind; 28] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
@@ -2485,6 +2569,7 @@ mod tests {
             GapKind::InvalidScriptRequirement,
             GapKind::AssumedScriptTargetVersion,
             GapKind::StringModuleRef,
+            GapKind::StringDistributionRef,
         ];
 
         /// The rules each kind's documentation says it may lower, written
@@ -2507,7 +2592,8 @@ mod tests {
                 | GapKind::UnresolvedPublicImport
                 | GapKind::UnresolvedScriptImport
                 | GapKind::UnreadPathSourceImport
-                | GapKind::UnreadBackendSetting => &[RuleId::Chk002],
+                | GapKind::UnreadBackendSetting
+                | GapKind::StringDistributionRef => &[RuleId::Chk002],
                 GapKind::UnknownExtras
                 | GapKind::RuntimeDependenciesUnknown
                 | GapKind::InvalidRuntimeRequirement => {

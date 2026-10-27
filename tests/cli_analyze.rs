@@ -5573,6 +5573,8 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
         // `ROOT_URLCONF = "mysite.urls"` in `base.py` names the URLconf by
         // its dotted name, so that file falls to info (#1026); `base.py` is
         // a settings variant beside the one read, so it is an entry (#1239).
+        // `INSTALLED_APPS = ["django.contrib.admin"]` there names a module of
+        // `django` the same way, so its CHK002 falls to info too (#1266).
         assert_eq!(
             levels(project.path()),
             [
@@ -5582,7 +5584,12 @@ fn binary_django_settings_include_and_exec_are_a_gap() {
                     "info".to_owned(),
                     "likely".to_owned(),
                 ),
-                level("CHK002", "django", "likely"),
+                (
+                    "CHK002".to_owned(),
+                    "django".to_owned(),
+                    "info".to_owned(),
+                    "likely".to_owned(),
+                ),
             ],
             "{settings}"
         );
@@ -9559,6 +9566,76 @@ fn binary_package_named_beside_a_directory_listing_lowers_its_modules() {
             level("acme/plugins/net/http.py", "info", "likely"),
             level("acme/themes/dark.py", "warning", "certain"),
         ]
+    );
+}
+
+/// A dotted string literal in a reachable runtime module that resolves to a
+/// declared distribution may load that distribution's module by name (a list
+/// of extensions handed to `importlib.import_module`), so its CHK002 falls
+/// to an info note at likely, and `--explain` names the string (#1266). A
+/// string in a test, in a file no entry reaches, or naming a stdlib or
+/// first-party module lowers nothing, nor does a computed one.
+#[test]
+fn binary_dotted_string_literal_lowers_the_named_distribution() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"pyyaml\", \"fancy-ext\", \"requests\", \"attrs\", \"unused-lib\"]\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "import importlib\n\nNAME = \"lib\"\nBUILTIN = (\"os.path\", \"acme.cli\", \"yaml.loader\", \"fancy_ext.plugin:setup\", f\"unused_{NAME}.mod\")\n\n\ndef main():\n    return [importlib.import_module(name) for name in BUILTIN]\n",
+        ),
+        ("acme/orphan.py", "LATER = \"attr.validators\"\n"),
+        ("tests/test_cli.py", "TARGET = \"requests.adapters\"\n"),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let unused: Vec<(String, String, String, String)> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK002")
+        .collect();
+    let level = |target: &str, severity: &str, confidence: &str| {
+        (
+            "CHK002".to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    assert_eq!(
+        unused,
+        [
+            level("attrs", "error", "certain"),
+            level("fancy-ext", "info", "likely"),
+            level("pyyaml", "info", "likely"),
+            level("requests", "error", "certain"),
+            level("unused-lib", "error", "certain"),
+        ]
+    );
+    // The gap reaches the user without `--explain` (ADR 0005 §3).
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "parse: `acme/cli.py:4` names `fancy_ext.plugin` of `fancy-ext` and modules of 1 more distribution in strings that may load them, which no import uses; those dependencies are reported as unused at info"
+        ),
+        "{stderr}"
+    );
+
+    let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:pyyaml"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(explain.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "a string literal in a reachable module names a module of the distribution, which may be loaded by name: `yaml.loader` in `acme/cli.py:4`"
+        ),
+        "{stderr}"
     );
 }
 
