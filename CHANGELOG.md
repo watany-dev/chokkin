@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `pyrefly.toml` and `[tool.pyrefly]` mark `pyrefly` used, as `ty.toml` and
+  `pyrightconfig.json` do for their type checkers.
+- OSS corpus: 13 projects whose domains, build systems and sizes the corpus
+  lacked (pandas, scikit-learn, pytest, rich, sphinx, ansible, aiohttp,
+  pillow, boto3, six, more-itertools, httpie, mypy); their CHK002 is recorded
+  only.
+
 ## [0.7.11] - 2026-10-27
 
 ### Added

@@ -978,10 +978,14 @@ def main() -> int:
     # from docker or shell, forms chokkin does not read yet, so the gate would
     # measure those known gaps. The orchestration plugin corpus (#1057) is too:
     # its false positives are a dbt adapter named by profiles.yml and the
-    # webserver `dg dev` spawns, forms chokkin does not read either.
+    # webserver `dg dev` spawns, forms chokkin does not read either. The
+    # diversity corpus is too: sphinx's runtime dependencies are the
+    # extensions it loads by module-name strings, which chokkin does not map
+    # to distributions yet.
     recorded_only = {
         "app-mode": oc.read_section(args.manifest, oc.APP_CORPUS_SECTION),
         "orchestration": oc.read_section(args.manifest, oc.ORCHESTRATION_CORPUS_SECTION),
+        "diversity": oc.read_section(args.manifest, oc.DIVERSITY_CORPUS_SECTION),
     }
     skipped = frozenset().union(*recorded_only.values())
     fp_ok, y002_total, y002_fp, y002_unclassified = fp_gate([f for f in findings if f[0] not in skipped])

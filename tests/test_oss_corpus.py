@@ -135,6 +135,9 @@ class CommittedManifestsTest(unittest.TestCase):
         self.assertEqual(
             orchestration, {"dagster-open-platform", "prefect-collection-registry", "open-gov-crawlers"}
         )
+        diversity = oc.read_section(oc.DEFAULT_MANIFEST, oc.DIVERSITY_CORPUS_SECTION)
+        self.assertIn("scikit-learn", diversity)
+        self.assertNotIn("open-gov-crawlers", diversity)
 
 
 if __name__ == "__main__":
