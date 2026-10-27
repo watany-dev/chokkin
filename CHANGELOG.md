@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OSS corpus: 95 precision labels on the diversity corpus. `report.md`
   records its precision per rule next to the floors, which leave it out.
 
+### Fixed
+- CHK001: a string naming a first-party package, in a file that lists a
+  directory or a package's modules (`pkgutil.iter_modules`, `glob`,
+  `os.listdir`), lowers the modules in that package and its direct
+  subdirectories to an info note at likely, as a plugin loader may load
+  them by scanning the package.
+
 ## [0.7.11] - 2026-10-27
 
 ### Added
