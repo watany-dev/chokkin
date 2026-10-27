@@ -2457,7 +2457,7 @@ sphinx	CHK010	tests/roots/test-ext-apidoc-toc/mypackage/main.py:mod_resource	tp	
 sphinx	CHK010	tests/test_ext_autosummary/test_ext_autosummary.py:autosummary_dummy_module	fp	first-party-missed	tests/roots/test-ext-autosummary/autosummary_dummy_module.py, put on sys.path by the testroot fixture
 sphinx	CHK010	tests/test_util/test_util_typing.py:unknown	tp	-	no such module; sphinx's mock(['unknown']) injects it at runtime
 sphinx	CHK010	tests/test_ext_autosummary/test_ext_autosummary.py:autosummary_dummy_inherited_module	fp	first-party-missed	tests/roots/test-ext-autosummary/autosummary_dummy_inherited_module.py, put on sys.path by the testroot fixture
-ansible	CHK001	lib/ansible/parsing/utils/jsonify.py	tp	-	no importer of ansible.parsing.utils.jsonify anywhere in the repo; parsing/utils is not a plugin directory
+ansible	CHK001	lib/ansible/parsing/utils/jsonify.py	info-expected	library-public-api	no importer of ansible.parsing.utils.jsonify anywhere in the repo; parsing/utils is not a plugin directory; library mode since #1271 (the build backend declares the second package the console script targets) reports the package's unimported modules at maybe, below the default floor
 ansible	CHK001	test/integration/targets/collections/collection_root_user/ansible_collections/testns/testcoll/plugins/module_utils/nested_same/nested_same/nested_same.py	fp	framework-loaded	integration target test collection; ansible-test runs the target and the collection loader resolves its module_utils by path
 ansible	CHK001	test/integration/targets/ansible-test-sanity-no-get-exception/ansible_collections/ns/col/plugins/modules/check-me.py	fp	framework-loaded	sample input for the ansible-test sanity target; read by the sanity test, never imported
 ansible	CHK001	lib/ansible/plugins/doc_fragments/action_common_attributes.py	fp	dynamic-import	doc fragment loaded by name: modules/meta.py:50 extends_documentation_fragment lists action_common_attributes
@@ -2491,7 +2491,7 @@ rich	CHK004	rich/pretty.py:IPython.core.formatters	fp	optional-import	in the els
 rich	CHK004	rich/live.py:IPython.display	fp	optional-import	inside `if self.console.is_jupyter:` try block (:254-256)
 sphinx	CHK004	sphinx/util/requests.py:urllib3.exceptions	tp	-	top-level import of urllib3, which sphinx gets only through requests
 pandas	CHK005	ipython	fp	optional-import	runtime use in pandas/io/formats/printing.py:309 runs only after `"IPython" not in sys.modules` returns early (:306)
-ansible	CHK006	lib/ansible/utils/listify.py:display	tp	-	display = Display() is used only in commented-out code (:30)
+ansible	CHK006	lib/ansible/utils/listify.py:display	info-expected	library-public-api	display = Display() is used only in commented-out code (:30); library mode since #1271 (the build backend declares the second package the console script targets) keeps the package's public API at info
 ansible	CHK006	lib/ansible/template/__init__.py:AnsibleUndefined	fp	library-public-api	compat alias (UndefinedMarker) in ansible.template, imported by third-party plugins and collections
 ansible	CHK006	lib/ansible/modules/group.py:Linux	fp	dynamic-import	platform subclass of Group, chosen at runtime by its `platform` attribute
 ansible	CHK006	lib/ansible/module_utils/distro/_distro.py:version_parts	fp	library-public-api	vendored distro library's public function (module_utils.distro re-exports the distro API)
