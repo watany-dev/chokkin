@@ -125,15 +125,19 @@ fn is_test_path(path: &str) -> bool {
     if dirs.split('/').any(|dir| dir == NESTED_TEST_DIR) {
         return true;
     }
-    if file_name == "conftest.py" {
-        return true;
-    }
-    // pytest's `test_*.py` / `*_test.py` are case-sensitive (#570); only the
-    // extension is not, for case-insensitive file systems.
-    file_name.rsplit_once('.').is_some_and(|(stem, ext)| {
-        (ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
-            && (stem.starts_with("test_") || stem.ends_with("_test"))
-    })
+    is_test_harness_name(file_name)
+}
+
+/// Whether `file_name` is a `conftest.py` or a module pytest collects by its
+/// default name. pytest's `test_*.py` / `*_test.py` are case-sensitive
+/// (#570); only the extension is not, for case-insensitive file systems.
+#[must_use]
+pub(crate) fn is_test_harness_name(file_name: &str) -> bool {
+    file_name == "conftest.py"
+        || file_name.rsplit_once('.').is_some_and(|(stem, ext)| {
+            (ext.eq_ignore_ascii_case("py") || ext.eq_ignore_ascii_case("pyi"))
+                && (stem.starts_with("test_") || stem.ends_with("_test"))
+        })
 }
 
 /// Whether `path` is input data under a test tree (`tests/data/case.py`,

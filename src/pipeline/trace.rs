@@ -481,6 +481,7 @@ mod tests {
                 max_confidence: Confidence::Certain,
                 mode: ProjectMode::App,
                 confidence_reason: None,
+                test_fixture: false,
             },
             UnreachableFile {
                 file: old_api_id,
@@ -488,6 +489,7 @@ mod tests {
                 max_confidence: Confidence::Certain,
                 mode: ProjectMode::App,
                 confidence_reason: None,
+                test_fixture: false,
             },
         ];
 

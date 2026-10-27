@@ -633,6 +633,7 @@ mod tests {
         let sources = sources();
         let resolution = ResolutionIndex {
             imports: vec![Arc::new(import)],
+            string_refs: Vec::new(),
             warnings: Vec::new(),
             transitive: lockfile.unwrap_or_default(),
             binary_resolutions: BTreeMap::new(),
@@ -1326,6 +1327,7 @@ mod tests {
         };
         let resolution = ResolutionIndex {
             imports: vec![Arc::new(import)],
+            string_refs: Vec::new(),
             warnings: Vec::new(),
             transitive: transitive.clone().unwrap_or_default(),
             binary_resolutions: BTreeMap::new(),

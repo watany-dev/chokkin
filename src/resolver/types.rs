@@ -120,6 +120,10 @@ pub enum ResolveWarning {
 pub struct ResolutionIndex {
     /// Resolved imports from parse output and plugin refs.
     pub imports: Vec<Arc<ResolvedImport>>,
+    /// Dotted-name string literals in runtime modules that resolve to a
+    /// third-party module (#1266): code may load the module by that name, so
+    /// they weaken CHK002 for it, but they are no imports and raise nothing.
+    pub string_refs: Vec<ResolvedImport>,
     /// Non-fatal warnings.
     pub warnings: Vec<ResolveWarning>,
     /// Lockfile transitive edges.

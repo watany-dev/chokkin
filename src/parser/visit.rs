@@ -18,8 +18,9 @@ use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
-    LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path, literal_target,
-    module_prefix, module_ref_literal, named_load, pytest_plugin_names, python_run, sys_path_hint,
+    LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path, lists_directory,
+    literal_target, module_prefix, module_ref_literal, named_load, pytest_plugin_names, python_run,
+    sys_path_hint,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -1274,6 +1275,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 self.record_computed_getattr(call);
                 self.record_literal_getattr(call);
                 self.sys_path.edited |= edits_sys_path(&call.func);
+                self.parsed.lists_directory |= lists_directory(&call.func);
                 if let Some((label, app, app_dir)) = self.server_names.app(call) {
                     let line = self.line_number(call);
                     self.parsed.server_apps.push(ServerApp {
@@ -1711,6 +1713,33 @@ mod tests {
                 ("python:pkg.config", 4),
             ]
         );
+    }
+
+    /// A call that lists a directory or a package's modules marks the file,
+    /// matched by the callee's last name; `walk` only through `os` (#1267).
+    #[test]
+    fn marks_files_that_list_a_directory() {
+        let lists = |source: &str| visit_source(source).lists_directory;
+        for source in [
+            "import pkgutil\nfor _ in pkgutil.iter_modules(pkg.__path__):\n    pass\n",
+            "from pkgutil import walk_packages\nwalk_packages(path)\n",
+            "import glob\ndef find(path):\n    return glob.glob(path + \"/*.py\")\n",
+            "from glob import iglob\niglob(\"*.py\")\n",
+            "Path(here).rglob(\"*.py\")\n",
+            "list(here.iterdir())\n",
+            "import os\nos.listdir(here)\n",
+            "import os\nos.scandir(here)\n",
+            "import os\nos.walk(here)\n",
+        ] {
+            assert!(lists(source), "{source}");
+        }
+        for source in [
+            "import ast\nast.walk(tree)\n",
+            "import os\nos.path.join(here, \"x\")\n",
+            "glob = 1\n",
+        ] {
+            assert!(!lists(source), "{source}");
+        }
     }
 
     /// Literal `module:attr` apps passed to uvicorn's `run` and `Config`,

@@ -553,6 +553,7 @@ mod tests {
                 distribution: Some("pyyaml".to_owned()),
                 confidence: ResolveConfidence::Certain,
             })],
+            string_refs: Vec::new(),
             warnings: Vec::new(),
             transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
@@ -752,6 +753,7 @@ mod tests {
                     ModuleOrigin::FirstParty,
                 )),
             ],
+            string_refs: Vec::new(),
             warnings: Vec::new(),
             transitive: LockfileGraph::default(),
             binary_resolutions: BTreeMap::new(),
@@ -1083,6 +1085,7 @@ mod tests {
             max_confidence,
             mode,
             confidence_reason: None,
+            test_fixture: false,
         };
         let mut report = ReachabilityReport::default();
         report.unreachable = vec![

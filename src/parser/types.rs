@@ -418,6 +418,11 @@ pub struct ParsedModule {
     /// the module they name (#1026): each distinct literal at its first line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub module_refs: Vec<ModuleRef>,
+    /// Calls a function that lists a directory or the modules of a package
+    /// (`pkgutil.iter_modules`, `glob.glob`, `os.listdir`): a dotted literal
+    /// here that names a package may load the modules under it (#1267).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lists_directory: bool,
     /// Calls that may load a name; `apply_module_loaders`
     /// moves the loader calls among them into `dynamic_imports` (#493).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
