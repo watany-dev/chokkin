@@ -44,6 +44,7 @@ fn scan(root: &Path, paths: &[String], binaries: &BTreeMap<String, String>) -> S
             hits.requirement_files.push(RequirementsRef {
                 path: rel.clone(),
                 origin: origin_at(rel, 0, "requirements directory"),
+                missing_ok: false,
             });
             continue;
         }

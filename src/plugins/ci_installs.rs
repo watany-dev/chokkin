@@ -79,6 +79,7 @@ pub(super) fn scan(root: &Path) -> (Vec<String>, Vec<RequirementsRef>) {
                     .map(|file| RequirementsRef {
                         path: file,
                         origin: origin_at(&rel, index, "workflow run"),
+                        missing_ok: true,
                     }),
             );
         }

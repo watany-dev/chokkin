@@ -865,6 +865,7 @@ fn push_tox_dependency(raw: &str, origin: &ReferenceOrigin, result: &mut ConfigS
         result.requirement_files.push(RequirementsRef {
             path: tox_root_path(&file),
             origin: origin.clone(),
+            missing_ok: false,
         });
         return;
     }
@@ -918,19 +919,13 @@ fn scan_noxfile(root: &Path, result: &mut ConfigScanResult) {
             let Some(requirement) = arg else {
                 continue;
             };
-            if matches!(requirement, "-r" | "--requirement") {
-                // A computed path is kept empty, an unread file (ADR 0005).
-                result.requirement_files.push(RequirementsRef {
-                    path: args.next().flatten().unwrap_or_default().to_owned(),
-                    origin: origin.clone(),
-                });
-                continue;
-            }
-            let mut rest = std::iter::empty();
+            // A computed path is read as empty, an unread file (ADR 0005).
+            let mut rest = args.by_ref().map(Option::unwrap_or_default);
             if let Some(file) = ci_installs::requirement_option(requirement, &mut rest) {
                 result.requirement_files.push(RequirementsRef {
                     path: file,
                     origin: origin.clone(),
+                    missing_ok: false,
                 });
                 continue;
             }

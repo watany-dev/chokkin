@@ -559,8 +559,8 @@ fn opaque_import_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
     })
 }
 
-/// An archive line has no manifest warning either: pip accepts it (#988).
-/// The warning names the first line by file and line.
+/// The first command or config that installs from a requirements file that
+/// could not be read (#1273), and how many more there are.
 fn unread_requirements_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
     let mut sites: Vec<(&str, Option<u32>, &str)> = gaps
         .iter()
@@ -580,6 +580,8 @@ fn unread_requirements_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
     })
 }
 
+/// An archive line has no manifest warning either: pip accepts it (#988).
+/// The warning names the first line by file and line.
 fn archive_requirement_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
     let mut sites: Vec<(&str, Option<u32>, &str)> = gaps
         .iter()

@@ -94,6 +94,7 @@ impl SourceHits {
                     .map(|path| RequirementsRef {
                         path,
                         origin: origin.clone(),
+                        missing_ok: false,
                     }),
             );
     }

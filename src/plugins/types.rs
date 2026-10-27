@@ -26,6 +26,12 @@ pub struct RequirementsRef {
     pub path: String,
     /// Where the reference is.
     pub origin: ReferenceOrigin,
+    /// A missing file is skipped, not a gap: a CI step may run in another
+    /// repository's checkout or a working directory below the root
+    /// (anyio's downstream jobs, scikit-learn's sparse checkout under
+    /// `path:`), where the file is not this project's.
+    #[serde(default)]
+    pub missing_ok: bool,
 }
 
 /// A config file a command points a tool at (`mypy --config-file

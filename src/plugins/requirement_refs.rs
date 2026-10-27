@@ -8,7 +8,8 @@
 //! (they provide binaries and make an import third-party, never a
 //! declaration in a context). A reference that cannot be read (a URL, a
 //! computed path, a missing file) is kept as unread: the gap stage lowers
-//! the findings its names may have answered (ADR 0005).
+//! the findings its names may have answered (ADR 0005). A CI step may run in
+//! another tree, so a file it names that is missing here is skipped.
 
 use std::collections::BTreeSet;
 
@@ -30,8 +31,12 @@ pub(super) fn read(manifest: &LoadedManifest, refs: &[RequirementsRef]) -> Refer
         if !seen.insert(reference.path.as_str()) {
             continue;
         }
-        let names = if is_literal_path(&reference.path) {
-            referenced_requirement_names(manifest, &reference.path).ok()
+        let literal = is_literal_path(&reference.path);
+        if literal && reference.missing_ok && !manifest.root.path.join(&reference.path).is_file() {
+            continue;
+        }
+        let names = if literal {
+            referenced_requirement_names(manifest, &reference.path)
         } else {
             None
         };

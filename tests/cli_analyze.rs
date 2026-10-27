@@ -11060,3 +11060,26 @@ fn binary_tool_config_file_option_reads_its_plugins() {
         "{issues:?}"
     );
 }
+
+/// A CI job may check out another repository or run under a working
+/// directory (anyio's downstream jobs), so a file its `pip install -r`
+/// names that is missing here is not this project's: no warning, and the
+/// unlisted binary stays certain (#1273).
+#[test]
+fn binary_missing_workflow_requirements_file_is_not_a_gap() {
+    let project = write_project(&[
+        ("pyproject.toml", MYPY_PYPROJECT),
+        ("acme.py", ""),
+        (
+            ".github/workflows/downstream.yml",
+            "jobs:\n  t:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          repository: other/project\n      - run: pip install -r requirements-tests.txt\n",
+        ),
+    ]);
+    let (issues, stderr) = json_issues_and_stderr(project.path());
+    let mypy = issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK008" && issue["target"] == "mypy")
+        .expect("CHK008 mypy");
+    assert_eq!(mypy["confidence"], "certain", "{mypy}");
+    assert!(!stderr.contains("could not be read"), "{stderr}");
+}
