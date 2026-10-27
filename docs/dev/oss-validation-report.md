@@ -442,6 +442,13 @@ section:
 | CHK008 | 14 | 14 | 7 / 7 | 50.0% | 85.7% (12/14) | 80 |
 | CHK010 | 57 | 35 | 26 / 9 | 74.3% | 89.8% (106/118) | 89 |
 
+Since #1269 an import after a call to a first-party install check is
+optional, which moved 9 scikit-learn CHK003 hits from `certain` to info; one
+of them was a labelled `fp`, so diversity CHK003 is now 20.0% (4 / 16). The
+other labelled helper cases import in a method that does not call the check
+itself (`tree/_export.py`, `partial_dependence.py` outside `plot()`), so they
+stay.
+
 The floors were measured on the corpus that the rules were tuned on, and the
 diversity corpus is far below them. Pooled, five rules would fail their floor
 (CHK001 65.8%, CHK003 89.8%, CHK006 88.9%, CHK008 67.9%, CHK010 86.3%), so

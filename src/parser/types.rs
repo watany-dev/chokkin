@@ -66,6 +66,13 @@ pub struct ImportRef {
     /// `>= (3, 9)`); `None` when no such test bounds it (#997).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_minors: Option<Vec<[u32; 2]>>,
+    /// Dotted callees of the calls made as statements before a non-optional
+    /// import in the same block or an enclosing one, as written (`check(x)`,
+    /// `utils.check(x)`). `apply_import_checks` marks the import optional
+    /// when one of them is a first-party function that checks the imported
+    /// package is installed (#1269).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub called_before: Vec<String>,
 }
 
 impl ImportRef {
@@ -429,6 +436,9 @@ pub struct ParsedModule {
     /// return it, directly or through the decorator they return (#1223).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub registry_decorators: Vec<String>,
+    /// Top-level functions that raise when a package is missing (#1269).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_checks: Vec<ImportCheck>,
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,
@@ -443,6 +453,17 @@ pub struct ParsedModule {
     /// so what the module imports is partly unknown (#902).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_unread_cells: bool,
+}
+
+/// A top-level function whose body tries to import packages and raises from
+/// an `except ImportError:` handler, so a call to it returns only when they
+/// are installed (#1269).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportCheck {
+    /// The function's name.
+    pub function: String,
+    /// The absolute modules its `try` body imports.
+    pub modules: Vec<String>,
 }
 
 /// Aggregate result of parsing all project `.py` sources.
@@ -484,6 +505,7 @@ mod tests {
             relative_level: 0,
             fallback_for: Vec::new(),
             version_minors: None,
+            called_before: Vec::new(),
         }
     }
 

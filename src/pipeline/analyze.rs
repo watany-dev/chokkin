@@ -14,7 +14,7 @@ use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_w
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
 use crate::manifest::{DeclaredDependency, normalize_distribution_name};
 use crate::parser::{
-    ParseSeverity, ParseSummary, ParsedModule, apply_module_loaders,
+    ParseSeverity, ParseSummary, ParsedModule, apply_import_checks, apply_module_loaders,
     parse_project_sources_with_cache,
 };
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
@@ -716,6 +716,7 @@ fn parse_with_member_files(
     sources.files.extend(member_files);
     let mut parse = parse_project_sources_with_cache(&probe.root, &sources, target, Some(cache))?;
     apply_module_loaders(&mut parse.modules, &probe.effective_config.module_loaders);
+    apply_import_checks(&mut parse.modules, &sources.layout);
     let (members, modules) = parse
         .modules
         .into_iter()

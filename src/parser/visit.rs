@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
-    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
+    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch, StmtTry,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -27,7 +27,7 @@ use super::lines::LineIndex;
 use super::module_guard::{
     async_library_names, availability_test, first_availability_check, guarded_roots,
     imported_module_guard, is_find_spec_value, is_install_check, is_main_guard_test,
-    raises_import_error, runs_as_main,
+    is_module_path, raises_import_error, runs_as_main,
 };
 use super::platform_guard::{
     PlatformModules, imports_platform_alias, is_platform_guard_test, mentions_platform_test,
@@ -38,8 +38,9 @@ use super::relative::{module_package, resolve_relative_import, unresolved_relati
 use super::server_app::ServerNames;
 use super::type_checking::is_type_checking_test;
 use super::types::{
-    AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef, ModuleRef,
-    NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind, import_context_for_file,
+    AttributeAccess, DecoratorSite, DynamicImport, ImportCheck, ImportContext, ImportKind,
+    ImportRef, ModuleRef, NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind,
+    import_context_for_file,
 };
 use super::version_guard::{self, ALL_MINORS, Minors};
 
@@ -120,6 +121,10 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// Where the enclosing function first checks if a package is installed;
     /// imports after it are optional (#695).
     availability_checked_at: Option<TextSize>,
+    /// Dotted callees of the calls made as statements so far in the blocks
+    /// that enclose the walk (#1269), written out only for an import after
+    /// them.
+    called_before: Vec<&'ast Expr>,
     function_depth: u32,
     module_level: bool,
     /// Module-level names that are truthy only when a `try` import succeeded:
@@ -188,6 +193,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             },
             in_main_block: false,
             availability_checked_at: None,
+            called_before: Vec::new(),
             function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
@@ -306,6 +312,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.parsed.registry_decorators = registry_decorators(stmts);
+        self.parsed.import_checks = import_checks(stmts);
         self.async_library_names = self.scope_async_library_names(None, stmts);
         // Without a plain `sys.platform`-style mention, only an aliased
         // import (`import sys as s`) can make a platform test, so most
@@ -670,6 +677,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     relative_level: 0,
                     fallback_for: Vec::new(),
                     version_minors: None,
+                    called_before: Vec::new(),
                 });
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
@@ -790,6 +798,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 relative_level: 0,
                 fallback_for: self.fallback_for.clone(),
                 version_minors: self.version_minor_runs(),
+                called_before: Vec::new(),
             });
         }
     }
@@ -879,6 +888,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 relative_level: level,
                 fallback_for: self.fallback_for.clone(),
                 version_minors: self.version_minor_runs(),
+                called_before: Vec::new(),
             });
         }
     }
@@ -887,7 +897,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         (self.version_minors != ALL_MINORS).then(|| version_guard::minor_runs(self.version_minors))
     }
 
-    fn push_import(&mut self, import: ImportRef) {
+    /// Record `import` with the calls it runs after, which may yet make it
+    /// optional; an import that already is keeps none.
+    fn push_import(&mut self, mut import: ImportRef) {
+        if !import.optional {
+            for func in &self.called_before {
+                let mut callee = String::new();
+                write_receiver(func, &mut callee);
+                if !import.called_before.contains(&callee) {
+                    import.called_before.push(callee);
+                }
+            }
+        }
         self.parsed.imports.push(import);
     }
 
@@ -969,8 +990,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
     /// only run with `x` installed (#695).
     fn visit_body(&mut self, body: &'ast [Stmt]) {
         let gated_depth = self.gated_depth;
+        let called_before = self.called_before.len();
         for stmt in body {
             self.visit_stmt(stmt);
+            // The statements after a call run only once it returned, which a
+            // first-party install check does only with its package (#1269).
+            if let Some(func) = statement_callee(stmt) {
+                self.called_before.push(func);
+            }
             // The statements after run only when the test was false, which
             // it cannot be with the package missing (#695, #958).
             let raise_guard = matches!(stmt, Stmt::If(if_stmt)
@@ -981,6 +1008,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             }
         }
         self.gated_depth = gated_depth;
+        self.called_before.truncate(called_before);
     }
 
     #[expect(
@@ -1511,6 +1539,80 @@ fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
         }
     }
     Some(roots)
+}
+
+/// The top-level functions whose body, unconditionally, tries to import
+/// packages and raises from a handler a failed import lands in: a call to
+/// one returns only when they are installed (#1269). The shape decides, not
+/// the name. A handler that returns instead (`return False`) lets the call
+/// return either way, so the caller has to test the result, and the function
+/// is no check.
+fn import_checks(stmts: &[Stmt]) -> Vec<ImportCheck> {
+    stmts
+        .iter()
+        .filter_map(|stmt| {
+            let Stmt::FunctionDef(def) = stmt else {
+                return None;
+            };
+            let mut modules: Vec<String> = def
+                .body
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    Stmt::Try(try_stmt) if raises_when_import_fails(try_stmt) => Some(try_stmt),
+                    _ => None,
+                })
+                .flat_map(|try_stmt| &try_stmt.body)
+                .flat_map(|stmt| match stmt {
+                    Stmt::Import(import) => import
+                        .names
+                        .iter()
+                        .map(|alias| alias.name.to_string())
+                        .collect(),
+                    Stmt::ImportFrom(import_from) if import_from.level == 0 => {
+                        import_from.module.iter().map(ToString::to_string).collect()
+                    },
+                    _ => Vec::new(),
+                })
+                .collect();
+            modules.sort();
+            modules.dedup();
+            (!modules.is_empty()).then(|| ImportCheck {
+                function: def.name.to_string(),
+                modules,
+            })
+        })
+        .collect()
+}
+
+/// Whether the first handler a missing package lands in ends by raising: a
+/// later `except ImportError: raise` never sees the `ModuleNotFoundError` an
+/// earlier handler logs and swallows.
+fn raises_when_import_fails(try_stmt: &StmtTry) -> bool {
+    try_stmt
+        .handlers
+        .iter()
+        .map(|handler| {
+            let ExceptHandler::ExceptHandler(handler) = handler;
+            handler
+        })
+        .find(|handler| handler.type_.as_deref().is_none_or(catches_import_error))
+        .is_some_and(|handler| matches!(handler.body.last(), Some(Stmt::Raise(_))))
+}
+
+/// The dotted callee of a call made as a statement, its result dropped or
+/// bound to names: `check(x)`, `pd = utils.check(x)` (#1269). A method of
+/// `self` / `cls` is left out, as no import binds it.
+fn statement_callee(stmt: &Stmt) -> Option<&Expr> {
+    let value = match stmt {
+        Stmt::Expr(expr) => &*expr.value,
+        Stmt::Assign(assign) => &*assign.value,
+        Stmt::AnnAssign(assign) => assign.value.as_deref()?,
+        _ => return None,
+    };
+    let Expr::Call(call) = value else {
+        return None;
+    };
+    is_module_path(&call.func).then_some(&*call.func)
 }
 
 /// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class
@@ -2598,6 +2700,57 @@ g = lambda x=utils.G: x
             .iter()
             .map(|import| (import.module.as_str(), import.optional))
             .collect()
+    }
+
+    /// #1269: a top-level function is an install check by its body alone:
+    /// an unconditional `try` that imports absolute modules and raises from
+    /// the first handler a missing package lands in.
+    #[test]
+    fn install_checks_are_read_from_function_bodies() {
+        let parsed = visit_source(
+            "def needs(caller):\n    try:\n        from x.sub import y\n        from .pkg import local\n        import z, w.core\n    except (ImportError, OSError) as e:\n        raise RuntimeError(caller) from e\n\ndef relative_only():\n    try:\n        from .pkg import local\n    except ImportError:\n        raise\n\ndef returns():\n    try:\n        import a\n    except ImportError:\n        return False\n\ndef narrow():\n    try:\n        import b\n    except ValueError:\n        raise\n\ndef nested():\n    if flag:\n        try:\n            import c\n        except ImportError:\n            raise\n",
+        );
+        let checks: Vec<(&str, Vec<&str>)> = parsed
+            .import_checks
+            .iter()
+            .map(|check| {
+                (
+                    check.function.as_str(),
+                    check.modules.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(checks, [("needs", vec!["w.core", "x.sub", "z"])]);
+    }
+
+    /// #1269: the statement calls an import runs after, results bound or
+    /// dropped; a method of `self` and a call in a branch that is over do
+    /// not count, and an optional import keeps none.
+    #[test]
+    fn imports_record_the_calls_they_run_after() {
+        let parsed = visit_source(
+            "import first\n\ndef f(self):\n    self.check()\n    import a\n    pd: object = utils.check_y()\n    import b\n    check_z()\n    check_z()\n    if flag:\n        later()\n    from c import d\n    try:\n        import e\n    except ImportError:\n        pass\n",
+        );
+        let called: Vec<(&str, Vec<&str>)> = parsed
+            .imports
+            .iter()
+            .map(|import| {
+                (
+                    import.module.as_str(),
+                    import.called_before.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            called,
+            [
+                ("first", vec![]),
+                ("a", vec![]),
+                ("b", vec!["utils.check_y"]),
+                ("c", vec!["utils.check_y", "check_z"]),
+                ("e", vec![]),
+            ]
+        );
     }
 
     /// #580: requests' `help.py` imports `cryptography` in `else:` and its

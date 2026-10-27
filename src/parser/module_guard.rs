@@ -274,7 +274,7 @@ fn is_availability_name(name: &str) -> bool {
 }
 
 /// A dotted name such as `transformers.utils`, not rooted at `self` / `cls`.
-fn is_module_path(expr: &Expr) -> bool {
+pub(super) fn is_module_path(expr: &Expr) -> bool {
     match expr {
         Expr::Name(name) => !matches!(name.id.as_str(), "self" | "cls"),
         Expr::Attribute(attribute) => is_module_path(&attribute.value),

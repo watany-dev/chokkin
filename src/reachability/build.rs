@@ -380,6 +380,7 @@ mod tests {
                     relative_level: 0,
                     fallback_for: Vec::new(),
                     version_minors: None,
+                    called_before: Vec::new(),
                 })
                 .collect(),
             has_opaque_dynamic_import: opaque,
