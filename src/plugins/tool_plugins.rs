@@ -1,5 +1,5 @@
 //! Tool plugins named in config: pytest `addopts` (`-p`, plugin options),
-//! mypy `plugins`, type-checker configs (ty, pyright, basedpyright), and
+//! mypy `plugins`, type-checker configs (ty, pyright, basedpyright, pyrefly), and
 //! datamodel-codegen `custom-formatters`.
 
 use std::collections::BTreeSet;
@@ -25,13 +25,15 @@ const PYTEST_INI_SECTIONS: [(&str, &str); 3] = [
 const MYPY_INI_FILES: [&str; 3] = ["mypy.ini", ".mypy.ini", "setup.cfg"];
 const PYTEST_PYPROJECT_TABLES: [&str; 2] = ["tool.pytest.ini_options", "tool.pytest"];
 /// pyright and basedpyright read the same config, so either may be the one in use.
-const TYPE_CHECKER_TABLES: [(&str, &[&str]); 3] = [
+const TYPE_CHECKER_TABLES: [(&str, &[&str]); 4] = [
     ("tool.ty", &["ty"]),
+    ("tool.pyrefly", &["pyrefly"]),
     ("tool.pyright", &["pyright", "basedpyright"]),
     ("tool.basedpyright", &["basedpyright"]),
 ];
-const TYPE_CHECKER_FILES: [(&str, &[&str]); 2] = [
+const TYPE_CHECKER_FILES: [(&str, &[&str]); 3] = [
     ("ty.toml", &["ty"]),
+    ("pyrefly.toml", &["pyrefly"]),
     ("pyrightconfig.json", &["pyright", "basedpyright"]),
 ];
 
@@ -43,6 +45,7 @@ pub(super) fn input_paths(root: &Path) -> Vec<PathBuf> {
         "mypy.ini",
         ".mypy.ini",
         "ty.toml",
+        "pyrefly.toml",
         "pyrightconfig.json",
     ]
     .into_iter()

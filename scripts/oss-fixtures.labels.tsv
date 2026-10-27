@@ -2405,3 +2405,15 @@ sqlalchemy	CHK008	isort	fp	not-invoked	pyproject.toml:262-267 [tool.isort] skip_
 sqlalchemy	CHK008	tox	tp	-	tox.ini still a supported runner (README.unittests.rst:13-17 `tox`); tox not declared anywhere; CI pip-installs nox only (run-test.yaml:117)
 healthchecks	CHK008	pytest	fp	not-invoked	tests run via `coverage run ... manage.py test` (.github/workflows/coverage.yml:30, tests.yml:59); no pytest config/conftest; usage is 'pytest defaults' from test_*.py names
 wger	CHK008	pytest	fp	not-invoked	CI runs `uv run coverage run ./manage.py test` (.github/workflows/ci.yml:56,62); no pytest config/conftest; usage is 'pytest defaults' from test_*.py names
+
+# --- Diversity corpus (CHK002) ---
+# Every CHK002 hit on the diversity corpus. sphinx lists its builtin extensions
+# in sphinx/application.py builtin_extensions and loads them by name at
+# startup; chokkin flags the strings but does not map them to distributions.
+sphinx	CHK002	alabaster	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'alabaster', which Sphinx.__init__ passes to setup_extension (import_module)
+sphinx	CHK002	sphinxcontrib-applehelp	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.applehelp', which Sphinx.__init__ passes to setup_extension (import_module)
+sphinx	CHK002	sphinxcontrib-devhelp	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.devhelp', which Sphinx.__init__ passes to setup_extension (import_module)
+sphinx	CHK002	sphinxcontrib-htmlhelp	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.htmlhelp', which Sphinx.__init__ passes to setup_extension (import_module)
+sphinx	CHK002	sphinxcontrib-jsmath	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.jsmath', which Sphinx.__init__ passes to setup_extension (import_module)
+sphinx	CHK002	sphinxcontrib-qthelp	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.qthelp', which Sphinx.__init__ passes to setup_extension (import_module)
+sphinx	CHK002	sphinxcontrib-serializinghtml	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.serializinghtml', which Sphinx.__init__ passes to setup_extension (import_module)

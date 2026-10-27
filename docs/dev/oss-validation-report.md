@@ -363,6 +363,84 @@ Makefile runs `sqlfluff lint`. Review then found that a project declaring only
 a dbt adapter or the old `dagster-dg` distribution would get CHK008 for `dbt`
 or `dg`, so those now provide the CLI as wrappers do.
 
+## Diversity corpus
+
+The 50 projects above were picked one feature at a time, and the picks
+cluster: 11 are web/HTTP libraries or frameworks (pallets, encode, Django,
+FastAPI), 7 are LLM tooling, 6 are Django apps, and every one of them is pure
+Python with a `pyproject.toml`-first build. Nothing covered scientific code,
+compiled extensions, a `setup.py`-only package or a single-module package, and
+only 6 projects were `small`. Thirteen release-pinned projects were added
+under `# --- diversity corpus`, one or two per missing axis:
+
+| Slug | Tag | Category / size | Axis it adds |
+|---|---|---|---|
+| `pandas` | `v3.1.0` | library / large | data science; meson-python, Cython |
+| `scikit-learn` | `1.9.1` | library / large | machine learning; meson-python, Cython; optional plotting deps |
+| `pytest` | `9.1.1` | cli / medium | test runner; `pytest11` plugins; setuptools-scm |
+| `rich` | `v15.0.0` | library / medium | terminal UI; poetry-core backend |
+| `sphinx` | `v9.2.0` | cli / large | docs tool; flit backend; extensions loaded by name |
+| `ansible` | `v2.21.5` | cli / large | infrastructure automation; plugins loaded by directory |
+| `aiohttp` | `v3.14.5` | library / medium | async networking; C extensions; `setup.cfg` |
+| `pillow` | `13.0.0` | library / medium | imaging; C extensions; in-tree build backend |
+| `boto3` | `1.43.119` | library / small | cloud SDK; `setup.py` / `setup.cfg` only |
+| `six` | `1.17.0` | library / small | single module; `setup.py` only |
+| `more-itertools` | `v11.2.1` | library / small | small library; flit backend |
+| `httpie` | `3.2.4` | cli / medium | CLI app; `setup.py` / `setup.cfg` only |
+| `mypy` | `v2.4.0` | cli / large | type checker; mypyc-compiled |
+
+Measured on 2026-10-27 with chokkin `0.7.11` plus the pyrefly fix below
+(3 cold runs, median):
+
+| Slug | Exit | Median ms | Findings | Main findings |
+|---|---:|---:|---:|---|
+| `pandas` | 0 | 253 | 76 | 65 CHK006 |
+| `scikit-learn` | 0 | 168 | 74 | 45 CHK003 (`matplotlib` / `pandas` imported in functions) |
+| `pytest` | 0 | 54 | 48 | 34 CHK006 |
+| `rich` | 0 | 35 | 24 | 19 CHK006, 3 CHK004 (`IPython`) |
+| `sphinx` | 0 | 94 | 88 | 66 CHK006, 7 CHK002 |
+| `ansible` | 0 | 224 | 707 | 467 CHK001, 174 CHK006 |
+| `aiohttp` | 0 | 56 | 108 | 103 CHK006 |
+| `pillow` | 0 | 64 | 74 | 61 CHK006 |
+| `boto3` | 0 | 26 | 11 | 8 CHK006 |
+| `six` | 0 | 10 | 5 | 2 CHK008 |
+| `more-itertools` | 0 | 31 | 1 | 1 CHK008 |
+| `httpie` | 0 | 26 | 12 | 4 CHK003 (`urllib3` via `requests`) |
+| `mypy` | 0 | 106 | 40 | 33 CHK006 |
+
+No project crashes or exits 2, and the slowest one (pandas, 1544 `.py`
+files) takes a quarter of a second, so speed does not depend on the domains
+the old corpus favoured. v0.4.1 (`573ff37`, the CI baseline) exits 2 on
+`sphinx` and reports 115 CHK003 on these projects against HEAD's 75, so the
+CHK003 growth criterion does not move; timed in turn with v0.7.10, the
+large projects summed 803 ms -> 817 ms (1.02x).
+
+Every CHK002 hit is labelled. All 7 are `fp` on `sphinx`: `alabaster` and the
+six `sphinxcontrib-*` distributions are runtime dependencies that Sphinx loads
+by name from `builtin_extensions` in `sphinx/application.py`. chokkin already
+notices those strings (`names sphinx.builders.changes and 53 more modules in
+strings`) but does not map them to distributions. As with the app-mode and
+orchestration corpora, this section's CHK002 is recorded only: the gate would
+measure a form chokkin does not read yet.
+
+One light fix came out of the measurement: `pyrefly.toml` and
+`[tool.pyrefly]` now mark `pyrefly` used, like `ty.toml` and
+`pyrightconfig.json` do for their checkers (`sphinx`'s `types` group).
+
+Gaps found, left for follow-up issues:
+
+- `sphinx`: module-name strings passed to an extension loader do not use the
+  distribution that provides the module (7 CHK002 `fp`).
+- `ansible`: 467 CHK001 in app mode. 251 are `test/integration/targets`
+  files that `ansible-test` runs, and 121 are modules and plugins under
+  `lib/ansible/{modules,plugins}` that the plugin loader finds by directory.
+- `scikit-learn`: 20 `certain` CHK003 for `matplotlib` and `pandas` (and 2
+  for `pytest`). They are imported inside functions after
+  `check_matplotlib_support()` / `check_pandas_support()`, helpers that
+  try-import the package and raise a helpful error, so the import is optional
+  although it is not under a `try` itself. The 1.9 `pyproject.toml` declares
+  no extras; the optional versions live in `sklearn/_min_dependencies.py`.
+
 ## #346 corpus measurements (#338–#342)
 
 Measured on 2026-10-04 with chokkin `0.6.0` over the same 20 pinned clones.

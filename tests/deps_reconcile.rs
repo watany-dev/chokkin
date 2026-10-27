@@ -864,7 +864,14 @@ fn mypy_plugins_and_type_checker_configs_mark_tools_used() {
     let report = reconcile_fixture("mypy_plugins_typecheckers");
     assert_used(
         &report,
-        &["basedpyright", "django-stubs", "mypy", "pydantic", "ty"],
+        &[
+            "basedpyright",
+            "django-stubs",
+            "mypy",
+            "pydantic",
+            "pyrefly",
+            "ty",
+        ],
     );
 }
 

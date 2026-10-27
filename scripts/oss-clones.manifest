@@ -126,3 +126,37 @@ wger	app	medium	65a1d40595a632984f016d9e9de0c103c004d9c4	https://github.com/wger
 dagster-open-platform	app	medium	c29d915add170fdbc2a59a248e90ce6cbff1623f	https://github.com/dagster-io/dagster-open-platform
 prefect-collection-registry	app	small	6be8519e91835916a26eab58c54c766dd3de59f1	https://github.com/PrefectHQ/prefect-collection-registry
 open-gov-crawlers	app	medium	87bdeaac38aae3f21c96e87331fb1636dc5ad424	https://github.com/public-law/open-gov-crawlers
+# --- diversity corpus ---
+# The corpus above leans on web/HTTP libraries (pallets, encode), LLM tooling
+# and Django apps, and all of it is pure Python. These projects cover what it
+# had none of: scientific / data code, Cython and C extensions with meson-python
+# or a custom build backend, setup.py / setup.cfg-only packaging, a test runner,
+# a docs tool, a type checker, infrastructure automation, a terminal UI library
+# and single-module packages. Selection and measurements are in
+# docs/dev/oss-validation-report.md. Pinned by commit SHA; the release tag:
+#   pandas          v3.1.0    meson-python, Cython
+#   scikit-learn    1.9.1     meson-python, Cython, optional plotting deps
+#   pytest          9.1.1     test runner, pytest11 plugins, setuptools-scm
+#   rich            v15.0.0   terminal UI, poetry-core backend
+#   sphinx          v9.2.0    docs tool, flit backend, extensions by name
+#   ansible         v2.21.5   infrastructure automation, plugins by directory
+#   aiohttp         v3.14.5   async networking, C extensions, setup.cfg
+#   pillow          13.0.0    image library, C extensions, in-tree backend
+#   boto3           1.43.119  cloud SDK, setup.py / setup.cfg only
+#   six             1.17.0    single module, setup.py only
+#   more-itertools  v11.2.1   small library, flit backend
+#   httpie          3.2.4     CLI app, setup.py / setup.cfg only
+#   mypy            v2.4.0    type checker, mypyc-compiled
+pandas	library	large	c6f46769b808eb60218189d089dd67841b44f1b9	https://github.com/pandas-dev/pandas
+scikit-learn	library	large	866c0f51e7560ef0303cbcc5f159df5382ea9e3f	https://github.com/scikit-learn/scikit-learn
+pytest	cli	medium	cf470ec0bf7eb89cd97dd56df4859eae5db46447	https://github.com/pytest-dev/pytest
+rich	library	medium	6ac483cbea39cab124dfd3483bba70ffafb71050	https://github.com/Textualize/rich
+sphinx	cli	large	7b2c103eaa4cabf0ac47224c444cf0cbc7c745e5	https://github.com/sphinx-doc/sphinx
+ansible	cli	large	3d36adf9a541aba1ed5f37aa124170f1f2df0a65	https://github.com/ansible/ansible
+aiohttp	library	medium	f17c631bddcfd4ec712342db28f1d3381a3fec71	https://github.com/aio-libs/aiohttp
+pillow	library	medium	293218ad059d994baf1777d882911bed6a49704a	https://github.com/python-pillow/Pillow
+boto3	library	small	e745502bb456cbf0f3b1b7fad273d3062690a19a	https://github.com/boto/boto3
+six	library	small	ebd9b3af90247b8858d415a05e96e9ee61e48d07	https://github.com/benjaminp/six
+more-itertools	library	small	4aeb4338ae1407d8da9723e86da99efeb446f719	https://github.com/more-itertools/more-itertools
+httpie	cli	medium	2105caa49bae87c5809c274e407619a0de2639d1	https://github.com/httpie/cli
+mypy	cli	large	935ba8afba7ceacca0651579450c74339f343016	https://github.com/python/mypy

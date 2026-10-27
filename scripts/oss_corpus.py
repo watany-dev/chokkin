@@ -28,6 +28,8 @@ CORE_SECTION_END = "# --- R-01"
 # Django apps added to measure CHK001 in app mode (#1065).
 APP_CORPUS_SECTION = "# --- app-mode CHK001 corpus"
 ORCHESTRATION_CORPUS_SECTION = "# --- orchestration plugin corpus"
+# Domains, build systems and sizes the sections above lack.
+DIVERSITY_CORPUS_SECTION = "# --- diversity corpus"
 LOG_TAIL_BYTES = 20_000
 
 

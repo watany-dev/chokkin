@@ -1,7 +1,7 @@
 [project]
 name = "mypy-plugins-typecheckers"
 version = "0.1.0"
-dependencies = ["basedpyright", "django-stubs", "mypy", "pydantic", "ty"]
+dependencies = ["basedpyright", "django-stubs", "mypy", "pydantic", "pyrefly", "ty"]
 
 [project.scripts]
 demo-cli = "acme.main:main"
