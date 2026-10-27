@@ -2679,7 +2679,7 @@ g = lambda x=utils.G: x
     #[test]
     fn install_checks_are_read_from_function_bodies() {
         let parsed = visit_source(
-            "def needs(caller):\n    try:\n        from x.sub import y\n        from . import local\n        import z, w.core\n    except (ImportError, OSError) as e:\n        raise RuntimeError(caller) from e\n\ndef relative_only():\n    try:\n        from . import local\n    except ImportError:\n        raise\n\ndef returns():\n    try:\n        import a\n    except ImportError:\n        return False\n\ndef narrow():\n    try:\n        import b\n    except ValueError:\n        raise\n\ndef nested():\n    if flag:\n        try:\n            import c\n        except ImportError:\n            raise\n",
+            "def needs(caller):\n    try:\n        from x.sub import y\n        from .pkg import local\n        import z, w.core\n    except (ImportError, OSError) as e:\n        raise RuntimeError(caller) from e\n\ndef relative_only():\n    try:\n        from .pkg import local\n    except ImportError:\n        raise\n\ndef returns():\n    try:\n        import a\n    except ImportError:\n        return False\n\ndef narrow():\n    try:\n        import b\n    except ValueError:\n        raise\n\ndef nested():\n    if flag:\n        try:\n            import c\n        except ImportError:\n            raise\n",
         );
         let checks: Vec<(&str, Vec<&str>)> = parsed
             .import_checks
