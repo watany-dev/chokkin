@@ -52,13 +52,31 @@ pub(super) fn platform_modules(
     }
     bindings.visit_body(body);
     let mut modules = outer.cloned().unwrap_or_default();
-    for (name, module) in bindings.0 {
+    for (name, (module, _)) in bindings.0 {
         match module {
             Some(module) => modules.insert(name.to_owned(), module),
             None => modules.remove(name),
         };
     }
     modules
+}
+
+/// How many times the scope `body` (with `parameters`) binds each name,
+/// nested blocks included and nested scopes' own names left out (#1272).
+pub(super) fn bound_names<'a>(
+    parameters: Option<&'a Parameters>,
+    body: &'a [Stmt],
+) -> HashMap<&'a str, u32> {
+    let mut bindings = Bindings::default();
+    for parameter in parameters.into_iter().flatten() {
+        bindings.bind(parameter.name().as_str(), None);
+    }
+    bindings.visit_body(body);
+    bindings
+        .0
+        .into_iter()
+        .map(|(name, (_, count))| (name, count))
+        .collect()
 }
 
 /// Whether the scope `body` imports a platform module under another name
@@ -113,20 +131,21 @@ pub(super) fn mentions_platform_test(source: &str, modules: &PlatformModules) ->
 }
 
 /// Per bound name, the module every binding so far imported (`None` once
-/// another binding was seen).
+/// another binding was seen), and how many bindings there were.
 #[derive(Default)]
-struct Bindings<'a>(HashMap<&'a str, Option<PlatformModule>>);
+struct Bindings<'a>(HashMap<&'a str, (Option<PlatformModule>, u32)>);
 
 impl<'a> Bindings<'a> {
     fn bind(&mut self, name: &'a str, module: Option<PlatformModule>) {
         self.0
             .entry(name)
-            .and_modify(|bound| {
+            .and_modify(|(bound, count)| {
                 if *bound != module {
                     *bound = None;
                 }
+                *count += 1;
             })
-            .or_insert(module);
+            .or_insert((module, 1));
     }
 }
 

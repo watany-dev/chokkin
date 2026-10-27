@@ -29,8 +29,8 @@ if sys.version_info[:2] >= (3, 10):
 else:
     import importlib_metadata as metadata
 
-# `.major` is not read, so the `else` may run.
-if sys.version_info.major >= 3:
+# `.micro` is not read, so the `else` may run.
+if sys.version_info.micro >= 0:
     text = str
 else:
     import six

@@ -69,10 +69,16 @@ pub struct ImportRef {
     /// Dotted callees of the calls made as statements before a non-optional
     /// import in the same block or an enclosing one, as written (`check(x)`,
     /// `utils.check(x)`). `apply_import_checks` marks the import optional
-    /// when one of them is a first-party function that checks the imported
-    /// package is installed (#1269).
+    /// when one of them is a first-party function that raises unless a
+    /// package is installed (#1269, #1272).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub called_before: Vec<String>,
+    /// Dotted callees of the calls an enclosing branch test needs truthy
+    /// before a non-optional import: `if check():`, or the rest of a block
+    /// after `if not check(): return`. `apply_import_checks` marks the import
+    /// optional when one of them is any first-party install check (#1272).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tested_before: Vec<String>,
 }
 
 impl ImportRef {
@@ -457,13 +463,18 @@ pub struct ParsedModule {
 
 /// A top-level function whose body tries to import packages and raises from
 /// an `except ImportError:` handler, so a call to it returns only when they
-/// are installed (#1269).
+/// are installed (#1269), or returns `None` / `False` there, so its result is
+/// truthy only when they are (#1272).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportCheck {
     /// The function's name.
     pub function: String,
     /// The absolute modules its `try` body imports.
     pub modules: Vec<String>,
+    /// The handler returns a falsy value instead of raising, so only a test
+    /// of the result tells the packages are installed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub returns_falsy: bool,
 }
 
 /// Aggregate result of parsing all project `.py` sources.
@@ -506,6 +517,7 @@ mod tests {
             fallback_for: Vec::new(),
             version_minors: None,
             called_before: Vec::new(),
+            tested_before: Vec::new(),
         }
     }
 

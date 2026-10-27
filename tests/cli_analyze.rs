@@ -10826,3 +10826,75 @@ fn binary_console_script_into_a_declared_second_package_stays_a_library() {
         "{stdout}"
     );
 }
+
+/// #1272: a `sys.modules` check is a condition on that module, so the rest
+/// of a function it returns from runs only with it: an undeclared package
+/// imported there is optional (info), whichever package it is.
+#[test]
+fn binary_import_after_a_loaded_module_return_is_optional() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n",
+        ),
+        ("src/acme/__init__.py", "from acme import display\n"),
+        (
+            "src/acme/display.py",
+            "import sys\n\n\ndef enable():\n    if \"IPython\" not in sys.modules:\n        return\n    from traitlets.traitlets import ObjectName\n    return ObjectName\n\n\ndef table():\n    import pandas\n    return pandas\n",
+        ),
+    ]);
+    let issues = json_issues(temp.path(), &["--no-cache", "--include", "CHK003"]);
+    let summary: Vec<(&str, &str, &str)> = issues
+        .iter()
+        .map(|issue| {
+            (
+                issue["symbol"].as_str().unwrap_or_default(),
+                issue["severity"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert!(
+        summary.contains(&("traitlets.traitlets", "info", "likely")),
+        "{summary:?}"
+    );
+    assert!(
+        summary.contains(&("pandas", "error", "certain")),
+        "{summary:?}"
+    );
+}
+
+/// #1272: six's `PY3 = sys.version_info[0] == 3` makes the `else:` of
+/// `if PY3:` run on no Python 3; with Python 2 allowed, an unresolved import
+/// there may be Python 2's stdlib, so CHK010 stays at info.
+#[test]
+fn binary_python_2_only_unresolved_import_is_info() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"compat\"\nversion = \"0\"\nrequires-python = \">=2.7\"\ndependencies = []\n",
+        ),
+        (
+            "src/compat/__init__.py",
+            "import sys\n\nPY3 = sys.version_info[0] == 3\n\nif PY3:\n    import io\nelse:\n    import StringIO\n\nimport zzmissing\n",
+        ),
+    ]);
+    let issues = json_issues(temp.path(), &["--no-cache", "--include", "CHK010"]);
+    let summary: Vec<(String, &str)> = issues
+        .iter()
+        .map(|issue| {
+            (
+                issue["message"].as_str().unwrap_or_default().to_owned(),
+                issue["severity"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    let severity = |module: &str| {
+        summary
+            .iter()
+            .find(|(message, _)| message.contains(&format!("`{module}`")))
+            .map(|(_, severity)| *severity)
+    };
+    assert_eq!(severity("StringIO"), Some("info"), "{summary:?}");
+    assert_eq!(severity("zzmissing"), Some("warning"), "{summary:?}");
+}

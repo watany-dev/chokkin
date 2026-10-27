@@ -13,22 +13,24 @@ use std::collections::{HashMap, HashSet};
 
 use crate::sources::{LayoutInfo, module_path, path_to_module};
 
-use super::types::{ImportKind, ImportRef, ParsedModule};
+use super::types::{ImportCheck, ImportKind, ImportRef, ParsedModule};
 
 /// Re-exports followed from a callee to the helper's definition; a chain
 /// longer than this is a cycle or too far to trust.
 const MAX_HOPS: usize = 8;
 
 /// Mark each import optional that runs after a call reaching a first-party
-/// function which checks the imported package is installed.
+/// function which checks a package is installed: a statement call to one
+/// that raises without it, or a call a branch test needs truthy to one that
+/// raises or returns a falsy value (#1272).
 ///
 /// A callee is read through the calling module's imports (`from .utils
 /// import check`, `import pkg.utils as u; u.check(...)`) or as a function of
 /// the module itself, then through the re-exports of the modules it names,
-/// such as a package `__init__.py`. An import of a checked module, of a
-/// submodule of one (`x.pyplot` after checking `x`) or of a package a checked
-/// module sits in is optional. A callee that reaches nothing leaves the
-/// import as it is.
+/// such as a package `__init__.py`. The code after the call runs only with
+/// the checked package, so every import there is optional, whatever it
+/// imports, as in a `try`'s `else:` (#1272). A callee that reaches nothing
+/// leaves the import as it is.
 pub(crate) fn apply_import_checks(modules: &mut [ParsedModule], layout: &LayoutInfo) {
     let functions = check_names(modules);
     // Most calls before an import (`logger.info(...)`) can name no check;
@@ -39,10 +41,10 @@ pub(crate) fn apply_import_checks(modules: &mut [ParsedModule], layout: &LayoutI
         .iter()
         .enumerate()
         .filter(|(_, module)| {
-            module
-                .imports
-                .iter()
-                .any(|import| import.called_before.iter().any(may_check))
+            module.imports.iter().any(|import| {
+                import.called_before.iter().any(may_check)
+                    || import.tested_before.iter().any(may_check)
+            })
         })
         .map(|(position, _)| position)
         .collect();
@@ -54,20 +56,27 @@ pub(crate) fn apply_import_checks(modules: &mut [ParsedModule], layout: &LayoutI
         .into_iter()
         .map(|caller| {
             let module = &modules[caller];
-            let marked = module
-                .imports
-                .iter()
-                .enumerate()
-                .filter(|(_, import)| {
-                    import.called_before.iter().any(|callee| {
-                        may_check(callee)
-                            && index
-                                .checked_modules(caller, callee)
-                                .is_some_and(|checked| checks_import(checked, &import.module))
+            let marked =
+                module
+                    .imports
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, import)| {
+                        let check = |callee: &String| {
+                            may_check(callee)
+                                .then(|| index.check(caller, callee))
+                                .flatten()
+                        };
+                        !import.module.is_empty()
+                            && (import.called_before.iter().any(|callee| {
+                                check(callee).is_some_and(|check| !check.returns_falsy)
+                            }) || import
+                                .tested_before
+                                .iter()
+                                .any(|callee| check(callee).is_some()))
                     })
-                })
-                .map(|(position, _)| position)
-                .collect();
+                    .map(|(position, _)| position)
+                    .collect();
             (caller, marked)
         })
         .collect();
@@ -105,22 +114,6 @@ fn check_names(modules: &[ParsedModule]) -> HashSet<&str> {
     names
 }
 
-/// Whether checking `checked` proves `module` importable: the same module,
-/// one inside it, or a package that holds it.
-fn checks_import(checked: &[String], module: &str) -> bool {
-    !module.is_empty()
-        && checked
-            .iter()
-            .any(|checked| within(module, checked) || within(checked, module))
-}
-
-/// Whether `module` is `package` or a module inside it.
-fn within(module: &str, package: &str) -> bool {
-    module
-        .strip_prefix(package)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
-}
-
 /// The project's install checks, and its modules by name for following
 /// re-exports. A module's name is worked out only when a lookup needs it:
 /// with many workspace members that is the costly part.
@@ -132,8 +125,8 @@ struct ProjectIndex<'a> {
     /// `pkg/utils/__init__.py`) to the modules that may carry a name ending
     /// in it.
     by_last_part: HashMap<&'a str, Vec<usize>>,
-    /// `pkg.mod.function` to the modules the function checks.
-    checks: HashMap<String, &'a [String]>,
+    /// `pkg.mod.function` to the check it is.
+    checks: HashMap<String, &'a ImportCheck>,
 }
 
 impl<'a> ProjectIndex<'a> {
@@ -160,10 +153,9 @@ impl<'a> ProjectIndex<'a> {
                 continue;
             };
             for check in &module.import_checks {
-                index.checks.insert(
-                    format!("{name}.{}", check.function),
-                    check.modules.as_slice(),
-                );
+                index
+                    .checks
+                    .insert(format!("{name}.{}", check.function), check);
             }
         }
         index
@@ -185,9 +177,9 @@ impl<'a> ProjectIndex<'a> {
         Some(&self.modules[position])
     }
 
-    /// The modules the function `callee` names in the module at `calling`
-    /// checks, if it is an install check.
-    fn checked_modules(&self, calling: usize, callee: &str) -> Option<&'a [String]> {
+    /// The install check the function `callee` names in the module at
+    /// `calling` is, if it is one.
+    fn check(&self, calling: usize, callee: &str) -> Option<&'a ImportCheck> {
         let (head, rest) = match callee.split_once('.') {
             Some((head, rest)) => (head, Some(rest)),
             None => (callee, None),
@@ -334,6 +326,7 @@ def table():
 def draw():
     helpers.check_x_support(\"draw\")
     import x.a
+    import other
 
 
 def reexported():
@@ -362,6 +355,9 @@ def other():
                 ("y".to_owned(), true),
                 ("y.extra".to_owned(), true),
                 ("x.a".to_owned(), true),
+                // Whatever it imports, the code after the check runs only
+                // with `x` (#1272).
+                ("other".to_owned(), true),
                 ("x.b".to_owned(), true),
                 // `probe_z` and `load_settings` return either way; the
                 // other check ran in a branch that is over.
@@ -409,6 +405,58 @@ def other():
         );
     }
 
+    /// #1272: a check that returns `False` on a missing package proves it
+    /// only where its result was tested truthy; called as a statement, it
+    /// returns either way. A raising check counts in a test too.
+    #[test]
+    fn falsy_checks_count_only_where_tested() {
+        let modules = parse(&[
+            ("src/pkg/_helpers.py", HELPERS),
+            (
+                "src/pkg/feature.py",
+                "\
+from pkg._helpers import check_x_support, probe_z
+
+
+def shown():
+    if probe_z():
+        import z.display
+        import rich
+
+
+def early():
+    if not probe_z():
+        return
+    import z.early
+
+
+def statement():
+    probe_z()
+    import z.statement
+
+
+def raising():
+    if check_x_support(\"raising\") is None:
+        import x.none
+    if not check_x_support(\"raising\") or flag:
+        return
+    import x.after
+",
+            ),
+        ]);
+        assert_eq!(
+            optional(&modules, "src/pkg/feature.py"),
+            [
+                ("z.display".to_owned(), true),
+                ("rich".to_owned(), true),
+                ("z.early".to_owned(), true),
+                ("z.statement".to_owned(), false),
+                ("x.none".to_owned(), false),
+                ("x.after".to_owned(), true),
+            ]
+        );
+    }
+
     /// A check defined in the same module, called at module level, covers
     /// the module's later imports and the functions defined after it.
     #[test]
@@ -427,15 +475,5 @@ def other():
             after,
             [("x.pyplot".to_owned(), true), ("x.colors".to_owned(), true)]
         );
-    }
-
-    #[test]
-    fn checks_cover_submodules_and_parent_packages_only() {
-        let checked = ["x.sub".to_owned()];
-        assert!(checks_import(&checked, "x.sub.deep"));
-        assert!(checks_import(&checked, "x"));
-        assert!(!checks_import(&checked, "x.other"));
-        assert!(!checks_import(&checked, "xy"));
-        assert!(!checks_import(&checked, ""));
     }
 }

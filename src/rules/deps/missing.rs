@@ -681,6 +681,7 @@ mod tests {
                 fallback_for: Vec::new(),
                 version_minors: None,
                 called_before: Vec::new(),
+                tested_before: Vec::new(),
             })
             .collect();
         ParseSummary {
@@ -1095,6 +1096,7 @@ mod tests {
             fallback_for: Vec::new(),
             version_minors: None,
             called_before: Vec::new(),
+            tested_before: Vec::new(),
         };
         let dynamic = |line, optional, platform_guarded| crate::parser::DynamicImport {
             module: "pkg".to_owned(),

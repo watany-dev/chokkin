@@ -189,6 +189,59 @@ pub(super) fn availability_test(test: &Expr) -> Option<bool> {
     }
 }
 
+/// Whether `test` asks if a module is already imported: `Some(true)` when its
+/// branch runs only once the module is loaded (`"x" in sys.modules`,
+/// `sys.modules.get("x")`, `sys.modules.get("x") is not None`), `Some(false)`
+/// when only before (`"x" not in sys.modules`, `... is None`). A module that
+/// is not installed is never loaded, so the branch is as conditional as one
+/// behind an availability check, whatever it then imports (#1272). A
+/// non-literal key could name anything and is read as no check.
+#[must_use]
+pub(super) fn loaded_test(test: &Expr) -> Option<bool> {
+    match test {
+        Expr::Call(_) => is_sys_modules_get(test).then_some(true),
+        Expr::Compare(compare) => {
+            let ([op], [left, right]) = (&*compare.ops, &*compare.operands) else {
+                return None;
+            };
+            match op {
+                CmpOp::In | CmpOp::NotIn
+                    if string_literal(left).is_some() && is_dotted(right, "sys", "modules") =>
+                {
+                    Some(*op == CmpOp::In)
+                },
+                CmpOp::Is | CmpOp::IsNot => {
+                    let ((get, Expr::NoneLiteral(_)) | (Expr::NoneLiteral(_), get)) = (left, right)
+                    else {
+                        return None;
+                    };
+                    is_sys_modules_get(get).then_some(*op == CmpOp::IsNot)
+                },
+                _ => None,
+            }
+        },
+        _ => None,
+    }
+}
+
+/// `sys.modules.get("x")` with a literal key (and a `None` default, if any),
+/// `None` until `x` is imported.
+fn is_sys_modules_get(expr: &Expr) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Expr::Attribute(get) = &*call.func else {
+        return false;
+    };
+    get.attr.as_str() == "get"
+        && is_dotted(&get.value, "sys", "modules")
+        && call.arguments.keywords.is_empty()
+        && match &*call.arguments.args {
+            [key] | [key, Expr::NoneLiteral(_)] => string_literal(key).is_some(),
+            _ => false,
+        }
+}
+
 /// Where a function `body` first checks if a package is installed, outside
 /// nested scopes: the start of the innermost statement making the check, so
 /// `import_module(x) if find_spec(x) else None` counts as after it (#695).
@@ -282,18 +335,12 @@ pub(super) fn is_module_path(expr: &Expr) -> bool {
     }
 }
 
-/// Whether `body` ends by raising `ImportError` / `ModuleNotFoundError`.
+/// Whether `body` ends by leaving the enclosing block: a `return`, or a
+/// `raise` of anything (#695, #1272). The statements after an `if` whose body
+/// does run only when its test was false.
 #[must_use]
-pub(super) fn raises_import_error(body: &[Stmt]) -> bool {
-    let Some(Stmt::Raise(raise)) = body.last() else {
-        return false;
-    };
-    let exc = match raise.exc.as_deref() {
-        Some(Expr::Call(call)) => &*call.func,
-        Some(exc) => exc,
-        None => return false,
-    };
-    matches!(exc, Expr::Name(name) if matches!(name.id.as_str(), "ImportError" | "ModuleNotFoundError"))
+pub(super) fn exits_block(body: &[Stmt]) -> bool {
+    matches!(body.last(), Some(Stmt::Return(_) | Stmt::Raise(_)))
 }
 
 /// Whether `stmt` calls a function named as raising unless a package is
@@ -638,16 +685,60 @@ mod tests {
     }
 
     #[test]
-    fn detects_import_error_raises() {
-        let raises = |source: &str| {
+    fn detects_block_exits() {
+        let exits = |source: &str| {
             let module = ruff_python_parser::parse_module(source).expect("parse");
-            raises_import_error(module.suite())
+            exits_block(module.suite())
         };
-        assert!(raises("x = 1\nraise ImportError('install x')"));
-        assert!(raises("raise ModuleNotFoundError"));
-        assert!(!raises("raise ValueError('x')"));
-        assert!(!raises("raise ImportError('x')\nx = 1"));
-        assert!(!raises("raise"));
+        assert!(exits("x = 1\nraise ImportError('install x')"));
+        assert!(exits("raise ModuleNotFoundError"));
+        assert!(exits("raise ValueError('x')"));
+        assert!(exits("raise"));
+        assert!(exits("log()\nreturn"));
+        assert!(exits("return None"));
+        assert!(!exits("raise ImportError('x')\nx = 1"));
+        assert!(!exits("return_value = 1"));
+        assert!(!exits("pass"));
+    }
+
+    fn loaded(source: &str) -> Option<bool> {
+        let parsed = ruff_python_parser::parse_expression(source).expect("parse");
+        loaded_test(parsed.expr())
+    }
+
+    /// #1272: a loaded-module check is a condition on the module, read in
+    /// either direction.
+    #[test]
+    fn detects_loaded_module_checks() {
+        for (source, loaded_only) in [
+            ("'IPython' in sys.modules", true),
+            ("'IPython' not in sys.modules", false),
+            ("sys.modules.get('numpy')", true),
+            ("sys.modules.get('numpy') is not None", true),
+            ("None is not sys.modules.get('numpy')", true),
+            ("sys.modules.get('numpy') is None", false),
+            ("sys.modules.get('numpy', None)", true),
+        ] {
+            assert_eq!(loaded(source), Some(loaded_only), "{source}");
+        }
+        for source in [
+            "name in sys.modules",
+            "'x' in modules",
+            "'x' in os.modules",
+            "'x' == sys.modules",
+            "sys.modules.get(name)",
+            "sys.modules.get('x', 0)",
+            "sys.modules.get(key='x')",
+            "sys.modules.pop('x')",
+            "cache.get('x')",
+            "get('x')",
+            "sys.modules.get('x') == None",
+            "sys.modules.get('x') is other",
+            "'x' in sys.modules and y",
+            "sys.modules['x']",
+        ] {
+            assert_eq!(loaded(source), None, "{source}");
+        }
     }
 
     #[test]
