@@ -1000,6 +1000,8 @@ module top-level（関数の外）で `warnings.warn` を呼び、第2位置引�
 
 `examples/` という名前のディレクトリの下の file (深さによらない。package の中の `weblate/examples/check_foo.py` を含む) の CHK001 は info にする。利用者が写して使うか手で実行する見本で、どこからも import されないのが普通だから (#1239)。root の `examples/**` は §8 で entry になるので、ここに残るのは package の中の見本と、entry にならない file。file context は変えない (wheel に入る `example_dags/` と同じく、その import は従来どおり判定する)。名前が `example/` のディレクトリや `examples.py` は対象外。
 
+test context の file で、`conftest.py` でもテストモジュールの既定名 (`test_*.py` / `*_test.py`) でもなく、同じディレクトリに到達可能な file が1つも無いものの CHK001 も info にする (#1268)。テストハーネスが path やディレクトリ規約で読む fixture の project・plugin・壊れた入力の見本 (ansible の `test/integration/targets/**`、mypy の `mypyc/test-data/`) で、どの file からも import されないのが普通だから。判定はディレクトリ名に依らない。テストモジュールや conftest の隣に置かれた helper (`tests/helpers_old.py`、airflow の `tests/unit/listeners/slow_listener.py`) は、隣の file が到達可能なので warning のまま残す。test context の import されない file 全般を下げる案は、こうした本物の未使用 helper を見落とすので採らない。confidence は変えない。
+
 confidenceとseverityは独立した2軸として扱う。severityはissue種別の重み(error / warning / info)、confidenceは解析の確からしさ(certain / likely / maybe)。表示filterは `confidence >= 設定値`、exit code 1の対象はdefaultで `severity >= error` かつ `confidence >= likely` にする。`--strict` ではwarning以上かつmaybe以上まで広げる。CLI で明示した `--confidence` は `--strict` より優先する: `--strict` が下げるのは設定値（default `likely`）の表示filterだけで、`--strict --confidence certain` は certain だけを表示し、exit code もその表示された issue だけで決める (#1134)。
 
 読めなかった入力による降格は 1 か所 (`src/rules/gaps.rs`、ADR 0005 の降格段) にまとめる。gap は「どの file の何が読めなかったか」を表す値 (`Gap { file, kind, member, site, target }`) で、pipeline が parse・reachability・manifest・plugin から集め (`collect_gaps`)、emit が ignore・severity・confidence filter の前に finding へ当てる。gap の種類ごとに、どの finding を下げるかを 1 つの表で決める。

@@ -2234,6 +2234,7 @@ mod tests {
             max_confidence,
             mode,
             confidence_reason: None,
+            test_fixture: false,
         };
         let mut reachability = ReachabilityReport::default();
         reachability.unread = vec![

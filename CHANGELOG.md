@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OSS corpus: 95 precision labels on the diversity corpus. `report.md`
   records its precision per rule next to the floors, which leave it out.
 
+### Changed
+- CHK001 reports a test file at info when no reachable file shares its
+  directory and it is neither a conftest nor named like a test module: input
+  a test harness loads by path, such as fixture projects and plugins (#1268).
+
 ## [0.7.11] - 2026-10-27
 
 ### Added

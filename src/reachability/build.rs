@@ -8,7 +8,8 @@ use crate::graph::ProjectGraph;
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::sources::{
-    DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set, member_ships,
+    DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set, is_test_harness_name,
+    member_ships,
 };
 
 use super::bfs::run_reachability_bfs;
@@ -64,6 +65,7 @@ pub fn analyze_reachability(
         .filter(|module| module.skipped)
         .map(|module| module.path.as_str())
         .collect();
+    let reachable_dirs = reachable_dirs(graph, &reachable);
     let mut unreachable = Vec::new();
     let mut unread = Vec::new();
     for file in &sources.files {
@@ -90,6 +92,7 @@ pub fn analyze_reachability(
             max_confidence: confidence_for_unreachable(mode),
             mode,
             confidence_reason: None,
+            test_fixture: is_test_fixture(file, &reachable_dirs),
         };
         if skipped.contains(file.path.as_str()) {
             unread.push(orphan);
@@ -262,6 +265,39 @@ fn apply_framework_globs(
         files,
         predecessors,
     })
+}
+
+/// The directories that hold a reachable file.
+fn reachable_dirs<'g>(
+    graph: &'g ProjectGraph,
+    reachable: &IndexSet<crate::graph::FileId>,
+) -> std::collections::HashSet<&'g str> {
+    reachable
+        .iter()
+        .filter_map(|id| graph.file(*id))
+        .map(|file| parent_dir(&file.path))
+        .collect()
+}
+
+/// Whether an unreachable file is test input a harness loads by path: a
+/// test-context file that is neither a conftest nor named like a test
+/// module, in a directory no reachable file shares (#1268).
+fn is_test_fixture(
+    file: &crate::sources::DiscoveredFile,
+    reachable_dirs: &std::collections::HashSet<&str>,
+) -> bool {
+    file.context == FileContext::Test
+        && !reachable_dirs.contains(parent_dir(&file.path))
+        && !is_test_harness_name(file_name(&file.path))
+}
+
+/// The directory part of a root-relative path, `""` at the root.
+fn parent_dir(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
+fn file_name(path: &str) -> &str {
+    path.rsplit_once('/').map_or(path, |(_, name)| name)
 }
 
 fn is_excluded(file: &crate::sources::DiscoveredFile, mode: ProjectMode) -> bool {
@@ -520,6 +556,55 @@ mod tests {
                     Confidence::Maybe,
                     ProjectMode::Library
                 ),
+            ]
+        );
+    }
+
+    /// A test-context orphan is test input only where no reachable file
+    /// shares its directory and it is not named like a test module (#1268).
+    #[test]
+    fn test_orphans_away_from_reachable_files_are_fixtures() {
+        let paths = [
+            "acme/main.py",
+            "acme/orphan.py",
+            "tests/test_main.py",
+            "tests/helpers_old.py",
+            "tests/targets/demo/plugins/action.py",
+            "tests/targets/demo/test_shape.py",
+            "tests/targets/demo/conftest.py",
+        ];
+        let parse = ParseSummary {
+            modules: paths.map(|path| parsed(path, &[], false)).into(),
+        };
+        let root = ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        };
+        let mut sources = flat_sources(root, &paths);
+        for file in &mut sources.files {
+            if file.path.starts_with("tests/") {
+                file.context = FileContext::Test;
+            }
+        }
+        let mut graph = graph_for(&sources, &parse, &[]);
+        let entry = app_entry(&["acme/main.py", "tests/test_main.py"]);
+        let report =
+            analyze_reachability(&mut graph, &sources, &entry, &no_plugins(), &parse, false)
+                .expect("reachability");
+
+        let found: Vec<_> = report
+            .unreachable
+            .iter()
+            .map(|file| (file.path.as_str(), file.test_fixture))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("acme/orphan.py", false),
+                ("tests/helpers_old.py", false),
+                ("tests/targets/demo/conftest.py", false),
+                ("tests/targets/demo/plugins/action.py", true),
+                ("tests/targets/demo/test_shape.py", false),
             ]
         );
     }

@@ -39,6 +39,11 @@ pub struct UnreachableFile {
     /// a member a metapackage root distributes ships it (#1060), for
     /// `--trace` and `--explain`.
     pub confidence_reason: Option<String>,
+    /// A test-context file that is neither a conftest nor named like a test
+    /// module, in a directory with no reachable file: input a test harness
+    /// loads by path or directory convention rather than a helper the tests
+    /// beside it forgot to import (#1268).
+    pub test_fixture: bool,
 }
 
 impl UnreachableFile {

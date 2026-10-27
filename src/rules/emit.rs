@@ -413,6 +413,7 @@ mod tests {
             max_confidence: Confidence::Certain,
             mode: ProjectMode::App,
             confidence_reason: None,
+            test_fixture: false,
         });
 
         let deps = DependencyReport::default();
@@ -526,6 +527,7 @@ mod tests {
             max_confidence: Confidence::Certain,
             mode: ProjectMode::App,
             confidence_reason: None,
+            test_fixture: false,
         });
 
         let issues = emit_issues(

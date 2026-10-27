@@ -12,7 +12,11 @@ use crate::sources::is_test_data_path;
 /// default run on its own. Library mode lowers confidence, not severity. A
 /// file under an `examples/` directory is info: it is a sample users copy or
 /// run by hand (weblate's `weblate/examples/check_foo.py`), which nothing
-/// imports by design (#1239).
+/// imports by design (#1239). So is a test-context file in a directory no
+/// reachable file shares, unless it is a conftest or named like a test
+/// module: a fixture project, plugin or broken input that a test harness
+/// loads by path or directory convention (#1268). A helper beside the test
+/// modules that forgot to import it stays a warning.
 #[must_use]
 pub(super) fn chk001_candidates(
     unreachable: &[UnreachableFile],
@@ -25,12 +29,13 @@ pub(super) fn chk001_candidates(
             continue;
         }
         let example = in_examples_dir(&file.path);
+        let fixture = !example && file.test_fixture;
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,
             subject: IssueSubject::File {
                 path: file.path.clone(),
             },
-            severity: if example {
+            severity: if example || fixture {
                 Severity::Info
             } else {
                 Severity::Warning
@@ -44,6 +49,9 @@ pub(super) fn chk001_candidates(
                 details: std::iter::once("reason: NotReachable".to_owned())
                     .chain(file.confidence_reason.clone())
                     .chain(example.then(|| "the file is under an `examples/` directory".to_owned()))
+                    .chain(fixture.then(|| {
+                        "the file is test input: no reachable file shares its directory".to_owned()
+                    }))
                     .collect(),
             },
         });
@@ -72,6 +80,7 @@ mod tests {
             max_confidence: Confidence::Certain,
             mode: ProjectMode::App,
             confidence_reason: None,
+            test_fixture: false,
         });
         let paths = |strict| {
             chk001_candidates(&unreachable, strict)
@@ -100,6 +109,7 @@ mod tests {
             max_confidence: Confidence::Likely,
             mode: ProjectMode::App,
             confidence_reason: None,
+            test_fixture: false,
         });
         let severities: Vec<Severity> = chk001_candidates(&unreachable, false)
             .into_iter()
@@ -117,6 +127,27 @@ mod tests {
     }
 
     #[test]
+    fn test_fixtures_are_info() {
+        let unreachable = [
+            ("tests/targets/demo/plugin.py", true),
+            ("tests/helper.py", false),
+        ]
+        .map(|(path, test_fixture)| UnreachableFile {
+            file: FileId(0),
+            path: path.to_owned(),
+            max_confidence: Confidence::Certain,
+            mode: ProjectMode::App,
+            confidence_reason: None,
+            test_fixture,
+        });
+        let severities: Vec<Severity> = chk001_candidates(&unreachable, false)
+            .into_iter()
+            .map(|candidate| candidate.severity)
+            .collect();
+        assert_eq!(severities, [Severity::Info, Severity::Warning]);
+    }
+
+    #[test]
     fn every_candidate_is_a_warning_at_the_file_confidence() {
         let modes = [ProjectMode::App, ProjectMode::Library];
         let confidences = [Confidence::Certain, Confidence::Likely, Confidence::Maybe];
@@ -128,6 +159,7 @@ mod tests {
                     max_confidence: confidence,
                     mode,
                     confidence_reason: None,
+                    test_fixture: false,
                 }];
                 let candidates = chk001_candidates(&unreachable, false);
                 assert_eq!(
