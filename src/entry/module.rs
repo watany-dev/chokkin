@@ -118,6 +118,9 @@ fn push_bases(layout: &LayoutInfo, prefix: &str, bases: &mut Vec<String>) {
     if !package_root.is_empty() {
         bases.push(join_rel(prefix, package_root));
     }
+    for root in package_roots(layout) {
+        bases.push(join_rel(prefix, root));
+    }
     bases.push(prefix.to_owned());
     for member in &layout.members {
         push_bases(&member.layout, &join_rel(prefix, &member.path), bases);
@@ -152,6 +155,7 @@ fn resolve_in(
 ) -> Option<String> {
     let package_root = package_root(layout);
     std::iter::once(package_root)
+        .chain(package_roots(layout))
         .chain((!package_root.is_empty()).then_some(""))
         .flat_map(|root| {
             let stem = join_rel(prefix, &join_rel(root, suffix));
@@ -179,6 +183,13 @@ fn package_root(layout: &LayoutInfo) -> &str {
     }
 }
 
+/// Directories the build backend ships a package from besides the layout's
+/// root (#1271), each once.
+fn package_roots(layout: &LayoutInfo) -> impl Iterator<Item = &str> {
+    let roots: BTreeSet<&str> = layout.package_roots.values().map(String::as_str).collect();
+    roots.into_iter()
+}
+
 /// Normalize Django `AppConfig` targets to their package root when applicable.
 fn normalize_module_target(module: &str) -> &str {
     if module.ends_with("AppConfig")
@@ -200,6 +211,28 @@ mod tests {
 
     fn known(paths: &[&str]) -> BTreeSet<String> {
         paths.iter().map(|path| (*path).to_owned()).collect()
+    }
+
+    #[test]
+    fn package_under_its_own_directory_resolves_there() {
+        let layout = LayoutInfo::with_package_roots(
+            "lib",
+            vec!["acme".to_owned(), "acme_test".to_owned()],
+            [("acme_test".to_owned(), "test/lib".to_owned())].into(),
+        );
+        let paths = known(&["lib/acme/cli.py", "test/lib/acme_test/cli.py"]);
+        assert_eq!(
+            resolve_module_to_path("acme_test.cli", &layout, &paths),
+            Some("test/lib/acme_test/cli.py".to_owned())
+        );
+        assert_eq!(
+            resolve_module_to_path("acme.cli", &layout, &paths),
+            Some("lib/acme/cli.py".to_owned())
+        );
+        assert_eq!(
+            ModuleIndex::new(&paths, &layout).resolve("acme_test.cli"),
+            Some("test/lib/acme_test/cli.py".to_owned())
+        );
     }
 
     #[test]

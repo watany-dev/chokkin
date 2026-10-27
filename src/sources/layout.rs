@@ -1,5 +1,6 @@
 //! Project layout inference and default globs.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -44,18 +45,19 @@ pub(crate) fn infer_layout(
     metadata: &ProjectMetadata,
     uv: &UvToolSettings,
 ) -> (LayoutInfo, Option<SourcesWarning>) {
-    let (mut layout, warning) = declared_layout(root, metadata.wheel_targets.as_ref()).map_or_else(
-        || {
-            let heuristic = heuristic_layout(root, metadata);
-            // A package named after the project beats a uv source that
-            // only shares its prefix (`acme_api/` over `acme = { path }`).
-            if heuristic.1.is_none() && heuristic.0.layout != ProjectLayout::Unknown {
-                return heuristic;
-            }
-            uv_source_layout(root, metadata, uv).unwrap_or(heuristic)
-        },
-        |layout| (layout, None),
-    );
+    let (mut layout, warning) = declared_layout(root, metadata.wheel_targets.as_ref(), metadata)
+        .map_or_else(
+            || {
+                let heuristic = heuristic_layout(root, metadata);
+                // A package named after the project beats a uv source that
+                // only shares its prefix (`acme_api/` over `acme = { path }`).
+                if heuristic.1.is_none() && heuristic.0.layout != ProjectLayout::Unknown {
+                    return heuristic;
+                }
+                uv_source_layout(root, metadata, uv).unwrap_or(heuristic)
+            },
+            |layout| (layout, None),
+        );
     // The unknown layout's globs already read the whole tree.
     if layout.layout != ProjectLayout::Unknown {
         layout.inferred_globs.extend(root_main_block_scripts(root));
@@ -95,11 +97,40 @@ impl LayoutInfo {
             ..Default::default()
         }
     }
+
+    /// [`Self::new`] for `packages`, those in `package_roots` living under
+    /// their own directory instead of `package_root` (#1271).
+    #[must_use]
+    pub fn with_package_roots(
+        package_root: &str,
+        packages: Vec<String>,
+        package_roots: BTreeMap<String, String>,
+    ) -> Self {
+        let (elsewhere, own): (Vec<String>, Vec<String>) = packages
+            .into_iter()
+            .partition(|package| package_roots.contains_key(package));
+        let mut layout = Self::new(package_root, own);
+        for package in elsewhere {
+            let dir = join_rel(&package_roots[&package], &package);
+            layout
+                .inferred_globs
+                .push(format!("{dir}/**/*.{{py,pyi,ipynb}}"));
+            layout.packages.push(package);
+        }
+        layout.package_roots = package_roots;
+        layout
+    }
 }
 
-/// Layout from wheel target configuration, when every declared package
-/// lives under one directory.
-fn declared_layout(root: &Path, targets: Option<&WheelTargets>) -> Option<LayoutInfo> {
+/// Layout from wheel target configuration. Packages declared under several
+/// directories (`where = ["lib", "test/lib"]`) all ship, so each keeps its
+/// own directory (#1271); the layout's root is the one holding the package
+/// named after the project, else the one holding the most packages.
+fn declared_layout(
+    root: &Path,
+    targets: Option<&WheelTargets>,
+    metadata: &ProjectMetadata,
+) -> Option<LayoutInfo> {
     let targets = targets?;
     let mut dirs: Vec<(String, String)> = targets
         .paths
@@ -113,13 +144,33 @@ fn declared_layout(root: &Path, targets: Option<&WheelTargets>) -> Option<Layout
     }
     dirs.sort();
     dirs.dedup();
-    let (package_root, _) = dirs.first()?;
-    if dirs.iter().any(|(other, _)| other != package_root) {
-        return None;
+    let names: Vec<String> = dirs.iter().map(|(_, package)| package.clone()).collect();
+    let package_root = project_package(&names, metadata)
+        .and_then(|package| dirs.iter().find(|(_, name)| *name == package))
+        .or_else(|| {
+            // `max_by_key` keeps the last of equals; the first sorted wins.
+            dirs.iter()
+                .rev()
+                .max_by_key(|(dir, _)| dirs.iter().filter(|(other, _)| other == dir).count())
+        })
+        .map(|(dir, _)| dir.clone())?;
+    let mut packages = Vec::new();
+    let mut package_roots = BTreeMap::new();
+    for (dir, package) in dirs {
+        // One import name shadows the other on `sys.path`: keep the first.
+        if packages.contains(&package) {
+            continue;
+        }
+        if dir != package_root {
+            package_roots.insert(package.clone(), dir);
+        }
+        packages.push(package);
     }
-    let package_root = package_root.clone();
-    let packages = dirs.into_iter().map(|(_, package)| package).collect();
-    Some(LayoutInfo::new(&package_root, packages))
+    Some(LayoutInfo::with_package_roots(
+        &package_root,
+        packages,
+        package_roots,
+    ))
 }
 
 /// Whether a wheel-declared directory is a package: a regular one, or a
@@ -197,8 +248,10 @@ fn top_level_package(root: &Path, path: &str) -> Option<(String, String)> {
     }
 }
 
-/// Top-level packages setuptools `find` reports under a non-root `where`;
-/// a root `where` is left to the heuristics, which skip non-package dirs.
+/// Top-level packages setuptools `find` reports. A root `where` counts only
+/// with an `include` naming packages (mypy's `["mypy*", "mypyc*"]`); the
+/// default `*` there would take `tests/` and `docs/`, so it is left to the
+/// heuristics, which skip non-package dirs (#1271).
 fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
     let matches = |patterns: &[String], name: &str| {
         patterns.iter().any(|pattern| {
@@ -206,9 +259,10 @@ fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
                 && Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
         })
     };
+    let names_packages = find.include.iter().any(|pattern| pattern != "*");
     find.where_dirs
         .iter()
-        .filter(|base| !base.is_empty())
+        .filter(|base| !base.is_empty() || names_packages)
         .flat_map(|base| {
             packages_with_init(&root.join(base), false)
                 .into_iter()
@@ -738,6 +792,17 @@ pub(crate) fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> 
     }
     let module_path = module_path(path)?;
 
+    let elsewhere = layout.package_roots.iter().find_map(|(package, root)| {
+        let rest = if root.is_empty() {
+            module_path
+        } else {
+            module_path.strip_prefix(root.as_str())?.strip_prefix('/')?
+        };
+        package_module_name(rest, std::slice::from_ref(package))
+    });
+    if elsewhere.is_some() {
+        return elsewhere;
+    }
     let distributed = match layout.layout {
         ProjectLayout::Src | ProjectLayout::PackageRoot => {
             module_under(module_path, &layout.package_root)
@@ -1469,19 +1534,130 @@ mod tests {
     }
 
     #[test]
-    fn declared_packages_under_different_roots_fall_back_to_heuristics() {
+    fn declared_packages_under_different_roots_keep_their_own_directories() {
         let temp = tree(&["src/acme", "other/extra"]);
+        let targets = WheelTargets {
+            source: "tool.hatch.build".to_owned(),
+            paths: vec!["src/acme".to_owned(), "other/extra".to_owned()],
+            find: Vec::new(),
+        };
         let metadata = ProjectMetadata {
-            wheel_targets: Some(WheelTargets {
-                source: "tool.hatch.build".to_owned(),
-                paths: vec!["src/acme".to_owned(), "other/extra".to_owned()],
-                find: Vec::new(),
-            }),
+            wheel_targets: Some(targets.clone()),
+            ..metadata("acme")
+        };
+        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        assert_eq!(layout.layout, ProjectLayout::Src);
+        assert_eq!(layout.package_root, "src");
+        assert_eq!(layout.packages, ["acme", "extra"]);
+        assert_eq!(layout.package_dir("acme"), "src/acme");
+        assert_eq!(layout.package_dir("extra"), "other/extra");
+        assert_eq!(layout.inferred_globs[0], "src/**/*.{py,pyi,ipynb}");
+        assert!(
+            layout
+                .inferred_globs
+                .contains(&"other/extra/**/*.{py,pyi,ipynb}".to_owned()),
+            "{:?}",
+            layout.inferred_globs
+        );
+        assert_eq!(
+            path_to_module("other/extra/sub/x.py", &layout),
+            Some("extra.sub.x".to_owned())
+        );
+        assert_eq!(
+            path_to_module("src/acme/core.py", &layout),
+            Some("acme.core".to_owned())
+        );
+        // A sibling of the package under its directory is not declared.
+        assert_eq!(path_to_module("other/stray.py", &layout), None);
+
+        // Without a project name, the directory holding most packages wins,
+        // the first sorted among equals.
+        let metadata = ProjectMetadata {
+            wheel_targets: Some(targets),
             ..ProjectMetadata::default()
         };
         let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        assert_eq!(layout.package_root, "other");
+        assert_eq!(layout.package_dir("acme"), "src/acme");
+    }
+
+    #[test]
+    fn declared_package_at_the_root_beside_a_src_package_keeps_the_root() {
+        let temp = tree(&["src/acme", "tools_pkg"]);
+        let metadata = ProjectMetadata {
+            wheel_targets: Some(WheelTargets {
+                source: "tool.hatch.build".to_owned(),
+                paths: vec!["src/acme".to_owned(), "tools_pkg".to_owned()],
+                find: Vec::new(),
+            }),
+            ..metadata("acme")
+        };
+        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
         assert_eq!(layout.package_root, "src");
-        assert_eq!(layout.inferred_globs[0], "src/**/*.{py,pyi,ipynb}");
+        assert_eq!(layout.package_dir("tools_pkg"), "tools_pkg");
+        assert_eq!(
+            path_to_module("tools_pkg/run.py", &layout),
+            Some("tools_pkg.run".to_owned())
+        );
+        assert_eq!(path_to_module("stray.py", &layout), None);
+    }
+
+    #[test]
+    fn setuptools_find_with_several_wheres_takes_every_package() {
+        let temp = tree(&["lib/acme", "lib/acme/sub", "test/lib/acme_test", "docs"]);
+        let metadata = ProjectMetadata {
+            wheel_targets: Some(WheelTargets {
+                source: "tool.setuptools".to_owned(),
+                paths: Vec::new(),
+                find: vec![PackageFind {
+                    where_dirs: vec!["lib".to_owned(), "test/lib".to_owned()],
+                    include: vec!["*".to_owned()],
+                    exclude: Vec::new(),
+                    namespaces: true,
+                }],
+            }),
+            ..metadata("acme")
+        };
+        let (layout, warning) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        assert_eq!(warning, None);
+        assert_eq!(layout.layout, ProjectLayout::PackageRoot);
+        assert_eq!(layout.package_root, "lib");
+        assert_eq!(layout.packages, ["acme", "acme_test"]);
+        assert_eq!(layout.package_dir("acme_test"), "test/lib/acme_test");
+        assert_eq!(
+            path_to_module("test/lib/acme_test/cli.py", &layout),
+            Some("acme_test.cli".to_owned())
+        );
+        assert_eq!(
+            path_to_module("lib/acme/sub/x.py", &layout),
+            Some("acme.sub.x".to_owned())
+        );
+    }
+
+    #[test]
+    fn setuptools_find_at_the_root_counts_only_with_an_include() {
+        let temp = tree(&["acme", "acmec", "tests", "tools"]);
+        let find = |include: &str| ProjectMetadata {
+            wheel_targets: Some(WheelTargets {
+                source: "tool.setuptools".to_owned(),
+                paths: Vec::new(),
+                find: vec![PackageFind {
+                    where_dirs: vec![String::new()],
+                    include: vec![include.to_owned()],
+                    exclude: Vec::new(),
+                    namespaces: false,
+                }],
+            }),
+            ..metadata("acme")
+        };
+        let (layout, _) = infer_layout(temp.path(), &find("acme*"), &UvToolSettings::default());
+        assert_eq!(layout.layout, ProjectLayout::Flat);
+        assert_eq!(layout.packages, ["acme", "acmec"]);
+        assert!(layout.package_roots.is_empty());
+        // The default `*` would take `tests/` and `tools/`: the heuristics
+        // pick the project package instead.
+        let (layout, _) = infer_layout(temp.path(), &find("*"), &UvToolSettings::default());
+        assert_eq!(layout.packages, ["acme"]);
     }
 
     #[test]
