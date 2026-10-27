@@ -26,7 +26,9 @@ pub(crate) fn resolve_module_to_path(
 /// files whose path ends in the name: airflow's 11k string literals walked
 /// its 133 members over every file for 3 s (#1025).
 pub(crate) struct ModuleIndex<'a> {
+    known_paths: &'a BTreeSet<String>,
     by_tail: FxHashMap<&'a str, Vec<&'a str>>,
+    bases: Vec<String>,
     base_rank: FxHashMap<String, usize>,
 }
 
@@ -42,10 +44,53 @@ impl<'a> ModuleIndex<'a> {
         let mut bases = Vec::new();
         push_bases(layout, "", &mut bases);
         let mut base_rank = FxHashMap::default();
-        for (rank, base) in bases.into_iter().enumerate() {
-            base_rank.entry(base).or_insert(rank);
+        for (rank, base) in bases.iter().enumerate() {
+            base_rank.entry(base.clone()).or_insert(rank);
         }
-        Self { by_tail, base_rank }
+        Self {
+            known_paths,
+            by_tail,
+            bases,
+            base_rank,
+        }
+    }
+
+    /// The directory of the package `module` names: a regular package's, or
+    /// else the first directory holding indexed files where the name would
+    /// resolve, a namespace package. A name that resolves to a module names
+    /// no package (#1267).
+    pub(crate) fn package_dir(&self, module: &str) -> Option<String> {
+        if let Some(path) = self.resolve(module) {
+            return path.strip_suffix("/__init__.py").map(str::to_owned);
+        }
+        let suffix = normalize_module_target(module).replace('.', "/");
+        self.bases.iter().find_map(|base| {
+            let dir = join_rel(base, &suffix);
+            let inside = format!("{dir}/");
+            self.known_paths
+                .range(inside.clone()..)
+                .next()
+                .is_some_and(|path| path.starts_with(&inside))
+                .then_some(dir)
+        })
+    }
+
+    /// The `.py` files in directory `dir` and in its direct subdirectories,
+    /// package `__init__.py` files aside.
+    pub(crate) fn modules_near(&self, dir: &str) -> Vec<&'a str> {
+        let inside = format!("{dir}/");
+        self.known_paths
+            .range(inside.clone()..)
+            .take_while(|path| path.starts_with(&inside))
+            .filter(|path| {
+                let rest = &path[inside.len()..];
+                let name = rest.rsplit('/').next().unwrap_or(rest);
+                rest.matches('/').count() <= 1
+                    && name != "__init__.py"
+                    && Path::new(name).extension().is_some_and(|ext| ext == "py")
+            })
+            .map(String::as_str)
+            .collect()
     }
 
     /// What [`resolve_module_to_path`] returns over the indexed files.

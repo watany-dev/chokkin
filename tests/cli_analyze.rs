@@ -9484,11 +9484,11 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
     for (target, reason) in [
         (
             "CHK001:acme/commands/cheat_sheet.py",
-            "a string literal names the module, which may be loaded by name: `acme.commands.cheat_sheet.run` in `acme/cli.py:2`",
+            "a string literal names the module or its listed package, which may be loaded by name: `acme.commands.cheat_sheet.run` in `acme/cli.py:2`",
         ),
         (
             "CHK001:acme/gunicorn_config.py",
-            "a string literal names the module, which may be loaded by name: `python:acme.gunicorn_config` in `acme/cli.py:3`",
+            "a string literal names the module or its listed package, which may be loaded by name: `python:acme.gunicorn_config` in `acme/cli.py:3`",
         ),
     ] {
         let explain = Command::new(env!("CARGO_BIN_EXE_chokkin"))
@@ -9499,6 +9499,67 @@ fn binary_dotted_string_literal_lowers_the_named_file() {
         let stderr = String::from_utf8(explain.stderr).expect("utf8");
         assert!(stderr.contains(reason), "{target}: {stderr}");
     }
+}
+
+/// A literal naming a whole package, in a file that lists a directory or a
+/// package's modules, may load the modules a plugin loader finds there: the
+/// `.py` files in the package and its direct subdirectories fall to an info
+/// note at likely, a regular package or a namespace one, while deeper files
+/// and a package named in a file that lists nothing, or in a test, stay
+/// certain (#1267).
+#[test]
+fn binary_package_named_beside_a_directory_listing_lowers_its_modules() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "from acme.loader import REGISTRY\nfrom acme.settings import DEFAULT\n\n\ndef main():\n    return REGISTRY, DEFAULT\n",
+        ),
+        (
+            "acme/loader.py",
+            "import glob\n\n\ndef load(package):\n    return glob.glob(package.replace(\".\", \"/\") + \"/*.py\")\n\n\nREGISTRY = [load(\"acme.plugins\"), load(\"acme.extras\")]\n",
+        ),
+        ("acme/settings.py", "DEFAULT = \"acme.formats\"\n"),
+        ("acme/plugins/__init__.py", ""),
+        ("acme/plugins/copy.py", ""),
+        ("acme/plugins/net/__init__.py", ""),
+        ("acme/plugins/net/http.py", ""),
+        ("acme/plugins/net/deep/far.py", ""),
+        ("acme/extras/zip.py", ""),
+        ("acme/formats/__init__.py", ""),
+        ("acme/formats/csv.py", ""),
+        ("acme/themes/dark.py", ""),
+        (
+            "tests/test_themes.py",
+            "import glob\n\n\ndef test_themes():\n    assert glob.glob(\"acme/themes/*.py\")\n    assert \"acme.themes\"\n",
+        ),
+    ]);
+
+    let unused: Vec<(String, String, String, String)> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK001")
+        .collect();
+    let level = |target: &str, severity: &str, confidence: &str| {
+        (
+            "CHK001".to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    assert_eq!(
+        unused,
+        [
+            level("acme/extras/zip.py", "info", "likely"),
+            level("acme/formats/csv.py", "warning", "certain"),
+            level("acme/plugins/copy.py", "info", "likely"),
+            level("acme/plugins/net/deep/far.py", "warning", "certain"),
+            level("acme/plugins/net/http.py", "info", "likely"),
+            level("acme/themes/dark.py", "warning", "certain"),
+        ]
+    );
 }
 
 /// A literal a loader API fetches by name (`import_string("pkg.mod.Cls")`,
