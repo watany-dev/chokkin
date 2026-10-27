@@ -1582,6 +1582,26 @@ mod tests {
     }
 
     #[test]
+    fn declared_directory_with_most_packages_is_the_root_without_a_name() {
+        let temp = tree(&["alpha/one", "beta/two", "beta/three"]);
+        let metadata = ProjectMetadata {
+            wheel_targets: Some(WheelTargets {
+                source: "tool.hatch.build".to_owned(),
+                paths: vec![
+                    "alpha/one".to_owned(),
+                    "beta/two".to_owned(),
+                    "beta/three".to_owned(),
+                ],
+                find: Vec::new(),
+            }),
+            ..ProjectMetadata::default()
+        };
+        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        assert_eq!(layout.package_root, "beta");
+        assert_eq!(layout.package_dir("one"), "alpha/one");
+    }
+
+    #[test]
     fn declared_package_at_the_root_beside_a_src_package_keeps_the_root() {
         let temp = tree(&["src/acme", "tools_pkg"]);
         let metadata = ProjectMetadata {
