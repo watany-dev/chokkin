@@ -373,6 +373,42 @@ def other():
         );
     }
 
+    /// A check reached under names re-exports give it, one rename after
+    /// another (`a.py` renames what `b.py` renamed), still counts; a name
+    /// no check carries, or a check's name bound to nothing, reaches nothing.
+    #[test]
+    fn renamed_re_exports_reach_the_check() {
+        let modules = parse(&[
+            ("src/pkg/a.py", "from pkg.b import require as require_x\n"),
+            (
+                "src/pkg/b.py",
+                "from pkg._helpers import check_x_support as require\n",
+            ),
+            ("src/pkg/_helpers.py", HELPERS),
+            (
+                "src/pkg/stray.py",
+                "def h():\n    check_x_support(\"h\")\n    import x.stray\n",
+            ),
+            (
+                "src/pkg/use.py",
+                "from pkg.a import require_x\nfrom pkg.b import other\n\n\ndef f():\n    require_x(\"f\")\n    import x.renamed\n\n\ndef g():\n    other()\n    import x.other\n",
+            ),
+        ]);
+        assert_eq!(
+            optional(&modules, "src/pkg/use.py"),
+            [
+                ("x.renamed".to_owned(), true),
+                ("x.other".to_owned(), false)
+            ]
+        );
+        // A check's name that no import binds and the module does not
+        // define reaches nothing.
+        assert_eq!(
+            optional(&modules, "src/pkg/stray.py"),
+            [("x.stray".to_owned(), false)]
+        );
+    }
+
     /// A check defined in the same module, called at module level, covers
     /// the module's later imports and the functions defined after it.
     #[test]

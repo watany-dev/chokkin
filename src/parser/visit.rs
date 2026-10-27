@@ -2673,6 +2673,57 @@ g = lambda x=utils.G: x
             .collect()
     }
 
+    /// #1269: a top-level function is an install check by its body alone:
+    /// an unconditional `try` that imports absolute modules and raises from
+    /// the first handler a missing package lands in.
+    #[test]
+    fn install_checks_are_read_from_function_bodies() {
+        let parsed = visit_source(
+            "def needs(caller):\n    try:\n        from x.sub import y\n        from . import local\n        import z, w.core\n    except (ImportError, OSError) as e:\n        raise RuntimeError(caller) from e\n\ndef relative_only():\n    try:\n        from . import local\n    except ImportError:\n        raise\n\ndef returns():\n    try:\n        import a\n    except ImportError:\n        return False\n\ndef narrow():\n    try:\n        import b\n    except ValueError:\n        raise\n\ndef nested():\n    if flag:\n        try:\n            import c\n        except ImportError:\n            raise\n",
+        );
+        let checks: Vec<(&str, Vec<&str>)> = parsed
+            .import_checks
+            .iter()
+            .map(|check| {
+                (
+                    check.function.as_str(),
+                    check.modules.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(checks, [("needs", vec!["w.core", "x.sub", "z"])]);
+    }
+
+    /// #1269: the statement calls an import runs after, results bound or
+    /// dropped; a method of `self` and a call in a branch that is over do
+    /// not count, and an optional import keeps none.
+    #[test]
+    fn imports_record_the_calls_they_run_after() {
+        let parsed = visit_source(
+            "import first\n\ndef f(self):\n    self.check()\n    import a\n    pd: object = utils.check_y()\n    import b\n    check_z()\n    check_z()\n    if flag:\n        later()\n    from c import d\n    try:\n        import e\n    except ImportError:\n        pass\n",
+        );
+        let called: Vec<(&str, Vec<&str>)> = parsed
+            .imports
+            .iter()
+            .map(|import| {
+                (
+                    import.module.as_str(),
+                    import.called_before.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            called,
+            [
+                ("first", vec![]),
+                ("a", vec![]),
+                ("b", vec!["utils.check_y"]),
+                ("c", vec!["utils.check_y", "check_z"]),
+                ("e", vec![]),
+            ]
+        );
+    }
+
     /// #580: requests' `help.py` imports `cryptography` in `else:` and its
     /// `compat.py` guards `simplejson` behind a flag set in the `try` body.
     #[test]
