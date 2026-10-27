@@ -26,7 +26,7 @@ use super::lines::LineIndex;
 use super::module_guard::{
     async_library_names, availability_test, first_availability_check, guarded_roots,
     imported_module_guard, is_find_spec_value, is_install_check, is_main_guard_test,
-    raises_import_error, runs_as_main,
+    is_module_path, raises_import_error, runs_as_main,
 };
 use super::platform_guard::{
     PlatformModules, imports_platform_alias, is_platform_guard_test, mentions_platform_test,
@@ -121,8 +121,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// imports after it are optional (#695).
     availability_checked_at: Option<TextSize>,
     /// Dotted callees of the calls made as statements so far in the blocks
-    /// that enclose the walk (#1269).
-    called_before: Vec<String>,
+    /// that enclose the walk (#1269), written out only for an import after
+    /// them.
+    called_before: Vec<&'ast Expr>,
     function_depth: u32,
     module_level: bool,
     /// Module-level names that are truthy only when a `try` import succeeded:
@@ -773,7 +774,6 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let deferred = self.function_depth > 0;
         for alias in &import.names {
             let optional = optional || self.is_imported_guarded(alias.name.as_str());
-            let called_before = self.called_before_unless(optional);
             self.loader_names.record_import(alias);
             self.server_names.record_import(alias);
             if alias.name.as_str() == "typing" {
@@ -797,7 +797,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 relative_level: 0,
                 fallback_for: self.fallback_for.clone(),
                 version_minors: self.version_minor_runs(),
-                called_before,
+                called_before: Vec::new(),
             });
         }
     }
@@ -887,18 +887,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 relative_level: level,
                 fallback_for: self.fallback_for.clone(),
                 version_minors: self.version_minor_runs(),
-                called_before: self.called_before_unless(optional),
+                called_before: Vec::new(),
             });
-        }
-    }
-
-    /// The calls an import runs after, which may yet make it optional; an
-    /// import that already is keeps none.
-    fn called_before_unless(&self, optional: bool) -> Vec<String> {
-        if optional {
-            Vec::new()
-        } else {
-            self.called_before.clone()
         }
     }
 
@@ -906,7 +896,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         (self.version_minors != ALL_MINORS).then(|| version_guard::minor_runs(self.version_minors))
     }
 
-    fn push_import(&mut self, import: ImportRef) {
+    /// Record `import` with the calls it runs after, which may yet make it
+    /// optional; an import that already is keeps none.
+    fn push_import(&mut self, mut import: ImportRef) {
+        if !import.optional {
+            for func in &self.called_before {
+                let mut callee = String::new();
+                write_receiver(func, &mut callee);
+                if !import.called_before.contains(&callee) {
+                    import.called_before.push(callee);
+                }
+            }
+        }
         self.parsed.imports.push(import);
     }
 
@@ -993,10 +994,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             self.visit_stmt(stmt);
             // The statements after a call run only once it returned, which a
             // first-party install check does only with its package (#1269).
-            if let Some(callee) = statement_callee(stmt)
-                && !self.called_before.contains(&callee)
-            {
-                self.called_before.push(callee);
+            if let Some(func) = statement_callee(stmt) {
+                self.called_before.push(func);
             }
             // The statements after run only when the test was false, which
             // it cannot be with the package missing (#695, #958).
@@ -1601,7 +1600,7 @@ fn raises_when_import_fails(try_stmt: &StmtTry) -> bool {
 /// The dotted callee of a call made as a statement, its result dropped or
 /// bound to names: `check(x)`, `pd = utils.check(x)` (#1269). A method of
 /// `self` / `cls` is left out, as no import binds it.
-fn statement_callee(stmt: &Stmt) -> Option<String> {
+fn statement_callee(stmt: &Stmt) -> Option<&Expr> {
     let value = match stmt {
         Stmt::Expr(expr) => &*expr.value,
         Stmt::Assign(assign) => &*assign.value,
@@ -1611,10 +1610,7 @@ fn statement_callee(stmt: &Stmt) -> Option<String> {
     let Expr::Call(call) = value else {
         return None;
     };
-    let mut callee = String::new();
-    (write_receiver(&call.func, &mut callee)
-        && !matches!(callee.split('.').next(), Some("self" | "cls")))
-    .then_some(callee)
+    is_module_path(&call.func).then_some(&*call.func)
 }
 
 /// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class

@@ -8,9 +8,10 @@
 //! ([`ImportRef::called_before`]); only the whole project tells which call
 //! reaches which helper.
 
-use std::collections::HashMap;
+use std::cell::OnceCell;
+use std::collections::{HashMap, HashSet};
 
-use crate::sources::{LayoutInfo, path_to_module};
+use crate::sources::{LayoutInfo, module_path, path_to_module};
 
 use super::types::{ImportKind, ImportRef, ParsedModule};
 
@@ -29,39 +30,79 @@ const MAX_HOPS: usize = 8;
 /// module sits in is optional. A callee that reaches nothing leaves the
 /// import as it is.
 pub(crate) fn apply_import_checks(modules: &mut [ParsedModule], layout: &LayoutInfo) {
-    if modules.iter().all(|module| module.import_checks.is_empty()) {
+    let functions = check_names(modules);
+    // Most calls before an import (`logger.info(...)`) can name no check;
+    // the name alone rules them out without resolving anything.
+    let may_check =
+        |callee: &String| functions.contains(callee.rsplit('.').next().unwrap_or(callee));
+    let callers: Vec<usize> = modules
+        .iter()
+        .enumerate()
+        .filter(|(_, module)| {
+            module
+                .imports
+                .iter()
+                .any(|import| import.called_before.iter().any(may_check))
+        })
+        .map(|(position, _)| position)
+        .collect();
+    if callers.is_empty() {
         return;
     }
-    let names: Vec<Option<String>> = modules
-        .iter()
-        .map(|module| path_to_module(&module.path, layout))
-        .collect();
-    let index = ProjectIndex::new(modules, &names);
-    let marks: Vec<Vec<usize>> = modules
-        .iter()
-        .zip(&names)
-        .map(|(module, name)| {
-            module
+    let index = ProjectIndex::new(modules, layout);
+    let marks: Vec<(usize, Vec<usize>)> = callers
+        .into_iter()
+        .map(|caller| {
+            let module = &modules[caller];
+            let marked = module
                 .imports
                 .iter()
                 .enumerate()
                 .filter(|(_, import)| {
-                    !import.called_before.is_empty()
-                        && import.called_before.iter().any(|callee| {
-                            index
-                                .checked_modules(module, name.as_deref(), callee)
+                    import.called_before.iter().any(|callee| {
+                        may_check(callee)
+                            && index
+                                .checked_modules(caller, callee)
                                 .is_some_and(|checked| checks_import(checked, &import.module))
-                        })
+                    })
                 })
                 .map(|(position, _)| position)
-                .collect()
+                .collect();
+            (caller, marked)
         })
         .collect();
-    for (module, marked) in modules.iter_mut().zip(marks) {
+    for (caller, marked) in marks {
         for position in marked {
-            module.imports[position].optional = true;
+            modules[caller].imports[position].optional = true;
         }
     }
+}
+
+/// The names a check can be called by: each check function's own name, and
+/// the `as` names re-exports give it (`from ._deps import needs as require`).
+fn check_names(modules: &[ParsedModule]) -> HashSet<&str> {
+    let mut names: HashSet<&str> = modules
+        .iter()
+        .flat_map(|module| &module.import_checks)
+        .map(|check| check.function.as_str())
+        .collect();
+    let renames: Vec<(&str, &str)> = modules
+        .iter()
+        .flat_map(|module| &module.imports)
+        .filter_map(|import| Some((import.name.as_deref()?, import.alias.as_deref()?)))
+        .collect();
+    for _ in 0..MAX_HOPS {
+        let before = names.len();
+        for (name, alias) in &renames {
+            if names.contains(name) {
+                names.insert(alias);
+            }
+        }
+        if names.len() == before {
+            break;
+        }
+    }
+    names
 }
 
 /// Whether checking `checked` proves `module` importable: the same module,
@@ -80,51 +121,80 @@ fn within(module: &str, package: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
-/// The project's install checks and module-level bindings, by module name.
+/// The project's install checks, and its modules by name for following
+/// re-exports. A module's name is worked out only when a lookup needs it:
+/// with many workspace members that is the costly part.
 struct ProjectIndex<'a> {
+    modules: &'a [ParsedModule],
+    layout: &'a LayoutInfo,
+    names: Vec<OnceCell<Option<String>>>,
+    /// The last part of each module's path (`utils` for `pkg/utils.py` and
+    /// `pkg/utils/__init__.py`) to the modules that may carry a name ending
+    /// in it.
+    by_last_part: HashMap<&'a str, Vec<usize>>,
     /// `pkg.mod.function` to the modules the function checks.
     checks: HashMap<String, &'a [String]>,
-    /// Module name to the module, for following its re-exports.
-    modules: HashMap<&'a str, &'a ParsedModule>,
 }
 
 impl<'a> ProjectIndex<'a> {
-    fn new(modules: &'a [ParsedModule], names: &'a [Option<String>]) -> Self {
-        let mut checks = HashMap::new();
-        let mut by_name = HashMap::new();
-        for (module, name) in modules.iter().zip(names) {
-            let Some(name) = name else {
+    fn new(modules: &'a [ParsedModule], layout: &'a LayoutInfo) -> Self {
+        let mut by_last_part: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (position, module) in modules.iter().enumerate() {
+            if let Some(stem) = module_path(&module.path) {
+                let last = stem.rsplit('/').next().unwrap_or(stem);
+                by_last_part.entry(last).or_default().push(position);
+            }
+        }
+        let mut index = Self {
+            modules,
+            layout,
+            names: vec![OnceCell::new(); modules.len()],
+            by_last_part,
+            checks: HashMap::new(),
+        };
+        for (position, module) in modules.iter().enumerate() {
+            if module.import_checks.is_empty() {
+                continue;
+            }
+            let Some(name) = index.name(position).map(str::to_owned) else {
                 continue;
             };
-            by_name.insert(name.as_str(), module);
             for check in &module.import_checks {
-                checks.insert(
+                index.checks.insert(
                     format!("{name}.{}", check.function),
                     check.modules.as_slice(),
                 );
             }
         }
-        Self {
-            checks,
-            modules: by_name,
-        }
+        index
     }
 
-    /// The modules the function `callee` names in `module` checks, if it is
-    /// an install check.
-    fn checked_modules(
-        &self,
-        module: &ParsedModule,
-        name: Option<&str>,
-        callee: &str,
-    ) -> Option<&'a [String]> {
+    fn name(&self, position: usize) -> Option<&str> {
+        self.names[position]
+            .get_or_init(|| path_to_module(&self.modules[position].path, self.layout))
+            .as_deref()
+    }
+
+    fn module_named(&self, name: &str) -> Option<&'a ParsedModule> {
+        let last = name.rsplit('.').next().unwrap_or(name);
+        let position = *self
+            .by_last_part
+            .get(last)?
+            .iter()
+            .find(|&&position| self.name(position) == Some(name))?;
+        Some(&self.modules[position])
+    }
+
+    /// The modules the function `callee` names in the module at `calling`
+    /// checks, if it is an install check.
+    fn checked_modules(&self, calling: usize, callee: &str) -> Option<&'a [String]> {
         let (head, rest) = match callee.split_once('.') {
             Some((head, rest)) => (head, Some(rest)),
             None => (callee, None),
         };
-        let base = match binding_target(&module.imports, head) {
+        let base = match binding_target(&self.modules[calling].imports, head) {
             Some(target) => target,
-            None => format!("{}.{head}", name?),
+            None => format!("{}.{head}", self.name(calling)?),
         };
         let mut qualified = match rest {
             Some(rest) => format!("{base}.{rest}"),
@@ -135,7 +205,7 @@ impl<'a> ProjectIndex<'a> {
                 return Some(checked);
             }
             let (owner, function) = qualified.rsplit_once('.')?;
-            let owner = self.modules.get(owner)?;
+            let owner = self.module_named(owner)?;
             qualified = binding_target(&owner.imports, function)?;
         }
         None
