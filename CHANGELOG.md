@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-10-27
+
 ### Added
 - Django: a database or cache backend named in `DATABASES` (`ENGINE`) or
   `CACHES` (`BACKEND`), a `STORAGES` backend and a `PASSWORD_HASHERS` entry
@@ -17,15 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cssselect` is used by an import of `lxml.cssselect`, `hiredis` by a use
   of `redis`, and the python-lsp-server plugins by a use of
   `python-lsp-server` (#1240, #1002).
-
-### Fixed
-- CHK008 no longer reports a CLI that is provided another way (#1241): the
-  project's own script (black formatting itself); the `entry` and `id` of a
-  local pre-commit hook whose `language` (`python`, `node`, ...) and
-  `additional_dependencies` make pre-commit build its own env; `pre-commit` for `.pre-commit-config.yaml`
-  when `prek` runs the hooks (`prek` is now a known CLI); `pytest` when only
-  pytest's default `test_*.py` names match and no pytest config or
-  `conftest.py` exists (unittest suites use the same names); and isort for a `[tool.isort]` whose `skip_glob` skips every file.
+- Django: `DJANGO_SETTINGS_MODULE` is read from `.env` files, compose files,
+  a Dockerfile `ENV`, a dev container's JSON and pytest's `--ds`, and the
+  settings module's django-split-settings `include()` files are followed
+  (#999, #938, #1239).
+- CHK006: the upper-case top-level names of a Django settings module or a
+  Flask `config.from_object` module are used, and so is a first-party symbol
+  a string literal spells as a dotted path (`MIDDLEWARE`, `STORAGES`,
+  `import_string` class lists, `"pkg.mod:attr"`). Strings in test files and
+  a module's strings naming its own symbols do not count (#1238).
+- CHK006: a symbol decorated by a registry decorator is used: a decorator
+  named `register_*` or `*_handler`, or ending in `register`,
+  `representation`, `listens_for` or `group`, a signal `.connect`,
+  flask-login's `user_loader`, and a first-party decorator whose body stores
+  its argument in a container and returns it. ansible's `DOCUMENTATION` /
+  `EXAMPLES` / `RETURN` in a module file are used too (#1238, #698, #1223).
+- CHK001: a Django project run from the root treats every package beside
+  `manage.py` as first-party, and reads what it loads by name: unittest's
+  `test*.py`, the settings variants beside the settings module and the
+  `FORMAT_MODULE_PATH` locale modules. A Sphinx `conf.py` built with
+  `sphinx-build -c` and the `.py` files a page shows with `literalinclude` /
+  `include` are entries, and a file under `examples/` is info and resolves
+  imports from the outermost `examples/` directory (#1239, #1091).
 
 ### Changed
 - The runtime peer table moved from code to `data/package-map.seed.json`,
@@ -39,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and CHK005 and CHK008 gain floors of 85% (89.5%) and 80% (85.7%) (#862).
 
 ### Fixed
+- CHK008 no longer reports a CLI that is provided another way (#1241): the
+  project's own script (black formatting itself); the `entry` and `id` of a
+  local pre-commit hook whose `language` (`python`, `node`, ...) and
+  `additional_dependencies` make pre-commit build its own env; `pre-commit` for `.pre-commit-config.yaml`
+  when `prek` runs the hooks (`prek` is now a known CLI); `pytest` when only
+  pytest's default `test_*.py` names match and no pytest config or
+  `conftest.py` exists (unittest suites use the same names); and isort for a `[tool.isort]` whose `skip_glob` skips every file.
 - Commands read their arguments where they load code: `celery flower`
   uses flower, `celery worker -P gevent` and `gunicorn -k gevent` use
   gevent (a dotted worker class is a module and a used class), celery's
@@ -49,6 +71,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read. One below the root only marks the distributions its commands name
   used, with no CHK008 for an undeclared binary; `supervisord` maps to
   supervisor (#1240).
+- CHK005 false positives (#1242): a module-level flag assigned from
+  `find_spec(...)` guards the imports under it, a `check_<x>_installed()`
+  call guards the imports after it, imports in Django `management/commands/`
+  and in a subpackage named after a dev- or extra-only library it integrates
+  (`scorers/ragas/`) are info, and files pytest collects through
+  `python_files` are test code.
 
 ## [0.7.10] - 2026-10-25
 
