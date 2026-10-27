@@ -430,16 +430,18 @@ One light fix came out of the measurement: `pyrefly.toml` and
 Gaps found, left for follow-up issues:
 
 - `sphinx`: module-name strings passed to an extension loader do not use the
-  distribution that provides the module (7 CHK002 `fp`).
+  distribution that provides the module (7 CHK002 `fp`, #1266).
 - `ansible`: 467 CHK001 in app mode. 251 are `test/integration/targets`
   files that `ansible-test` runs, and 121 are modules and plugins under
-  `lib/ansible/{modules,plugins}` that the plugin loader finds by directory.
+  `lib/ansible/{modules,plugins}` that the plugin loader finds by directory
+  (#1268, #1267).
 - `scikit-learn`: 20 `certain` CHK003 for `matplotlib` and `pandas` (and 2
   for `pytest`). They are imported inside functions after
   `check_matplotlib_support()` / `check_pandas_support()`, helpers that
   try-import the package and raise a helpful error, so the import is optional
   although it is not under a `try` itself. The 1.9 `pyproject.toml` declares
-  no extras; the optional versions live in `sklearn/_min_dependencies.py`.
+  no extras; the optional versions live in `sklearn/_min_dependencies.py`
+  (#1269).
 
 ## #346 corpus measurements (#338–#342)
 
