@@ -107,12 +107,19 @@ class PrecisionMissesTest(unittest.TestCase):
         self.assertEqual(om.precision_misses(findings), ["CHK003=88.9%<90%"])
 
     def test_rules_without_a_floor_are_recorded_only(self) -> None:
-        self.assertNotIn("CHK008", om.PRECISION_FLOORS)
-        self.assertEqual(om.precision_misses([finding("CHK008", "fp")]), [])
+        self.assertNotIn("CHK007", om.PRECISION_FLOORS)
+        self.assertEqual(om.precision_misses([finding("CHK007", "fp")]), [])
 
     def test_chk001_is_floored_once_app_projects_carry_labels(self) -> None:
-        findings = [finding("CHK001", "fp")] * 3 + [finding("CHK001", "tp")] * 2  # 40%
-        self.assertEqual(om.precision_misses(findings), ["CHK001=40.0%<50%"])
+        findings = [finding("CHK001", "fp")] * 3 + [finding("CHK001", "tp")] * 17  # 85%
+        self.assertEqual(om.precision_misses(findings), [])
+        findings.append(finding("CHK001", "fp"))  # 81.0%
+        self.assertEqual(om.precision_misses(findings), ["CHK001=81.0%<85%"])
+
+    def test_chk005_and_chk008_are_floored(self) -> None:
+        findings = [finding("CHK005", "fp")] * 2 + [finding("CHK005", "tp")] * 8  # 80%
+        findings += [finding("CHK008", "fp")] * 3 + [finding("CHK008", "tp")] * 7  # 70%
+        self.assertEqual(om.precision_misses(findings), ["CHK005=80.0%<85%", "CHK008=70.0%<80%"])
 
     def test_chk002_is_floored_by_the_fp_gate(self) -> None:
         # 95% precision is a 5% FP rate, which the §17 gate already fails.
