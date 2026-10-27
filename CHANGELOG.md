@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only.
 - OSS corpus: 95 precision labels on the diversity corpus. `report.md`
   records its precision per rule next to the floors, which leave it out.
+- A dotted module name in a string literal of a reachable runtime module
+  (`"pkg.ext.help"`, `"pkg.backends.cache:Cache"`) that resolves to a
+  declared distribution lowers that distribution's CHK002 to an info note
+  at likely, as code may load the module by name; a warning names the first
+  such string (#1266).
 
 ## [0.7.11] - 2026-10-27
 
