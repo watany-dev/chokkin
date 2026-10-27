@@ -936,6 +936,37 @@ mod tests {
     use crate::rules::RuleId;
     use crate::rules::Severity;
 
+    /// The first unread requirements file by site is named; the rest are counted (#1273).
+    #[test]
+    fn unread_requirements_warning_names_the_first_site() {
+        let gap = |file: &str, line| Gap {
+            file: file.to_owned(),
+            kind: GapKind::UnreadRequirementsFile,
+            member: None,
+            site: Some((format!("{file}.txt"), line)),
+            target: None,
+        };
+        assert_eq!(unread_requirements_warning(&[]), None);
+        let warning = |gaps: &[Gap]| match unread_requirements_warning(gaps) {
+            Some(ProbeWarning::UnreadRequirementsFile {
+                path, line, more, ..
+            }) => (path, line, more),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            warning(&[gap("tox.ini", Some(4))]),
+            ("tox.ini".to_owned(), Some(4), 0)
+        );
+        assert_eq!(
+            warning(&[
+                gap("tox.ini", Some(4)),
+                gap("noxfile.py", None),
+                gap("tox.ini", Some(2))
+            ]),
+            ("noxfile.py".to_owned(), None, 2)
+        );
+    }
+
     /// A syntax error names the skip even after an earlier warning; a
     /// warning alone is the notebook's reason, and no diagnostic means the
     /// bytes did not decode (#893).

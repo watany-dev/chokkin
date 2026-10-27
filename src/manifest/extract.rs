@@ -740,6 +740,42 @@ mod tests {
         assert_eq!(unreadable_reason(&error), "could not be read");
     }
 
+    /// #1273: a referenced file is read only inside the root; a file the
+    /// manifest already read, or one with nothing but comments, adds no
+    /// names, and one whose only include fails or is not read is unread.
+    #[test]
+    fn referenced_requirement_names_reads_files_inside_the_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root_dir = temp.path().join("project");
+        std::fs::create_dir(&root_dir).expect("mkdir");
+        let files = [
+            ("../outside.txt", "requests\n"),
+            ("requirements.txt", "flask\n"),
+            ("comments.txt", "# nothing\n"),
+            ("broken.txt", "-r missing.txt\n"),
+            ("remote.txt", "-r https://example.com/base.txt\n"),
+            ("lint.txt", "Mypy_Extensions\n-r comments.txt\n"),
+        ];
+        for (file, text) in files {
+            std::fs::write(root_dir.join(file), text).expect("write");
+        }
+        let root = ProjectRoot {
+            path: root_dir,
+            marker: crate::discovery::RootMarker::RequirementsTxt,
+        };
+        let config = crate::config::load_config(&root).expect("config");
+        let manifest = extract_manifest(&root, &config).expect("extract");
+        let names = |rel| referenced_requirement_names(&manifest, rel);
+
+        assert_eq!(names("../outside.txt"), None);
+        assert_eq!(names("absent.txt"), None);
+        assert_eq!(names("broken.txt"), None);
+        assert_eq!(names("remote.txt"), None);
+        assert_eq!(names("requirements.txt"), Some(Vec::new()));
+        assert_eq!(names("comments.txt"), Some(Vec::new()));
+        assert_eq!(names("lint.txt"), Some(vec!["mypy-extensions".to_owned()]));
+    }
+
     /// #917: the warning names the manifest whose `requires-python` was kept.
     #[test]
     fn unreadable_requires_python_names_the_kept_manifest() {

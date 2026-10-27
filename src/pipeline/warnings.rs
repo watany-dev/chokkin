@@ -823,6 +823,29 @@ mod tests {
         (diagnostic.file, diagnostic.line)
     }
 
+    /// The unread-requirements warning counts the other files (#1273).
+    #[test]
+    fn unread_requirements_warning_counts_the_other_files() {
+        let warning = |more| {
+            ProbeWarning::UnreadRequirementsFile {
+                path: "tox.ini".to_owned(),
+                line: Some(3),
+                file: "a computed path".to_owned(),
+                more,
+            }
+            .to_string()
+        };
+        let tail = "; unlisted binaries and unresolved imports are reported below certain";
+        assert_eq!(
+            warning(0),
+            format!(
+                "manifest: `tox.ini:3` installs from `a computed path`, which could not be read{tail}"
+            )
+        );
+        assert!(warning(1).contains("read (and 1 more requirements file);"));
+        assert!(warning(2).contains("read (and 2 more requirements files);"));
+    }
+
     /// One opaque-import warning names the first module and counts the rest (#909).
     #[test]
     fn opaque_import_warning_names_the_first_module() {
