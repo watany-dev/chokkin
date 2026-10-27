@@ -346,6 +346,26 @@ pub(super) fn edits_sys_path(func: &Expr) -> bool {
     }
 }
 
+/// Whether a call lists a directory or a package's modules, by the callee's
+/// last name: `pkgutil`'s `iter_modules` / `walk_packages`, `glob` / `iglob`
+/// and `pathlib`'s `glob` / `rglob` / `iterdir`, `os.listdir` / `scandir`,
+/// and `os.walk` (#1267). `walk` needs the `os` receiver, since `ast.walk`
+/// lists no directory.
+#[must_use]
+pub(super) fn lists_directory(func: &Expr) -> bool {
+    let (name, receiver) = match func {
+        Expr::Name(name) => (name.id.as_str(), None),
+        Expr::Attribute(attribute) => (attribute.attr.as_str(), Some(&*attribute.value)),
+        _ => return false,
+    };
+    match name {
+        "iter_modules" | "walk_packages" | "glob" | "iglob" | "rglob" | "iterdir" | "listdir"
+        | "scandir" => true,
+        "walk" => receiver.is_some_and(|receiver| is_receiver(receiver, "os")),
+        _ => false,
+    }
+}
+
 /// A string literal that may name a directory added to `sys.path`: a
 /// relative path, without its `.` and `..` segments (`"../exts"` gives
 /// `exts`). `"."` gives `""`, the module's own directory.

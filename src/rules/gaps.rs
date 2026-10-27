@@ -362,7 +362,7 @@ impl GapKind {
                  decided the module is not stdlib"
             },
             Self::StringModuleRef => {
-                "a string literal names the module, which may be loaded by name"
+                "a string literal names the module or its listed package, which may be loaded by name"
             },
             Self::StringDistributionRef => {
                 "a string literal in a reachable module names a module of the distribution, which \
@@ -892,19 +892,26 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         let mut gaps = Vec::new();
         for reference in &module.module_refs {
             let name = crate::parser::module_ref_name(&reference.text);
-            let Some(target) = resolve_dotted_prefix(name, &index) else {
-                continue;
+            let targets = match resolve_dotted_prefix(name, &index) {
+                Some(target) => vec![target],
+                None if file_context(&module.path, context.sources) == FileContext::Runtime => {
+                    listed_package_modules(module, &reference.text, &index)
+                },
+                None => Vec::new(),
             };
-            if target == module.path || is_reached(&target, context.graph, context.reachability) {
-                continue;
+            for target in targets {
+                if target == module.path || is_reached(&target, context.graph, context.reachability)
+                {
+                    continue;
+                }
+                gaps.push(Gap {
+                    file: module.path.clone(),
+                    kind: GapKind::StringModuleRef,
+                    member: None,
+                    site: Some((reference.text.clone(), Some(reference.line))),
+                    target: Some(target),
+                });
             }
-            gaps.push(Gap {
-                file: module.path.clone(),
-                kind: GapKind::StringModuleRef,
-                member: None,
-                site: Some((reference.text.clone(), Some(reference.line))),
-                target: Some(target),
-            });
         }
         gaps
     });
@@ -969,6 +976,33 @@ fn resolve_dotted_prefix(module: &str, index: &ModuleIndex<'_>) -> Option<String
         }
         candidate = prefix;
     }
+}
+
+/// The modules a literal naming a whole package may load, in a file that
+/// lists a directory or a package's modules: plugin loaders take the
+/// package's dotted name and load what they find under it (ansible's
+/// `PluginLoader(..., "pkg.plugins.action", ...)` with `glob` and
+/// `pkgutil.iter_modules`), so the `.py` files in the package and in its
+/// direct subdirectories (#1267). The caller passes only runtime files: a test lists
+/// files to check them (airflow's test of `iter_airflow_imports` asserts
+/// `"airflow.utils"`), not to load plugins. Elsewhere, or for a name with
+/// `python:` or `:attr`, a package name loads only its `__init__.py`, which
+/// is no CHK001 candidate, so nothing.
+fn listed_package_modules(
+    module: &ParsedModule,
+    text: &str,
+    index: &ModuleIndex<'_>,
+) -> Vec<String> {
+    if !module.lists_directory || crate::parser::module_ref_name(text) != text {
+        return Vec::new();
+    }
+    index.package_dir(text).map_or_else(Vec::new, |dir| {
+        index
+            .modules_near(&dir)
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    })
 }
 
 /// Whether root-relative `path` is below directory `dir`.
@@ -2318,6 +2352,7 @@ mod tests {
             max_confidence,
             mode,
             confidence_reason: None,
+            test_fixture: false,
         };
         let mut reachability = ReachabilityReport::default();
         reachability.unread = vec![

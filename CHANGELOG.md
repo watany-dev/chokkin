@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at likely, as code may load the module by name; a warning names the first
   such string (#1266).
 
+### Changed
+- CHK001 reports a test file at info when no reachable file shares its
+  directory and it is neither a conftest nor named like a test module: input
+  a test harness loads by path, such as fixture projects and plugins (#1268).
+
+### Fixed
+- CHK001: a string naming a first-party package, in a file that lists a
+  directory or a package's modules (`pkgutil.iter_modules`, `glob`,
+  `os.listdir`), lowers the modules in that package and its direct
+  subdirectories to an info note at likely, as a plugin loader may load
+  them by scanning the package.
+
 ## [0.7.11] - 2026-10-27
 
 ### Added
