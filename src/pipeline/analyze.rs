@@ -1,5 +1,6 @@
 //! Full project analysis orchestration (pipeline steps 1–13).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
@@ -12,7 +13,7 @@ use crate::entry::{
 };
 use crate::fix::{FixOptions, FixReport, WorkspaceFixManifest, apply_fixes_with_workspace};
 use crate::graph::{GraphError, ProjectGraph, add_parsed_imports, build_graph_skeleton};
-use crate::manifest::{DeclaredDependency, normalize_distribution_name};
+use crate::manifest::{DeclaredDependency, LoadedManifest, normalize_distribution_name};
 use crate::parser::{
     ParseSeverity, ParseSummary, ParsedModule, apply_import_checks, apply_module_loaders,
     parse_project_sources_with_cache,
@@ -258,6 +259,10 @@ fn run_analysis_core(
         cache: Some(&options.cache),
         dockerfiles: &probe.dockerfiles,
     })?;
+    // The requirements files commands install from declare names the way a
+    // file outside the fixed names does (#1273).
+    let manifest = with_requirement_names(&probe.manifest, &plugins.config_requirement_names);
+    let manifest = manifest.as_ref();
     let mut warnings: Vec<ProbeWarning> = parse
         .modules
         .iter()
@@ -269,7 +274,7 @@ fn run_analysis_core(
     mark_command_scripts_dev(
         &mut sources,
         &probe.effective_config,
-        &probe.manifest,
+        manifest,
         &plugins,
         &parse,
     );
@@ -282,7 +287,7 @@ fn run_analysis_core(
         .collect();
     let mut entry = build_entry_roots(
         &probe.effective_config,
-        &probe.manifest,
+        manifest,
         sources,
         &members,
         &plugins,
@@ -321,7 +326,7 @@ fn run_analysis_core(
         .collect();
     let resolution = resolve_imports_for_analysis(
         &probe.effective_config,
-        &probe.manifest,
+        manifest,
         sources,
         &parse,
         &plugin_refs,
@@ -342,10 +347,7 @@ fn run_analysis_core(
 
     let mut reachability =
         analyze_reachability(&mut graph, sources, &entry, &plugins, &parse, production)?;
-    let surface = PublicSurface::resolve(
-        probe.manifest.metadata.wheel_targets.as_ref(),
-        &sources.files,
-    );
+    let surface = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
     if let Some(surface) = &surface {
         apply_public_surface(&mut reachability, surface, &entry);
     }
@@ -386,7 +388,7 @@ fn run_analysis_core(
 
     let stdlib = StdlibRange::for_project(
         probe.effective_config.target_version.as_ref(),
-        probe.manifest.metadata.requires_python.as_deref(),
+        manifest.metadata.requires_python.as_deref(),
     );
     let member_imports: Vec<Vec<String>> = probe
         .workspace_inputs
@@ -432,7 +434,7 @@ fn run_analysis_core(
                     build_scripts: &probe.build_scripts,
                     local: &probe.local_trees,
                 },
-                &probe.manifest,
+                manifest,
                 &plugins,
                 &workspace_boundaries,
                 &probe.scripts,
@@ -443,7 +445,7 @@ fn run_analysis_core(
                 &context,
                 &entry,
                 &plugins,
-                &probe.manifest,
+                manifest,
                 &member_surfaces,
                 production_tests.as_deref(),
             )
@@ -461,7 +463,7 @@ fn run_analysis_core(
         .collect();
     let gaps = collect_gaps(
         &context,
-        &probe.manifest,
+        manifest,
         &members,
         &probe.scripts,
         &plugins,
@@ -472,6 +474,7 @@ fn run_analysis_core(
     );
     warnings.extend(opaque_import_warning(&gaps));
     warnings.extend(archive_requirement_warning(&gaps));
+    warnings.extend(unread_requirements_warning(&gaps));
     warnings.extend(command_target_warnings(&gaps));
     warnings.extend(string_module_ref_warning(&gaps));
     warnings.extend(string_distribution_ref_warning(&gaps, &deps.candidates));
@@ -493,6 +496,26 @@ fn run_analysis_core(
         issues,
         warnings,
     })
+}
+
+/// `manifest` with `names` added to its `extra_requirements`, cloned only
+/// when one is new.
+fn with_requirement_names<'m>(
+    manifest: &'m LoadedManifest,
+    names: &[String],
+) -> Cow<'m, LoadedManifest> {
+    if names
+        .iter()
+        .all(|name| manifest.sources.extra_requirements.contains(name))
+    {
+        return Cow::Borrowed(manifest);
+    }
+    let mut manifest = manifest.clone();
+    manifest
+        .sources
+        .extra_requirements
+        .extend(names.iter().cloned());
+    Cow::Owned(manifest)
 }
 
 /// The entry plan's warnings, less the config entries that source discovery
@@ -533,6 +556,27 @@ fn opaque_import_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
     Some(ProbeWarning::OpaqueDynamicImport {
         path,
         more: files.count(),
+    })
+}
+
+/// The first command or config that installs from a requirements file that
+/// could not be read (#1273), and how many more there are.
+fn unread_requirements_warning(gaps: &[Gap]) -> Option<ProbeWarning> {
+    let mut sites: Vec<(&str, Option<u32>, &str)> = gaps
+        .iter()
+        .filter(|gap| gap.kind == GapKind::UnreadRequirementsFile)
+        .filter_map(|gap| {
+            let (file, line) = gap.site.as_ref()?;
+            Some((gap.file.as_str(), *line, file.as_str()))
+        })
+        .collect();
+    sites.sort_by_key(|(path, line, _)| (*path, line.is_none(), *line));
+    let (path, line, file) = *sites.first()?;
+    Some(ProbeWarning::UnreadRequirementsFile {
+        path: path.to_owned(),
+        line,
+        file: file.to_owned(),
+        more: sites.len() - 1,
     })
 }
 
@@ -891,6 +935,37 @@ mod tests {
     use crate::rules::IssueSubject;
     use crate::rules::RuleId;
     use crate::rules::Severity;
+
+    /// The first unread requirements file by site is named; the rest are counted (#1273).
+    #[test]
+    fn unread_requirements_warning_names_the_first_site() {
+        let gap = |file: &str, line| Gap {
+            file: file.to_owned(),
+            kind: GapKind::UnreadRequirementsFile,
+            member: None,
+            site: Some((format!("{file}.txt"), line)),
+            target: None,
+        };
+        assert_eq!(unread_requirements_warning(&[]), None);
+        let warning = |gaps: &[Gap]| match unread_requirements_warning(gaps) {
+            Some(ProbeWarning::UnreadRequirementsFile {
+                path, line, more, ..
+            }) => (path, line, more),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            warning(&[gap("tox.ini", Some(4))]),
+            ("tox.ini".to_owned(), Some(4), 0)
+        );
+        assert_eq!(
+            warning(&[
+                gap("tox.ini", Some(4)),
+                gap("noxfile.py", None),
+                gap("tox.ini", Some(2))
+            ]),
+            ("noxfile.py".to_owned(), None, 2)
+        );
+    }
 
     /// A syntax error names the skip even after an earlier warning; a
     /// warning alone is the notebook's reason, and no diagnostic means the

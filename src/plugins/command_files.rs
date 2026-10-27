@@ -23,13 +23,13 @@ use std::path::Path;
 use crate::config::ChokkinConfig;
 use crate::manifest::normalize_distribution_name;
 use crate::resolver::{VenvIndex, build_binary_map};
-use crate::sources::is_dockerfile;
+use crate::sources::{is_dockerfile, is_requirements_dir_file};
 
 use super::commands::{KnownBinary, SourceHits};
 use super::config_scan::{ConfigScanResult, is_shell_script, strip_shell_comment};
 use super::config_text::{logical_lines, origin_at};
 use super::task_files::scan_dockerfile;
-use super::types::CommandTarget;
+use super::types::{CommandTarget, RequirementsRef};
 
 /// Sections whose `command` supervisord runs.
 const SUPERVISOR_SECTIONS: [&str; 3] = ["program:", "eventlistener:", "fcgi-program:"];
@@ -40,6 +40,14 @@ fn scan(root: &Path, paths: &[String], binaries: &BTreeMap<String, String>) -> S
     let mut hits = SourceHits::default();
     let known = |name: &str| binaries.contains_key(name);
     for rel in paths {
+        if is_requirements_dir_file(Path::new(rel)) {
+            hits.requirement_files.push(RequirementsRef {
+                path: rel.clone(),
+                origin: origin_at(rel, 0, "requirements directory"),
+                missing_ok: false,
+            });
+            continue;
+        }
         let Some(contents) = read_candidate(&root.join(rel)) else {
             continue;
         };
@@ -177,6 +185,8 @@ pub(super) fn scan_into(
             .map(|name| normalize_distribution_name(name)),
     );
     result.declared_distributions.extend(hits.installed);
+    result.requirement_files.extend(hits.requirement_files);
+    result.tool_configs.extend(hits.tool_configs);
     result.module_refs.extend(hits.module_refs);
     result.command_targets.extend(hits.command_targets);
     result.used_symbols.extend(hits.used_symbols);

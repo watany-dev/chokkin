@@ -21,6 +21,7 @@ mod flask;
 mod plugin_map;
 mod prefect;
 mod pytest;
+mod requirement_refs;
 mod scrapy;
 mod script_entries;
 mod task_files;
@@ -33,6 +34,7 @@ pub(crate) use django::{
     INCLUDE_LABEL as DJANGO_INCLUDE_LABEL, SETTINGS_LABEL as DJANGO_SETTINGS_LABEL,
     STAR_IMPORT_LABEL as DJANGO_STAR_IMPORT_LABEL,
 };
+pub(crate) use doctools::sphinx_config_file;
 pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};
 pub(crate) use enablers::{PluginActivation, PluginActivationReason};
 pub(crate) use error::PluginsError;
@@ -42,8 +44,8 @@ pub(crate) use pytest::{PytestImportSettings, import_settings as pytest_import_s
 #[cfg(test)]
 pub(crate) use types::FrameworkUsedGlob;
 pub(crate) use types::{
-    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin, SysPathImport,
-    SysPathImporter, UnreadSettings,
+    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
+    RequirementsRef, SysPathImport, SysPathImporter, UnreadSettings,
 };
 pub use types::{PluginContribution, PluginHints};
 pub(crate) use util::{parse_module_symbol, parse_uvicorn_script_target};

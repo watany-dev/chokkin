@@ -31,6 +31,7 @@ use super::fastapi;
 use super::flask;
 use super::prefect;
 use super::pytest;
+use super::requirement_refs;
 use super::scrapy;
 use super::tool_plugins;
 use super::types::{PluginContribution, PluginEntry, PluginHints};
@@ -119,20 +120,14 @@ pub fn extract_plugin_hints_with_parse(
     }
 
     let mut scan = cached_config_scan(&ctx, config, manifest, cache)?;
-    // From the parse, the walk, and member pyprojects, which the config scan
-    // cache does not key on.
-    command_files::scan_into(&mut scan, &root.path, command_files, ctx.config);
-    let formatters = tool_plugins::datamodel_codegen_formatters(&ctx);
+    let requirements = scan_uncached(&ctx, command_files, &mut scan);
     let mut command_targets = scan.command_targets;
     command_targets.extend(commands::parsed_server_apps(parse));
-    command_targets.extend(formatters.command_targets);
     command_targets.extend(
         contributions
             .iter()
             .flat_map(|contrib: &PluginContribution| contrib.command_targets.iter().cloned()),
     );
-    let mut module_refs = scan.module_refs;
-    module_refs.extend(formatters.module_refs);
 
     Ok(PluginHints {
         contributions,
@@ -140,12 +135,35 @@ pub fn extract_plugin_hints_with_parse(
         config_used_distributions: scan.used_distributions,
         config_declared_distributions: scan.declared_distributions,
         config_provided_binaries: scan.provided_binaries,
-        config_module_refs: module_refs,
+        config_requirement_names: requirements.names,
+        unread_requirements: requirements.unread,
+        config_module_refs: scan.module_refs,
         config_used_symbols: scan.used_symbols,
         config_script_entries: scan.script_entries,
         config_command_targets: command_targets,
         warnings,
     })
+}
+
+/// What the config scan cache does not key on, read on every run: the
+/// command files the walk found, member pyprojects' formatters, and the
+/// files commands point at (#1273). Their hits join `scan`; the
+/// requirements files' names are returned.
+fn scan_uncached(
+    ctx: &PluginContext<'_>,
+    command_files: &[String],
+    scan: &mut config_scan::ConfigScanResult,
+) -> requirement_refs::ReferencedRequirements {
+    let root = ctx.root.path.as_path();
+    command_files::scan_into(scan, root, command_files, ctx.config);
+    let formatters = tool_plugins::datamodel_codegen_formatters(ctx);
+    scan.command_targets.extend(formatters.command_targets);
+    scan.module_refs.extend(formatters.module_refs);
+    let tool_configs = tool_plugins::scan_referenced(root, &scan.tool_configs);
+    scan.module_refs.extend(tool_configs.module_refs);
+    scan.command_targets.extend(tool_configs.command_targets);
+    scan.used_distributions.extend(tool_configs.distributions);
+    requirement_refs::read(ctx.manifest, &scan.requirement_files)
 }
 
 /// The entries plugins name by path before the inventory is parsed, so files
@@ -276,7 +294,7 @@ fn config_scan_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", manifest.sources).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "config-scan-v9".to_owned(),
+            unit_version: "config-scan-v10".to_owned(),
         },
         inputs,
     })

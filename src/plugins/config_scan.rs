@@ -18,8 +18,8 @@ use super::config_text::{
 };
 use super::context::PluginContext;
 use super::types::{
-    BinaryUsage, CommandTargetRef, ModuleReference, ReferenceOrigin, ScriptReference,
-    SymbolReference,
+    BinaryUsage, CommandTargetRef, ModuleReference, ReferenceOrigin, RequirementsRef,
+    ScriptReference, SymbolReference, ToolConfigRef,
 };
 use super::{ci_installs, script_entries, task_files, tool_plugins};
 
@@ -52,6 +52,14 @@ pub(super) struct ConfigScanResult {
     /// Classes command options name by path (#1239).
     #[serde(default)]
     pub used_symbols: Vec<SymbolReference>,
+    /// Requirements files commands, tox `deps` and nox installs install
+    /// from (#1273); read on every run, outside this cache.
+    #[serde(default)]
+    pub requirement_files: Vec<RequirementsRef>,
+    /// Config files commands point a tool at (#1273); read on every run,
+    /// outside this cache.
+    #[serde(default)]
+    pub tool_configs: Vec<ToolConfigRef>,
 }
 
 const MKDOCS_CONFIG_NAMES: [&str; 2] = ["mkdocs.yml", "mkdocs.yaml"];
@@ -113,9 +121,9 @@ pub(super) fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     merge_hits(&mut result, &mut seen_binaries, hits);
     let hits = tool_plugins::scan(root, pyproject.as_ref());
     merge_hits(&mut result, &mut seen_binaries, hits);
-    result
-        .declared_distributions
-        .extend(ci_installs::scan(root));
+    let (installed, requirement_files) = ci_installs::scan(root);
+    result.declared_distributions.extend(installed);
+    result.requirement_files.extend(requirement_files);
     result.script_entries.extend(script_entries::scan(root));
 
     for list in [
@@ -187,6 +195,8 @@ fn merge_hits(
     result.module_refs.extend(hits.module_refs);
     result.command_targets.extend(hits.command_targets);
     result.declared_distributions.extend(hits.installed);
+    result.requirement_files.extend(hits.requirement_files);
+    result.tool_configs.extend(hits.tool_configs);
     result.used_symbols.extend(hits.used_symbols);
 }
 
@@ -502,7 +512,7 @@ fn scan_tox_config(
     let Ok(contents) = std::fs::read_to_string(&path) else {
         return;
     };
-    scan_tox_contents(ctx, &contents, result);
+    scan_tox_contents(ctx, &rel, 0, &contents, result);
     scan_tox_commands(&rel, 0, &contents, result, seen, known);
 }
 
@@ -535,7 +545,7 @@ fn scan_pyproject_tox(
                 line.saturating_sub(1)
             }
         });
-        scan_tox_contents(ctx, contents, result);
+        scan_tox_contents(ctx, &doc.rel, offset, contents, result);
         scan_tox_commands(&doc.rel, offset, contents, result, seen, known);
     }
     scan_native_tox(
@@ -619,8 +629,13 @@ fn scan_native_tox(
             .collect()
     };
     for (path, env) in envs {
+        let origin = ReferenceOrigin {
+            file: rel.to_owned(),
+            line: toml_key_line(text, &path, "deps"),
+            label: format!("{path}.deps"),
+        };
         for dep in strings(env.get("deps")) {
-            push_tox_dependency(&dep, result);
+            push_tox_dependency(&dep, &origin, result);
         }
         for extra in strings(env.get("extras")) {
             mark_optional_extra_dependencies(ctx, &extra, result);
@@ -731,7 +746,9 @@ fn expand_tox_substitutions(command: &str) -> String {
         .replace("{envpython}", "python")
         .replace("{env_python}", "python")
         .replace("{envbindir}/", "")
-        .replace("{env_bin_dir}/", "");
+        .replace("{env_bin_dir}/", "")
+        .replace("{toxinidir}/", "")
+        .replace("{tox_root}/", "");
     let mut depth = 0usize;
     let mut expanded = String::with_capacity(command.len());
     for ch in command.chars() {
@@ -751,85 +768,100 @@ enum ToxListKey {
     Extras,
 }
 
-fn scan_tox_contents(ctx: &PluginContext<'_>, contents: &str, result: &mut ConfigScanResult) {
-    let mut current_extras: Vec<String> = Vec::new();
+/// `extras` and `deps` of every section. A line is read as INI reads it, a
+/// `key = value` with or without spaces around `=` (`deps=pytest`) or `:`
+/// (#1273); a line with neither sets no key and only ends the one before.
+fn scan_tox_contents(
+    ctx: &PluginContext<'_>,
+    rel: &str,
+    line_offset: usize,
+    contents: &str,
+    result: &mut ConfigScanResult,
+) {
     let mut current_key: Option<ToxListKey> = None;
 
-    for line in contents.lines() {
+    for (index, line) in contents.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            current_extras.clear();
             current_key = None;
             continue;
         }
         if trimmed.is_empty() {
             continue;
         }
+        let origin = || origin_at(rel, line_offset + index, "tox deps");
         if let Some(key) = current_key
             && line.chars().next().is_some_and(char::is_whitespace)
         {
             match key {
-                ToxListKey::Deps => push_tox_dependency(trimmed, result),
-                ToxListKey::Extras => {
-                    current_extras.extend(push_tox_extras(ctx, trimmed, result));
-                },
+                ToxListKey::Deps => push_tox_dependency(trimmed, &origin(), result),
+                ToxListKey::Extras => push_tox_extras(ctx, trimmed, result),
             }
             continue;
         }
         current_key = None;
-        if let Some(value) = trimmed.strip_prefix("extras =") {
-            current_key = Some(ToxListKey::Extras);
-            current_extras = push_tox_extras(ctx, value, result);
+        let Some((key, value)) = trimmed.split_once(['=', ':']) else {
             continue;
-        }
-        if let Some(value) = trimmed.strip_prefix("extras +=") {
-            current_key = Some(ToxListKey::Extras);
-            current_extras.extend(push_tox_extras(ctx, value, result));
-            continue;
-        }
-        if let Some(value) = trimmed.strip_prefix("deps =") {
-            current_key = Some(ToxListKey::Deps);
-            if value.trim().is_empty() {
-                for extra in &current_extras {
-                    mark_optional_extra_dependencies(ctx, extra, result);
-                }
-            } else {
-                push_tox_dependency(value, result);
-            }
-            continue;
-        }
-        if let Some(value) = trimmed.strip_prefix("deps +=") {
-            current_key = Some(ToxListKey::Deps);
-            push_tox_dependency(value, result);
+        };
+        // `key +=` appends to the inherited list; it is read the same way.
+        let key = key.trim();
+        match key.strip_suffix('+').map_or(key, str::trim_end) {
+            "extras" => {
+                current_key = Some(ToxListKey::Extras);
+                push_tox_extras(ctx, value, result);
+            },
+            "deps" => {
+                current_key = Some(ToxListKey::Deps);
+                push_tox_dependency(value, &origin(), result);
+            },
+            _ => {},
         }
     }
 }
 
-fn push_tox_extras(
-    ctx: &PluginContext<'_>,
-    raw: &str,
-    result: &mut ConfigScanResult,
-) -> Vec<String> {
-    let extras = raw
+fn push_tox_extras(ctx: &PluginContext<'_>, raw: &str, result: &mut ConfigScanResult) {
+    for extra in raw
         .split(',')
         .map(str::trim)
         .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    for extra in &extras {
+    {
         mark_optional_extra_dependencies(ctx, extra, result);
     }
-    extras
 }
 
-fn push_tox_dependency(raw: &str, result: &mut ConfigScanResult) {
-    if let Some(name) = extract_requirement_name(strip_tox_factors(raw.trim())) {
+/// One `deps` entry: a requirement, or `-r file`, which installs what the
+/// file lists (#1273). A `-c file` only constrains versions, and
+/// `{[testenv]deps}` substitutes another section's entries, read there.
+fn push_tox_dependency(raw: &str, origin: &ReferenceOrigin, result: &mut ConfigScanResult) {
+    let entry = strip_tox_factors(raw.trim());
+    let mut words = entry.split_whitespace();
+    if let Some(first) = words.next()
+        && let Some(file) = ci_installs::requirement_option(first, &mut words)
+    {
+        result.requirement_files.push(RequirementsRef {
+            path: tox_root_path(&file),
+            origin: origin.clone(),
+            missing_ok: false,
+        });
+        return;
+    }
+    if let Some(name) = extract_requirement_name(entry) {
         push_distribution(result, &name);
-        // `-r file`, `{[testenv]deps}` and paths are not distributions.
+        // `-c file`, `{[testenv]deps}` and paths are not distributions.
         if is_distribution_name(&name) {
             result.declared_distributions.push(name);
         }
     }
+}
+
+/// A tox path with its `{toxinidir}` / `{tox_root}` prefix dropped: tox
+/// runs pip from that directory, the project root.
+fn tox_root_path(path: &str) -> String {
+    ["{toxinidir}", "{tox_root}"]
+        .iter()
+        .find_map(|prefix| path.strip_prefix(prefix))
+        .map_or(path, |rest| rest.trim_start_matches(['/', '\\']))
+        .to_owned()
 }
 
 /// A PEP 508 project name (letters, digits, `-`, `_`, `.`).
@@ -852,30 +884,47 @@ fn scan_noxfile(root: &Path, result: &mut ConfigScanResult) {
     };
     let mut visitor = SessionInstallVisitor::default();
     visitor.visit_body(&suite);
-    let mut option_value = false;
-    for requirement in visitor.requirements {
-        // `"-r", "requirements.txt"`: the option's value is a path, not a name.
-        if std::mem::take(&mut option_value) {
-            continue;
-        }
-        if requirement.starts_with('-') {
-            option_value = matches!(
-                requirement.as_str(),
-                "-r" | "--requirement" | "-c" | "--constraint" | "-e" | "--editable"
-            );
-            continue;
-        }
-        if let Some(name) = extract_requirement_name(&requirement)
-            && is_distribution_name(&name)
-        {
-            result.declared_distributions.push(name);
+    let origin = ReferenceOrigin {
+        file: NOX_CONFIG.to_owned(),
+        line: None,
+        label: "session.install".to_owned(),
+    };
+    for call in &visitor.calls {
+        let mut args = call.iter().map(|arg| arg.as_deref());
+        while let Some(arg) = args.next() {
+            let Some(requirement) = arg else {
+                continue;
+            };
+            // A computed path is read as empty, an unread file (ADR 0005).
+            let mut rest = args.by_ref().map(Option::unwrap_or_default);
+            if let Some(file) = ci_installs::requirement_option(requirement, &mut rest) {
+                result.requirement_files.push(RequirementsRef {
+                    path: file,
+                    origin: origin.clone(),
+                    missing_ok: false,
+                });
+                continue;
+            }
+            if requirement.starts_with('-') {
+                // `"-c", "constraints.txt"`: the option's value is a path, not a name.
+                if matches!(requirement, "-c" | "--constraint" | "-e" | "--editable") {
+                    args.next();
+                }
+                continue;
+            }
+            if let Some(name) = extract_requirement_name(requirement)
+                && is_distribution_name(&name)
+            {
+                result.declared_distributions.push(name);
+            }
         }
     }
 }
 
 #[derive(Default)]
 struct SessionInstallVisitor {
-    requirements: Vec<String>,
+    /// The positional arguments of each call, `None` where not a literal.
+    calls: Vec<Vec<Option<String>>>,
 }
 
 impl<'a> Visitor<'a> for SessionInstallVisitor {
@@ -885,8 +934,8 @@ impl<'a> Visitor<'a> for SessionInstallVisitor {
             && attribute.attr.as_str() == "install"
             && matches!(&*attribute.value, Expr::Name(name) if name.id.as_str() == "session")
         {
-            self.requirements
-                .extend(call.arguments.args.iter().filter_map(string_value));
+            self.calls
+                .push(call.arguments.args.iter().map(string_value).collect());
         }
         walk_expr(self, expr);
     }
@@ -1696,5 +1745,50 @@ mod tests {
             result.declared_distributions,
             ["black", "coverage", "flake8", "isort", "pytest", "sphinx"]
         );
+        let files: Vec<(&str, &str)> = result
+            .requirement_files
+            .iter()
+            .map(|reference| (reference.path.as_str(), reference.origin.file.as_str()))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                ("requirements/test.txt", "tox.ini"),
+                ("requirements.txt", "noxfile.py")
+            ]
+        );
+    }
+
+    /// INI reads `deps=x`, `deps= x` and `deps: x` as `deps = x`, and
+    /// `-r` takes its file with or without a space or `{toxinidir}`
+    /// (#1273). A `-c` file only constrains, and a computed nox path is
+    /// kept empty, an unread file.
+    #[test]
+    fn tox_keys_without_spaces_and_requirement_references() {
+        let result = scan_files(&[
+            (
+                "tox.ini",
+                "[testenv]\ndeps=flake8\n\n[testenv:a]\ndeps= pytest\n    -r{toxinidir}/ci/a.txt\n\
+                 [testenv:b]\ndeps: mypy\n    -c constraints.txt\n    --requirement=ci/b.txt\n\
+                 [testenv:c]\ndeps +=\n    -r ci/c.txt\n",
+            ),
+            (
+                "noxfile.py",
+                "import nox\n\n@nox.session\ndef t(session):\n    \
+                 session.install(\"-r\", REQS)\n    session.install(\"-rci/d.txt\")\n",
+            ),
+        ]);
+        assert_eq!(result.declared_distributions, ["flake8", "mypy", "pytest"]);
+        let files: Vec<&str> = result
+            .requirement_files
+            .iter()
+            .map(|reference| reference.path.as_str())
+            .collect();
+        assert_eq!(files, ["ci/a.txt", "ci/b.txt", "ci/c.txt", "", "ci/d.txt"]);
+        let lines: Vec<Option<u32>> = result.requirement_files[..3]
+            .iter()
+            .map(|reference| reference.origin.line)
+            .collect();
+        assert_eq!(lines, [Some(6), Some(10), Some(13)]);
     }
 }

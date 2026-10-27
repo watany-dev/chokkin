@@ -26,6 +26,7 @@ use super::types::{
     DeclaredDependency, DependencyContext, ExtrasState, LoadedManifest, LockfileGraph,
     LockfileKind, ManifestSources, ProjectMetadata, UvToolSettings,
 };
+use super::util::path_is_within_root;
 use super::warnings::ManifestWarning;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -453,6 +454,44 @@ fn read_extra_requirements(
     }
 }
 
+/// The distributions a requirements file declares that a command or config
+/// installs from (`pip install -r`, tox `deps = -r`, #1273), with its `-r`
+/// includes, keyed by `rel` (root-relative, as written). Names only, like a
+/// file outside the fixed names that names no context: where it is
+/// installed (a tox env, a CI job, a test runner's venv) is not read. A
+/// file the manifest already read adds nothing, since its names are already
+/// there. `None` when nothing could be read: the file is outside the
+/// project or missing, or nothing parsed before an error.
+pub(crate) fn referenced_requirement_names(
+    manifest: &LoadedManifest,
+    rel: &str,
+) -> Option<Vec<String>> {
+    let root = manifest.root.path.as_path();
+    let path = root.join(rel);
+    if !path_is_within_root(root, &path) || !path.is_file() {
+        return None;
+    }
+    if manifest
+        .sources
+        .requirements_files
+        .contains(&rel_to_root(root, &path))
+    {
+        return Some(Vec::new());
+    }
+    let (extracted, outcome) = extract_requirements_path(root, &path, &DependencyContext::Runtime);
+    if extracted.dependencies.is_empty() && (outcome.is_err() || extracted.skipped) {
+        return None;
+    }
+    Some(
+        extracted
+            .dependencies
+            .iter()
+            .filter(|dep| !dep.name.is_empty())
+            .map(|dep| normalize_distribution_name(&dep.name))
+            .collect(),
+    )
+}
+
 /// Why an extra requirements file stopped parsing, without the absolute path
 /// an I/O error names.
 pub(super) fn unreadable_reason(error: &ManifestError) -> String {
@@ -699,6 +738,42 @@ mod tests {
             source: std::io::Error::other("denied"),
         };
         assert_eq!(unreadable_reason(&error), "could not be read");
+    }
+
+    /// #1273: a referenced file is read only inside the root; a file the
+    /// manifest already read, or one with nothing but comments, adds no
+    /// names, and one whose only include fails or is not read is unread.
+    #[test]
+    fn referenced_requirement_names_reads_files_inside_the_root() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root_dir = temp.path().join("project");
+        std::fs::create_dir(&root_dir).expect("mkdir");
+        let files = [
+            ("../outside.txt", "requests\n"),
+            ("requirements.txt", "flask\n"),
+            ("comments.txt", "# nothing\n"),
+            ("broken.txt", "-r missing.txt\n"),
+            ("remote.txt", "-r https://example.com/base.txt\n"),
+            ("lint.txt", "Mypy_Extensions\n-r comments.txt\n"),
+        ];
+        for (file, text) in files {
+            std::fs::write(root_dir.join(file), text).expect("write");
+        }
+        let root = ProjectRoot {
+            path: root_dir,
+            marker: crate::discovery::RootMarker::RequirementsTxt,
+        };
+        let config = crate::config::load_config(&root).expect("config");
+        let manifest = extract_manifest(&root, &config).expect("extract");
+        let names = |rel| referenced_requirement_names(&manifest, rel);
+
+        assert_eq!(names("../outside.txt"), None);
+        assert_eq!(names("absent.txt"), None);
+        assert_eq!(names("broken.txt"), None);
+        assert_eq!(names("remote.txt"), None);
+        assert_eq!(names("requirements.txt"), Some(Vec::new()));
+        assert_eq!(names("comments.txt"), Some(Vec::new()));
+        assert_eq!(names("lint.txt"), Some(vec!["mypy-extensions".to_owned()]));
     }
 
     /// #917: the warning names the manifest whose `requires-python` was kept.

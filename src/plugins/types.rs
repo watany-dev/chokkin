@@ -17,6 +17,35 @@ pub struct ReferenceOrigin {
     pub label: String,
 }
 
+/// A requirements file a command or config installs from (`pip install -r
+/// path`, tox `deps = -r path`), or one the walk found in a `requirements`
+/// directory below the root (#1273).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequirementsRef {
+    /// The path as written, relative to the project root.
+    pub path: String,
+    /// Where the reference is.
+    pub origin: ReferenceOrigin,
+    /// A missing file is skipped, not a gap: a CI step may run in another
+    /// repository's checkout or a working directory below the root
+    /// (anyio's downstream jobs, scikit-learn's sparse checkout under
+    /// `path:`), where the file is not this project's.
+    #[serde(default)]
+    pub missing_ok: bool,
+}
+
+/// A config file a command points a tool at (`mypy --config-file
+/// mypy_self_check.ini`), read like the tool's own config (#1273).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ToolConfigRef {
+    /// The tool whose config it is (`mypy`, `pytest`).
+    pub(super) tool: String,
+    /// The path as written, relative to the project root.
+    pub(super) path: String,
+    /// Where the reference is.
+    pub(super) origin: ReferenceOrigin,
+}
+
 /// Additional entry root from a plugin (§9.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginEntry {
@@ -268,6 +297,15 @@ pub struct PluginHints {
     /// Binaries remote pre-commit hooks install into pre-commit's own
     /// environment; they cover `BinaryUsage::config_section` usages (#680).
     pub config_provided_binaries: Vec<String>,
+    /// Distributions the requirements files commands and configs install
+    /// from declare (#1273). They declare names only, like a requirements
+    /// file outside the fixed names: the analysis adds them to the root
+    /// manifest's `extra_requirements`.
+    pub config_requirement_names: Vec<String>,
+    /// Requirements files commands and configs install from that could not
+    /// be read: a URL, a computed path, or a missing or unreadable file.
+    /// Each one may provide any binary or import (ADR 0005).
+    pub unread_requirements: Vec<RequirementsRef>,
     /// Module references from generic config scanning (pytest `-p`, mypy plugins, PDM `call`).
     pub config_module_refs: Vec<ModuleReference>,
     /// Classes command options name by path, such as celery's `--scheduler`

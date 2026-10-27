@@ -2442,7 +2442,7 @@ pillow	CHK010	Tests/oss-fuzz/fuzz_font.py:atheris	tp	-	undeclared third-party: a
 pytest	CHK010	testing/test_pytester.py:imported	tp	-	imported.py is written by pytester.makepyfile at test runtime; not in repo
 pytest	CHK010	src/_pytest/unittest.py:zope	tp	-	undeclared third-party: zope.interface, behind a twisted-installed check; declared nowhere
 pytest	CHK010	testing/test_pathlib.py:xxxpackage	tp	-	xxxpackage is created under tmp_path at test runtime; not in repo
-pytest	CHK010	src/_pytest/unittest.py:twisted	tp	-	undeclared third-party: twisted, behind _get_twisted_version() check; declared nowhere
+pytest	CHK010	src/_pytest/unittest.py:twisted	fp	declared-third-party	tox [testenv:plugins] deps = -rtesting/plugins_integration/requirements.txt installs twisted; the import is behind the _get_twisted_version() check (was tp before #1273 followed tox -r files)
 pytest	CHK010	testing/example_scripts/unittest/test_unittest_asynctest.py:asynctest	tp	-	undeclared third-party: asynctest; example script run by pytester, declared nowhere
 pytest	CHK010	testing/test_monkeypatch.py:main_app	tp	-	main_app.py written to modules_tmpdir at test runtime; not in repo
 scikit-learn	CHK010	sklearn/ensemble/_hist_gradient_boosting/utils.py:xgboost	tp	-	undeclared third-party: xgboost (comparison helper branch); not in pyproject or _min_dependencies
@@ -2512,9 +2512,11 @@ pillow	CHK008	mypy	fp	isolated-env	tox.ini [testenv:mypy] installs it from .ci/r
 pytest	CHK008	black	fp	isolated-env	black appears only as blacken-docs additional_dependencies in .pre-commit-config.yaml
 pytest	CHK008	pylint	tp	-	.pre-commit-config.yaml:87 local hook `entry: pylint` with language: unsupported runs the developer's pylint; declared nowhere
 rich	CHK008	tox	tp	-	tox.ini present; tox not in pyproject dev dependencies
-scikit-learn	CHK008	pytest	tp	-	[tool.pytest.ini_options] and test suite need pytest; pyproject declares it nowhere (only sklearn/_min_dependencies.py)
+scikit-learn	CHK008	pytest	fp	isolated-env	.github/workflows/unit-tests.yml runs pip install -r build_tools/github/lint_lock.txt, which pins pytest==9.1.0 (was tp before #1273 followed pip install -r files)
 scikit-learn	CHK008	towncrier	fp	ci-provided	run by the scientific-python/action-towncrier-changelog action and the conda doc environments (build_tools/circle/doc_environment.yml)
 scikit-learn	CHK008	pre-commit	tp	-	.pre-commit-config.yaml; .devcontainer/setup.sh:14 installs pre-commit with micromamba; not in pyproject
 six	CHK008	pytest	fp	isolated-env	tox.ini [testenv] deps= pytest
 six	CHK008	flake8	fp	isolated-env	tox.ini [testenv:flake8] installs flake8 as its deps
+six	CHK008	sphinx-build	tp	-	documentation/Makefile runs sphinx-build on documentation/conf.py; six declares sphinx nowhere (no requirements file, tox env or workflow installs it)
+six	CHK010	documentation/conf.py:sphinx	info-expected	dev-context	conf.py extensions name sphinx.ext.intersphinx; sphinx is declared and installed nowhere in the repo
 sphinx	CHK008	tox	tp	-	tox.ini and Makefile drive tox; not in any [dependency-groups] of pyproject

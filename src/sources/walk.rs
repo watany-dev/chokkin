@@ -409,11 +409,24 @@ pub(crate) fn is_dockerfile(path: &Path) -> bool {
         || lower.starts_with("containerfile.")
 }
 
+/// A `.txt` / `.in` file in a directory named `requirements` at any depth
+/// (ansible's `test/lib/ansible_test/_data/requirements/units.txt`), which
+/// a runner installs from with `pip install -r` (#1273). The fixed
+/// `requirements/` and `tests/requirements/` are read by the manifest too.
+pub(crate) fn is_requirements_dir_file(rel: &Path) -> bool {
+    let extension = rel.extension().and_then(|ext| ext.to_str());
+    extension.is_some_and(|ext| ext.eq_ignore_ascii_case("txt") || ext.eq_ignore_ascii_case("in"))
+        && rel
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|dir| dir == "requirements")
+}
+
 /// `entry`, at `rel`, as a command file that is neither excluded nor ignored:
 /// a Dockerfile below the root (#1061), a file named like a shell script
 /// (`.sh` / `.bash` / `.zsh` / `.ksh`, or no extension) outside the root's
-/// `scripts/` and `bin/`, which the config scan reads, or a supervisor config
-/// (`.conf`).
+/// `scripts/` and `bin/`, which the config scan reads, a supervisor config
+/// (`.conf`), or a requirements file in a `requirements` directory (#1273).
 /// The plugins read the contents and drop what is neither (#1240).
 fn command_file(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Option<String> {
     let path = entry.path();
@@ -430,7 +443,7 @@ fn command_file(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Opti
             && rel
                 .parent()
                 .is_some_and(|dir| dir == Path::new("scripts") || dir == Path::new("bin"));
-        named && !config_scanned
+        named && !config_scanned || is_requirements_dir_file(rel)
     };
     if !wanted {
         return None;
@@ -633,6 +646,22 @@ mod tests {
         }
         assert!(!is_dockerfile(Path::new("Dockerfile.dockerignore")));
         assert!(!is_dockerfile(Path::new("docker-compose.yml")));
+    }
+
+    /// #1273: only a `.txt` / `.in` file directly in a `requirements` directory.
+    #[test]
+    fn requirements_dir_files_need_both_the_directory_and_the_extension() {
+        for rel in ["requirements/base.txt", "test/requirements/units.IN"] {
+            assert!(is_requirements_dir_file(Path::new(rel)), "{rel}");
+        }
+        for rel in [
+            "requirements/README.md",
+            "ci/base.txt",
+            "requirements/py3/base.txt",
+            "requirements.txt",
+        ] {
+            assert!(!is_requirements_dir_file(Path::new(rel)), "{rel}");
+        }
     }
 
     #[test]

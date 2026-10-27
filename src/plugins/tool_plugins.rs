@@ -14,7 +14,7 @@ use super::config_text::{
 };
 use super::context::PluginContext;
 use super::plugin_map::pytest_option_distribution;
-use super::types::{BinaryUsage, CommandTarget, CommandTargetRef, ReferenceOrigin};
+use super::types::{BinaryUsage, CommandTarget, CommandTargetRef, ReferenceOrigin, ToolConfigRef};
 
 /// (file, section) pairs pytest reads `addopts` from, besides pyproject.
 const PYTEST_INI_SECTIONS: [(&str, &str); 3] = [
@@ -76,6 +76,90 @@ pub(super) fn scan(root: &Path, pyproject: Option<&PyprojectDoc>) -> SourceHits 
         if is_file_named(root, name) {
             hits.distributions
                 .extend(distributions.iter().copied().map(str::to_owned));
+        }
+    }
+    hits
+}
+
+/// The config files commands point mypy and pytest at (`mypy --config-file
+/// mypy_self_check.ini`, `pytest -c ci.ini`, #1273), read as the tool reads
+/// its own: mypy `plugins` and pytest `addopts`, from an INI file's `[mypy]`
+/// / `[pytest]` / `[tool:pytest]` section or a TOML file's `[tool.mypy]` /
+/// `[tool.pytest.ini_options]` table. The binary itself is a usage where the
+/// command runs it. A file that is not a literal path in the project, or
+/// cannot be read, is an opaque command target: the plugins it may load are
+/// unknown, so the gap stage lowers what they may reach.
+pub(super) fn scan_referenced(root: &Path, refs: &[ToolConfigRef]) -> SourceHits {
+    let mut hits = SourceHits::default();
+    let mut seen = BTreeSet::new();
+    for reference in refs {
+        if !seen.insert((reference.tool.as_str(), reference.path.as_str())) {
+            continue;
+        }
+        let path = root.join(&reference.path);
+        let contents = (!super::commands::is_computed(&reference.path)
+            && !Path::new(&reference.path).is_absolute()
+            && path.is_file())
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten();
+        let Some(contents) = contents else {
+            hits.command_targets.push(CommandTargetRef {
+                target: CommandTarget::Opaque {
+                    text: format!("{} config {}", reference.tool, reference.path),
+                },
+                origin: reference.origin.clone(),
+                deploy: false,
+            });
+            continue;
+        };
+        let rel = rel_to_root(root, &path);
+        let toml = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
+        match (reference.tool.as_str(), toml) {
+            ("mypy", false) => {
+                if let Some((index, plugins)) = ini_value(&contents, "mypy", "plugins") {
+                    push_mypy_plugins(&mut hits, &plugins, &origin_at(&rel, index, "mypy.plugins"));
+                }
+            },
+            ("pytest", false) => {
+                for section in ["pytest", "tool:pytest"] {
+                    if let Some((index, value)) = ini_value(&contents, section, "addopts") {
+                        let origin = origin_at(&rel, index, &format!("{section}.addopts"));
+                        push_addopts(&mut hits, &value, &origin);
+                    }
+                }
+            },
+            (tool_name, true) => {
+                let Ok(table) = toml::from_str::<toml::Table>(&contents) else {
+                    continue;
+                };
+                let value = |table_path: &str, key: &str| {
+                    table_path
+                        .split('.')
+                        .try_fold(&table, |table, name| table.get(name)?.as_table())
+                        .and_then(|table| table.get(key))
+                        .and_then(toml_words)
+                };
+                let origin = |table_path: &str, key: &str| ReferenceOrigin {
+                    file: rel.clone(),
+                    line: toml_key_line(&contents, table_path, key),
+                    label: format!("{table_path}.{key}"),
+                };
+                if tool_name == "mypy"
+                    && let Some(plugins) = value("tool.mypy", "plugins")
+                {
+                    push_mypy_plugins(&mut hits, &plugins, &origin("tool.mypy", "plugins"));
+                }
+                if tool_name == "pytest" {
+                    for table_path in PYTEST_PYPROJECT_TABLES {
+                        if let Some(addopts) = value(table_path, "addopts") {
+                            push_addopts(&mut hits, &addopts, &origin(table_path, "addopts"));
+                        }
+                    }
+                }
+            },
+            _ => {},
         }
     }
     hits
@@ -307,6 +391,52 @@ mod tests {
             .map(|path| rel_to_root(temp.path(), path))
             .collect();
         assert_eq!(paths, ["pytest.ini", "ty.toml"]);
+    }
+
+    /// #1273: a referenced config is read only for its own tool and only
+    /// at a literal path inside the project; any other is opaque.
+    #[test]
+    fn referenced_configs_are_read_for_their_own_tool() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).expect("mkdir");
+        let both = |mypy: &str, pytest: &str| {
+            format!(
+                "[tool.mypy]\nplugins = [\"{mypy}\"]\n\
+                 [tool.pytest.ini_options]\naddopts = \"-p {pytest}\"\n"
+            )
+        };
+        let files = [
+            ("pytest-only.toml", both("mypy_a", "pytest_b")),
+            ("mypy-only.toml", both("mypy_c", "pytest_d")),
+            (
+                "ci.ini",
+                "[pytest]\naddopts = -p pytest_e\n[mypy]\nplugins = mypy_f\n".to_owned(),
+            ),
+            ("$CFG.ini", "[mypy]\nplugins = mypy_g\n".to_owned()),
+            ("../outside.ini", "[mypy]\nplugins = mypy_h\n".to_owned()),
+        ];
+        for (file, text) in &files {
+            std::fs::write(root.join(file), text).expect("write");
+        }
+        let outside = temp.path().join("outside.ini");
+        let reference = |tool: &str, path: &str| ToolConfigRef {
+            tool: tool.to_owned(),
+            path: path.to_owned(),
+            origin: origin(),
+        };
+        let hits = scan_referenced(
+            &root,
+            &[
+                reference("pytest", "pytest-only.toml"),
+                reference("mypy", "mypy-only.toml"),
+                reference("pytest", "ci.ini"),
+                reference("mypy", "$CFG.ini"),
+                reference("mypy", &outside.to_string_lossy()),
+            ],
+        );
+        assert_eq!(modules(&hits), ["pytest_b", "mypy_c", "pytest_e"]);
+        assert_eq!(hits.command_targets.len(), 2);
     }
 
     #[test]

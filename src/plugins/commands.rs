@@ -7,11 +7,12 @@
 
 use crate::parser::ParseSummary;
 
-use super::ci_installs::installed_distributions;
+use super::ci_installs::installs;
 use super::config_scan::is_distribution_name;
 use super::plugin_map::plugin_module_distribution;
 use super::types::{
-    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin, SymbolReference,
+    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
+    RequirementsRef, SymbolReference, ToolConfigRef,
 };
 
 /// Predicate for binary names worth reporting (the binary map plus known tools).
@@ -37,6 +38,10 @@ pub(super) struct SourceHits {
     /// Distributions the commands `pip install`, which provide their
     /// binaries the way a manifest declaration does (#1241).
     pub(super) installed: Vec<String>,
+    /// Requirements files those commands install from (#1273).
+    pub(super) requirement_files: Vec<RequirementsRef>,
+    /// Config files a tool is pointed at (`mypy --config-file x.ini`, #1273).
+    pub(super) tool_configs: Vec<ToolConfigRef>,
     /// Classes command options name by path; their modules are in
     /// `module_refs` (#1239).
     pub(super) used_symbols: Vec<SymbolReference>,
@@ -72,7 +77,26 @@ impl SourceHits {
                 origin: origin.clone(),
             });
         }
-        self.installed.extend(installed_distributions(command));
+        for (tool, path) in uses.tool_configs {
+            self.tool_configs.push(ToolConfigRef {
+                tool: tool.to_owned(),
+                path,
+                origin: origin.clone(),
+            });
+        }
+        let installs = installs(command);
+        self.installed.extend(installs.distributions);
+        self.requirement_files
+            .extend(
+                installs
+                    .requirement_files
+                    .into_iter()
+                    .map(|path| RequirementsRef {
+                        path,
+                        origin: origin.clone(),
+                        missing_ok: false,
+                    }),
+            );
     }
 
     /// [`Self::push_command`] for a command the deployed image or process
@@ -121,6 +145,8 @@ pub(super) struct CommandUses {
     /// `(module, name)` of a class named by path; the tool imports the
     /// module and looks the name up in it.
     pub(super) symbols: Vec<(String, String)>,
+    /// `(tool, path)` of a config file an option points the tool at.
+    pub(super) tool_configs: Vec<(&'static str, String)>,
 }
 
 /// Celery subcommands a plugin distribution registers under
@@ -183,7 +209,15 @@ pub(super) fn command_uses(command: &str) -> CommandUses {
                     uses.push_class(worker);
                 }
             },
+            "mypy" => {
+                if let Some(path) = option_value(args, None, "--config-file") {
+                    uses.tool_configs.push(("mypy", path.to_owned()));
+                }
+            },
             "pytest" | "py.test" => {
+                if let Some(path) = option_value(args, Some("-c"), "--config-file") {
+                    uses.tool_configs.push(("pytest", path.to_owned()));
+                }
                 // pytest-django's settings module.
                 if let Some(settings) = option_value(args, None, "--ds")
                     && !is_computed(settings)
@@ -1239,6 +1273,35 @@ mod tests {
         hits.push_command("twine upload dist/*", &known, &origin);
         hits.push_command("pip install -r requirements-dev.txt", &known, &origin);
         assert_eq!(hits.installed, ["twine"]);
+        assert_eq!(hits.requirement_files.len(), 1);
+        assert_eq!(hits.requirement_files[0].path, "requirements-dev.txt");
+    }
+
+    /// mypy's `tox.ini` points mypy at `mypy_self_check.ini` (#1273).
+    #[test]
+    fn config_file_options_name_tool_configs() {
+        let cases: &[(&str, &[(&str, &str)])] = &[
+            (
+                "python -m mypy --config-file mypy_self_check.ini misc",
+                &[("mypy", "mypy_self_check.ini")],
+            ),
+            ("mypy --config-file=ci/mypy.ini", &[("mypy", "ci/mypy.ini")]),
+            (
+                "pytest -c ci/pytest.ini tests",
+                &[("pytest", "ci/pytest.ini")],
+            ),
+            ("pytest --config-file ci.toml", &[("pytest", "ci.toml")]),
+            ("mypy src", &[]),
+        ];
+        for (command, expected) in cases {
+            let uses = command_uses(command);
+            let found: Vec<(&str, &str)> = uses
+                .tool_configs
+                .iter()
+                .map(|(tool, path)| (*tool, path.as_str()))
+                .collect();
+            assert_eq!(found, *expected, "{command}");
+        }
     }
 
     #[test]

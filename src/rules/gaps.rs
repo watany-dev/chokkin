@@ -17,7 +17,9 @@ use crate::manifest::{
 };
 use crate::parser::{ImportContext, NOT_IN_PACKAGE, ParseSummary, ParsedModule};
 use crate::path_util::join_rel;
-use crate::plugins::{CommandTarget, CommandTargetRef, PluginHints, UnreadSettings};
+use crate::plugins::{
+    CommandTarget, CommandTargetRef, PluginHints, RequirementsRef, UnreadSettings,
+};
 use crate::reachability::ReachabilityReport;
 use crate::resolver::{
     RUNTIME_PEERS, ResolveWarning, ResolvedImport, StdlibRange, import_root, is_first_party_import,
@@ -187,6 +189,10 @@ pub enum GapKind {
     /// import shows. `target` holds the distribution, whose CHK002 alone it
     /// lowers to an info note at likely, as [`Self::StringModuleRef`] does.
     StringDistributionRef,
+    /// A command or config installs from a requirements file that could not
+    /// be read (#1273): a URL, a computed path, a missing file. Any binary
+    /// it may provide or import it may make third-party is unknown.
+    UnreadRequirementsFile,
 }
 
 /// How a gap changes a finding in its scope.
@@ -265,7 +271,11 @@ impl GapKind {
                 Self::UnreadPathSourceImport | Self::UnreadBackendSetting,
                 RuleId::Chk002,
                 IssueSubject::Distribution { .. },
-            ) => Some(Lowering::Cap(Confidence::Likely)),
+            )
+            | (Self::UnreadRequirementsFile, RuleId::Chk008, IssueSubject::Binary { .. })
+            | (Self::UnreadRequirementsFile, RuleId::Chk010, IssueSubject::Import { .. }) => {
+                Some(Lowering::Cap(Confidence::Likely))
+            },
             (
                 Self::RuntimeDependenciesUnknown
                 | Self::InvalidRequirement
@@ -386,6 +396,10 @@ impl GapKind {
             Self::StringDistributionRef => {
                 "a string literal in a reachable module names a module of the distribution, which \
                  may be loaded by name"
+            },
+            Self::UnreadRequirementsFile => {
+                "a command installs from a requirements file that could not be read, which may \
+                 provide it"
             },
         }
     }
@@ -578,6 +592,12 @@ pub fn collect_gaps(
         plugins
             .unread_settings()
             .map(|(plugin, unread)| settings_gap(plugin, unread)),
+    );
+    gaps.extend(
+        plugins
+            .unread_requirements
+            .iter()
+            .map(requirements_file_gap),
     );
     gaps.extend(path_source_gaps(
         &context.resolution.imports,
@@ -1081,6 +1101,23 @@ fn path_source_gaps(imports: &[Arc<ResolvedImport>], dirs: &[String]) -> Vec<Gap
 /// Settings decide what Django runs in every member, and an extension
 /// `sphinx-build` loads may be any module on its path, so the gap lowers the
 /// whole project's findings.
+/// One gap per unread requirements file, at the command or config that
+/// installs from it; a computed path is named as such.
+fn requirements_file_gap(reference: &RequirementsRef) -> Gap {
+    let path = if reference.path.is_empty() {
+        "a computed path".to_owned()
+    } else {
+        reference.path.clone()
+    };
+    Gap {
+        file: reference.origin.file.clone(),
+        kind: GapKind::UnreadRequirementsFile,
+        member: None,
+        site: Some((path, reference.origin.line)),
+        target: None,
+    }
+}
+
 fn settings_gap(plugin: PluginId, unread: &UnreadSettings) -> Gap {
     let kind = match (plugin, &unread.backend) {
         (PluginId::Sphinx, _) => GapKind::UnreadSphinxExtensions,
@@ -2633,7 +2670,7 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 30] = [
+        const KINDS: [GapKind; 31] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
@@ -2664,6 +2701,7 @@ mod tests {
             GapKind::AssumedScriptTargetVersion,
             GapKind::StringModuleRef,
             GapKind::StringDistributionRef,
+            GapKind::UnreadRequirementsFile,
         ];
 
         /// The rules each kind's documentation says it may lower, written
@@ -2714,6 +2752,7 @@ mod tests {
                     RuleId::Chk004,
                     RuleId::Chk005,
                 ],
+                GapKind::UnreadRequirementsFile => &[RuleId::Chk008, RuleId::Chk010],
             }
         }
 
