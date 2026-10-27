@@ -6719,6 +6719,51 @@ fn binary_setup_py_single_module_distribution_is_a_library() {
     assert!(!codes.contains(&"CHK001"), "{codes:?}");
 }
 
+/// `packages` setup.py cannot read may ship any module, so with no package
+/// found an orphan is reported below certain and the argument is named in a
+/// warning; a `setup()` passing none leaves it certain (#1275).
+#[test]
+fn binary_unread_setup_py_packages_lower_orphans() {
+    let levels = |setup: &str| {
+        let project = write_project(&[
+            ("setup.py", setup),
+            ("run.py", "if __name__ == \"__main__\":\n    pass\n"),
+            ("helper.py", "x = 1\n"),
+        ]);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--reporter", "json"])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+        let chk001: Vec<(String, String)> = parsed["issues"]
+            .as_array()
+            .expect("issues")
+            .iter()
+            .filter(|issue| issue["code"] == "CHK001")
+            .map(|issue| {
+                (
+                    issue["path"].as_str().unwrap_or_default().to_owned(),
+                    issue["confidence"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        (chk001, stderr)
+    };
+    let (chk001, stderr) = levels(
+        "from setuptools import setup, find_packages\nsetup(name=\"acme\", packages=find_packages())\n",
+    );
+    assert_eq!(chk001, [("helper.py".to_owned(), "likely".to_owned())]);
+    assert!(
+        stderr.contains("manifest: partially static setup.py `setup.py` (argument `packages`)"),
+        "{stderr}"
+    );
+    let (chk001, stderr) = levels("from setuptools import setup\nsetup(name=\"acme\")\n");
+    assert_eq!(chk001, [("helper.py".to_owned(), "certain".to_owned())]);
+    assert!(!stderr.contains("setup.py"), "{stderr}");
+}
+
 /// A console script whose target maps to no discovered file is no evidence
 /// of an app (#1275): the project stays a library. In an app, a file in a
 /// directory named after the target's package is reported below certain,
