@@ -1,6 +1,6 @@
 //! `mode = auto` resolution (§8).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, ProjectMode};
 use crate::manifest::{
@@ -10,6 +10,8 @@ use crate::resolver::import_root;
 use crate::sources::{DiscoveredSources, FileContext, LayoutInfo, PublicSurface};
 
 use super::auto::detect_auto_entries;
+use super::build::parse_manifest_target;
+use super::module::resolve_module_to_path;
 use super::types::EntryCandidate;
 
 const APP_ENTRY_FILE_NAMES: &[&str] = &["manage.py", "asgi.py", "wsgi.py", "app.py"];
@@ -111,7 +113,10 @@ fn ships_no_code(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool
 /// A `wsgi.py` / `app.py` module of the project's own package (werkzeug)
 /// is a library feature, not an app signal; nor is a test fixture's
 /// `app.py`. With `own_cli_is_library`, neither is a CLI shipped inside the
-/// package (`django-admin`, `httpx`) (#652); a GUI script always is.
+/// package (`django-admin`, `httpx`) (#652); a GUI script always is. A
+/// script whose target maps to no discovered file is no signal either way:
+/// chokkin could not read where it points, which is a gap, not an app
+/// (#1275).
 fn has_clear_app_signals(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
@@ -119,10 +124,18 @@ fn has_clear_app_signals(
     own_cli_is_library: bool,
 ) -> bool {
     let layout = &sources.layout;
+    let known_paths: BTreeSet<String> =
+        sources.files.iter().map(|file| file.path.clone()).collect();
+    let maps_to_source = |target: &str| {
+        parse_manifest_target(target).is_some_and(|(module, _)| {
+            resolve_module_to_path(&module, layout, &known_paths).is_some()
+        })
+    };
     if manifest.entry_points.iter().any(|entry| {
-        entry.group == "gui"
+        (entry.group == "gui"
             || (entry.group == "console"
-                && !(own_cli_is_library && targets_own_package(&entry.target, &layout.packages)))
+                && !(own_cli_is_library && targets_own_package(&entry.target, &layout.packages))))
+            && maps_to_source(&entry.target)
     }) {
         return true;
     }
@@ -154,9 +167,16 @@ fn names_distribution(manifest: &LoadedManifest) -> bool {
     manifest.metadata.name.is_some() || manifest.sources.setup_py_dynamic_name
 }
 
+/// A named distribution that ships a package of its own, or whose declared
+/// wheel targets ship a discovered file: a single-module distribution
+/// (`py_modules = ["six"]`) has no package directory (#1275).
 fn is_library_project(manifest: &LoadedManifest, sources: &DiscoveredSources) -> bool {
     if !names_distribution(manifest) {
         return false;
+    }
+
+    if PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files).is_some() {
+        return true;
     }
 
     if sources.layout.packages.is_empty() {
@@ -272,6 +292,31 @@ mod tests {
         }
     }
 
+    /// A discovered file for each entry point's target, as a project that
+    /// ships its scripts has: a target mapping to no file is no app signal
+    /// (#1275).
+    fn add_target_files(sources: &mut DiscoveredSources, manifest: &LoadedManifest) {
+        for entry in &manifest.entry_points {
+            let Some((module, _)) = parse_manifest_target(&entry.target) else {
+                continue;
+            };
+            let path = crate::path_util::join_rel(
+                &sources.layout.package_root,
+                &format!("{}.py", module.replace('.', "/")),
+            );
+            if !sources.files.iter().any(|file| file.path == path) {
+                sources.files.push(DiscoveredFile {
+                    context: crate::sources::assign_file_context(&path),
+                    path,
+                    kind: FileKind::Python,
+                });
+            }
+        }
+        sources
+            .files
+            .sort_by(|left, right| left.path.cmp(&right.path));
+    }
+
     fn auto_candidate(path: &str) -> EntryCandidate {
         EntryCandidate {
             spec: EntrySpec {
@@ -288,7 +333,9 @@ mod tests {
     fn auto_mode(manifest: &LoadedManifest, candidates: &[EntryCandidate]) -> ProjectMode {
         let mut config = default_config();
         config.mode = ProjectMode::Auto;
-        resolve_project_mode(&config, manifest, &library_sources(), candidates)
+        let mut sources = library_sources();
+        add_target_files(&mut sources, manifest);
+        resolve_project_mode(&config, manifest, &sources, candidates)
     }
 
     #[test]
@@ -312,6 +359,46 @@ mod tests {
         // `acme_cli` is not `acme`: the prefix alone is not the package.
         manifest.entry_points.push(console_script("acme_cli:main"));
         assert_eq!(auto_mode(&manifest, &[]), ProjectMode::App);
+    }
+
+    #[test]
+    fn script_mapping_to_no_file_is_no_app_signal() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("acme".to_owned());
+        manifest
+            .entry_points
+            .push(console_script("acme_server.cli:main"));
+        let mut gui = console_script("acme_gui:main");
+        gui.group = "gui".to_owned();
+        manifest.entry_points.push(gui);
+        let mut config = default_config();
+        config.mode = ProjectMode::Auto;
+        let mode = resolve_project_mode(&config, &manifest, &library_sources(), &[]);
+        assert_eq!(mode, ProjectMode::Library);
+    }
+
+    #[test]
+    fn single_module_distribution_is_a_library() {
+        let mut manifest = empty_manifest();
+        manifest.metadata.name = Some("six".to_owned());
+        let mut sources = library_sources();
+        sources.layout = LayoutInfo::new("", Vec::new());
+        sources.files[0].path = "six.py".to_owned();
+        let mut config = default_config();
+        config.mode = ProjectMode::Auto;
+        assert_eq!(
+            resolve_project_mode(&config, &manifest, &sources, &[]),
+            ProjectMode::App
+        );
+        manifest.metadata.wheel_targets = Some(crate::manifest::WheelTargets {
+            source: "setup.py".to_owned(),
+            paths: vec!["six.py".to_owned()],
+            find: Vec::new(),
+        });
+        assert_eq!(
+            resolve_project_mode(&config, &manifest, &sources, &[]),
+            ProjectMode::Library
+        );
     }
 
     #[test]
@@ -419,6 +506,7 @@ mod tests {
         sources.files[0].path = "src/acme/wsgi.py".to_owned();
         assert!(is_library_member(&manifest, &sources));
         manifest.entry_points.push(console_script("acme.cli:main"));
+        add_target_files(&mut sources, &manifest);
         assert!(!is_library_member(&manifest, &sources));
     }
 
@@ -427,8 +515,10 @@ mod tests {
         let mut manifest = empty_manifest();
         let mut sources = library_sources();
         manifest.entry_points.push(console_script("acme.cli:main"));
+        add_target_files(&mut sources, &manifest);
         assert!(is_distributed_library(&manifest, &sources));
         manifest.entry_points[0].target = "tools.cli:main".to_owned();
+        add_target_files(&mut sources, &manifest);
         assert!(!is_distributed_library(&manifest, &sources));
         manifest.entry_points[0].target = "acme.cli:main".to_owned();
         sources.files[0].path = "manage.py".to_owned();
@@ -515,7 +605,9 @@ mod tests {
 
         let mut own_cli = manifest.clone();
         own_cli.entry_points.push(console_script("acme.cli:main"));
-        assert!(distributions(&config, &own_cli, &sources, &[]).is_empty());
+        let mut cli_sources = sources.clone();
+        add_target_files(&mut cli_sources, &own_cli);
+        assert!(distributions(&config, &own_cli, &cli_sources, &[]).is_empty());
         let app_file = [auto_candidate("app.py")];
         assert!(distributions(&config, &manifest, &sources, &app_file).is_empty());
 
@@ -650,6 +742,7 @@ mod tests {
                     kind: FileKind::Python,
                 })
                 .collect();
+            add_target_files(&mut sources, &self.manifest());
             sources
         }
 
@@ -861,6 +954,7 @@ mod tests {
                         kind: FileKind::Python,
                     })
                     .collect();
+                add_target_files(&mut sources, &self.manifest());
                 sources
             }
 

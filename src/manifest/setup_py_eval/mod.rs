@@ -739,6 +739,9 @@ impl<'a> Evaluator<'a> {
                         | "install_requires"
                         | "extras_require"
                         | "entry_points"
+                        | "packages"
+                        | "py_modules"
+                        | "package_dir"
                 )
                 .then(|| (name.to_owned(), self.eval(&keyword.value)))
             })

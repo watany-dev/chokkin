@@ -297,10 +297,10 @@ fn run_analysis_core(
     if no_entry_root {
         entry_warnings.push(ProbeWarning::Entry(EntryWarning::NoEntryRoot));
     }
-    let skipped_entries: Vec<String> = entry_warnings
+    let gap_entry_warnings: Vec<EntryWarning> = entry_warnings
         .iter()
         .filter_map(|warning| match warning {
-            ProbeWarning::Entry(EntryWarning::MissingEntryPath { path }) => Some(path.clone()),
+            ProbeWarning::Entry(warning) => Some(warning.clone()),
             _ => None,
         })
         .collect();
@@ -465,8 +465,7 @@ fn run_analysis_core(
         &members,
         &probe.scripts,
         &plugins,
-        &skipped_entries,
-        no_entry_root,
+        &gap_entry_warnings,
         &probe.unread_path_sources,
         &probe.effective_config.dependencies,
         stdlib,

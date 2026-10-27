@@ -21,7 +21,7 @@ use super::requirements::{
     requirements_path_context,
 };
 use super::setup_cfg::extract_setup_cfg;
-use super::setup_py::extract_setup_py;
+use super::setup_py::{ShippedModules, extract_setup_py};
 use super::types::{
     DeclaredDependency, DependencyContext, ExtrasState, LoadedManifest, LockfileGraph,
     LockfileKind, ManifestSources, ProjectMetadata, UvToolSettings,
@@ -150,6 +150,15 @@ pub fn extract_manifest(
             "setup.py",
         );
         sources.setup_py_dynamic_name = extracted.dynamic_name;
+        // A wheel target pyproject.toml declares wins, as merge_metadata
+        // keeps its other fields.
+        if metadata.wheel_targets.is_none() {
+            match extracted.shipped {
+                ShippedModules::Read(targets) => metadata.wheel_targets = Some(targets),
+                ShippedModules::Unread => sources.setup_py_packages_unread = true,
+                ShippedModules::NotPassed => {},
+            }
+        }
         entry_points.extend(extracted.entry_points);
         if let Some(state) = extracted.extras {
             extras = Some(extras.unwrap_or_default().merge(state));

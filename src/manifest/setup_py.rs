@@ -17,9 +17,11 @@ use super::setup_py_eval::{
 };
 use super::types::{
     DeclaredDependency, DependencyContext, EntryPointDecl, ExtrasState, ProjectMetadata,
+    WheelTargets,
 };
 use super::util::{DependencyPush, push_dependency, read_text};
 use super::warnings::ManifestWarning;
+use super::wheel::setup_py_targets;
 
 /// Partial extraction result from `setup.py`.
 #[derive(Debug, Default)]
@@ -32,8 +34,12 @@ pub(super) struct SetupPyExtraction {
     pub warnings: Vec<ManifestWarning>,
     /// Whether static parsing succeeded.
     pub parsed: bool,
-    /// `setup()` passes a `name` that cannot be read statically.
+    /// The `name` could not be read, though the file declares one:
+    /// `setup()` passes a value that is not static, or the file builds a
+    /// distribution but its `setup()` call could not be read (#1275).
     pub dynamic_name: bool,
+    /// The modules the wheel ships, as `packages` / `py_modules` say.
+    pub shipped: ShippedModules,
     /// `install_requires` could not be fully read (no static `setup()` call,
     /// or a value the evaluator cannot follow).
     pub runtime_unknown: bool,
@@ -51,6 +57,19 @@ pub(super) struct SetupPyExtraction {
     pub entry_points: Vec<EntryPointDecl>,
 }
 
+/// What `setup()` says the wheel ships (#1275).
+#[derive(Debug, Default)]
+pub(super) enum ShippedModules {
+    /// Neither `packages` nor `py_modules` is passed.
+    #[default]
+    NotPassed,
+    /// Literal lists, as wheel targets.
+    Read(WheelTargets),
+    /// `packages`, `py_modules` or `package_dir` may be passed but could not
+    /// be read, so which modules the wheel ships is unknown.
+    Unread,
+}
+
 /// Whether the `setup.py` at `path` builds a distribution (#1078): it imports
 /// `setuptools` or `distutils`, or a `setup` from any module (`skbuild`,
 /// `numpy.distutils.core`), anywhere, even inside `main()` and under an alias.
@@ -62,14 +81,16 @@ pub(crate) fn builds_distribution(path: &Path) -> bool {
     let Ok(bytes) = std::fs::read(path) else {
         return path.is_file();
     };
-    let Some(stmts) = crate::parser::decode_python_source(bytes)
+    crate::parser::decode_python_source(bytes)
         .as_deref()
         .and_then(parse_module)
-    else {
-        return true;
-    };
+        .is_none_or(|stmts| imports_setup(&stmts))
+}
+
+/// Whether the statements import a build module or a `setup` anywhere.
+fn imports_setup(stmts: &[Stmt]) -> bool {
     let mut finder = SetupImportFinder(false);
-    finder.visit_body(&stmts);
+    finder.visit_body(stmts);
     finder.0
 }
 
@@ -110,9 +131,18 @@ pub(super) fn extract_setup_py(
         return Ok(unreadable(ManifestWarning::FileUndecodable { file: rel }));
     };
 
-    let call = parse_module(&contents).and_then(|stmts| evaluate_setup_call(root, &stmts));
+    let stmts = parse_module(&contents);
+    let call = stmts
+        .as_ref()
+        .and_then(|stmts| evaluate_setup_call(root, stmts));
     let Some(call) = call else {
-        return Ok(unreadable(ManifestWarning::SetupPyNotStatic { file: rel }));
+        let mut result = unreadable(ManifestWarning::SetupPyNotStatic { file: rel });
+        // A script that only shares the name declares no distribution.
+        if stmts.is_some_and(|stmts| !imports_setup(&stmts)) {
+            result.dynamic_name = false;
+            result.shipped = ShippedModules::NotPassed;
+        }
+        return Ok(result);
     };
     result
         .files_missing
@@ -123,18 +153,7 @@ pub(super) fn extract_setup_py(
         .filter_map(|raw| requirements_line_distribution(raw))
         .collect();
 
-    result.metadata.name = string_keyword(&call, "name");
-    result.dynamic_name = result.metadata.name.is_none() && call.keyword("name").is_some();
-    result.metadata.version = string_keyword(&call, "version");
-    result.metadata.requires_python = string_keyword(&call, "python_requires");
-    if let Some(entry_points) = call.keyword("entry_points") {
-        EntryPoints {
-            rel: &rel,
-            entries: &mut result.entry_points,
-            warnings: &mut result.warnings,
-        }
-        .read_setup_py(entry_points);
-    }
+    read_metadata(&call, &rel, &mut result);
 
     let install_requires = call.keyword("install_requires").map(dependency_items);
     // `extras_require` the evaluator could not read, entries of it the
@@ -151,9 +170,11 @@ pub(super) fn extract_setup_py(
     } else {
         call.keyword("extras_require").map(|_| ExtrasState::Known)
     };
-    let nothing_read = install_requires
-        .as_ref()
-        .is_none_or(|items| items.items.is_empty() && !items.complete);
+    // No `install_requires` and no `**kwargs` declares no runtime
+    // dependency: the list is known to be empty, not unread (#1275).
+    let nothing_read = install_requires.as_ref().map_or(call.unpacked, |items| {
+        items.items.is_empty() && !items.complete
+    });
     if nothing_read && extras_require.is_empty() {
         result.runtime_unknown = install_requires.is_some() || call.unpacked;
         result
@@ -197,14 +218,90 @@ pub(super) fn extract_setup_py(
     Ok(result)
 }
 
-/// Neither dependencies nor extras could be read.
+/// Nothing could be read: dependencies, extras, the name or the modules the
+/// wheel ships.
 fn unreadable(warning: ManifestWarning) -> SetupPyExtraction {
     SetupPyExtraction {
         runtime_unknown: true,
+        dynamic_name: true,
+        shipped: ShippedModules::Unread,
         extras: Some(ExtrasState::Unknown),
         warnings: vec![warning],
         ..SetupPyExtraction::default()
     }
+}
+
+/// The keywords read whether or not the dependencies are: the metadata, the
+/// modules the wheel ships and the entry points.
+fn read_metadata(call: &SetupCall, rel: &str, result: &mut SetupPyExtraction) {
+    result.metadata.name = string_keyword(call, "name");
+    result.dynamic_name = result.metadata.name.is_none() && call.keyword("name").is_some();
+    result.metadata.version = string_keyword(call, "version");
+    result.metadata.requires_python = string_keyword(call, "python_requires");
+    read_shipped_modules(call, rel, result);
+    if let Some(entry_points) = call.keyword("entry_points") {
+        EntryPoints {
+            rel,
+            entries: &mut result.entry_points,
+            warnings: &mut result.warnings,
+        }
+        .read_setup_py(entry_points);
+    }
+}
+
+fn read_shipped_modules(call: &SetupCall, rel: &str, result: &mut SetupPyExtraction) {
+    result.shipped = match shipped_modules(call) {
+        Ok(Some(targets)) => ShippedModules::Read(targets),
+        Ok(None) => ShippedModules::NotPassed,
+        Err(argument) => {
+            result
+                .warnings
+                .push(ManifestWarning::SetupPyPartiallyStatic {
+                    file: rel.to_owned(),
+                    argument: argument.to_owned(),
+                });
+            ShippedModules::Unread
+        },
+    };
+}
+
+/// The wheel targets literal `packages` / `py_modules` name, mapped through
+/// `package_dir`; `None` when `setup()` passes neither. `Err` names the
+/// argument that could not be read, or `packages` when `**kwargs` may pass
+/// them.
+fn shipped_modules(call: &SetupCall) -> Result<Option<WheelTargets>, &'static str> {
+    let names = |argument: &'static str| match call.keyword(argument) {
+        None => Ok(Vec::new()),
+        Some(Value::List(items, _)) => items
+            .iter()
+            .map(|item| match item {
+                Value::Str(name) => Ok(name.clone()),
+                _ => Err(argument),
+            })
+            .collect(),
+        Some(_) => Err(argument),
+    };
+    let packages = names("packages")?;
+    let modules = names("py_modules")?;
+    let package_dir = match call.keyword("package_dir") {
+        None => Vec::new(),
+        Some(Value::Dict {
+            items,
+            partial: false,
+            ..
+        }) => items
+            .iter()
+            .map(|(package, dir)| match dir {
+                Value::Str(dir) => Ok((package.clone(), dir.clone())),
+                _ => Err("package_dir"),
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err("package_dir"),
+    };
+    if call.keyword("packages").is_none() && call.keyword("py_modules").is_none() && call.unpacked {
+        return Err("packages");
+    }
+    Ok(setup_py_targets(&packages, &modules, &package_dir))
 }
 
 fn string_keyword(call: &SetupCall, name: &str) -> Option<String> {
@@ -760,6 +857,77 @@ setuptools.setup(name='celery', install_requires=reqs('default.txt'),
     fn unpacked_setup_kwargs_hide_install_requires() {
         let result = extract("kw = load()\nsetup(name='acme', **kw)\n", &[]);
         assert!(result.runtime_unknown);
+    }
+
+    #[test]
+    fn absent_install_requires_declares_nothing() {
+        // six: an unread `long_description` and `version` leave the rest read.
+        let result = extract(
+            "import six\nwith open('README.rst') as fp:\n    text = fp.read()\n\
+             setup(name='six', version=six.__version__, py_modules=['six'], long_description=text)\n",
+            &[],
+        );
+        assert!(result.parsed);
+        assert!(!result.runtime_unknown);
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        assert_eq!(result.metadata.name.as_deref(), Some("six"));
+        let ShippedModules::Read(targets) = result.shipped else {
+            panic!("wheel targets: {:?}", result.shipped);
+        };
+        assert_eq!(targets.paths, vec!["six.py"]);
+    }
+
+    #[test]
+    fn literal_packages_map_through_package_dir() {
+        let result = extract(
+            "setup(name='acme', packages=['acme', 'acme.sub'], py_modules=['tool'], package_dir={'': 'src'})\n",
+            &[],
+        );
+        let ShippedModules::Read(targets) = result.shipped else {
+            panic!("wheel targets: {:?}", result.shipped);
+        };
+        assert_eq!(targets.source, "setup.py");
+        assert_eq!(
+            targets.paths,
+            vec!["src/acme", "src/acme/sub", "src/tool.py"]
+        );
+    }
+
+    #[test]
+    fn unread_packages_are_a_gap() {
+        for (script, argument) in [
+            ("setup(name='acme', packages=find_packages())\n", "packages"),
+            ("setup(name='acme', py_modules=[name])\n", "py_modules"),
+            (
+                "setup(name='acme', packages=['acme'], package_dir=dirs)\n",
+                "package_dir",
+            ),
+            ("setup(name='acme', **kw)\n", "packages"),
+        ] {
+            let result = extract(script, &[]);
+            assert!(matches!(result.shipped, ShippedModules::Unread), "{script}");
+            assert!(
+                result.warnings.iter().any(|warning| matches!(
+                    warning,
+                    ManifestWarning::SetupPyPartiallyStatic { argument: seen, .. } if seen == argument
+                )),
+                "{script}: {:?}",
+                result.warnings
+            );
+        }
+        let result = extract("setup(name='acme')\n", &[]);
+        assert!(matches!(result.shipped, ShippedModules::NotPassed));
+    }
+
+    #[test]
+    fn unreadable_setup_py_leaves_the_name_unread_not_absent() {
+        let result = extract("from setuptools import setup\nmain()\n", &[]);
+        assert!(result.dynamic_name);
+        assert!(matches!(result.shipped, ShippedModules::Unread));
+        // A script that only shares the file name builds no distribution.
+        let result = extract("import django\ndjango.setup()\n", &[]);
+        assert!(!result.dynamic_name);
+        assert!(matches!(result.shipped, ShippedModules::NotPassed));
     }
 
     #[test]

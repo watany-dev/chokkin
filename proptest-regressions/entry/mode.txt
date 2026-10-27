@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c3c5e8f0774e903f330008774660065f404404104591988114e2f6d55f8f2df8 # shrinks to inputs = Inputs { name: true, dynamic_name: false, src_layout: false, packages: [], entry_points: [], files: [] }, signal = Gui("acme.cli:main")
+cc 83b5258d9d46c6784890c84444a0030725738968ce3aeb121a5c14396061670a # shrinks to inputs = Inputs { name: true, dynamic_name: false, src_layout: false, packages: [], entry_points: [(false, "acme")], files: [] }, signal = Package("acme")

@@ -6687,6 +6687,98 @@ fn binary_entry_warnings_reach_stderr() {
     );
 }
 
+/// A static `setup()` with a value it cannot read keeps what it can read:
+/// the name and the single module `py_modules` ships make a library, so the
+/// module is no orphan, and the absent `install_requires` declares nothing
+/// rather than being unread (#1275).
+#[test]
+fn binary_setup_py_single_module_distribution_is_a_library() {
+    let project = write_project(&[
+        (
+            "setup.py",
+            "from setuptools import setup\nwith open(\"README.rst\") as fp:\n    long_description = fp.read()\nsetup(name=\"six\", py_modules=[\"six\"], long_description=long_description)\n",
+        ),
+        ("README.rst", "six\n"),
+        ("six.py", "import os\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(!stderr.contains("setup.py"), "{stderr}");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(parsed["mode"], "library", "{parsed}");
+    let codes: Vec<&str> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter_map(|issue| issue["code"].as_str())
+        .collect();
+    assert!(!codes.contains(&"CHK001"), "{codes:?}");
+}
+
+/// A console script whose target maps to no discovered file is no evidence
+/// of an app (#1275): the project stays a library. In an app, a file in a
+/// directory named after the target's package is reported below certain,
+/// since the script may run it, and `--explain` names the target.
+#[test]
+fn binary_unmapped_console_script_is_a_gap_not_an_app() {
+    let manifest = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+                    [project.scripts]\nacme-test = \"acme_test.cli:main\"\n";
+    let files = [
+        ("src/acme/__init__.py", ""),
+        ("tools/lib/acme_test/__init__.py", ""),
+        ("tools/lib/acme_test/cli.py", ""),
+        ("tools/lib/acme_test/util.py", ""),
+        ("tools/other.py", ""),
+    ];
+    let auto = write_project(&[&[("pyproject.toml", manifest)][..], &files].concat());
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(auto.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    assert_eq!(parsed["mode"], "library", "{parsed}");
+
+    let app_manifest = format!(
+        "{manifest}\n[tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n\
+         entry = [\"src/acme/__init__.py\"]\n"
+    );
+    let app = write_project(&[&[("pyproject.toml", app_manifest.as_str())][..], &files].concat());
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .args(["--explain", "CHK001:tools/lib/acme_test/util.py"])
+        .arg(app.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for line in [
+        "entry: could not map `acme_test.cli` to a source file",
+        "an entry point's target could not be mapped to a source file",
+    ] {
+        assert!(stderr.contains(line), "{line}\n{stderr}");
+    }
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let chk001: Vec<(&str, &str)> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .filter(|issue| issue["code"] == "CHK001")
+        .filter_map(|issue| Some((issue["path"].as_str()?, issue["confidence"].as_str()?)))
+        .collect();
+    assert!(
+        chk001.contains(&("tools/lib/acme_test/util.py", "likely")),
+        "{chk001:?}"
+    );
+    assert!(
+        chk001.contains(&("tools/other.py", "certain")),
+        "{chk001:?}"
+    );
+}
+
 /// Member manifests and the extra requirements files are read like the root
 /// manifest, so what they could not read is reported too, under root-relative
 /// paths (#888).
