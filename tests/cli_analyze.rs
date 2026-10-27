@@ -10898,3 +10898,165 @@ fn binary_python_2_only_unresolved_import_is_info() {
     assert_eq!(severity("StringIO"), Some("info"), "{summary:?}");
     assert_eq!(severity("zzmissing"), Some("warning"), "{summary:?}");
 }
+
+/// What a project's analysis reports, and its warnings.
+fn json_issues_and_stderr(root: &Path) -> (Vec<serde_json::Value>, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--reporter", "json", "--no-cache"])
+        .arg(root)
+        .output()
+        .expect("run chokkin");
+    let stdout = String::from_utf8(output.stdout).expect("utf8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    (
+        parsed["issues"].as_array().cloned().unwrap_or_default(),
+        String::from_utf8(output.stderr).expect("utf8"),
+    )
+}
+
+const MYPY_PYPROJECT: &str =
+    "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.mypy]\nstrict = true\n";
+
+/// pillow's `[testenv:mypy] deps = -r .ci/requirements-mypy.txt` installs
+/// mypy from a file outside the fixed names: the file provides the binary
+/// the `[tool.mypy]` table uses, wherever it is (#1273).
+#[test]
+fn binary_tox_requirements_reference_provides_its_binaries() {
+    let project = write_project(&[
+        ("pyproject.toml", MYPY_PYPROJECT),
+        ("acme.py", ""),
+        (
+            "tox.ini",
+            "[testenv:mypy]\ndeps =\n    -r .ci/requirements-mypy.txt\ncommands = mypy acme.py\n",
+        ),
+        (".ci/requirements-mypy.txt", "mypy==1.15\n"),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    assert!(
+        !issue_keys(&issues).contains(&("CHK008".to_owned(), "mypy".to_owned())),
+        "{issues:?}"
+    );
+}
+
+/// six's `deps=flake8` and `deps= pytest` are `key = value` lines without
+/// the spaces; INI reads them all the same (#1273).
+#[test]
+fn binary_tox_deps_without_spaces_declare_distributions() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("acme.py", ""),
+        (
+            "tox.ini",
+            "[testenv]\ndeps= pytest\ncommands= python -m pytest\n\n[testenv:flake8]\ndeps=flake8\ncommands= flake8 acme.py\n",
+        ),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    let keys = issue_keys(&issues);
+    for binary in ["pytest", "flake8"] {
+        assert!(
+            !keys.contains(&("CHK008".to_owned(), binary.to_owned())),
+            "{keys:?}"
+        );
+    }
+}
+
+/// A requirements file a command installs from that cannot be read may
+/// provide any binary: the unlisted one is no longer certain, and a warning
+/// names the file (#1273, ADR 0005).
+#[test]
+fn binary_unread_requirements_reference_lowers_unlisted_binaries() {
+    let project = write_project(&[
+        ("pyproject.toml", MYPY_PYPROJECT),
+        ("acme.py", ""),
+        (
+            "tox.ini",
+            "[testenv:mypy]\ndeps = -r https://example.com/requirements-mypy.txt\ncommands = mypy acme.py\n",
+        ),
+    ]);
+    let (issues, stderr) = json_issues_and_stderr(project.path());
+    let mypy = issues
+        .iter()
+        .find(|issue| issue["code"] == "CHK008" && issue["target"] == "mypy")
+        .expect("CHK008 mypy");
+    assert_eq!(mypy["confidence"], "likely", "{mypy}");
+    assert!(stderr.contains("could not be read"), "{stderr}");
+}
+
+/// ansible-test installs its sanity and unit test venvs from
+/// `test/lib/ansible_test/_data/requirements/*.txt`, which its own code
+/// names: a file in a `requirements` directory at any depth declares names
+/// (#1273), so their imports resolve and their binaries are provided.
+#[test]
+fn binary_requirements_directory_below_the_root_declares_names() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\naddopts = \"-q\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("tests/test_acme.py", "import voluptuous\n"),
+        (
+            "tools/runner/_data/requirements/units.txt",
+            "pytest\nvoluptuous\n",
+        ),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    let keys = issue_keys(&issues);
+    assert!(
+        keys.iter()
+            .all(|(code, _)| code != "CHK008" && code != "CHK010"),
+        "{keys:?}"
+    );
+}
+
+/// six's Sphinx config is `documentation/conf.py`, which its Makefile builds:
+/// a `conf.py` that sets Sphinx settings is the docs context wherever its
+/// directory is, so it is no unused file (#1273).
+#[test]
+fn binary_sphinx_config_outside_docs_is_a_docs_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n",
+        ),
+        ("acme.py", "if __name__ == \"__main__\":\n    pass\n"),
+        (
+            "documentation/conf.py",
+            "extensions = []\nproject = \"acme\"\nmaster_doc = \"index\"\n",
+        ),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    assert!(
+        !issue_keys(&issues).contains(&("CHK001".to_owned(), "documentation/conf.py".to_owned())),
+        "{issues:?}"
+    );
+}
+
+/// mypy's `tox.ini` runs `mypy --config-file mypy_self_check.ini`, whose
+/// `plugins` loads a module of the project: the file is read like the
+/// tool's own config, so the plugin is used (#1273).
+#[test]
+fn binary_tool_config_file_option_reads_its_plugins() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"mypy\"]\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"**/*.py\"]\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/__main__.py", "import acme\n"),
+        ("acme/checker_plugin.py", "import mypy\n"),
+        (
+            "tox.ini",
+            "[testenv:self]\ncommands = python -m mypy --config-file self_check.ini acme\n",
+        ),
+        ("self_check.ini", "[mypy]\nplugins = acme.checker_plugin\n"),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    assert!(
+        !issue_keys(&issues).contains(&("CHK001".to_owned(), "acme/checker_plugin.py".to_owned())),
+        "{issues:?}"
+    );
+}

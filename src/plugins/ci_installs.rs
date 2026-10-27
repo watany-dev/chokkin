@@ -8,8 +8,10 @@
 use std::path::{Path, PathBuf};
 
 use super::config_scan::{extract_requirement_name, is_distribution_name, strip_shell_comment};
-use super::config_text::leading_spaces;
+use super::config_text::{leading_spaces, origin_at};
 use super::devtools::{is_workflow_file, workflow_run_commands};
+use super::types::RequirementsRef;
+use crate::path_util::rel_to_root;
 
 /// Actions that install a distribution's CLI themselves.
 const ACTION_PROVIDERS: &[(&str, &str)] = &[
@@ -56,25 +58,51 @@ pub(super) fn input_paths(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
-pub(super) fn scan(root: &Path) -> Vec<String> {
+/// The distributions the workflows install, and the requirements files
+/// their `run:` steps install from, which are read from the repository root
+/// the steps start in.
+pub(super) fn scan(root: &Path) -> (Vec<String>, Vec<RequirementsRef>) {
     let mut distributions = Vec::new();
+    let mut requirements = Vec::new();
     for path in input_paths(root) {
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        for (_, command) in workflow_run_commands(&contents) {
-            distributions.extend(installed_distributions(&command));
+        let rel = rel_to_root(root, &path);
+        for (index, command) in workflow_run_commands(&contents) {
+            let found = installs(&command);
+            distributions.extend(found.distributions);
+            requirements.extend(
+                found
+                    .requirement_files
+                    .into_iter()
+                    .map(|file| RequirementsRef {
+                        path: file,
+                        origin: origin_at(&rel, index, "workflow run"),
+                    }),
+            );
         }
         distributions.extend(contents.lines().filter_map(action_distribution));
     }
-    distributions
+    (distributions, requirements)
 }
 
-/// Distributions a shell command installs with `pip install`, `uv pip
-/// install`, `python -m pip install`, `pipx install` or `uv tool install`.
-pub(super) fn installed_distributions(command: &str) -> Vec<String> {
+/// What the install commands in a shell command name.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct Installs {
+    /// Distributions named on the command line.
+    pub(super) distributions: Vec<String>,
+    /// Requirements files `-r` / `--requirement` name, as written (#1273).
+    /// `-c` files only constrain versions, so they install nothing.
+    pub(super) requirement_files: Vec<String>,
+}
+
+/// The distributions and requirements files `pip install`, `uv pip
+/// install`, `python -m pip install`, `pipx install` or `uv tool install`
+/// name in `command`.
+pub(super) fn installs(command: &str) -> Installs {
     let command = without_expressions(command).replace("\\\n", " ");
-    let mut found = Vec::new();
+    let mut found = Installs::default();
     let lines = command.lines().map(strip_shell_comment);
     for segment in lines.flat_map(|line| line.split([';', '|', '&'])) {
         let words: Vec<&str> = segment.split_whitespace().collect();
@@ -89,17 +117,46 @@ pub(super) fn installed_distributions(command: &str) -> Vec<String> {
         }) else {
             continue;
         };
-        let mut args = words.iter().skip(install + 2);
+        let pip = words[install] != "pipx" && words[install] != "tool";
+        let mut args = words
+            .iter()
+            .map(|word| word.trim_matches(['"', '\'']))
+            .skip(install + 2);
         while let Some(arg) = args.next() {
-            if VALUE_OPTIONS.contains(arg) {
+            if let Some(file) = requirement_option(arg, &mut args) {
+                if pip && !file.is_empty() {
+                    found.requirement_files.push(file);
+                }
+                continue;
+            }
+            if VALUE_OPTIONS.contains(&arg) {
                 args.next();
                 continue;
             }
-            let name = extract_requirement_name(arg.trim_matches(['"', '\'']));
-            found.extend(name.filter(|name| is_distribution_name(name)));
+            let name = extract_requirement_name(arg);
+            found
+                .distributions
+                .extend(name.filter(|name| is_distribution_name(name)));
         }
     }
     found
+}
+
+/// The file a pip `-r` option names, from its own word (`-rfile`,
+/// `--requirement=file`) or the next one, empty when the option ends the
+/// command; `None` when `arg` is no `-r` option.
+pub(super) fn requirement_option<'a>(
+    arg: &str,
+    rest: &mut impl Iterator<Item = &'a str>,
+) -> Option<String> {
+    if matches!(arg, "-r" | "--requirement") {
+        return Some(rest.next().unwrap_or_default().to_owned());
+    }
+    let inline = arg
+        .strip_prefix("--requirement=")
+        .or_else(|| arg.strip_prefix("-r"))
+        .filter(|file| !file.is_empty() && !file.starts_with('-'))?;
+    Some(inline.to_owned())
 }
 
 /// `command` with `${{ ... }}` expressions dropped: their words are unknown
@@ -167,7 +224,30 @@ mod tests {
             ),
         ];
         for (command, expected) in cases {
-            assert_eq!(installed_distributions(command), *expected, "{command}");
+            assert_eq!(installs(command).distributions, *expected, "{command}");
+        }
+    }
+
+    #[test]
+    fn pip_install_commands_name_their_requirement_files() {
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "pip install -r requirements/dev.txt -c c.txt",
+                &["requirements/dev.txt"],
+            ),
+            (
+                "uv pip install --requirement=ci/a.txt -rci/b.txt",
+                &["ci/a.txt", "ci/b.txt"],
+            ),
+            (
+                "python -m pip install \"-r\" 'docs/requirements.txt'",
+                &["docs/requirements.txt"],
+            ),
+            ("pipx install -r x.txt tox", &[]),
+            ("pip install -r", &[]),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(installs(command).requirement_files, *expected, "{command}");
         }
     }
 
@@ -199,8 +279,9 @@ mod tests {
         )
         .expect("write ci");
         std::fs::write(workflows.join("notes.md"), "- run: pip install black\n").expect("write md");
-        let mut found = scan(temp.path());
+        let (mut found, requirements) = scan(temp.path());
         found.sort();
         assert_eq!(found, ["pre-commit", "tox"]);
+        assert!(requirements.is_empty());
     }
 }

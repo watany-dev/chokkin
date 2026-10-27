@@ -242,6 +242,25 @@ fn include_target(line: &str) -> Option<(&str, &str)> {
     (INCLUDE_DIRECTIVES.contains(&name) && !target.is_empty()).then_some((name, target))
 }
 
+/// The first discovered `conf.py` whose contents are a Sphinx configuration
+/// (it assigns `extensions` and another Sphinx setting), wherever its
+/// directory is: six's `documentation/conf.py` turns the plugin on as
+/// `docs/conf.py` does (#1273). A `conf.py` that does not parse, or sets
+/// neither, turns nothing on.
+pub(crate) fn sphinx_config_file(root: &Path, sources: &DiscoveredSources) -> Option<String> {
+    sources
+        .python_files()
+        .filter(|file| {
+            Path::new(&file.path)
+                .file_name()
+                .is_some_and(|name| name == "conf.py")
+        })
+        .find(|file| {
+            read_module(&root.join(&file.path)).is_some_and(|(_, stmts)| sets_sphinx_config(&stmts))
+        })
+        .map(|file| file.path.clone())
+}
+
 /// Names only a Sphinx `conf.py` sets beside `extensions` at its top level.
 const SPHINX_CONFIG_NAMES: [&str; 8] = [
     "project",

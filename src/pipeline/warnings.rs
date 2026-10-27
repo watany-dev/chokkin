@@ -78,6 +78,19 @@ pub enum ProbeWarning {
         /// How many other such lines there are.
         more: usize,
     },
+    /// A command or config installs from a requirements file that could
+    /// not be read (#1273), which caps unlisted-binary and unresolved-import
+    /// findings below certain.
+    UnreadRequirementsFile {
+        /// Root-relative path of the first command or config.
+        path: String,
+        /// Its line, when known.
+        line: Option<u32>,
+        /// The requirements file as written.
+        file: String,
+        /// How many other such references there are.
+        more: usize,
+    },
     /// A task file or tool config runs Python code no entry reaches, which
     /// caps unused-file findings below certain (#913). One per file.
     UnreadCommandTarget {
@@ -181,6 +194,7 @@ impl ProbeWarning {
             | Self::NestedProjectsSkipped { .. }
             | Self::OpaqueDynamicImport { .. }
             | Self::ArchiveRequirement { .. }
+            | Self::UnreadRequirementsFile { .. }
             | Self::UnreadCommandTarget { .. }
             | Self::StringModuleRef { .. }
             | Self::StringDistributionRef { .. }
@@ -243,6 +257,7 @@ impl ProbeWarning {
                 (Some(path), None)
             },
             Self::ArchiveRequirement { path, line, .. }
+            | Self::UnreadRequirementsFile { path, line, .. }
             | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
             Self::StringModuleRef { path, line, .. }
             | Self::StringDistributionRef { path, line, .. } => (Some(path), Some(*line)),
@@ -376,6 +391,28 @@ impl fmt::Display for ProbeWarning {
                 name,
                 more,
             } => write_archive_requirement(formatter, path, *line, name, *more),
+            Self::UnreadRequirementsFile {
+                path,
+                line,
+                file,
+                more,
+            } => {
+                let site = crate::rules::import_site(path, *line);
+                write!(
+                    formatter,
+                    "manifest: `{site}` installs from `{file}`, which could not be read"
+                )?;
+                if *more > 0 {
+                    write!(
+                        formatter,
+                        " (and {more} more requirements file{})",
+                        if *more == 1 { "" } else { "s" }
+                    )?;
+                }
+                formatter.write_str(
+                    "; unlisted binaries and unresolved imports are reported below certain",
+                )
+            },
             Self::UnreadCommandTarget {
                 path,
                 line,

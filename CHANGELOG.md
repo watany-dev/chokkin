@@ -28,6 +28,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a test harness loads by path, such as fixture projects and plugins (#1268).
 
 ### Fixed
+- Requirements files are followed by reference, wherever they are: `pip
+  install -r` in commands and workflows, tox `deps = -r file` and nox
+  `session.install("-r", file)` read the file's names like a requirements
+  file outside the fixed names, and so does a file in a `requirements`
+  directory at any depth. A reference that cannot be read (a URL, a computed
+  path, a missing file) keeps CHK008 and CHK010 below `certain` and is named
+  in a warning. `mypy --config-file x` and `pytest -c x` read `x` as that
+  tool's config, a `conf.py` with Sphinx settings turns the Sphinx plugin on
+  wherever its directory is, and `tox.ini` keys are read with or without
+  spaces around `=` (`deps=flake8`). pillow's mypy, ansible's pytest and
+  ansible-test sanity imports, and six's tox deps and `documentation/conf.py`
+  are no longer reported (#1273).
 - An import that runs only when some package is installed is optional
   whatever it imports: in the body of `"x" in sys.modules` (or
   `sys.modules.get("x")`), after `if <x is missing>: return` or a `raise` of

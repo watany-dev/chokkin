@@ -354,6 +354,8 @@ mod tests {
             config_used_distributions: Vec::new(),
             config_declared_distributions: Vec::new(),
             config_provided_binaries: Vec::new(),
+            config_requirement_names: Vec::new(),
+            unread_requirements: Vec::new(),
             config_module_refs: Vec::new(),
             config_used_symbols: Vec::new(),
             config_script_entries: Vec::new(),

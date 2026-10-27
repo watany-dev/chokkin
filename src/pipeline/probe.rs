@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::VERSION;
 use crate::cache::CacheOptions;
 use crate::config::{
-    ChokkinConfig, ConfigSources, DependencyGroupsConfig, LoadedConfig, ResolvedWorkspaceMember,
-    RuntimeOverrides, TargetVersion, apply_overrides, declares_project, load_config,
-    load_root_config, nested_projects,
+    ChokkinConfig, ConfigSources, DependencyGroupsConfig, LoadedConfig, PluginId,
+    ResolvedWorkspaceMember, RuntimeOverrides, TargetVersion, apply_overrides, declares_project,
+    load_config, load_root_config, nested_projects,
 };
 use crate::discovery::{ProjectRoot, RootMarker, discover_project_root};
 use crate::manifest::{
@@ -22,7 +22,7 @@ use crate::manifest::{
 use crate::path_util::{join_rel, rel_to_root, resolve_under_root};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, discover_plugin_entries,
-    resolve_plugin_activations,
+    resolve_plugin_activations, sphinx_config_file,
 };
 use crate::reporters::escape_control;
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
@@ -255,7 +255,12 @@ pub(super) fn probe_project_with_cache(
             layout: input.sources.layout.clone(),
         })
         .collect();
-    let plugin_activations = activate_plugins(&mut loaded.effective, &manifest, &workspace_inputs);
+    let plugin_activations = activate_plugins(
+        &mut loaded.effective,
+        &manifest,
+        &workspace_inputs,
+        &sources,
+    );
     include_plugin_sources(&loaded, &manifest, &discovered, &nested, &mut sources)?;
     let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
     apply_member_context(&mut sources, loaded.effective.production);
@@ -548,6 +553,7 @@ fn activate_plugins(
     config: &mut ChokkinConfig,
     manifest: &LoadedManifest,
     workspace_inputs: &[WorkspaceMemberInputs],
+    sources: &DiscoveredSources,
 ) -> Vec<PluginActivation> {
     let scopes: Vec<EnablerScope<'_>> = std::iter::once(EnablerScope {
         member: None,
@@ -558,7 +564,17 @@ fn activate_plugins(
         manifest: &input.manifest,
     }))
     .collect();
-    let activations = resolve_plugin_activations(config, &scopes);
+    let mut activations = resolve_plugin_activations(config, &scopes);
+    // A Sphinx configuration is known by its contents, wherever it is (#1273).
+    if let Some(sphinx) = activations.iter_mut().find(|activation| {
+        activation.plugin == PluginId::Sphinx
+            && !activation.enabled
+            && activation.reason == PluginActivationReason::Default
+    }) && let Some(path) = sphinx_config_file(&manifest.root.path, sources)
+    {
+        sphinx.enabled = true;
+        sphinx.reason = PluginActivationReason::File { path };
+    }
     for activation in &activations {
         config.plugins.insert(activation.plugin, activation.enabled);
     }

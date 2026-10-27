@@ -26,6 +26,7 @@ use super::types::{
     DeclaredDependency, DependencyContext, ExtrasState, LoadedManifest, LockfileGraph,
     LockfileKind, ManifestSources, ProjectMetadata, UvToolSettings,
 };
+use super::util::path_is_within_root;
 use super::warnings::ManifestWarning;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -451,6 +452,50 @@ fn read_extra_requirements(
         }));
         sources.requirements_files.extend(extracted.files_read);
     }
+}
+
+/// The distributions a requirements file declares that a command or config
+/// installs from (`pip install -r`, tox `deps = -r`, #1273), with its `-r`
+/// includes, keyed by `rel` (root-relative, as written). Names only, like a
+/// file outside the fixed names that names no context: where it is
+/// installed (a tox env, a CI job, a test runner's venv) is not read. A
+/// file the manifest already read adds nothing, since its names are already
+/// there. `Err` says why nothing could be read: the file is outside the
+/// project, missing, or did not parse before anything was declared.
+pub(crate) fn referenced_requirement_names(
+    manifest: &LoadedManifest,
+    rel: &str,
+) -> Result<Vec<String>, String> {
+    let root = manifest.root.path.as_path();
+    let path = root.join(rel);
+    if !path_is_within_root(root, &path) {
+        return Err("is outside the project".to_owned());
+    }
+    if !path.is_file() {
+        return Err("does not exist".to_owned());
+    }
+    if manifest
+        .sources
+        .requirements_files
+        .contains(&rel_to_root(root, &path))
+    {
+        return Ok(Vec::new());
+    }
+    let (extracted, outcome) = extract_requirements_path(root, &path, &DependencyContext::Runtime);
+    if extracted.dependencies.is_empty()
+        && let Err(error) = &outcome
+    {
+        return Err(unreadable_reason(error));
+    }
+    if extracted.dependencies.is_empty() && extracted.skipped {
+        return Err("could not be decoded".to_owned());
+    }
+    Ok(extracted
+        .dependencies
+        .iter()
+        .filter(|dep| !dep.name.is_empty())
+        .map(|dep| normalize_distribution_name(&dep.name))
+        .collect())
 }
 
 /// Why an extra requirements file stopped parsing, without the absolute path
