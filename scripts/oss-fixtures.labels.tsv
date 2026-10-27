@@ -2417,3 +2417,103 @@ sphinx	CHK002	sphinxcontrib-htmlhelp	fp	-	loaded by name: sphinx/application.py 
 sphinx	CHK002	sphinxcontrib-jsmath	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.jsmath', which Sphinx.__init__ passes to setup_extension (import_module)
 sphinx	CHK002	sphinxcontrib-qthelp	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.qthelp', which Sphinx.__init__ passes to setup_extension (import_module)
 sphinx	CHK002	sphinxcontrib-serializinghtml	fp	-	loaded by name: sphinx/application.py builtin_extensions lists 'sphinxcontrib.serializinghtml', which Sphinx.__init__ passes to setup_extension (import_module)
+
+# --- Diversity corpus precision samples ---
+# Hand-labelled by reading the pinned clones (nothing executed): every hit of
+# the diversity corpus at HEAD, at most 6 per project and rule, first in
+# sample-precision-labels.py hash order. CHK002 is in the section above.
+ansible	CHK010	test/lib/ansible_test/_util/controller/sanity/yamllint/yamllinter.py:yamllint	fp	dev-context	ansible-test runs this sanity script in its own venv built from test/lib/ansible_test/_data/requirements/sanity.yamllint.txt, which pins yamllint
+ansible	CHK010	test/lib/ansible_test/_util/controller/sanity/validate-modules/validate_modules/main.py:voluptuous	fp	dev-context	ansible-test venv from _data/requirements/sanity.validate-modules.txt pins voluptuous
+ansible	CHK010	test/lib/ansible_test/_util/controller/sanity/validate-modules/validate_modules/schema.py:voluptuous	fp	dev-context	ansible-test venv from _data/requirements/sanity.validate-modules.txt pins voluptuous
+ansible	CHK010	test/lib/ansible_test/_util/controller/sanity/validate-modules/validate_modules/main.py:antsibull_docs_parser	fp	dev-context	ansible-test venv from _data/requirements/sanity.validate-modules.txt pins antsibull-docs-parser
+ansible	CHK010	test/units/ansible_test/_internal/ci/test_azp.py:pytest_mock	fp	declared-third-party	pytest-mock is in test/lib/ansible_test/_data/requirements/units.txt, which ansible-test installs for unit tests; chokkin does not read that file
+ansible	CHK010	test/units/utils/test_encrypt.py:pytest_mock	fp	declared-third-party	pytest-mock is in test/lib/ansible_test/_data/requirements/units.txt (ansible-test units venv)
+boto3	CHK010	tests/unit/test_crt.py:awscrt	tp	-	undeclared third-party: awscrt comes only through the crt extra botocore[crt] (setup.cfg:11)
+boto3	CHK010	boto3/s3/transfer.py:awscrt	tp	-	undeclared third-party: awscrt only via botocore[crt]; import behind HAS_CRT flag
+pandas	CHK010	pandas/io/clipboard/__init__.py:PyQt4	tp	-	undeclared third-party: last fallback in nested try/except ImportError; PyQt4 declared nowhere
+pandas	CHK010	pandas/io/sql.py:adbc_driver_manager	tp	-	undeclared third-party: adbc-driver-manager only via adbc-driver-postgresql/sqlite in the postgresql/sql-other extras
+pandas	CHK010	pandas/tests/io/test_sql.py:adbc_driver_manager	tp	-	undeclared third-party: adbc-driver-manager only via adbc-driver-postgresql (extras)
+pillow	CHK010	Tests/test_imageqt.py:PySide6	tp	-	undeclared third-party: Qt bindings installed only by .ci/install.sh; pyproject declares none
+pillow	CHK010	Tests/test_imageqt.py:PyQt6	tp	-	undeclared third-party: PyQt6 installed only by .ci/install.sh:46
+pillow	CHK010	Tests/test_qt_image_qapplication.py:PySide6	tp	-	undeclared third-party: Qt bindings installed only by .ci/install.sh
+pillow	CHK010	Tests/test_qt_image_qapplication.py:PyQt6	tp	-	undeclared third-party: PyQt6 installed only by .ci/install.sh
+pillow	CHK010	Tests/oss-fuzz/fuzz_pillow.py:atheris	tp	-	undeclared third-party: atheris comes from the OSS-Fuzz base image; build.sh installs only Pillow itself
+pillow	CHK010	Tests/oss-fuzz/fuzz_font.py:atheris	tp	-	undeclared third-party: atheris from the OSS-Fuzz base image, declared nowhere in the repo
+pytest	CHK010	testing/test_pytester.py:imported	tp	-	imported.py is written by pytester.makepyfile at test runtime; not in repo
+pytest	CHK010	src/_pytest/unittest.py:zope	tp	-	undeclared third-party: zope.interface, behind a twisted-installed check; declared nowhere
+pytest	CHK010	testing/test_pathlib.py:xxxpackage	tp	-	xxxpackage is created under tmp_path at test runtime; not in repo
+pytest	CHK010	src/_pytest/unittest.py:twisted	tp	-	undeclared third-party: twisted, behind _get_twisted_version() check; declared nowhere
+pytest	CHK010	testing/example_scripts/unittest/test_unittest_asynctest.py:asynctest	tp	-	undeclared third-party: asynctest; example script run by pytester, declared nowhere
+pytest	CHK010	testing/test_monkeypatch.py:main_app	tp	-	main_app.py written to modules_tmpdir at test runtime; not in repo
+scikit-learn	CHK010	sklearn/ensemble/_hist_gradient_boosting/utils.py:xgboost	tp	-	undeclared third-party: xgboost (comparison helper branch); not in pyproject or _min_dependencies
+scikit-learn	CHK010	sklearn/utils/_testing.py:cupy	tp	-	undeclared third-party: cupy (array-API test branch); declared nowhere
+scikit-learn	CHK010	sklearn/tests/test_docstring_parameters.py:numpydoc	tp	-	undeclared in pyproject: numpydoc listed only in sklearn/_min_dependencies.py (tests, docs)
+scikit-learn	CHK010	sklearn/ensemble/_hist_gradient_boosting/utils.py:catboost	tp	-	undeclared third-party: catboost; declared nowhere
+scikit-learn	CHK010	sklearn/ensemble/_hist_gradient_boosting/utils.py:lightgbm	tp	-	undeclared third-party: lightgbm; declared nowhere
+scikit-learn	CHK010	sklearn/utils/_testing.py:numpydoc	tp	-	undeclared in pyproject: numpydoc only in sklearn/_min_dependencies.py
+six	CHK010	six.py:StringIO	fp	stdlib	Python 2 stdlib StringIO in the PY2 branch of six.py
+sphinx	CHK010	tests/roots/test-ext-apidoc-toc/mypackage/main.py:mod_something	tp	-	no mod_something module anywhere in the repo; apidoc test root is documented, never run
+sphinx	CHK010	tests/roots/test-ext-apidoc-toc/mypackage/main.py:mod_resource	tp	-	no mod_resource module in the repo (mypackage/resource is a package named resource)
+sphinx	CHK010	tests/test_ext_autosummary/test_ext_autosummary.py:autosummary_dummy_module	fp	first-party-missed	tests/roots/test-ext-autosummary/autosummary_dummy_module.py, put on sys.path by the testroot fixture
+sphinx	CHK010	tests/test_util/test_util_typing.py:unknown	tp	-	no such module; sphinx's mock(['unknown']) injects it at runtime
+sphinx	CHK010	tests/test_ext_autosummary/test_ext_autosummary.py:autosummary_dummy_inherited_module	fp	first-party-missed	tests/roots/test-ext-autosummary/autosummary_dummy_inherited_module.py, put on sys.path by the testroot fixture
+ansible	CHK001	lib/ansible/parsing/utils/jsonify.py	tp	-	no importer of ansible.parsing.utils.jsonify anywhere in the repo; parsing/utils is not a plugin directory
+ansible	CHK001	test/integration/targets/collections/collection_root_user/ansible_collections/testns/testcoll/plugins/module_utils/nested_same/nested_same/nested_same.py	fp	framework-loaded	integration target test collection; ansible-test runs the target and the collection loader resolves its module_utils by path
+ansible	CHK001	test/integration/targets/ansible-test-sanity-no-get-exception/ansible_collections/ns/col/plugins/modules/check-me.py	fp	framework-loaded	sample input for the ansible-test sanity target; read by the sanity test, never imported
+ansible	CHK001	lib/ansible/plugins/doc_fragments/action_common_attributes.py	fp	dynamic-import	doc fragment loaded by name: modules/meta.py:50 extends_documentation_fragment lists action_common_attributes
+ansible	CHK001	test/integration/targets/jinja_plugins/filter_plugins/good_filter.py	fp	framework-loaded	filter_plugins/ beside the target's playbook, found by the plugin loader by directory
+ansible	CHK001	test/integration/targets/plugin_loader/normal/action_plugins/self_referential.py	fp	framework-loaded	action_plugins/ beside the target's playbook, found by the plugin loader by directory
+mypy	CHK001	mypy/plugins/proper_plugin.py	fp	external-reference	mypy_self_check.ini:17 plugins = mypy.plugins.proper_plugin (the self-check config passed with --config-file)
+mypy	CHK001	mypyc/test-data/driver/driver.py	fp	external-reference	mypyc/test/test_run.py:370 copies test-data/driver/driver.py as the default run driver
+mypy	CHK001	mypyc/test-data/fixtures/ir.py	fp	external-reference	mypyc/test/testutil.py:32 ICODE_GEN_BUILTINS = test-data/fixtures/ir.py, the builtins stub for IR tests
+mypy	CHK001	mypy/gclogger.py	tp	-	no reference to mypy.gclogger or GcLogger anywhere in the repo
+mypy	CHK001	mypyc/test-data/fixtures/testutil.py	fp	external-reference	mypyc/test/test_run.py:191 shutil.copyfile(TESTUTIL_PATH, "testutil.py") into each run test
+six	CHK001	documentation/conf.py	fp	framework-loaded	Sphinx config: documentation/Makefile:40 runs $(SPHINXBUILD) -b html in that directory
+aiohttp	CHK003	aiohttp/worker.py:gunicorn.config	info-expected	optional-import	aiohttp.worker is the Gunicorn worker class, loaded only by gunicorn (-k aiohttp.GunicornWebWorker), so gunicorn is always present
+aiohttp	CHK003	aiohttp/worker.py:uvloop	info-expected	optional-import	inside GunicornUVLoopWebWorker.init_process, used only when that worker class is chosen
+aiohttp	CHK003	aiohttp/worker.py:gunicorn.workers	info-expected	optional-import	aiohttp.worker is loaded only by gunicorn as a worker class
+ansible	CHK003	lib/ansible/module_utils/_internal/_ansiballz/_extensions/_coverage.py:coverage	info-expected	optional-import	imported only when options.output is set (internal code-coverage collection, :24-30)
+httpie	CHK003	httpie/models.py:urllib3.util	tp	-	top-level import of urllib3, which httpie gets only through requests; setup.cfg install_requires does not list urllib3
+httpie	CHK003	httpie/client.py:urllib3.util	tp	-	top-level import; urllib3 only via requests
+httpie	CHK003	httpie/client.py:urllib3	tp	-	top-level import; urllib3 only via requests
+httpie	CHK003	httpie/ssl_.py:urllib3.util.ssl_	tp	-	top-level import; urllib3 only via requests
+pandas	CHK003	pandas/io/formats/printing.py:traitlets.traitlets	info-expected	optional-import	in the IPython table-schema formatter, reached only after `"IPython" in sys.modules` (:306); traitlets comes with IPython
+pandas	CHK003	pandas/io/formats/style_render.py:markupsafe	info-expected	optional-import	module is loaded only after import_optional_dependency("jinja2") on the line above; markupsafe comes with jinja2
+pytest	CHK003	src/_pytest/python_api.py:numpy	info-expected	optional-import	ApproxNumpy.__eq__, constructed only when a numpy array is passed to approx()
+scikit-learn	CHK003	sklearn/utils/validation.py:pandas.api.types	info-expected	optional-import	_pandas_dtype_needs_early_conversion is called only for pandas input; pandas is optional (_min_dependencies.py)
+scikit-learn	CHK003	sklearn/tree/_export.py:matplotlib.text	info-expected	optional-import	plot_tree calls check_matplotlib_support before reaching this export method
+scikit-learn	CHK003	sklearn/inspection/_plot/partial_dependence.py:matplotlib	info-expected	optional-import	plot() calls check_matplotlib_support first (#1269)
+scikit-learn	CHK003	sklearn/utils/estimator_checks.py:pytest	info-expected	optional-import	only on mark == "xfail", a pytest-only code path of the public check helper
+scikit-learn	CHK003	sklearn/model_selection/_plot.py:matplotlib.pyplot	info-expected	optional-import	check_matplotlib_support(...) on the line above (#1269)
+scikit-learn	CHK003	sklearn/datasets/_openml.py:pandas.errors	info-expected	optional-import	only when parser == "pandas", after check_pandas_support in fetch_openml
+rich	CHK004	rich/jupyter.py:IPython.display	fp	optional-import	inside try/except ModuleNotFoundError (:88-95)
+rich	CHK004	rich/pretty.py:IPython.core.formatters	fp	optional-import	in the else branch of try get_ipython() / except NameError, i.e. only inside IPython
+rich	CHK004	rich/live.py:IPython.display	fp	optional-import	inside `if self.console.is_jupyter:` try block (:254-256)
+sphinx	CHK004	sphinx/util/requests.py:urllib3.exceptions	tp	-	top-level import of urllib3, which sphinx gets only through requests
+pandas	CHK005	ipython	fp	optional-import	runtime use in pandas/io/formats/printing.py:309 runs only after `"IPython" not in sys.modules` returns early (:306)
+ansible	CHK006	lib/ansible/utils/listify.py:display	tp	-	display = Display() is used only in commented-out code (:30)
+ansible	CHK006	lib/ansible/template/__init__.py:AnsibleUndefined	fp	library-public-api	compat alias (UndefinedMarker) in ansible.template, imported by third-party plugins and collections
+ansible	CHK006	lib/ansible/modules/group.py:Linux	fp	dynamic-import	platform subclass of Group, chosen at runtime by its `platform` attribute
+ansible	CHK006	lib/ansible/module_utils/distro/_distro.py:version_parts	fp	library-public-api	vendored distro library's public function (module_utils.distro re-exports the distro API)
+ansible	CHK006	lib/ansible/module_utils/_internal/_patches/_dataclass_annotation_patch.py:ClassVar	fp	dynamic-import	read as _ts.ClassVar through _ts = sys.modules[__name__] (:12, :28)
+ansible	CHK006	lib/ansible/modules/group.py:AIX	fp	dynamic-import	platform subclass of Group, chosen at runtime by its `platform` attribute
+mypy	CHK006	mypy/stubgen.py:NOT_IN_ALL	tp	-	defined at :273 and referenced nowhere
+mypy	CHK006	mypy/dmypy/client.py:do_kill	fp	framework-loaded	registered by @action(kill_parser) (:452) as the subcommand's handler
+mypy	CHK006	mypy/dmypy/client.py:do_recheck	fp	framework-loaded	registered by the @action(...) subcommand decorator
+mypy	CHK006	mypy/dmypy/client.py:do_daemon	fp	framework-loaded	registered by the @action(...) subcommand decorator
+mypy	CHK006	mypy/dmypy/client.py:do_check	fp	framework-loaded	registered by @action(check_parser) (:464)
+mypy	CHK006	mypy/test/helpers.py:run_mypy	tp	-	no caller of mypy.test.helpers.run_mypy (misc/ defines its own run_mypy)
+ansible	CHK008	pytest	fp	isolated-env	ansible-test installs pytest into its units venv from test/lib/ansible_test/_data/requirements/units.txt
+boto3	CHK008	tox	tp	-	tox.ini drives the test envs; tox is declared nowhere (setup.py, setup.cfg, requirements-dev.txt)
+more-itertools	CHK008	tox	tp	-	tox.ini present and used; tox not in pyproject or requirements files
+mypy	CHK008	ruff	fp	isolated-env	ruff runs from the astral-sh/ruff-pre-commit hook in .pre-commit-config.yaml (its own env); [tool.ruff] is that hook's config
+pillow	CHK008	mypy	fp	isolated-env	tox.ini [testenv:mypy] installs it from .ci/requirements-mypy.txt
+pytest	CHK008	black	fp	isolated-env	black appears only as blacken-docs additional_dependencies in .pre-commit-config.yaml
+pytest	CHK008	pylint	tp	-	.pre-commit-config.yaml:87 local hook `entry: pylint` with language: unsupported runs the developer's pylint; declared nowhere
+rich	CHK008	tox	tp	-	tox.ini present; tox not in pyproject dev dependencies
+scikit-learn	CHK008	pytest	tp	-	[tool.pytest.ini_options] and test suite need pytest; pyproject declares it nowhere (only sklearn/_min_dependencies.py)
+scikit-learn	CHK008	towncrier	fp	ci-provided	run by the scientific-python/action-towncrier-changelog action and the conda doc environments (build_tools/circle/doc_environment.yml)
+scikit-learn	CHK008	pre-commit	tp	-	.pre-commit-config.yaml; .devcontainer/setup.sh:14 installs pre-commit with micromamba; not in pyproject
+six	CHK008	pytest	fp	isolated-env	tox.ini [testenv] deps= pytest
+six	CHK008	flake8	fp	isolated-env	tox.ini [testenv:flake8] installs flake8 as its deps
+sphinx	CHK008	tox	tp	-	tox.ini and Makefile drive tox; not in any [dependency-groups] of pyproject

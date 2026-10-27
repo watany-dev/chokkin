@@ -423,6 +423,46 @@ strings`) but does not map them to distributions. As with the app-mode and
 orchestration corpora, this section's CHK002 is recorded only: the gate would
 measure a form chokkin does not read yet.
 
+### Precision on the diversity corpus
+
+Every hit of the diversity corpus was then sampled per project and rule (at
+most 6 each, first in `sample-precision-labels.py` hash order, 95 labels) and
+labelled by reading the clones. `info-expected` counts as `fp`, as in the
+gate. The existing corpus column is the same full run without the diversity
+section:
+
+| Rule | Diversity hits | Labelled | tp / fp | Diversity precision | Existing corpus | Floor |
+|---|---:|---:|---:|---:|---:|---:|
+| CHK001 | 471 | 12 | 2 / 10 | 16.7% | 88.5% (23/26) | 85 |
+| CHK002 | 7 | 7 | 0 / 7 | 0.0% | (FP-rate gate) | — |
+| CHK003 | 34 | 21 | 4 / 17 | 19.0% | 100.0% (146/146) | 90 |
+| CHK004 | 4 | 4 | 1 / 3 | 25.0% | 100.0% (611/611) | 95 |
+| CHK005 | 1 | 1 | 0 / 1 | 0.0% | 89.5% (17/19) | 85 |
+| CHK006 | 207 | 12 | 3 / 9 | 25.0% | 96.2% (101/105) | 90 |
+| CHK008 | 14 | 14 | 7 / 7 | 50.0% | 85.7% (12/14) | 80 |
+| CHK010 | 57 | 35 | 26 / 9 | 74.3% | 89.8% (106/118) | 89 |
+
+The floors were measured on the corpus that the rules were tuned on, and the
+diversity corpus is far below them. Pooled, five rules would fail their floor
+(CHK001 65.8%, CHK003 89.8%, CHK006 88.9%, CHK008 67.9%, CHK010 86.3%), so
+the floors leave the diversity corpus out and `report.md` records its
+precision per rule in the same row. The false positives fall into a few
+patterns:
+
+- Optional imports chokkin cannot see as optional (CHK003 / CHK004 / CHK005,
+  21 of 32 non-CHK001/006 `fp`): imports after an availability helper
+  (#1269), inside the only module a host framework loads (aiohttp's Gunicorn
+  worker), behind `"IPython" in sys.modules`, or in a `try` whose
+  `ModuleNotFoundError` handler the CHK004 path does not honour (rich).
+- Files and symbols a loader finds by name or directory (CHK001 / CHK006):
+  ansible-test targets and plugin directories (#1267, #1268), doc fragments
+  named in module docs, platform subclasses chosen by a `platform`
+  attribute, dmypy handlers registered by an `@action(parser)` decorator, a
+  mypy plugin named in a `--config-file` ini, and mypyc test fixtures copied
+  by path.
+- Tools installed into an isolated environment (CHK008 / CHK010): tox
+  `deps`, ansible-test's per-test requirement files, and pre-commit hooks.
+
 One light fix came out of the measurement: `pyrefly.toml` and
 `[tool.pyrefly]` now mark `pyrefly` used, like `ty.toml` and
 `pyrightconfig.json` do for their checkers (`sphinx`'s `types` group).

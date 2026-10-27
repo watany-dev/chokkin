@@ -94,7 +94,8 @@ project drives is visible (#1065); floors use the pooled (micro) precision.
 CHK001 / CHK003 / CHK004 / CHK005 / CHK006 / CHK008 / CHK010 have a floor
 (#701, #1065, #862), so a precision drop fails the gate even when the counts
 hold. CHK002's floor is criterion 1: with no unclassified finding, FP rate < 5%
-is precision > 95%. CHK007 / CHK009 are recorded only until their labels can
+is precision > 95%. The floors leave the diversity corpus out (#1265): its
+precision per rule is recorded in the same row, and gates nothing. CHK007 / CHK009 are recorded only until their labels can
 carry one (#862).
 CERTAIN_FLOORS gates the `certain` findings alone, at any severity: those are
 what --fix acts on (ADR 0003; `--allow-remove-files` deletes a `certain`
@@ -999,7 +1000,22 @@ def main() -> int:
 
     tp_labels = [k for k, (v, _) in labels.items() if v == "tp"]
     missed = recall_missed(labels, reported)
-    precision_low = precision_misses(findings)
+    # The diversity corpus (#1265) measures domains and build systems the rest
+    # lacks, so its precision is recorded next to the floors rather than gated
+    # by them: the floors guard the corpus they were measured on against
+    # regressions, and the diversity numbers show how far that corpus is from
+    # the rest of Python.
+    diversity = recorded_only["diversity"]
+    precision_low = precision_misses([f for f in findings if f[0] not in diversity])
+
+    def diversity_precision() -> str:
+        rows = [f for f in findings if f[0] in diversity]
+        parts = []
+        for code in PRECISION_FLOORS:
+            tp, fp = precision(rows, code)
+            if tp + fp:
+                parts.append(f"{code} {100 * tp / (tp + fp):.1f}% ({tp}/{tp + fp})")
+        return "; diversity corpus, recorded only: " + (", ".join(parts) or "n/a")
     certain_low = certain_misses(findings)
 
     def certain_measured(code: str) -> str:
@@ -1055,7 +1071,7 @@ def main() -> int:
                  verdict(passes["fp"])],
                 ["Precision floor (labelled hits)",
                  ", ".join(f"{c} >= {f}%" for c, f in PRECISION_FLOORS.items()),
-                 " ".join(precision_low) or "all at or above",
+                 (" ".join(precision_low) or "all at or above") + diversity_precision(),
                  verdict(passes["precision"])],
                 ["Precision floor, `certain` only (what --fix acts on)",
                  ", ".join(f"{c} >= {f}%, all labelled" for c, f in CERTAIN_FLOORS.items()),
@@ -1088,7 +1104,8 @@ def main() -> int:
         "per-project precisions over the (n) corpus projects with a labelled hit (recall",
         "sentinels excluded), and Max share the project holding the most of them (#1065).",
         "A large gap or share means one project drives the number. Floors apply to",
-        "Precision % only.",
+        "Precision % without the diversity corpus, whose own precision the exit",
+        "criteria table records.",
         "",
         *oc.md_table(
             ["Rule", "Reported", "Info", "tp", "fp", "deferred", "unknown", "Coverage %", "Precision %",
