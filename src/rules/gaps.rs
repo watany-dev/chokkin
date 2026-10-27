@@ -1372,6 +1372,7 @@ mod tests {
             relative_level: level,
             fallback_for: Vec::new(),
             version_minors: None,
+            called_before: Vec::new(),
         };
         let unplaced = |line: u32| ParseDiagnostic {
             line,

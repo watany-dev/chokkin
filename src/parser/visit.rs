@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
-    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch,
+    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch, StmtTry,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -37,8 +37,9 @@ use super::relative::{module_package, resolve_relative_import, unresolved_relati
 use super::server_app::ServerNames;
 use super::type_checking::is_type_checking_test;
 use super::types::{
-    AttributeAccess, DecoratorSite, DynamicImport, ImportContext, ImportKind, ImportRef, ModuleRef,
-    NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind, import_context_for_file,
+    AttributeAccess, DecoratorSite, DynamicImport, ImportCheck, ImportContext, ImportKind,
+    ImportRef, ModuleRef, NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind,
+    import_context_for_file,
 };
 use super::version_guard::{self, ALL_MINORS, Minors};
 
@@ -119,6 +120,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// Where the enclosing function first checks if a package is installed;
     /// imports after it are optional (#695).
     availability_checked_at: Option<TextSize>,
+    /// Dotted callees of the calls made as statements so far in the blocks
+    /// that enclose the walk (#1269).
+    called_before: Vec<String>,
     function_depth: u32,
     module_level: bool,
     /// Module-level names that are truthy only when a `try` import succeeded:
@@ -187,6 +191,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             },
             in_main_block: false,
             availability_checked_at: None,
+            called_before: Vec::new(),
             function_depth: 0,
             module_level: true,
             try_flags: HashSet::new(),
@@ -305,6 +310,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.parsed.registry_decorators = registry_decorators(stmts);
+        self.parsed.import_checks = import_checks(stmts);
         self.async_library_names = self.scope_async_library_names(None, stmts);
         // Without a plain `sys.platform`-style mention, only an aliased
         // import (`import sys as s`) can make a platform test, so most
@@ -669,6 +675,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     relative_level: 0,
                     fallback_for: Vec::new(),
                     version_minors: None,
+                    called_before: Vec::new(),
                 });
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
@@ -766,6 +773,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let deferred = self.function_depth > 0;
         for alias in &import.names {
             let optional = optional || self.is_imported_guarded(alias.name.as_str());
+            let called_before = self.called_before_unless(optional);
             self.loader_names.record_import(alias);
             self.server_names.record_import(alias);
             if alias.name.as_str() == "typing" {
@@ -789,6 +797,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 relative_level: 0,
                 fallback_for: self.fallback_for.clone(),
                 version_minors: self.version_minor_runs(),
+                called_before,
             });
         }
     }
@@ -878,7 +887,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 relative_level: level,
                 fallback_for: self.fallback_for.clone(),
                 version_minors: self.version_minor_runs(),
+                called_before: self.called_before_unless(optional),
             });
+        }
+    }
+
+    /// The calls an import runs after, which may yet make it optional; an
+    /// import that already is keeps none.
+    fn called_before_unless(&self, optional: bool) -> Vec<String> {
+        if optional {
+            Vec::new()
+        } else {
+            self.called_before.clone()
         }
     }
 
@@ -968,8 +988,16 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
     /// only run with `x` installed (#695).
     fn visit_body(&mut self, body: &'ast [Stmt]) {
         let gated_depth = self.gated_depth;
+        let called_before = self.called_before.len();
         for stmt in body {
             self.visit_stmt(stmt);
+            // The statements after a call run only once it returned, which a
+            // first-party install check does only with its package (#1269).
+            if let Some(callee) = statement_callee(stmt)
+                && !self.called_before.contains(&callee)
+            {
+                self.called_before.push(callee);
+            }
             // The statements after run only when the test was false, which
             // it cannot be with the package missing (#695, #958).
             let raise_guard = matches!(stmt, Stmt::If(if_stmt)
@@ -980,6 +1008,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             }
         }
         self.gated_depth = gated_depth;
+        self.called_before.truncate(called_before);
     }
 
     #[expect(
@@ -1509,6 +1538,83 @@ fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
         }
     }
     Some(roots)
+}
+
+/// The top-level functions whose body, unconditionally, tries to import
+/// packages and raises from a handler a failed import lands in: a call to
+/// one returns only when they are installed (#1269). The shape decides, not
+/// the name. A handler that returns instead (`return False`) lets the call
+/// return either way, so the caller has to test the result, and the function
+/// is no check.
+fn import_checks(stmts: &[Stmt]) -> Vec<ImportCheck> {
+    stmts
+        .iter()
+        .filter_map(|stmt| {
+            let Stmt::FunctionDef(def) = stmt else {
+                return None;
+            };
+            let mut modules: Vec<String> = def
+                .body
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    Stmt::Try(try_stmt) if raises_when_import_fails(try_stmt) => Some(try_stmt),
+                    _ => None,
+                })
+                .flat_map(|try_stmt| &try_stmt.body)
+                .flat_map(|stmt| match stmt {
+                    Stmt::Import(import) => import
+                        .names
+                        .iter()
+                        .map(|alias| alias.name.to_string())
+                        .collect(),
+                    Stmt::ImportFrom(import_from) if import_from.level == 0 => {
+                        import_from.module.iter().map(ToString::to_string).collect()
+                    },
+                    _ => Vec::new(),
+                })
+                .collect();
+            modules.sort();
+            modules.dedup();
+            (!modules.is_empty()).then(|| ImportCheck {
+                function: def.name.to_string(),
+                modules,
+            })
+        })
+        .collect()
+}
+
+/// Whether the first handler a missing package lands in ends by raising: a
+/// later `except ImportError: raise` never sees the `ModuleNotFoundError` an
+/// earlier handler logs and swallows.
+fn raises_when_import_fails(try_stmt: &StmtTry) -> bool {
+    try_stmt
+        .handlers
+        .iter()
+        .map(|handler| {
+            let ExceptHandler::ExceptHandler(handler) = handler;
+            handler
+        })
+        .find(|handler| handler.type_.as_deref().is_none_or(catches_import_error))
+        .is_some_and(|handler| matches!(handler.body.last(), Some(Stmt::Raise(_))))
+}
+
+/// The dotted callee of a call made as a statement, its result dropped or
+/// bound to names: `check(x)`, `pd = utils.check(x)` (#1269). A method of
+/// `self` / `cls` is left out, as no import binds it.
+fn statement_callee(stmt: &Stmt) -> Option<String> {
+    let value = match stmt {
+        Stmt::Expr(expr) => &*expr.value,
+        Stmt::Assign(assign) => &*assign.value,
+        Stmt::AnnAssign(assign) => assign.value.as_deref()?,
+        _ => return None,
+    };
+    let Expr::Call(call) = value else {
+        return None;
+    };
+    let mut callee = String::new();
+    (write_receiver(&call.func, &mut callee)
+        && !matches!(callee.split('.').next(), Some("self" | "cls")))
+    .then_some(callee)
 }
 
 /// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class

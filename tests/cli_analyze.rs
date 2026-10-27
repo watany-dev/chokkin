@@ -10458,3 +10458,45 @@ fn binary_unresolved_relative_import_is_no_certain_unused_file() {
         "{stderr}"
     );
 }
+
+/// #1269: an import after a call to a first-party function that tries the
+/// import and raises from `except ImportError:` runs only with the package,
+/// so an undeclared one is an optional import (info), whatever the helper is
+/// called.
+#[test]
+fn binary_import_after_a_first_party_install_check_is_optional() {
+    let temp = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n",
+        ),
+        ("src/acme/__init__.py", "from acme import plots\n"),
+        (
+            "src/acme/_deps.py",
+            "def needs(caller):\n    try:\n        import matplotlib\n    except ImportError as e:\n        raise ImportError(caller) from e\n",
+        ),
+        (
+            "src/acme/plots.py",
+            "from acme._deps import needs\n\n\ndef plot():\n    needs(\"plot\")\n    import matplotlib.pyplot as plt\n    return plt\n\n\ndef table():\n    import pandas\n    return pandas\n",
+        ),
+    ]);
+    let issues = json_issues(temp.path(), &["--no-cache", "--include", "CHK003"]);
+    let summary: Vec<(&str, &str, &str)> = issues
+        .iter()
+        .map(|issue| {
+            (
+                issue["symbol"].as_str().unwrap_or_default(),
+                issue["severity"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert!(
+        summary.contains(&("matplotlib.pyplot", "info", "likely")),
+        "{summary:?}"
+    );
+    assert!(
+        summary.contains(&("pandas", "error", "certain")),
+        "{summary:?}"
+    );
+}
