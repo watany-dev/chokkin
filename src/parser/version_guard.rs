@@ -495,5 +495,21 @@ mod tests {
         ] {
             assert_eq!(names_runs(source, "PY2", 0), [ALL], "{source}");
         }
+        // A value that reads no version binds nothing.
+        let module =
+            ruff_python_parser::parse_module("import sys\nX = other()\nY = flag\n").expect("parse");
+        let modules = platform_modules(None, None, module.suite());
+        assert!(version_names(module.suite(), &modules).is_empty());
+        // A bound name is read where `sys` is not, such as a function that
+        // shadows it.
+        let names = VersionNames::from([("PY2".to_owned(), (0, ALL_MINORS))]);
+        let parsed = ruff_python_parser::parse_expression("PY2").expect("parse");
+        let minors = branch_minors(
+            &[],
+            Some(parsed.expr()),
+            &PlatformModules::default(),
+            &names,
+        );
+        assert_eq!(minors, 0);
     }
 }

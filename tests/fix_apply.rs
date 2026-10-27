@@ -265,7 +265,7 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
                 .map(|fix| &fix.subject)
                 .collect()
         ),
-        ["attrs", "xarray"]
+        ["attrs", "cloudpickle", "xarray"]
     );
     assert_eq!(
         subjects(
@@ -276,16 +276,8 @@ fn fix_moves_only_top_level_misplaced_imports_to_runtime() {
                 .map(|fix| &fix.subject)
                 .collect()
         ),
-        // `cloudpickle` sits under a `sys.modules` check (#1272).
         [
-            "cloudpickle",
-            "dask",
-            "polars",
-            "pyarrow",
-            "pyspark",
-            "sympy",
-            "toolz",
-            "trio"
+            "dask", "polars", "pyarrow", "pyspark", "sympy", "toolz", "trio"
         ]
     );
 }

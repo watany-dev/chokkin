@@ -2,7 +2,14 @@ import sys
 
 import sniffio
 
-if "pyspark" in sys.modules:
+
+def is_pyspark_session():
+    return "pyspark" in sys.modules
+
+
+# The predicate names `pyspark`, so only its imports are optional; a
+# `sys.modules` check itself would gate `cloudpickle` too (#1272).
+if is_pyspark_session():
     from pyspark.sql import DataFrame
     import cloudpickle
 

@@ -1940,6 +1940,47 @@ mod tests {
         let parsed =
             visit_source("import subprocess, sys\nsubprocess.run([sys.executable, path])\n");
         assert!(parsed.runs_python_file);
+
+        // A tuple command reads like a list.
+        let parsed = visit_source(
+            "import subprocess, sys\nsubprocess.run((sys.executable, \"-m\", \"pip\"))\n",
+        );
+        assert!(parsed.imports.iter().any(|import| import.module == "pip"));
+    }
+
+    /// `from typing import TYPE_CHECKING as TC` names the flag; the same
+    /// name from another module or a relative `typing`, or another name from
+    /// `typing`, does not. A relative import of `import_module` is no loader.
+    #[test]
+    fn only_typing_type_checking_and_absolute_loaders_are_bound() {
+        let context = |source: &str| {
+            visit_source(source)
+                .imports
+                .iter()
+                .find(|import| import.module == "guarded")
+                .map(|import| import.context)
+                .expect("guarded import")
+        };
+        assert_eq!(
+            context("from typing import TYPE_CHECKING as TC\nif TC:\n    import guarded\n"),
+            ImportContext::Type
+        );
+        for source in [
+            "from other import TYPE_CHECKING as TC\nif TC:\n    import guarded\n",
+            "from .typing import TYPE_CHECKING as TC\nif TC:\n    import guarded\n",
+            "from typing import cast as TC\nif TC:\n    import guarded\n",
+        ] {
+            assert_eq!(context(source), ImportContext::Runtime, "{source}");
+        }
+        let dynamic = |source: &str| visit_source(source).dynamic_imports.len();
+        assert_eq!(
+            dynamic("from importlib import import_module\nimport_module(\"acme.plugin\")\n"),
+            1
+        );
+        assert_eq!(
+            dynamic("from .importlib import import_module\nimport_module(\"acme.plugin\")\n"),
+            0
+        );
     }
 
     #[test]
