@@ -195,6 +195,20 @@ fn action_distribution(line: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// An inline `-r` value is the file; an empty one, or one that is
+    /// another option, is no `-r` option.
+    #[test]
+    fn requirement_option_reads_inline_values_only_when_they_name_a_file() {
+        let none = &mut std::iter::empty();
+        assert_eq!(
+            requirement_option("-rci/a.txt", none),
+            Some("ci/a.txt".to_owned())
+        );
+        assert_eq!(requirement_option("--requirement=", none), None);
+        assert_eq!(requirement_option("-r-x", none), None);
+        assert_eq!(requirement_option("-r", none), Some(String::new()));
+    }
+
     #[test]
     fn install_commands_name_distributions_without_options_or_files() {
         let cases: &[(&str, &[&str])] = &[

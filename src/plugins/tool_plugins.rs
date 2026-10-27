@@ -393,6 +393,52 @@ mod tests {
         assert_eq!(paths, ["pytest.ini", "ty.toml"]);
     }
 
+    /// #1273: a referenced config is read only for its own tool and only
+    /// at a literal path inside the project; any other is opaque.
+    #[test]
+    fn referenced_configs_are_read_for_their_own_tool() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("project");
+        std::fs::create_dir(&root).expect("mkdir");
+        let both = |mypy: &str, pytest: &str| {
+            format!(
+                "[tool.mypy]\nplugins = [\"{mypy}\"]\n\
+                 [tool.pytest.ini_options]\naddopts = \"-p {pytest}\"\n"
+            )
+        };
+        let files = [
+            ("pytest-only.toml", both("mypy_a", "pytest_b")),
+            ("mypy-only.toml", both("mypy_c", "pytest_d")),
+            (
+                "ci.ini",
+                "[pytest]\naddopts = -p pytest_e\n[mypy]\nplugins = mypy_f\n".to_owned(),
+            ),
+            ("$CFG.ini", "[mypy]\nplugins = mypy_g\n".to_owned()),
+            ("../outside.ini", "[mypy]\nplugins = mypy_h\n".to_owned()),
+        ];
+        for (file, text) in &files {
+            std::fs::write(root.join(file), text).expect("write");
+        }
+        let outside = temp.path().join("outside.ini");
+        let reference = |tool: &str, path: &str| ToolConfigRef {
+            tool: tool.to_owned(),
+            path: path.to_owned(),
+            origin: origin(),
+        };
+        let hits = scan_referenced(
+            &root,
+            &[
+                reference("pytest", "pytest-only.toml"),
+                reference("mypy", "mypy-only.toml"),
+                reference("pytest", "ci.ini"),
+                reference("mypy", "$CFG.ini"),
+                reference("mypy", &outside.to_string_lossy()),
+            ],
+        );
+        assert_eq!(modules(&hits), ["pytest_b", "mypy_c", "pytest_e"]);
+        assert_eq!(hits.command_targets.len(), 2);
+    }
+
     #[test]
     fn addopts_reads_plugins_and_plugin_options() {
         let mut hits = SourceHits::default();

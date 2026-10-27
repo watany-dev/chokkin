@@ -778,13 +778,11 @@ fn scan_tox_contents(
     contents: &str,
     result: &mut ConfigScanResult,
 ) {
-    let mut current_extras: Vec<String> = Vec::new();
     let mut current_key: Option<ToxListKey> = None;
 
     for (index, line) in contents.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            current_extras.clear();
             current_key = None;
             continue;
         }
@@ -797,9 +795,7 @@ fn scan_tox_contents(
         {
             match key {
                 ToxListKey::Deps => push_tox_dependency(trimmed, &origin(), result),
-                ToxListKey::Extras => {
-                    current_extras.extend(push_tox_extras(ctx, trimmed, result));
-                },
+                ToxListKey::Extras => push_tox_extras(ctx, trimmed, result),
             }
             continue;
         }
@@ -807,50 +803,30 @@ fn scan_tox_contents(
         let Some((key, value)) = trimmed.split_once(['=', ':']) else {
             continue;
         };
+        // `key +=` appends to the inherited list; it is read the same way.
         let key = key.trim();
-        let (key, appends) = key
-            .strip_suffix('+')
-            .map_or((key, false), |key| (key.trim_end(), true));
-        match key {
+        match key.strip_suffix('+').map_or(key, str::trim_end) {
             "extras" => {
                 current_key = Some(ToxListKey::Extras);
-                let extras = push_tox_extras(ctx, value, result);
-                if appends {
-                    current_extras.extend(extras);
-                } else {
-                    current_extras = extras;
-                }
+                push_tox_extras(ctx, value, result);
             },
             "deps" => {
                 current_key = Some(ToxListKey::Deps);
-                if !appends && value.trim().is_empty() {
-                    for extra in &current_extras {
-                        mark_optional_extra_dependencies(ctx, extra, result);
-                    }
-                } else {
-                    push_tox_dependency(value, &origin(), result);
-                }
+                push_tox_dependency(value, &origin(), result);
             },
             _ => {},
         }
     }
 }
 
-fn push_tox_extras(
-    ctx: &PluginContext<'_>,
-    raw: &str,
-    result: &mut ConfigScanResult,
-) -> Vec<String> {
-    let extras = raw
+fn push_tox_extras(ctx: &PluginContext<'_>, raw: &str, result: &mut ConfigScanResult) {
+    for extra in raw
         .split(',')
         .map(str::trim)
         .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    for extra in &extras {
+    {
         mark_optional_extra_dependencies(ctx, extra, result);
     }
-    extras
 }
 
 /// One `deps` entry: a requirement, or `-r file`, which installs what the
@@ -1809,5 +1785,10 @@ mod tests {
             .map(|reference| reference.path.as_str())
             .collect();
         assert_eq!(files, ["ci/a.txt", "ci/b.txt", "ci/c.txt", "", "ci/d.txt"]);
+        let lines: Vec<Option<u32>> = result.requirement_files[..3]
+            .iter()
+            .map(|reference| reference.origin.line)
+            .collect();
+        assert_eq!(lines, [Some(6), Some(10), Some(13)]);
     }
 }
