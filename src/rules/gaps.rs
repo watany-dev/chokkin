@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::config::{Confidence, DependencyGroupsConfig, PluginId, TargetVersion};
-use crate::entry::{ModuleIndex, beside_origin, resolve_module_to_path};
+use crate::entry::{EntryWarning, ModuleIndex, beside_origin, resolve_module_to_path};
 use crate::graph::ProjectGraph;
 use crate::manifest::{
     ExtrasState, InlineScript, LoadedManifest, ManifestWarning, archive_distribution_name,
@@ -27,7 +27,7 @@ use crate::rules::deps::{
     DeclarationBucket, declaration_bucket, declaration_buckets, file_context,
 };
 use crate::rules::types::{IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site};
-use crate::sources::{FileContext, is_dockerfile};
+use crate::sources::{DiscoveredSources, FileContext, is_dockerfile, path_to_module};
 
 /// One piece of input the analysis could not read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +74,15 @@ pub enum GapKind {
     /// An app-mode project has no entry root (#1138): no file is known to
     /// run, so any file or distribution may be used by code that does.
     NoEntryRoot,
+    /// An entry point's target maps to no discovered file (#1275): the code
+    /// it runs may use any file of the package it names, which `target`
+    /// holds as its top-level name, wherever that package lies.
+    UnresolvedEntryTarget,
+    /// The root `setup.py` may pass `packages` / `py_modules` in a form not
+    /// read, or could not be read at all, and the layout found no package
+    /// (#1275): which modules the distribution ships, and so whether it is a
+    /// library whose modules callers import, is unknown.
+    UnreadShippedModules,
     /// A skipped public module of a library that no root reaches: a caller
     /// may import it, so it may use any declared distribution (#550). It
     /// leaves orphans alone, since what it imports must ship in the wheel
@@ -222,7 +231,9 @@ impl GapKind {
                 | Self::OpaqueDynamicImport
                 | Self::UnreadCommandTarget
                 | Self::UnreadDjangoSettings
-                | Self::UnreadSphinxExtensions,
+                | Self::UnreadSphinxExtensions
+                | Self::UnresolvedEntryTarget
+                | Self::UnreadShippedModules,
                 RuleId::Chk001,
                 _,
             )
@@ -306,6 +317,14 @@ impl GapKind {
             Self::UnreadModule => "a reachable module could not be read",
             Self::SkippedEntry => "an entry point is not a discovered source file",
             Self::NoEntryRoot => "no entry root was found, so no file is known to run",
+            Self::UnresolvedEntryTarget => {
+                "an entry point's target could not be mapped to a source file, so the code it \
+                 runs in its package is not followed"
+            },
+            Self::UnreadShippedModules => {
+                "`setup.py` may ship modules it names in a form that could not be read, and no \
+                 package was found"
+            },
             Self::UnreadPublicModule => "a public module of the library could not be read",
             Self::UnreadNotebookCells => {
                 "some code cells of a reachable notebook could not be read"
@@ -444,6 +463,10 @@ impl Gap {
                 .target
                 .as_deref()
                 .is_some_and(|setting| setting_may_load(setting, name)),
+            (GapKind::UnresolvedEntryTarget, IssueSubject::File { path }) => self
+                .target
+                .as_deref()
+                .is_some_and(|package| in_named_package(path, package)),
             (GapKind::UnresolvedRelativeImport, IssueSubject::File { path }) => {
                 self.target.as_deref().is_some_and(|dir| is_under(path, dir))
             },
@@ -483,6 +506,20 @@ impl Gap {
     }
 }
 
+/// Whether `path` lies in a directory named `package`, or is the module
+/// `package.py`, at any depth: the layout could not place the package, so
+/// any such directory may be it.
+fn in_named_package(path: &str, package: &str) -> bool {
+    let mut parts = path.split('/').peekable();
+    while let Some(part) = parts.next() {
+        let is_last = parts.peek().is_none();
+        if (!is_last && part == package) || (is_last && part.strip_suffix(".py") == Some(package)) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether a backend `setting` may select `peer`, or a driver that provides
 /// it (`hiredis` for the cache backend's `redis`).
 fn setting_may_load(setting: &str, peer: &str) -> bool {
@@ -501,9 +538,10 @@ fn setting_may_load(setting: &str, peer: &str) -> bool {
 ///
 /// One in a module that never runs hides nothing, so module and import gaps
 /// count only where the module is reached or, for an unread module, where a
-/// caller of the library may import it. `skipped_entries` are the entry
+/// caller of the library may import it. `entry_warnings` name the entry
 /// paths skipped as not discovered, less those that do not exist, which run
-/// nothing; `no_entry_root` says an app has no root at all (#1138).
+/// nothing; the targets that map to no file (#1275); and whether an app has
+/// no root at all (#1138).
 #[must_use]
 #[expect(
     clippy::too_many_arguments,
@@ -515,28 +553,18 @@ pub fn collect_gaps(
     members: &[MemberManifest<'_>],
     scripts: &[InlineScript],
     plugins: &PluginHints,
-    skipped_entries: &[String],
-    no_entry_root: bool,
+    entry_warnings: &[EntryWarning],
     unread_path_sources: &[String],
     groups: &DependencyGroupsConfig,
     project_range: StdlibRange,
 ) -> Vec<Gap> {
     let mut gaps = module_gaps(context.parse, context.graph, context.reachability);
-    gaps.extend(skipped_entries.iter().map(|path| Gap {
-        file: path.clone(),
-        kind: GapKind::SkippedEntry,
-        member: None,
-        target: None,
-        site: None,
-    }));
-    // The whole project: no file to name.
-    gaps.extend(no_entry_root.then(|| Gap {
-        file: String::new(),
-        kind: GapKind::NoEntryRoot,
-        member: None,
-        target: None,
-        site: None,
-    }));
+    gaps.extend(
+        entry_warnings
+            .iter()
+            .filter_map(|warning| entry_gap(warning, context.sources)),
+    );
+    gaps.extend(shipped_modules_gap(context, manifest));
     gaps.extend(unread_public_module_gaps(context.reachability));
     gaps.extend(unresolved_import_gaps(context, manifest, scripts));
     gaps.extend(command_target_gaps(
@@ -1173,6 +1201,58 @@ fn script_gaps(
     gaps
 }
 
+/// A target that maps to no file is a gap only when the layout places no
+/// module of its top-level package: one inside a package the layout knows
+/// (`acme.missing`) is a typo or a generated module, which runs nothing
+/// chokkin could read (#933), while a package the layout could not place may
+/// lie in any directory of its name (#1275).
+fn entry_gap(warning: &EntryWarning, sources: &DiscoveredSources) -> Option<Gap> {
+    let (file, kind, site, target) = match warning {
+        EntryWarning::MissingEntryPath { path } => {
+            (path.clone(), GapKind::SkippedEntry, None, None)
+        },
+        // The whole project: no file to name.
+        EntryWarning::NoEntryRoot => (String::new(), GapKind::NoEntryRoot, None, None),
+        EntryWarning::UnresolvedModuleTarget { module, file, .. } => {
+            let package = import_root(module);
+            let placed = sources.files.iter().any(|source| {
+                path_to_module(&source.path, &sources.layout)
+                    .is_some_and(|placed| import_root(&placed) == package)
+            });
+            if placed {
+                return None;
+            }
+            (
+                file.clone(),
+                GapKind::UnresolvedEntryTarget,
+                Some((module.clone(), None)),
+                Some(package.to_owned()),
+            )
+        },
+    };
+    Some(Gap {
+        file,
+        kind,
+        member: None,
+        site,
+        target,
+    })
+}
+
+/// The root `setup.py` may ship modules it names in a form not read, and the
+/// layout found no package to stand in for them (#1275).
+fn shipped_modules_gap(context: &RuleContext<'_>, manifest: &LoadedManifest) -> Option<Gap> {
+    (manifest.sources.setup_py_packages_unread && context.sources.layout.packages.is_empty()).then(
+        || Gap {
+            file: "setup.py".to_owned(),
+            kind: GapKind::UnreadShippedModules,
+            member: None,
+            target: None,
+            site: None,
+        },
+    )
+}
+
 /// The manifest's warning names the file (`pyproject.toml` for
 /// `dynamic = ["dependencies"]`); the fallback keeps the gap if one is missing.
 fn manifest_gap(manifest: &LoadedManifest) -> Option<Gap> {
@@ -1347,6 +1427,16 @@ fn gap_detail(kind: GapKind, gaps: &[&Gap]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_package_is_any_directory_or_module_of_that_name() {
+        assert!(in_named_package("test/lib/acme_test/cli.py", "acme_test"));
+        assert!(in_named_package("acme_test/cli.py", "acme_test"));
+        assert!(in_named_package("tools/acme_test.py", "acme_test"));
+        assert!(!in_named_package("tools/acme_test_x/cli.py", "acme_test"));
+        assert!(!in_named_package("acme_test", "acme_test"));
+        assert!(!in_named_package("tools/x_acme_test.py", "acme_test"));
+    }
     use crate::rules::types::ExplainData;
 
     fn candidate(rule: RuleId, subject: IssueSubject) -> IssueCandidate {
@@ -2542,10 +2632,12 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 28] = [
+        const KINDS: [GapKind; 30] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
+            GapKind::UnresolvedEntryTarget,
+            GapKind::UnreadShippedModules,
             GapKind::UnreadPublicModule,
             GapKind::UnreadNotebookCells,
             GapKind::UnresolvedRelativeImport,
@@ -2587,7 +2679,9 @@ mod tests {
                 GapKind::UnresolvedRelativeImport
                 | GapKind::OpaqueDynamicImport
                 | GapKind::UnreadCommandTarget
-                | GapKind::StringModuleRef => &[RuleId::Chk001],
+                | GapKind::StringModuleRef
+                | GapKind::UnresolvedEntryTarget
+                | GapKind::UnreadShippedModules => &[RuleId::Chk001],
                 GapKind::UnreadPublicModule
                 | GapKind::UnresolvedImport
                 | GapKind::UnresolvedPublicImport

@@ -258,6 +258,29 @@ fn setuptools_targets(tool: &toml::Table) -> Option<WheelTargets> {
     targets("tool.setuptools", paths, find)
 }
 
+/// Wheel targets a `setup.py` passes as literal `packages` and `py_modules`,
+/// mapped through `package_dir` as `[tool.setuptools]` is.
+pub(super) fn setup_py_targets(
+    packages: &[String],
+    modules: &[String],
+    package_dir: &[(String, String)],
+) -> Option<WheelTargets> {
+    let package_dir: Vec<(String, String)> = package_dir
+        .iter()
+        .map(|(package, dir)| (package.clone(), normalize_path(dir)))
+        .collect();
+    let paths = packages
+        .iter()
+        .map(|package| setuptools_package_path(package, &package_dir))
+        .chain(
+            modules
+                .iter()
+                .map(|module| format!("{}.py", setuptools_package_path(module, &package_dir))),
+        )
+        .collect();
+    targets("setup.py", paths, Vec::new())
+}
+
 fn setuptools_package_dir(section: &toml::Table) -> Vec<(String, String)> {
     section
         .get("package-dir")

@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a test harness loads by path, such as fixture projects and plugins (#1268).
 
 ### Fixed
+- A `setup.py` with a value it cannot read (`long_description=fp.read()`)
+  keeps the name, `packages`, `py_modules` and `package_dir` it can read;
+  literal ones become wheel targets, so a single-module distribution such
+  as six is a library. One with no `install_requires` declares nothing
+  instead of warning that it is not static. Unread `packages` / `py_modules`
+  warn, and with no package found lower CHK001 to likely; a `setup.py` whose
+  `setup()` cannot be read counts as naming a distribution (#1275).
+- A console or GUI script whose target maps to no discovered file no
+  longer makes the project an app. When the layout places no module of the
+  target's package, it lowers CHK001 to likely for the files in directories
+  named after that package (#1275).
 - Every package the build backend declares is a package of the project: one
   under a second `packages.find` `where` directory (`["lib", "test/lib"]`)
   keeps that directory, and a root `where` counts when its `include` names

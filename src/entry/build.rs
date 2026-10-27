@@ -727,7 +727,7 @@ fn collect_symbol_ref_entries(
     }
 }
 
-fn parse_manifest_target(target: &str) -> Option<(String, Option<String>)> {
+pub(super) fn parse_manifest_target(target: &str) -> Option<(String, Option<String>)> {
     if let Some((module, symbol)) = parse_uvicorn_script_target(target) {
         return Some((module, Some(symbol)));
     }
