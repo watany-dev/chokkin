@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CHK005 / CHK007 / CHK008. CHK001's precision floor rises from 45% to 50%
   (measured 53.5%); CHK006's falls from 90% to 70% (measured 74.8%): its 90%
   was measured on library projects, where public names are only info.
+- The corpus gate's precision floors rise to the measured precision after
+  the v0.7.11 fixes: CHK001 50% -> 85% (88.5%), CHK006 70% -> 90% (96.2%),
+  and CHK005 and CHK008 gain floors of 85% (89.5%) and 80% (85.7%) (#862).
 
 ### Fixed
 - Commands read their arguments where they load code: `celery flower`

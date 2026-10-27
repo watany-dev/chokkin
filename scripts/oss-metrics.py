@@ -91,10 +91,11 @@ Precision: every rule's precision tp / (tp + fp) over its labelled hits is
 recorded in report.md (#656), next to its per-project mean (macro) and the
 largest single-project share of its labelled hits, so a rule whose number one
 project drives is visible (#1065); floors use the pooled (micro) precision.
-CHK001 / CHK003 / CHK004 / CHK006 / CHK010 have a floor (#701, #1065), so a
-precision drop fails the gate even when the counts hold. CHK002's floor is
-criterion 1: with no unclassified finding, FP rate < 5% is precision > 95%.
-The other rules are recorded only until their labels can carry one (#862).
+CHK001 / CHK003 / CHK004 / CHK005 / CHK006 / CHK008 / CHK010 have a floor
+(#701, #1065, #862), so a precision drop fails the gate even when the counts
+hold. CHK002's floor is criterion 1: with no unclassified finding, FP rate < 5%
+is precision > 95%. CHK007 / CHK009 are recorded only until their labels can
+carry one (#862).
 CERTAIN_FLOORS gates the `certain` findings alone, at any severity: those are
 what --fix acts on (ADR 0003; `--allow-remove-files` deletes a `certain`
 CHK001 file whatever its severity). An unknown or deferred one fails it, as
@@ -184,21 +185,27 @@ MEDIUM_GATE_MS = 2000
 FP_GATE_PCT = 5
 # Per-rule precision floors in percent (#701): the measured precision rounded
 # down to a multiple of 5. CHK002 has none here: the §17 FP-rate gate is its
-# floor, and a stricter one. CHK005 / CHK007 / CHK008 / CHK009 have too few
-# labelled hits yet and are recorded only (#862). CHK001 is reported by default
-# in app mode only, so its floor waited until 8 app-mode projects carried
-# labels, so that no single project's conventions (airflow's DAG files, #1062)
-# decide the gate. It rose from 25 to 45 once URLconf include() strings
-# became module references (#1094, 30.2% -> 48.1%); most of what remains is
-# settings strings and CLIs run from docker or shell (#1065). With every hit
-# labelled it measures 53.5% and the floor is 50 (#1239). CHK006's 90 was
-# measured on library projects, where a public name is info rather than a hit;
-# labelling 8 hits of each app-mode project measured 74.8% (app mode alone
-# about a third: settings names, dotted strings, registration decorators), so
-# the floor is now 70 and the gate covers app mode (#1238). CHK010 measured
-# 90.0% with no margin; #1242 moved two guarded tp hits to info (89.8%), so its
-# floor is 89 rather than the multiple of 5 below, which would give up 5 points.
-PRECISION_FLOORS = {"CHK001": 50, "CHK003": 90, "CHK004": 95, "CHK006": 70, "CHK010": 89}
+# floor, and a stricter one. CHK007 / CHK009 have too few labelled hits yet
+# and are recorded only (#862). CHK001 is reported by default in app mode
+# only, so its floor waited until 8 app-mode projects carried labels, so that
+# no single project's conventions (airflow's DAG files, #1062) decide the
+# gate. It rose from 25 to 45 once URLconf include() strings became module
+# references (#1094, 30.2% -> 48.1%), to 50 with every hit labelled (53.5%),
+# and to 85 once the flat Django layout, Sphinx pages and examples were read
+# (#1239, 88.5%). CHK006's 90 was measured on library projects, where a public
+# name is info rather than a hit; labelling 8 hits of each app-mode project
+# measured 74.8%, so the floor fell to 70 and the gate covers app mode
+# (#1238). Settings names, dotted strings and registration decorators took it
+# to 96.2%, and the floor is back at 90 rather than 95, which one more false
+# positive would fail. CHK005 (89.5%, 19 hits) and CHK008 (85.7%, 14 hits)
+# carry a floor since #1241 / #1242 (#862): 85 and 80 each allow one more
+# false positive. CHK010 measured 90.0% with no margin; #1242 moved two
+# guarded tp hits to info (89.8%), so its floor is 89 rather than the
+# multiple of 5 below, which would give up 5 points.
+PRECISION_FLOORS = {
+    "CHK001": 85, "CHK003": 90, "CHK004": 95, "CHK005": 85,
+    "CHK006": 90, "CHK008": 80, "CHK010": 89,
+}
 # Floors over `certain` findings only (#1094), which --fix acts on. A file
 # --fix --allow-remove-files deletes while it is in use breaks the project, so
 # CHK001's floor is every one: a `certain` false positive is a bug to fix, not
