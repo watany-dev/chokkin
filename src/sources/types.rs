@@ -1,9 +1,10 @@
 //! Source file discovery types.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cache::CacheKeyHasher;
 use crate::discovery::ProjectRoot;
+use crate::path_util::join_rel;
 
 use super::warnings::SourcesWarning;
 
@@ -88,6 +89,10 @@ pub struct LayoutInfo {
     pub package_root: String,
     /// Package directory names (e.g. `acme` for `src/acme` or `acme/`).
     pub packages: Vec<String>,
+    /// Root-relative directory of each package the build backend declares
+    /// under another directory than `package_root` (`where = ["lib",
+    /// "test/lib"]` puts one package under `test/lib`) (#1271).
+    pub package_roots: BTreeMap<String, String>,
     /// Root-level non-distribution packages (`tests/` with `__init__.py`)
     /// that import as `tests.*` but never count as the distributed package.
     pub local_packages: Vec<String>,
@@ -129,7 +134,9 @@ impl LayoutInfo {
     /// Root-relative directory of `package` (`lib/sqlalchemy`, or `acme` flat).
     #[must_use]
     pub fn package_dir(&self, package: &str) -> String {
-        if self.package_root.is_empty() {
+        if let Some(root) = self.package_roots.get(package) {
+            join_rel(root, package)
+        } else if self.package_root.is_empty() {
             package.to_owned()
         } else {
             format!("{}/{package}", self.package_root)
@@ -157,6 +164,10 @@ impl LayoutInfo {
         hasher.field_str(self.layout.as_str());
         hasher.field_str(&self.package_root);
         hash_str_list(&mut hasher, &self.packages);
+        for (package, root) in &self.package_roots {
+            hasher.field_str(package);
+            hasher.field_str(root);
+        }
         hash_str_list(&mut hasher, &self.local_packages);
         hash_str_list(&mut hasher, &self.inferred_globs);
         for member in &self.members {
