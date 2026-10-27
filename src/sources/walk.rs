@@ -648,6 +648,22 @@ mod tests {
         assert!(!is_dockerfile(Path::new("docker-compose.yml")));
     }
 
+    /// #1273: only a `.txt` / `.in` file directly in a `requirements` directory.
+    #[test]
+    fn requirements_dir_files_need_both_the_directory_and_the_extension() {
+        for rel in ["requirements/base.txt", "test/requirements/units.IN"] {
+            assert!(is_requirements_dir_file(Path::new(rel)), "{rel}");
+        }
+        for rel in [
+            "requirements/README.md",
+            "ci/base.txt",
+            "requirements/py3/base.txt",
+            "requirements.txt",
+        ] {
+            assert!(!is_requirements_dir_file(Path::new(rel)), "{rel}");
+        }
+    }
+
     #[test]
     fn source_kind_collects_python_extensions_only() {
         let kind = |path: &str| source_kind(Path::new(path));
