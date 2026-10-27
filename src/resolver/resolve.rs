@@ -409,8 +409,8 @@ impl Resolver<'_> {
     }
 
     /// The dotted-name string literals of runtime modules that resolve to a
-    /// distribution (#1266), resolved as runtime imports of the module they
-    /// name. A name is no import, so nothing it resolves to or fails to
+    /// third-party module (#1266), resolved as runtime imports of the module
+    /// they name. A name is no import, so nothing it resolves to or fails to
     /// resolve to raises a warning; a first-party, stdlib or unresolved name
     /// is dropped, since it names no distribution.
     fn string_refs(&self, parse: &ParseSummary, stdlib: StdlibRange) -> Vec<ResolvedImport> {
@@ -448,8 +448,7 @@ impl Resolver<'_> {
                             cache,
                             &mut Vec::new(),
                         );
-                        (import.origin == ModuleOrigin::ThirdParty && import.distribution.is_some())
-                            .then_some(import)
+                        (import.origin == ModuleOrigin::ThirdParty).then_some(import)
                     })
                     .collect()
             });

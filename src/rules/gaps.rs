@@ -913,8 +913,9 @@ fn string_module_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
 
 /// One gap per distribution a dotted-name string literal in a reachable
 /// runtime module names, at its first literal by file and line (#1266). The
-/// resolver keeps only the literals that resolve to a distribution, so a
-/// first-party, stdlib or unknown name is none; a literal in a public module
+/// resolver keeps only the literals that resolve to a third-party module,
+/// so a first-party, stdlib or unknown name is none, and one with no
+/// distribution names none; a literal in a public module
 /// of a library counts as its imports do for CHK002 (#501). A name that no
 /// declaration provides lowers nothing, as no CHK002 names it.
 fn string_distribution_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
