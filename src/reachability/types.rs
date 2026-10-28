@@ -48,7 +48,7 @@ pub struct UnreachableFile {
     /// classes or its dotted module path (`config.yml:1051` names
     /// `TaskHandlerWithCustomFormatter`): users select it in their own
     /// settings, which the tree does not hold (#1258).
-    pub config_mention: Option<String>,
+    pub selected_by: Option<String>,
 }
 
 impl UnreachableFile {

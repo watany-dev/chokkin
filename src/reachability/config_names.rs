@@ -1,10 +1,13 @@
-//! Config files a package ships that name an unreachable module (#1258).
+//! Why users may select an unreachable module in their own settings
+//! (#1258): a config file its package ships names it, or it is a plugin
+//! beside the ones a list of module names loads.
 //!
 //! A logging handler or a backend users select in their own settings is
 //! named only by the package's config template or schema
 //! (airflow's `config_templates/config.yml` documents
 //! `TaskHandlerWithCustomFormatter`); nothing in the tree imports it. Being
-//! named there is not reachability, only a reason to lower CHK001.
+//! named there, or sitting beside listed plugins, is not reachability, only
+//! a reason to lower CHK001.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,14 +27,23 @@ use super::types::ReachabilityReport;
 const CONFIG_EXTENSIONS: &[&str] = &["yml", "yaml", "cfg", "ini", "toml"];
 const MAX_DEPTH: usize = 16;
 
-/// Record where a package config names each app-mode orphan that CHK001
-/// would report as a warning, after the wheel surfaces settled its mode.
+/// Record why users may select each app-mode orphan that CHK001 would
+/// report as a warning, after the wheel surfaces settled its mode: a
+/// sibling module a list of module names loads (#1257), or a package config
+/// that names it.
+///
+/// A module beside the ones a plugin list names is an opt-in the same
+/// loader takes when users add it to their own list (redash's
+/// `big_query_gce.py` beside the runners in `default_query_runners`, added
+/// through `REDASH_ADDITIONAL_QUERY_RUNNERS`). It must define a public class,
+/// as a plugin does: an empty or helper-only module beside them stays a
+/// warning (redash's empty `google_spanner.py`).
 ///
 /// Test files, test fixtures, samples and library orphans are not looked
 /// up: CHK001 already lowers the first three, and a library orphan is
 /// `maybe`, hidden by default. Skipping them keeps the walk off test trees
 /// and library packages, where it found nothing on the corpus.
-pub(crate) fn apply_config_mentions(
+pub(crate) fn apply_user_selected(
     report: &mut ReachabilityReport,
     files: &[DiscoveredFile],
     root: &Path,
@@ -41,6 +53,11 @@ pub(crate) fn apply_config_mentions(
         .iter()
         .filter(|file| file.context == FileContext::Test)
         .map(|file| file.path.as_str())
+        .collect();
+    let listed_dirs: HashMap<&str, &str> = report
+        .listed_files
+        .iter()
+        .map(|path| (parent_rel(path), path.as_str()))
         .collect();
     let mut names = ConfigNames::new(root, files, parse);
     for file in &mut report.unreachable {
@@ -52,7 +69,13 @@ pub(crate) fn apply_config_mentions(
         {
             continue;
         }
-        file.config_mention = names.mention(&file.path);
+        let sibling = listed_dirs
+            .get(parent_rel(&file.path))
+            .filter(|_| !names.public_classes(&file.path).is_empty())
+            .map(|sibling| {
+                format!("its sibling `{sibling}` is loaded from a list of module names")
+            });
+        file.selected_by = sibling.or_else(|| names.mention(&file.path));
     }
 }
 
@@ -93,20 +116,7 @@ impl<'a> ConfigNames<'a> {
     fn mention(&mut self, path: &str) -> Option<String> {
         let top = self.top_package(path)?;
         let dotted = dotted_module(top, path)?;
-        let mut names: Vec<&str> = self
-            .modules
-            .get(path)
-            .map(|module| {
-                module
-                    .symbols
-                    .iter()
-                    .filter(|def| {
-                        def.kind == SymbolKind::Class && def.is_public && !def.in_type_checking
-                    })
-                    .map(|def| def.name.as_str())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut names = self.public_classes(path);
         names.push(&dotted);
         let root = self.root;
         let texts = self
@@ -120,6 +130,23 @@ impl<'a> ConfigNames<'a> {
                 Some(format!("`{file}:{line}` names `{name}`"))
             })
         })
+    }
+
+    /// The public top-level classes `path` defines outside `TYPE_CHECKING`.
+    fn public_classes(&self, path: &str) -> Vec<&'a str> {
+        self.modules
+            .get(path)
+            .map(|module| {
+                module
+                    .symbols
+                    .iter()
+                    .filter(|def| {
+                        def.kind == SymbolKind::Class && def.is_public && !def.in_type_checking
+                    })
+                    .map(|def| def.name.as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The outermost directory of the `__init__.py` chain holding `path`.
@@ -331,7 +358,7 @@ mod tests {
             mode,
             confidence_reason: None,
             test_fixture,
-            config_mention: None,
+            selected_by: None,
         };
         let mut report = ReachabilityReport {
             unreachable: vec![
@@ -344,14 +371,75 @@ mod tests {
             ],
             ..ReachabilityReport::default()
         };
-        apply_config_mentions(&mut report, &files, root, &ParseSummary::default());
+        apply_user_selected(&mut report, &files, root, &ParseSummary::default());
         let mentioned: Vec<&str> = report
             .unreachable
             .iter()
-            .filter(|file| file.config_mention.is_some())
+            .filter(|file| file.selected_by.is_some())
             .map(|file| file.path.as_str())
             .collect();
         assert_eq!(mentioned, ["acme/app.py"]);
+    }
+
+    #[test]
+    fn a_class_module_beside_a_listed_one_is_an_opt_in() {
+        use crate::config::Confidence;
+        use crate::graph::FileId;
+        use crate::reachability::UnreachableFile;
+
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let files = inventory(&[
+            "acme/__init__.py",
+            "acme/runners/__init__.py",
+            "acme/runners/athena.py",
+            "acme/runners/big_query_gce.py",
+            "acme/runners/google_spanner.py",
+            "acme/other/extra.py",
+        ]);
+        let parse = ParseSummary {
+            modules: vec![
+                module("acme/runners/big_query_gce.py", &[("BigQueryGCE", true)]),
+                module("acme/runners/google_spanner.py", &[]),
+                module("acme/other/extra.py", &[("Extra", true)]),
+            ],
+        };
+        let orphan = |path: &str| UnreachableFile {
+            file: FileId(0),
+            path: path.to_owned(),
+            max_confidence: Confidence::Likely,
+            mode: ProjectMode::App,
+            confidence_reason: None,
+            test_fixture: false,
+            selected_by: None,
+        };
+        let mut report = ReachabilityReport {
+            unreachable: vec![
+                orphan("acme/runners/big_query_gce.py"),
+                orphan("acme/runners/google_spanner.py"),
+                orphan("acme/other/extra.py"),
+            ],
+            listed_files: std::iter::once("acme/runners/athena.py".to_owned()).collect(),
+            ..ReachabilityReport::default()
+        };
+        apply_user_selected(&mut report, &files, temp.path(), &parse);
+        let selected: Vec<(&str, Option<&str>)> = report
+            .unreachable
+            .iter()
+            .map(|file| (file.path.as_str(), file.selected_by.as_deref()))
+            .collect();
+        assert_eq!(
+            selected,
+            [
+                (
+                    "acme/runners/big_query_gce.py",
+                    Some(
+                        "its sibling `acme/runners/athena.py` is loaded from a list of module names"
+                    )
+                ),
+                ("acme/runners/google_spanner.py", None),
+                ("acme/other/extra.py", None),
+            ]
+        );
     }
 
     #[test]
