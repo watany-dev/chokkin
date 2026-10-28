@@ -8,16 +8,22 @@ use crate::manifest::normalize_distribution_name;
 use crate::parser::ParsedModule;
 use crate::resolver::{RUNTIME_PEERS, ResolvedImport};
 
-/// Modules a scope uses, whose runtime peers they load: each third-party
-/// import's module and, for a `from` import of one, the name below it, which
-/// may be a submodule (`from lxml import cssselect`) or a backend class.
+/// Modules a scope uses, whose runtime peers they load: each third-party or
+/// stdlib import's module (`zoneinfo` loads `tzdata`) and, for a `from`
+/// import of one, the name below it, which may be a submodule
+/// (`from lxml import cssselect`) or a backend class.
 pub(super) fn used_modules<'a>(
     imports: impl IntoIterator<Item = &'a ResolvedImport>,
     parsed: impl IntoIterator<Item = &'a ParsedModule>,
 ) -> BTreeSet<String> {
     let mut modules: BTreeSet<String> = imports
         .into_iter()
-        .filter(|import| import.origin == ModuleOrigin::ThirdParty)
+        .filter(|import| {
+            matches!(
+                import.origin,
+                ModuleOrigin::ThirdParty | ModuleOrigin::Stdlib
+            )
+        })
         .map(|import| import.full_module.clone())
         .collect();
     let names: Vec<String> = parsed
@@ -64,9 +70,7 @@ pub(super) fn used_companions<'a>(
 /// it: Django's Postgres backend named in `DATABASES` uses `psycopg`, an
 /// import of `lxml.cssselect` uses `cssselect`.
 fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet<String>) -> bool {
-    name.strip_prefix("types-")
-        .or_else(|| name.strip_suffix("-stubs"))
-        .is_some_and(|runtime| used(&normalize_distribution_name(runtime)))
+    stub_base(name).is_some_and(|runtime| used(&normalize_distribution_name(runtime)))
         || RUNTIME_PEERS.iter().any(|entry| {
             entry.peer == name
                 && (entry.providers.iter().any(|provider| used(provider))
@@ -75,6 +79,14 @@ fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet
                         .iter()
                         .any(|module| uses_module(modules, module)))
         })
+}
+
+/// The runtime distribution a stub-only distribution types: `types-x`,
+/// `x-stubs` and `x-types` (`celery-types`, `django-types`, #1256).
+fn stub_base(name: &str) -> Option<&str> {
+    name.strip_prefix("types-")
+        .or_else(|| name.strip_suffix("-stubs"))
+        .or_else(|| name.strip_suffix("-types"))
 }
 
 /// Whether `modules` has `module` or a name below it.
@@ -183,6 +195,54 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn libraries_use_the_peers_they_load_without_an_import() {
+        // #1256: Flask's CLI loads `.env` through python-dotenv,
+        // `pyautogui.screenshot()` imports PIL, razorpay imports
+        // pkg_resources.
+        for (peer, provider) in [
+            ("python-dotenv", "flask"),
+            ("pillow", "pyautogui"),
+            ("setuptools", "razorpay"),
+        ] {
+            assert!(
+                companion_is_used(peer, |name| name == provider, &BTreeSet::new()),
+                "{peer}"
+            );
+            assert!(
+                !companion_is_used(peer, |_| false, &BTreeSet::new()),
+                "{peer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stdlib_import_uses_its_data_peer() {
+        // `zoneinfo` reads the tzdata package where the system has no time
+        // zone database (#1256).
+        for module in ["zoneinfo", "zoneinfo.ZoneInfo", "backports.zoneinfo"] {
+            let modules = BTreeSet::from([module.to_owned()]);
+            assert!(companion_is_used("tzdata", |_| false, &modules), "{module}");
+        }
+        let modules = BTreeSet::from(["zoneinfox".to_owned()]);
+        assert!(!companion_is_used("tzdata", |_| false, &modules));
+    }
+
+    #[test]
+    fn a_types_suffix_is_a_stub_of_its_runtime() {
+        // weblate's `celery-types` (#1256).
+        assert!(companion_is_used(
+            "celery-types",
+            |name| name == "celery",
+            &BTreeSet::new()
+        ));
+        assert!(!companion_is_used(
+            "celery-types",
+            |_| false,
+            &BTreeSet::new()
+        ));
+    }
+
     mod props {
         use super::*;
         use proptest::prelude::*;
@@ -200,6 +260,7 @@ mod tests {
                 .map(|entry| entry.peer.to_owned())
                 .chain(providers.iter().map(|name| format!("types-{name}")))
                 .chain(providers.iter().map(|name| format!("{name}-stubs")))
+                .chain(providers.iter().map(|name| format!("{name}-types")))
                 .chain(["rich".to_owned(), "types-rich".to_owned()])
                 .collect();
             (
@@ -256,6 +317,7 @@ mod tests {
                         let stub = name
                             .strip_prefix("types-")
                             .or_else(|| name.strip_suffix("-stubs"))
+                            .or_else(|| name.strip_suffix("-types"))
                             .is_some_and(|base| live(&normalize_distribution_name(base)));
                         stub || RUNTIME_PEERS.iter().any(|entry| {
                             entry.peer == name.as_str()
@@ -280,7 +342,7 @@ mod tests {
             /// seed.
             #[test]
             fn companions_are_the_least_closed_set(
-                used_bits in prop::collection::vec(prop::bool::weighted(0.15), 16),
+                used_bits in prop::collection::vec(prop::bool::weighted(0.15), 24),
                 module_bits in prop::collection::vec(prop::bool::weighted(0.05), 160),
                 order in any::<u64>(),
                 extra in 0_usize..16,
