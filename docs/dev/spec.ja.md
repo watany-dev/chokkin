@@ -1205,6 +1205,8 @@ CHK007 は mode によらず、wheel が配布する `__init__.py` で明示的�
 
 import 時に非推奨を告げる互換 shim (§11、#778) で定義された symbol の CHK006 は info にする。
 
+同じく、`examples/` という名前のディレクトリの下の file (§11 の CHK001 と同じ判定) で定義された symbol の CHK006 は info にする (#1255)。見本は利用者が写して使うもので、中の class や関数を外から参照しないのが普通だから。Sphinx の `literalinclude` が file を entry にしても (§19)、file を entry にするだけで中の symbol は参照されないので、info にしなければ CHK001 の fp が CHK006 に移るだけになる。`examples/` の外の `literalinclude` 対象は下げない。`:pyobject:` で runtime module の一部を見せる page もあり、その module の未参照 symbol は従来どおり判定する。
+
 `unused_export` の自動削除はv1までは避ける。安全なfixは `__all__` からの削除程度に限定し、関数・class本体の削除は `--fix --unsafe` がある場合だけにする。
 
 ## 13. fix仕様
