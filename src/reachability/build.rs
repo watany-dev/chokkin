@@ -6,6 +6,7 @@ use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
 use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
+use crate::path_util::parent_rel;
 use crate::plugins::PluginHints;
 use crate::sources::{
     DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set, is_test_harness_name,
@@ -276,7 +277,7 @@ fn reachable_dirs<'g>(
     reachable
         .iter()
         .filter_map(|id| graph.file(*id))
-        .map(|file| parent_dir(&file.path))
+        .map(|file| parent_rel(&file.path))
         .collect()
 }
 
@@ -322,13 +323,8 @@ fn is_test_fixture(
     reachable_dirs: &std::collections::HashSet<&str>,
 ) -> bool {
     file.context == FileContext::Test
-        && !reachable_dirs.contains(parent_dir(&file.path))
+        && !reachable_dirs.contains(parent_rel(&file.path))
         && !is_test_harness_name(file_name(&file.path))
-}
-
-/// The directory part of a root-relative path, `""` at the root.
-fn parent_dir(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
 fn file_name(path: &str) -> &str {

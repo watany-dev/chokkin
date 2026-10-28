@@ -117,6 +117,13 @@ fn strip_suffix_ignore_case<'a>(path: &'a str, suffix: &str) -> Option<&'a str> 
     tail.eq_ignore_ascii_case(suffix).then_some(stem)
 }
 
+/// The directory part of a root-relative `/`-separated path, `""` at the
+/// root.
+#[must_use]
+pub(crate) fn parent_rel(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
 /// Join root-relative `/`-separated paths, where `""` is the root.
 #[must_use]
 pub(crate) fn join_rel(base: &str, rel: &str) -> String {

@@ -39,18 +39,32 @@ pub(super) fn callee_name(func: &Expr) -> Option<&str> {
     }
 }
 
-/// The relative `.py` path a run of consecutive string literal arguments of
-/// a path call spells (`join(prefix, "driver", "driver.py")` gives
-/// `driver/driver.py`, `copyfile("data/x.py", dst)` gives `data/x.py`), when
-/// it has a directory: a bare `"setup.py"` names a file in whatever
-/// directory the code runs in, which may be any file of that name.
-pub(super) fn path_ref(call: &ExprCall) -> Option<String> {
-    if !callee_name(&call.func).is_some_and(|name| PATH_CALLS.contains(&name)) {
-        return None;
-    }
+/// Callees, by their last name, whose consecutive path arguments are joined
+/// into one path; the other path calls take each argument as a whole path.
+const JOINING_CALLS: &[&str] = &["join", "joinpath", "Path", "PurePath"];
+
+/// The relative `.py` paths the string literal arguments of a path call
+/// spell, when they have a directory: a run of consecutive literals joined
+/// for a joining call (`join(prefix, "driver", "driver.py")` gives
+/// `driver/driver.py`), each literal alone otherwise (`copy("a/x.py",
+/// "b/x.py")` gives both, `open("tools/gen.py", "r")` the first). A bare
+/// `"setup.py"` names a file in whatever directory the code runs in, which
+/// may be any file of that name.
+pub(super) fn path_refs(call: &ExprCall) -> Vec<String> {
+    let Some(callee) = callee_name(&call.func).filter(|name| PATH_CALLS.contains(name)) else {
+        return Vec::new();
+    };
     let args = &call.arguments.args;
-    args.split(|arg| str_constant(arg).is_none())
-        .find_map(|run| joined_py_path(run.iter().filter_map(str_constant)))
+    if JOINING_CALLS.contains(&callee) {
+        args.split(|arg| str_constant(arg).is_none())
+            .filter_map(|run| joined_py_path(run.iter().filter_map(str_constant)))
+            .collect()
+    } else {
+        args.iter()
+            .filter_map(str_constant)
+            .filter_map(|literal| joined_py_path(std::iter::once(literal)))
+            .collect()
+    }
 }
 
 /// The literals joined as one relative path, without `.` and `..`
@@ -135,7 +149,7 @@ fn is_globals_call(expr: &Expr) -> bool {
 mod tests {
     use ruff_python_ast::Expr;
 
-    use super::{adds_computed_path, gets_own_name, path_ref, reads_own_namespace};
+    use super::{adds_computed_path, gets_own_name, path_refs, reads_own_namespace};
 
     fn expr(source: &str) -> Expr {
         ruff_python_parser::parse_expression(source)
@@ -143,11 +157,11 @@ mod tests {
             .into_expr()
     }
 
-    fn call_path(source: &str) -> Option<String> {
+    fn call_paths(source: &str) -> Vec<String> {
         let Expr::Call(call) = expr(source) else {
             panic!("not a call: {source}");
         };
-        path_ref(&call)
+        path_refs(&call)
     }
 
     #[test]
@@ -168,8 +182,17 @@ mod tests {
             (r#"Path(root, "pkg\\mod.py")"#, "pkg/mod.py"),
             (r#"runpy.run_path("scripts/gen.py")"#, "scripts/gen.py"),
         ] {
-            assert_eq!(call_path(source).as_deref(), Some(path), "{source}");
+            assert_eq!(call_paths(source), [path], "{source}");
         }
+    }
+
+    #[test]
+    fn path_refs_take_each_literal_of_a_non_joining_call() {
+        assert_eq!(call_paths(r#"open("tools/gen.py", "r")"#), ["tools/gen.py"]);
+        assert_eq!(
+            call_paths(r#"shutil.copy("a/x.py", "b/x.py")"#),
+            ["a/x.py", "b/x.py"]
+        );
     }
 
     #[test]
@@ -184,7 +207,7 @@ mod tests {
             r#"os.path.join(d, "a b/x.py")"#,
             r#"os.path.join(d, "fixtures/.py")"#,
         ] {
-            assert_eq!(call_path(source), None, "{source}");
+            assert!(call_paths(source).is_empty(), "{source}");
         }
     }
 

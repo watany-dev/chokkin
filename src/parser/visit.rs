@@ -16,7 +16,7 @@ use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::write_receiver;
 use super::by_name::{
-    adds_computed_path, callee_name, gets_own_name, path_ref, reads_own_namespace,
+    adds_computed_path, callee_name, gets_own_name, path_refs, reads_own_namespace,
 };
 use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
@@ -176,6 +176,9 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// The module-level classes, which a call may hand to a function that
     /// enumerates their subclasses (#1274).
     module_classes: FxHashSet<&'ast str>,
+    /// The enclosing classes, each with the number of function frames open
+    /// when it began, so a method's `cls` names its class.
+    class_frames: Vec<(&'ast str, usize)>,
     parsed: ParsedModule,
 }
 
@@ -231,6 +234,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             string_attribute_sites: Vec::new(),
             function_frames: Vec::new(),
             module_classes: FxHashSet::default(),
+            class_frames: Vec::new(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -1060,14 +1064,20 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
 
     /// A module-level class's bases, and whether it registers its
     /// subclasses with `__init_subclass__` (#1274).
-    fn record_class_facts(&mut self, class: &StmtClassDef) {
+    fn record_class_facts(&mut self, class: &'ast StmtClassDef) {
         if !self.module_level {
             return;
         }
+        self.module_classes.insert(class.name.as_str());
         let name = class.name.to_string();
+        // `Plugin[Row]` subclasses `Plugin`.
         let bases: Vec<String> = class
             .bases()
             .iter()
+            .map(|base| match base {
+                Expr::Subscript(subscript) => &*subscript.value,
+                other => other,
+            })
             .filter_map(|base| callee_name(base).map(str::to_owned))
             .collect();
         let facts = &mut self.parsed.subclass_facts;
@@ -1083,13 +1093,25 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    /// The class a `__subclasses__()` receiver names: the enclosing class for
+    /// the first parameter of one of its methods (`cls`, `self`), the name
+    /// itself otherwise.
+    fn receiver_class(&self, receiver: &str) -> String {
+        let method_of = self.class_frames.last().filter(|(_, depth)| {
+            *depth + 1 == self.function_frames.len()
+                && self
+                    .function_frames
+                    .last()
+                    .is_some_and(|(_, parameters)| parameters.first() == Some(&receiver))
+        });
+        method_of.map_or(receiver, |(class, _)| class).to_owned()
+    }
+
     /// What a call tells about names and files used without an import
     /// (#1274): `__subclasses__()` and what is handed to the functions that
     /// call it, and a `.py` path given to a file call.
     fn record_by_name(&mut self, call: &'ast ExprCall) {
-        if let Some(path) = path_ref(call) {
-            self.parsed.path_refs.push(path);
-        }
+        self.parsed.path_refs.extend(path_refs(call));
         let Some(callee) = callee_name(&call.func) else {
             return;
         };
@@ -1102,7 +1124,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 facts.enumerators.push((*function).to_owned());
             }
             if let Expr::Name(base) = &*attribute.value {
-                facts.bases.push((base.id.to_string(), line));
+                let base = self.receiver_class(base.id.as_str());
+                self.parsed.subclass_facts.bases.push((base, line));
             }
             return;
         }
@@ -1230,7 +1253,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 self.record_class_facts(def);
                 let outer_flags = self.enter_scope_names(None, &def.body);
+                self.class_frames
+                    .push((def.name.as_str(), self.function_frames.len()));
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
+                self.class_frames.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
                 self.platform_modules = outer_modules;
@@ -2566,21 +2592,32 @@ class Plugin:
 
 Plugin.__subclasses__()
 print(Linux)
+
+class Backend:
+    @classmethod
+    def every(cls):
+        return cls.__subclasses__()
+
+class RowPlugin(Plugin[Row]):
+    pass
 ";
         let facts = visit_source(source).subclass_facts;
         assert_eq!(
             facts.classes,
-            [(
-                "Linux".to_owned(),
-                vec!["Group".to_owned(), "Mixin".to_owned()]
-            )]
+            [
+                (
+                    "Linux".to_owned(),
+                    vec!["Group".to_owned(), "Mixin".to_owned()]
+                ),
+                ("RowPlugin".to_owned(), vec!["Plugin".to_owned()]),
+            ]
         );
         assert_eq!(
             facts.bases,
-            [("Plugin".to_owned(), 17)],
-            "the first line of each class"
+            [("Backend".to_owned(), 27), ("Plugin".to_owned(), 17)],
+            "the first line of each class; a method's `cls` names its class"
         );
-        assert_eq!(facts.enumerators, ["all_subclasses"]);
+        assert_eq!(facts.enumerators, ["all_subclasses", "every"]);
         assert_eq!(
             facts.forwards,
             [("platform_subclass".to_owned(), "all_subclasses".to_owned())]

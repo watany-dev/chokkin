@@ -84,7 +84,6 @@ fn parameter_names(parameters: &Parameters) -> Vec<&str> {
         .posonlyargs
         .iter()
         .chain(&parameters.args)
-        .chain(&parameters.kwonlyargs)
         .map(|parameter| parameter.parameter.name.as_str())
         .collect()
 }
@@ -155,16 +154,20 @@ fn stores_by_call(expr: &Expr, target: &str) -> bool {
             .any(|arg| holds(arg, target))
 }
 
-/// `subparser.set_defaults(action=target)` or `register(target)`, where
-/// `subparser` / `register` is one of `given`: the factory hands the target
-/// to what its caller passed it (#1274).
+/// `subparser.set_defaults(action=target)`, where `subparser` is one of
+/// `given`: the factory hands the target to an object its caller passed it
+/// (#1274). Calling the parameter itself (`callback(target)`) runs the
+/// function rather than keeping it.
 fn hands_over(expr: &Expr, target: &str, given: &[&str]) -> bool {
     let Expr::Call(call) = expr else {
         return false;
     };
+    let Expr::Attribute(method) = &*call.func else {
+        return false;
+    };
     given
         .iter()
-        .any(|name| *name != target && rooted_at(&call.func, name))
+        .any(|name| *name != target && rooted_at(&method.value, name))
         && call
             .arguments
             .args
@@ -262,12 +265,6 @@ def action(subparser):
         subparser.set_defaults(action=func)
         return func
     return register
-
-def on(callback_registry, *, hook):
-    def wrap(fn):
-        callback_registry(hook, fn)
-        return fn
-    return wrap
 "#;
         assert_eq!(
             found(source),
@@ -282,7 +279,6 @@ def on(callback_registry, *, hook):
                 "tried",
                 "tried_else",
                 "action",
-                "on",
             ]
         );
     }
@@ -349,6 +345,18 @@ def logged_factory(level):
 def passes_to_own(name):
     def wrap(fn):
         fn.configure(name)
+        return fn
+    return wrap
+
+def calls_given(callback):
+    def wrap(fn):
+        callback(fn)
+        return fn
+    return wrap
+
+def keyword_only(*, registry):
+    def wrap(fn):
+        registry.set_defaults(action=fn)
         return fn
     return wrap
 

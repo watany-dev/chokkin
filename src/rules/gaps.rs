@@ -16,7 +16,7 @@ use crate::manifest::{
     invalid_requirement_name, normalize_distribution_name,
 };
 use crate::parser::{ImportContext, NOT_IN_PACKAGE, ParseSummary, ParsedModule};
-use crate::path_util::join_rel;
+use crate::path_util::{join_rel, parent_rel};
 use crate::plugins::{
     CommandTarget, CommandTargetRef, PluginHints, RequirementsRef, UnreadSettings,
 };
@@ -207,8 +207,9 @@ pub enum GapKind {
     ModuleSelfReference,
     /// An unresolved import names a module the project has as a file, and a
     /// file beside that module adds a computed path to `sys.path` (#1274): a
-    /// test root's `sys.path.insert(0, root)` may make it importable. `target` is the file; it lowers that import's
-    /// CHK010 alone to an info note at likely.
+    /// test root's `sys.path.insert(0, root)` may make it importable.
+    /// `target` is the file; it lowers that import's CHK010 alone to an info
+    /// note at likely.
     ComputedSysPathImport,
 }
 
@@ -550,7 +551,7 @@ impl Gap {
 
     /// The directory of an image's Dockerfile, its usual build context.
     fn image_dir(&self) -> &str {
-        self.file.rsplit_once('/').map_or("", |(dir, _)| dir)
+        parent_rel(&self.file)
     }
 
     /// Whether the site is the root of `module`.
@@ -1125,7 +1126,9 @@ fn subclass_registry_gaps(parse: &ParseSummary) -> Vec<Gap> {
                     .filter(|(callee, _, _)| enumerators.contains(callee.as_str()))
                     .map(|(_, name, line)| (name.as_str(), *line)),
             );
-        for (name, line) in named {
+        // Every class derives from `object`, and `type` is the metaclass: a
+        // debug helper listing their subclasses picks none of the project's.
+        for (name, line) in named.filter(|(name, _)| !matches!(*name, "object" | "type")) {
             bases.entry(name).or_insert((path, line));
         }
     }
@@ -1201,20 +1204,23 @@ fn computed_sys_path_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
     if adders.is_empty() {
         return Vec::new();
     }
-    let adding_dirs: BTreeSet<&str> = adders.iter().map(|path| parent_dir(path)).collect();
-    let mut modules: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    // Each project module by its name: its path and the directory it is
+    // importable from.
+    let mut modules: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
     for file in &context.sources.files {
         let path = file.path.as_str();
-        let name = match path.rsplit_once('/').map_or(path, |(_, name)| name) {
-            "__init__.py" => parent_dir(path)
-                .rsplit_once('/')
-                .map_or_else(|| parent_dir(path), |(_, dir)| dir),
+        let (name, dir) = match path.rsplit_once('/').map_or(path, |(_, name)| name) {
+            "__init__.py" => {
+                let package = parent_rel(path);
+                let name = package.rsplit_once('/').map_or(package, |(_, name)| name);
+                (name, parent_rel(package))
+            },
             name => match name.strip_suffix(".py") {
-                Some(stem) => stem,
+                Some(stem) => (stem, parent_rel(path)),
                 None => continue,
             },
         };
-        modules.entry(name).or_default().push(path);
+        modules.entry(name).or_default().push((path, dir));
     }
     let mut sites: BTreeMap<(&str, &str), (Option<u32>, &str)> = BTreeMap::new();
     for warning in &context.resolution.warnings {
@@ -1225,21 +1231,11 @@ fn computed_sys_path_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
             continue;
         };
         let root = import_root(import);
-        let Some(target) = modules
-            .get(root)
-            .into_iter()
-            .flatten()
-            .copied()
-            .find(|path| {
-                let dir = parent_dir(path);
-                let dir = if path.ends_with("/__init__.py") {
-                    parent_dir(dir)
-                } else {
-                    dir
-                };
-                adding_dirs.contains(dir)
-            })
-        else {
+        let Some(&(target, _)) = modules.get(root).into_iter().flatten().find(|(_, dir)| {
+            adders
+                .iter()
+                .any(|adder| *adder != file.as_str() && parent_rel(adder) == *dir)
+        }) else {
             continue;
         };
         let kept = sites
@@ -1260,11 +1256,6 @@ fn computed_sys_path_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
             target: Some(target.to_owned()),
         })
         .collect()
-}
-
-/// The directory part of a root-relative path, `""` at the root.
-fn parent_dir(path: &str) -> &str {
-    path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
 /// The project file `module` names, or else the one its longest prefix of
