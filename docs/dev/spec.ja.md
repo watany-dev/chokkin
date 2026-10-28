@@ -775,7 +775,7 @@ extra指定 (例: psycopg[pool])
   -> extraを付けていない宣言 (psycopg) からは従来どおりCHK003/CHK004
   -> extraの展開を読むのはuv.lockのみ。lockfileがない場合は展開しない
 
-stub package (types-* / *-stubs)
+stub package (types-* / *-stubs / *-types)
   -> importされないため素朴にはCHK002になる
   -> 対応するruntime packageの使用があればtype contextでused扱い
   -> runtime package自体が未使用なら、stubも併せてunused報告する
@@ -789,14 +789,18 @@ runtime peer (例: python-multipart)
      datasets の archive backend、torchmetrics の COCO backend、inspect-ai の
      provider/plugin、redis-py の hiredis parser、python-lsp-server の plugin、
      `dg dev` / `dagster dev` が UI を出す dagster-webserver (provider は
-     dagster-dg-cli / dagster-dg / dagster、#1256) も同じ表で扱う。project と PEP 723 の両 scope に適用する
+     dagster-dg-cli / dagster-dg / dagster、#1256)、flask の CLI と `Flask.run()`
+     が `.env` を読む python-dotenv、`pyautogui.screenshot()` が読む pillow、
+     razorpay が `pkg_resources` を読む setuptools (#1256) も同じ表で扱う。
+     project と PEP 723 の両 scope に適用する
   -> module が読み込む peer は、その module かその下の名前の使用で used 扱い
      (#1240)。settings の文字列も import と同じく使用に数えるので、`DATABASES`
      の `django.db.backends.postgresql` は psycopg / psycopg2 を、`CACHES` の
      `django.core.cache.backends.redis.RedisCache` は redis を、`STORAGES` の
      `storages.backends.s3boto3` は boto3 を、`PASSWORD_HASHERS` の
      `Argon2PasswordHasher` は argon2-cffi を、`import lxml.cssselect` は
-     cssselect を使う。親 package (`django.db.backends`) と名前が前方一致する
+     cssselect を使う。stdlib の module も数え、`zoneinfo` は system に time
+     zone database が無いときに読む tzdata を使う (#1256)。親 package (`django.db.backends`) と名前が前方一致する
      だけの兄弟 module は使用にしない。peer が別の peer の provider なら
      (CACHES の redis と hiredis) それも used にする
   -> 表は `data/package-map.seed.json` の `runtime_peers` に 1 行ずつ出典と

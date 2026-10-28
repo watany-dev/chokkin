@@ -4577,6 +4577,39 @@ fn binary_django_backend_settings_use_their_drivers() {
     );
 }
 
+/// A stdlib import uses the peer it loads (`zoneinfo` reads tzdata), a
+/// library the peers it loads without an import (Flask's CLI reads `.env`
+/// through python-dotenv), and a `-types` stub is a stub (#1256).
+#[test]
+fn binary_peers_of_stdlib_modules_and_types_stubs_are_used() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            concat!(
+                "[project]\nname = 'app'\nversion = '0'\n",
+                "dependencies = ['flask', 'python-dotenv', 'tzdata', 'celery', 'rich']\n",
+                "\n[dependency-groups]\ntypes = ['celery-types']\n",
+                "\n[tool.chokkin]\nmode = 'app'\n",
+            ),
+        ),
+        (
+            "app.py",
+            "from zoneinfo import ZoneInfo\nimport celery\nfrom flask.cli import FlaskGroup\n",
+        ),
+    ]);
+    let found: Vec<_> = json_issues(project.path(), &["--no-cache", "--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            issue["distribution"]
+                .as_str()
+                .expect("distribution")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(found, ["rich"]);
+}
+
 /// A backend setting not read may select any driver it loads, and only those:
 /// other unused dependencies stay certain (#1240).
 #[test]

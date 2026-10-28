@@ -28,7 +28,7 @@ Properties:
 C1  ``used_companions`` is the least set closed under the peer rule: a
     declared peer is used when one of its providers is used or found, or
     when a used module is one of its modules or below one; a stub
-    (``types-x``, ``x-stubs``) when ``x`` is.  Nothing outside it is found.
+    (``types-x``, ``x-stubs``, ``x-types``) when ``x`` is.  Nothing outside it is found.
 C2  The result does not depend on the order of the declarations.
 C3  Monotonic: more used providers or modules never drop a companion.
 C4  A table module counts only for itself and the names below it at a dot:
@@ -96,6 +96,8 @@ def companion_is_used(name: str, used, modules: frozenset[str]) -> bool:
         runtime = name[len("types-") :]
     elif name.endswith("-stubs"):
         runtime = name[: -len("-stubs")]
+    elif name.endswith("-types"):
+        runtime = name[: -len("-types")]
     if runtime is not None and used(normalize(runtime)):
         return True
     entry = TABLE.get(name)
@@ -136,7 +138,7 @@ def setting_may_load(setting: str, peer: str) -> bool:
 def peer_rule(name: str, live: frozenset[str], modules) -> bool:
     """One step of the rule: a stub of a live distribution, or a peer of a
     live provider or of a used module (itself or a name below it)."""
-    for prefix, suffix in (("types-", ""), ("", "-stubs")):
+    for prefix, suffix in (("types-", ""), ("", "-stubs"), ("", "-types")):
         if name.startswith(prefix) and name.endswith(suffix) and (prefix or suffix):
             base = name[len(prefix) : len(name) - len(suffix)]
             if normalize(base) in live:
@@ -180,7 +182,12 @@ def module_pool() -> list[str]:
 
 
 DECLARED = tuple(
-    sorted(set(TABLE) | {f"types-{p}" for p in PROVIDERS} | {f"{p}-stubs" for p in PROVIDERS})
+    sorted(
+        set(TABLE)
+        | {f"types-{p}" for p in PROVIDERS}
+        | {f"{p}-stubs" for p in PROVIDERS}
+        | {f"{p}-types" for p in PROVIDERS}
+    )
 ) + ("rich", "types-rich")
 
 
