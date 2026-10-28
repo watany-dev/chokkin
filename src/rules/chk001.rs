@@ -35,9 +35,8 @@ pub(super) fn chk001_candidates(
         let example = in_examples_dir(&file.path);
         let template = !example && in_templates_dir(&file.path);
         let fixture = !example && !template && file.test_fixture;
-        let named = (!example && !template && !fixture)
-            .then_some(file.config_mention.as_ref())
-            .flatten();
+        // Set only for files none of the above lowers (`apply_config_mentions`).
+        let named = file.config_mention.as_ref();
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,
             subject: IssueSubject::File {

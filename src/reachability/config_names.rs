@@ -308,7 +308,8 @@ mod tests {
         write(
             root,
             "acme/config.yml",
-            "a: acme.app\nb: acme.lib\nc: acme.tests.helper\nd: acme.fixture\n",
+            "a: acme.app\nb: acme.lib\nc: acme.tests.helper\nd: acme.fixture\n\
+             e: acme.examples.demo\nf: acme.config_templates.web\n",
         );
         let mut files = inventory(&[
             "acme/__init__.py",
@@ -317,6 +318,10 @@ mod tests {
             "acme/lib.py",
             "acme/tests/helper.py",
             "acme/fixture.py",
+            "acme/examples/__init__.py",
+            "acme/examples/demo.py",
+            "acme/config_templates/__init__.py",
+            "acme/config_templates/web.py",
         ]);
         files[4].context = FileContext::Test;
         let orphan = |path: &str, mode, test_fixture| UnreachableFile {
@@ -334,6 +339,8 @@ mod tests {
                 orphan("acme/lib.py", ProjectMode::Library, false),
                 orphan("acme/tests/helper.py", ProjectMode::App, false),
                 orphan("acme/fixture.py", ProjectMode::App, true),
+                orphan("acme/examples/demo.py", ProjectMode::App, false),
+                orphan("acme/config_templates/web.py", ProjectMode::App, false),
             ],
             ..ReachabilityReport::default()
         };
@@ -345,6 +352,26 @@ mod tests {
             .map(|file| file.path.as_str())
             .collect();
         assert_eq!(mentioned, ["acme/app.py"]);
+    }
+
+    #[test]
+    fn the_walk_skips_hidden_and_vendored_dirs_and_stops_at_max_depth() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        for dir in [".venv", "node_modules", "__pycache__", "conf"] {
+            write(root, &format!("acme/{dir}/c.yml"), "x\n");
+        }
+        let deep = |levels: usize| {
+            let dirs: Vec<String> = (0..levels).map(|level| format!("d{level}")).collect();
+            format!("acme/{}/c.yml", dirs.join("/"))
+        };
+        write(root, &deep(MAX_DEPTH), "x\n");
+        write(root, &deep(MAX_DEPTH + 1), "x\n");
+        let read: Vec<String> = read_configs(root, "acme")
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        assert_eq!(read, ["acme/conf/c.yml".to_owned(), deep(MAX_DEPTH)]);
     }
 
     #[test]
