@@ -17,8 +17,8 @@ mod warnings;
 
 pub(crate) use cache::{SourcesCache, WalkIgnore};
 pub(crate) use context::{
-    apply_member_context, assign_file_context, assign_layout_file_context, is_test_data_path,
-    is_test_harness_name,
+    apply_member_context, assign_file_context, assign_layout_file_context, in_examples_dir,
+    is_test_data_path, is_test_harness_name,
 };
 pub use discover::discover_sources;
 pub(crate) use discover::{
@@ -36,5 +36,5 @@ pub(crate) use types::MemberLayout;
 pub use types::{
     DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, ProjectLayout,
 };
-pub(crate) use walk::{is_dockerfile, is_requirements_dir_file};
+pub(crate) use walk::{is_dbt_profiles, is_dockerfile, is_requirements_dir_file};
 pub use warnings::SourcesWarning;

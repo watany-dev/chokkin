@@ -1,0 +1,7 @@
+[project]
+name = "dbt-profiles"
+version = "0.1.0"
+dependencies = ["dbt-snowflake", "dbt-postgres"]
+
+[project.scripts]
+demo-cli = "acme.main:main"

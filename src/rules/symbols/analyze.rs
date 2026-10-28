@@ -17,7 +17,9 @@ use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
     sort_candidates,
 };
-use crate::sources::{DiscoveredSources, FileContext, PublicSurface, member_ships, path_to_module};
+use crate::sources::{
+    DiscoveredSources, FileContext, PublicSurface, in_examples_dir, member_ships, path_to_module,
+};
 
 use super::conventions::{
     config_star_symbols, convention_symbols, host_hook_symbols, is_codegen_file, scanned_files,
@@ -354,6 +356,10 @@ fn detect_unused_exports(
         }
 
         let (severity, confidence) = unused_export_severity(mode, entry.in_all);
+        // A sample under `examples/` is copied, not imported, as its CHK001
+        // says; a `literalinclude` entry made it reachable (#1255).
+        let example = in_examples_dir(&entry.path);
+        let severity = if example { Severity::Info } else { severity };
         candidates.push(IssueCandidate {
             rule: RuleId::Chk006,
             subject: IssueSubject::Symbol {
@@ -383,7 +389,10 @@ fn detect_unused_exports(
                     "`from … import name` and `module.name` access on imported modules are tracked"
                         .to_owned(),
                     "decorated handlers, fixtures, and entry targets are excluded".to_owned(),
-                ],
+                ]
+                .into_iter()
+                .chain(example.then(|| "the file is under an `examples/` directory".to_owned()))
+                .collect(),
             },
         });
     }

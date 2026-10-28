@@ -143,19 +143,38 @@ pub(super) fn detect_unlisted_binaries(
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
     let mut reported = HashSet::default();
+    let unprovided: Vec<(&BinaryUsage, &String)> = plugins
+        .all_binary_usages()
+        .filter(|usage| !usage.inferred)
+        .filter_map(|usage| {
+            let distribution = resolution.binary_resolutions.get(&usage.binary)?;
+            (!providers.provides(usage, distribution)).then_some((usage, distribution))
+        })
+        .collect();
+    // A leftover config section is weak evidence that the tool runs at all
+    // (transformers' `[tool.coverage]`), so only a command makes the finding
+    // certain; the command's origin is the one reported (#1260).
+    let run_by_command: HashSet<&str> = unprovided
+        .iter()
+        .filter(|(usage, _)| !usage.config_section)
+        .map(|(_, distribution)| distribution.as_str())
+        .collect();
 
-    for usage in plugins.all_binary_usages() {
-        if usage.inferred {
-            continue;
-        }
-        let Some(distribution) = resolution.binary_resolutions.get(&usage.binary) else {
-            continue;
-        };
-        if providers.provides(usage, distribution) {
+    for (usage, distribution) in unprovided {
+        let run = run_by_command.contains(distribution.as_str());
+        if run && usage.config_section {
             continue;
         }
         if !reported.insert(distribution.clone()) {
             continue;
+        }
+        let origin_detail = match usage.origin.line {
+            Some(line) => format!("binary usage in {}:{line}", usage.origin.file),
+            None => format!("binary usage in {}", usage.origin.file),
+        };
+        let mut details = vec![origin_detail];
+        if !run {
+            details.push("only a tool config section uses it; no command runs it".to_owned());
         }
 
         candidates.push(IssueCandidate {
@@ -164,7 +183,11 @@ pub(super) fn detect_unlisted_binaries(
                 name: usage.binary.clone(),
             },
             severity: Severity::Warning,
-            confidence: Confidence::Certain,
+            confidence: if run {
+                Confidence::Certain
+            } else {
+                Confidence::Likely
+            },
             message: format!(
                 "binary {} resolves to {distribution} but it is not declared in the manifest",
                 usage.binary
@@ -176,10 +199,7 @@ pub(super) fn detect_unlisted_binaries(
                     "{} requires declared dependency {distribution}",
                     usage.binary
                 ),
-                details: vec![match usage.origin.line {
-                    Some(line) => format!("binary usage in {}:{line}", usage.origin.file),
-                    None => format!("binary usage in {}", usage.origin.file),
-                }],
+                details,
             },
         });
     }
@@ -305,6 +325,42 @@ mod tests {
             &command_hints(&["pytest"]),
         );
         assert_eq!(found, ["pytest"]);
+    }
+
+    #[test]
+    fn a_config_section_alone_is_likely_and_a_command_makes_it_certain() {
+        let resolution = resolution(&[("coverage", "coverage"), ("pylint", "pylint")]);
+        let mut command = usage("coverage", false);
+        command.origin.line = Some(7);
+        let plugins = hints(vec![
+            usage("coverage", true),
+            usage("pylint", true),
+            command,
+        ]);
+        let manifest = manifest(&[]);
+        let declared = build_declared_index(&manifest);
+        let providers = BinaryProviders::new(&declared, &manifest, &[], &plugins);
+        let found: Vec<_> = detect_unlisted_binaries(&providers, &resolution, &plugins)
+            .into_iter()
+            .filter_map(
+                |candidate| match (&candidate.subject, &candidate.origins[..]) {
+                    (IssueSubject::Binary { name }, [Origin::Binary(origin)]) => Some((
+                        name.clone(),
+                        candidate.confidence,
+                        origin.line,
+                        candidate.explain.details.len(),
+                    )),
+                    _ => None,
+                },
+            )
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("pylint".to_owned(), Confidence::Likely, Some(1), 2),
+                ("coverage".to_owned(), Confidence::Certain, Some(7), 1),
+            ]
+        );
     }
 
     #[test]

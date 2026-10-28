@@ -73,6 +73,12 @@ pub(crate) static RUNTIME_PEERS: &[RuntimePeer] = &[
         settings: &["DATABASES"],
     },
     RuntimePeer {
+        peer: "dagster-webserver",
+        providers: &["dagster", "dagster-dg", "dagster-dg-cli"],
+        modules: &[],
+        settings: &[],
+    },
+    RuntimePeer {
         peer: "dropbox",
         providers: &[],
         modules: &["storages.backends.dropbox"],
