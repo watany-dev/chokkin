@@ -13,6 +13,36 @@ CPython の意味論との差分を機械的に探索するためのモデル群
 | `exit_status_z3.py` | `rules/emit.rs`, `rules/filter.rs`, `rules/types.rs` (fingerprint), `baseline/store.rs` | 有限領域の全数探索 + Z3 (SMT) | F1 fingerprint が (rule, member, subject) に対して単射 (`:` を含む path と member を含む)、E1 baseline 適用後の exit status が新しい issue だけに対する emit と一致、E2 baseline が exit 0 を exit 1 に変えない、E3 行だけ違う issue は抑制される、E4 書いた run に当てた baseline は exit 0 |
 | `ignore_model.py` | `rules/ignore.rs` (§18) | 有限領域の全数探索 | I1 dependency 系 rule の config ignore は distribution 名 glob（CHK008 は binary 名も可）で、pattern の綴り揺れに依らない、I1b distribution 未解決なら ignore しない、I2 集約 finding (CHK010 の行、CHK005 の import site) は全 site が抑制されるときだけ抑制し、CHK005 は抑制されない site のうち最強のものに立つ |
 | `fix_plan_model.py` | `fix/plan.rs` (`plan_move_to_runtime`、`governing_manifest`)、`fix/pyproject.rs` (`move_group_to_runtime`)、`rules/deps/{misplaced,missing,reconcile,used}.rs` (§10 CHK005 と §13、workspace member・`--strict`・lockfile extra 経由の index を含む) | 有限領域の全数探索 (root・member 各 3 件までの宣言 × static 有無 × `--strict` × import site) | F1 適用した move の finding は再解析で消える、F2 move は finding を決めた manifest を書き換える、F3 governing な manifest に pyproject の dev 宣言が 1 件だけで runtime 宣言が無く static なら move する、F4 計画した move はすべて適用できる (同じ entry を 2 度動かさない) |
+| `version_guard_model.py` | `parser/version_guard.rs` (`VersionTest::read` / `holds`、`branch_minors`、`minor_runs`)、`parser/condition.rs` (`can` / `fixed` / `excluded`)、`parser/visit.rs` (入れ子の積)、`resolver/stdlib.rs` (`excludes_minors`) (#997) | 有限領域の全数探索 vs Python のタプル比較と `if` / `elif` / `else` の意味論 | V1 `holds` が `sys.version_info` / `[:2]` / `[0]` の両辺・6 演算子で Python の比較と一致し、最後の bit が以降の全 minor を代表する、V2 `can` が健全で opaque leaf の重複が無ければ正確、V3 `excluded` が健全、V4 `never_runs` が `requires-python` の窓の全 minor・opaque の全値で健全、V5 `minor_runs` が bit 集合を過不足なく表す |
+| `setup_cfg_requirements_model.py` | `manifest/setup_cfg.rs` (`ini_lines`、`append_value`、`one_line_options`、`setup_cfg_requirement_items`)、`manifest/setuptools_reqs.rs` (#989) | 有限領域の全数探索 vs stdlib `configparser` + setuptools 80.9.0 (`_parse_list_semicolon`、`parse_strings`) | P1 `install_requires` の要件テキストが setuptools と順序まで一致 (D1 末尾 `\` の扱いを除く)、P2 `one_line_options` は configparser の値に改行が無い option と一致 |
+| `testpaths_glob_model.py` | `sources/layout.rs` (`expand_testpath`、`matching_children`、`dirs_from`、`testpath_entries`、`unmatched_testpaths`) と globset 0.4 の 1 component 照合 (#998) | 有限領域の全数探索 vs 実ディレクトリ上の stdlib `glob.glob(recursive=True)` (pytest `_decide_args`) | T1 entry が test にする file の集合が pytest と一致、T2 「何も指さない」warning が pytest の glob が空のときに限る (D1 symlink、D2 字義どおりの entry を除く) |
+
+v0.7.10 で入った 3 モデルは `--broken` で意図的に壊した移植を走らせ、性質がそれを反例として捕まえることも確かめる (`make formal` が両方を走らせる)。
+
+## v0.7.10 の台帳
+
+v0.7.10 の変更を `.claude/skills/formal-spec-extraction` の手順で形式化した結果。「実装の主張」はコードのコメント・テスト・CHANGELOG が述べる仕様、「検査」はモデルの結果、「確認事項」は反例のうち意図か不具合かを決める必要があるもの。確認事項はモデルに `Q` 番号で登録してあり、決着したら意図なら `D` に移し、不具合なら実装を直してモデルから外す (外さないと stale として CI が落ちる)。
+
+### 実装の主張と検査結果
+
+| 変更 | 実装の主張 | 検査 | 結果 |
+|---|---|---|---|
+| #997 `sys.version_info` ガード | 読むのは `sys.version_info` / `[:2]` とリテラルタプルの比較 (と `[0]` / `.major`) だけで、他は opaque。`requires-python` の全 minor で除外される分岐の import は CHK003/004/005 にならない | `version_guard_model.py` V1–V5、`stdlib.rs` `range_follows_the_minors_requires_python_allows` に `excludes_minors` の健全性 (PEP 440 で評価した許可 minor と交わらない) を追加 | 成立。壊した移植 3 種 (`full` の長さを無視、opaque を free 扱い、`max` を含む比較) はすべて反例になる |
+| #989 setup.cfg の 1 行の値を `;` で分割 | setuptools の `_parse_list_semicolon` と同じく、1 行の値は `;` で、複数行の値は行で分ける | `setup_cfg_requirements_model.py` P1/P2 (25,732 通り) | 分割規則は成立 (P2)。分割の前段の INI 読みで Q1・Q2 の乖離。#989 以前の読み (常に行で分割) は反例になる |
+| #998 testpaths の glob 展開 | pytest の `glob.iglob(entry, recursive=True)` と同じ path を指す。何も指さない entry は warning | `testpaths_glob_model.py` T1/T2 (4,368 entry) | `*` `?` `[...]` と隠し名の規則は成立。`**` と globset の構文差で Q3–Q6 の乖離 |
+
+### 確認事項 (反例)
+
+| # | 反例 | chokkin | setuptools / pytest | 影響 |
+|---|---|---|---|---|
+| Q1 | `[options]` の直後にインデントした key (`  install_requires = a;b`) | 行を読み飛ばし、`install_requires` が無い | configparser は option として読む | 宣言がすべて消え、その import が CHK010 / 宣言漏れになる (ADR 0005 の「黙って捨てる」に当たる) |
+| Q2 | `]` の後に文字がある section header (`[options] ; c`) | header と認めず、以下の option は前の section に入る | `SECTCRE` は前方一致で `options` を開く | Q1 と同じ |
+| Q3 | globset が拒む component (閉じない `[`、逆順の範囲 `[z-a]`) | その component は何にも一致せず、entry は字義どおり残る (D2) | `t[1` は字義どおりの名前に一致し、`[z-a]` は何にも一致しない | `t[1/*` のような entry が「何も指さない」warning になり test context が付かない |
+| Q4 | `[^a]` | 否定の class | `^` と `a` の class | 一致する名前が逆になる |
+| Q5 | `tests/*/**` のように、file に一致した component の後の `**` | `dirs_from` が file を base として残し、その file が test になる | `_glob2` は directory のときだけ base を返す | pytest が集めない file に test context が付く。`dirs_from` で base が directory か確かめれば直る |
+| Q6 | 最後の component の `**` | directory だけを返す | file も返す | root 直下でだけ差が出る (`testpaths = **` で root の file が test にならない) |
+
+Q1・Q2 は依存宣言を失う方向なので優先度が高い。Q3–Q6 は `testpaths` に書かれることが稀な形で、Q5 だけが 1 行で直せる不具合。
 
 ## 実装に対する検証 (kani / proptest)
 
