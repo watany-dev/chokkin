@@ -4255,12 +4255,41 @@ value = t\"{utils.C}\"
             Opaque,
         }
 
+        /// What a generated availability flag holds (#1242).
+        #[derive(Clone, Copy, Debug)]
+        enum FlagValue {
+            /// `x = importlib.util.find_spec("c")`, `None` without `c`.
+            FindSpec,
+            /// `x = find_spec("c") and find_spec("d")`.
+            FindSpecAnd,
+            /// `x = is_c_available()`, `False` without `c`.
+            Available,
+        }
+
+        /// How the `if` after a flag tests it.
+        #[derive(Clone, Copy, Debug)]
+        enum FlagTest {
+            Truthy,
+            Falsy,
+            IsNotNone,
+            IsNone,
+        }
+
         #[derive(Clone, Debug)]
         enum Block {
-            Import { from: bool },
+            Import {
+                from: bool,
+            },
             Check,
+            /// `check_c_installed()`, which raises without `c` (#1242).
+            InstallCheck,
+            /// An availability flag assigned and then tested by an `if`.
+            Flag(FlagValue, FlagTest, Vec<Self>),
             Try(Try),
-            With { suppress: bool, body: Vec<Self> },
+            With {
+                suppress: bool,
+                body: Vec<Self>,
+            },
             If(Guard, Vec<Self>),
             Def(Vec<Self>),
             Class(Vec<Self>),
@@ -4283,6 +4312,7 @@ value = t\"{utils.C}\"
             prop_oneof![
                 3 => any::<bool>().prop_map(|from| Block::Import { from }),
                 1 => Just(Block::Check),
+                1 => Just(Block::InstallCheck),
             ]
             .prop_recursive(4, 24, 3, |inner| {
                 let body = prop::collection::vec(inner, 0..3);
@@ -4299,7 +4329,20 @@ value = t\"{utils.C}\"
                     Just(Guard::Main),
                     Just(Guard::Opaque),
                 ];
+                let value = prop_oneof![
+                    Just(FlagValue::FindSpec),
+                    Just(FlagValue::FindSpecAnd),
+                    Just(FlagValue::Available),
+                ];
+                let test = prop_oneof![
+                    Just(FlagTest::Truthy),
+                    Just(FlagTest::Falsy),
+                    Just(FlagTest::IsNotNone),
+                    Just(FlagTest::IsNone),
+                ];
                 prop_oneof![
+                    (value, test, body.clone())
+                        .prop_map(|(value, test, body)| Block::Flag(value, test, body)),
                     (
                         body.clone(),
                         handler,
@@ -4328,11 +4371,14 @@ value = t\"{utils.C}\"
         }
 
         /// Whether `blocks` check for a package outside nested scopes, as
-        /// `first_availability_check` looks for one.
+        /// `first_availability_check` looks for one: a flag's `find_spec` /
+        /// `is_c_available` call is one, an install check's name is not.
         fn checks(blocks: &[Block]) -> bool {
             blocks.iter().any(|block| match block {
-                Block::Check => true,
-                Block::Import { .. } | Block::Def(_) | Block::Class(_) => false,
+                Block::Check | Block::Flag(..) => true,
+                Block::Import { .. } | Block::InstallCheck | Block::Def(_) | Block::Class(_) => {
+                    false
+                },
                 Block::Try(Try {
                     body,
                     handled,
@@ -4370,6 +4416,9 @@ value = t\"{utils.C}\"
             main_block: bool,
             /// The innermost def / class is a function.
             function_scope: bool,
+            /// Inside a def / class, where an assignment is no module-level
+            /// flag.
+            nested: bool,
             /// Roots of the `try` body an enclosing `except ImportError:`
             /// falls back for (#721).
             fallback_for: Vec<String>,
@@ -4416,7 +4465,7 @@ value = t\"{utils.C}\"
                 let mut frame = frame.clone();
                 for block in blocks {
                     self.block(block, depth, &frame);
-                    if matches!(block, Block::Check) {
+                    if matches!(block, Block::Check | Block::InstallCheck) {
                         frame.gated = true;
                     }
                 }
@@ -4449,6 +4498,55 @@ value = t\"{utils.C}\"
                     fallback_for: frame.fallback_for.clone(),
                 };
                 self.expected.push((module, flags));
+            }
+
+            /// A package check in a function makes the imports after it in
+            /// that function optional (#713).
+            fn check_seen(&mut self, frame: &Frame) {
+                if frame.function_scope
+                    && let Some(function) = self.functions.last_mut()
+                {
+                    function.seen = true;
+                }
+            }
+
+            /// A module-level flag guards the `if` body when the test is
+            /// false without the package: truthiness for both values, and
+            /// `is not None` only for `find_spec`'s `None`. In a def or class
+            /// the name is a plain local, but its call is a check (#713).
+            fn flag(
+                &mut self,
+                (value, test): (FlagValue, FlagTest),
+                body: &[Block],
+                depth: usize,
+                frame: &Frame,
+            ) {
+                let name = self.fresh("zzf");
+                let assigned = match value {
+                    FlagValue::FindSpec => "importlib.util.find_spec(\"zzc\")",
+                    FlagValue::FindSpecAnd => {
+                        "importlib.util.find_spec(\"zzc\") and importlib.util.find_spec(\"zzd\")"
+                    },
+                    FlagValue::Available => "is_zzc_available()",
+                };
+                self.line(depth, &format!("{name} = {assigned}"));
+                self.check_seen(frame);
+                let tested = match test {
+                    FlagTest::Truthy => name,
+                    FlagTest::Falsy => format!("not {name}"),
+                    FlagTest::IsNotNone => format!("{name} is not None"),
+                    FlagTest::IsNone => format!("{name} is None"),
+                };
+                self.line(depth, &format!("if {tested}:"));
+                let find_spec = matches!(value, FlagValue::FindSpec | FlagValue::FindSpecAnd);
+                let guards = match test {
+                    FlagTest::Truthy => true,
+                    FlagTest::IsNotNone => find_spec,
+                    FlagTest::Falsy | FlagTest::IsNone => false,
+                };
+                let mut inner = frame.clone();
+                inner.gated |= guards && !frame.nested;
+                self.body(body, depth + 1, &inner);
             }
 
             fn try_block(&mut self, block: &Try, depth: usize, frame: &Frame) {
@@ -4504,11 +4602,14 @@ value = t\"{utils.C}\"
                     Block::Check => {
                         self.line(depth, "if importlib.util.find_spec(\"zzc\") is None:");
                         self.line(depth + 1, "raise ImportError(\"zzc\")");
-                        if frame.function_scope
-                            && let Some(function) = self.functions.last_mut()
-                        {
-                            function.seen = true;
-                        }
+                        self.check_seen(frame);
+                    },
+                    Block::InstallCheck => {
+                        let name = self.fresh("check_zzc");
+                        self.line(depth, &format!("{name}_installed()"));
+                    },
+                    Block::Flag(value, test, body) => {
+                        self.flag((*value, *test), body, depth, frame);
                     },
                     Block::Try(block) => self.try_block(block, depth, frame),
                     Block::With { suppress, body } => {
@@ -4556,6 +4657,7 @@ value = t\"{utils.C}\"
                         let inner = Frame {
                             caught: false,
                             function_scope: true,
+                            nested: true,
                             ..frame.clone()
                         };
                         self.body(body, depth + 1, &inner);
@@ -4566,6 +4668,7 @@ value = t\"{utils.C}\"
                         self.line(depth, &format!("class {name}:"));
                         let inner = Frame {
                             function_scope: false,
+                            nested: true,
                             ..frame.clone()
                         };
                         self.body(body, depth + 1, &inner);
@@ -4613,7 +4716,9 @@ value = t\"{utils.C}\"
                 };
                 // A module-level check that raises makes the rest of the
                 // module optional; nothing else outlives its statement.
-                let checked = blocks.iter().any(|block| matches!(block, Block::Check));
+                let checked = blocks
+                    .iter()
+                    .any(|block| matches!(block, Block::Check | Block::InstallCheck));
                 let mut blocks = blocks;
                 blocks.push(Block::Import { from: false });
                 model.body(&blocks, 0, &Frame::default());
