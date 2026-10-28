@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
 
 use super::public::star_imports;
@@ -41,7 +43,7 @@ pub(super) fn build_registry(
     module_names: &HashMap<&str, String>,
 ) -> Vec<RegistryEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
 
     for module in modules {
         let Some(owner) = module_names.get(module.path.as_str()) else {
@@ -76,7 +78,7 @@ pub(super) fn build_registry(
 /// whether the symbol was referenced from a module other than its own.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(super) struct ReferenceIndex {
-    entries: HashMap<SymbolId, bool>,
+    entries: FxHashMap<SymbolId, bool>,
 }
 
 impl ReferenceIndex {
@@ -88,7 +90,7 @@ impl ReferenceIndex {
     /// still count as importers: their path never equals a module name, so
     /// every reference they make is external.
     pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
-        let known_modules: HashSet<&str> = module_names.values().map(String::as_str).collect();
+        let known_modules: FxHashSet<&str> = module_names.values().map(String::as_str).collect();
         let stars = StarImports::build(modules, module_names);
 
         let partials = crate::parallel::fold_per_worker(
@@ -124,7 +126,7 @@ impl ReferenceIndex {
         &mut self,
         module: &'m ParsedModule,
         module_names: &'m HashMap<&str, String>,
-        known_modules: &HashSet<&'m str>,
+        known_modules: &FxHashSet<&'m str>,
         stars: &StarImports<'a>,
         cache: &mut StarCache<'a>,
     ) {
@@ -133,14 +135,14 @@ impl ReferenceIndex {
             .map_or(module.path.as_str(), String::as_str);
         // A module reads `pkg.name` once or a thousand times, through one
         // import or one per function body: each reference is recorded once.
-        let mut names_by_receiver: HashMap<&str, HashSet<&str>> = HashMap::new();
+        let mut names_by_receiver: FxHashMap<&str, FxHashSet<&str>> = FxHashMap::default();
         for access in &module.attribute_accesses {
             names_by_receiver
                 .entry(access.receiver.as_str())
                 .or_default()
                 .insert(access.name.as_str());
         }
-        let mut recorded: HashSet<(&str, &str)> = HashSet::new();
+        let mut recorded: FxHashSet<(&str, &str)> = FxHashSet::default();
         let mut record = |target_module: &'m str, name: &'m str| {
             if recorded.insert((target_module, name)) {
                 self.record(importer, SymbolId::new(target_module, name), stars, cache);
@@ -247,18 +249,18 @@ impl ReferenceIndex {
 struct StarImports<'a> {
     /// Names each star-importing module defines itself, shadowing
     /// star-imported ones.
-    defines: HashMap<&'a str, HashSet<&'a str>>,
+    defines: FxHashMap<&'a str, FxHashSet<&'a str>>,
     /// The modules that star-import each module.
-    parents: HashMap<&'a str, Vec<&'a str>>,
+    parents: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules that define or import each name. A forwarded
     /// reference can only meet a symbol or a re-export there, so the
     /// packages a name merely passes through are never recorded (#803).
-    binders: HashMap<&'a str, Vec<&'a str>>,
+    binders: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules missing from the parsed ones, such as reachable
     /// modules left out of the `--production` evidence: they may bind any name.
     opaque: Vec<&'a str>,
     /// `__all__` of the modules that bind one.
-    exports: HashMap<&'a str, &'a Exports>,
+    exports: FxHashMap<&'a str, &'a Exports>,
 }
 
 /// [`StarImports::sources`] per symbol, kept by each indexing worker.
@@ -288,7 +290,7 @@ impl<'a> StarImports<'a> {
             }
             stars.exports.insert(name.as_str(), &module.exports);
         }
-        let mut parsed = HashSet::new();
+        let mut parsed = FxHashSet::default();
         for module in modules {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
@@ -341,7 +343,7 @@ impl<'a> StarImports<'a> {
             return false;
         }
         let mut queue = vec![binder];
-        let mut seen = HashSet::from([binder]);
+        let mut seen = FxHashSet::from_iter([binder]);
         while let Some(current) = queue.pop() {
             for &parent in self.parents.get(current).into_iter().flatten() {
                 if self.defines[parent].contains(name) {
@@ -376,7 +378,7 @@ impl<'a> StarImports<'a> {
 fn sibling_module<'n>(
     importer_path: &str,
     name: &str,
-    known_modules: &HashSet<&str>,
+    known_modules: &FxHashSet<&str>,
     module_names: &'n HashMap<&str, String>,
 ) -> Option<&'n str> {
     if known_modules.contains(name) {

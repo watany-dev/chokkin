@@ -9,7 +9,8 @@
 //! reaches which helper.
 
 use std::cell::OnceCell;
-use std::collections::{HashMap, HashSet};
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::sources::{LayoutInfo, module_path, path_to_module};
 
@@ -131,7 +132,7 @@ struct ProjectIndex<'a> {
 
 impl<'a> ProjectIndex<'a> {
     fn new(modules: &'a [ParsedModule], layout: &'a LayoutInfo) -> Self {
-        let mut by_last_part: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_last_part: HashMap<&str, Vec<usize>> = HashMap::default();
         for (position, module) in modules.iter().enumerate() {
             if let Some(stem) = module_path(&module.path) {
                 let last = stem.rsplit('/').next().unwrap_or(stem);
@@ -143,7 +144,7 @@ impl<'a> ProjectIndex<'a> {
             layout,
             names: vec![OnceCell::new(); modules.len()],
             by_last_part,
-            checks: HashMap::new(),
+            checks: HashMap::default(),
         };
         for (position, module) in modules.iter().enumerate() {
             if module.import_checks.is_empty() {

@@ -1,8 +1,9 @@
 //! Shared formatting helpers for reporters.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::Write as _;
+
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::manifest::DependencyOrigin;
 use crate::rules::{
@@ -191,11 +192,11 @@ const REPEATS_SHOWN: usize = 5;
 /// and a count of the rest, for outputs a person reads top to bottom (#888).
 /// The count points nowhere: it stands for warnings in many files.
 pub(crate) fn condense_diagnostics(diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
-    let mut totals = HashMap::<u64, usize>::new();
+    let mut totals = HashMap::<u64, usize>::default();
     for diagnostic in diagnostics {
         *totals.entry(diagnostic.kind).or_default() += 1;
     }
-    let mut shown = HashMap::<u64, usize>::new();
+    let mut shown = HashMap::<u64, usize>::default();
     let mut out = Vec::new();
     for diagnostic in diagnostics {
         let seen = shown.entry(diagnostic.kind).or_default();

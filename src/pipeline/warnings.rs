@@ -1,12 +1,13 @@
 //! Pipeline warning aggregation and display.
 
-use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::mem::discriminant;
 use std::path::Path;
+
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::entry::EntryWarning;
 use crate::manifest::{DependencyContext, ManifestWarning, invalid_requirement_name};
@@ -854,7 +855,7 @@ fn write_dynamic_extras_unread(
 pub fn diagnostic_lines<'a>(
     warnings: impl IntoIterator<Item = &'a ProbeWarning>,
 ) -> Vec<Diagnostic> {
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     warnings
         .into_iter()
         .map(ProbeWarning::diagnostic)

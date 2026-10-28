@@ -2,11 +2,12 @@
 //! "already imported" checks and the `__main__` script block (#681), and
 //! "is it installed" checks (#695).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use ruff_python_ast::visitor::{Visitor, walk_expr, walk_stmt};
 use ruff_python_ast::{BoolOp, CmpOp, Expr, ExprContext, Parameters, Stmt, UnaryOp};
 use ruff_text_size::{Ranged, TextSize};
+use rustc_hash::FxHashMap;
 
 /// The top-level module `test` proves is already imported when its body
 /// runs: `"x" in sys.modules` or `sniffio.current_async_library() == "x"`,
@@ -96,7 +97,7 @@ pub(super) fn async_library_names(
 /// Per bound name, whether every binding so far assigned the sniffio call.
 #[derive(Default)]
 struct AsyncLibraryBindings<'a> {
-    only_async_library: HashMap<&'a str, bool>,
+    only_async_library: FxHashMap<&'a str, bool>,
 }
 
 impl<'a> Visitor<'a> for AsyncLibraryBindings<'a> {

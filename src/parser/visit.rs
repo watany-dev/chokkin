@@ -1,6 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -140,10 +140,10 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// Module-level names that are truthy only when a `try` import succeeded:
     /// set to `True` in the body (`has_x = True`, #730). Inside a function or
     /// class, the ones its scope does not rebind (#1272).
-    try_flags: HashSet<String>,
+    try_flags: FxHashSet<String>,
     /// Module-level names set to `None` in an `except ImportError:` handler
     /// (`x = None`), which `x is None` also reads; scoped as `try_flags`.
-    none_flags: HashSet<String>,
+    none_flags: FxHashSet<String>,
     typing_aliases: HashSet<String>,
     type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
@@ -154,7 +154,7 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     prefix_modules: FxHashMap<String, usize>,
     /// Names the current scope binds to the module a literal
     /// `import_module("pkg.m")` returned, with that module's name (#1144).
-    literal_modules: HashMap<String, String>,
+    literal_modules: FxHashMap<String, String>,
     command_words: BTreeSet<String>,
     sys_path: SysPathHints,
     /// Each distinct dotted-name literal at its first line (#1026).
@@ -222,14 +222,14 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             tested_before: Vec::new(),
             function_depth: 0,
             module_level: true,
-            try_flags: HashSet::new(),
-            none_flags: HashSet::new(),
+            try_flags: FxHashSet::default(),
+            none_flags: FxHashSet::default(),
             typing_aliases: HashSet::from(["typing".to_owned()]),
             type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
             server_names: ServerNames::default(),
             prefix_modules: FxHashMap::default(),
-            literal_modules: HashMap::new(),
+            literal_modules: FxHashMap::default(),
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
             module_refs: BTreeMap::new(),
@@ -542,7 +542,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         &mut self,
         parameters: Option<&Parameters>,
         body: &[Stmt],
-    ) -> (HashSet<String>, HashSet<String>, VersionNames) {
+    ) -> (FxHashSet<String>, FxHashSet<String>, VersionNames) {
         let outer = (
             self.try_flags.clone(),
             self.none_flags.clone(),
@@ -563,7 +563,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         outer
     }
 
-    fn leave_scope_names(&mut self, outer: (HashSet<String>, HashSet<String>, VersionNames)) {
+    fn leave_scope_names(&mut self, outer: (FxHashSet<String>, FxHashSet<String>, VersionNames)) {
         (self.try_flags, self.none_flags, self.version_names) = outer;
     }
 
@@ -1781,8 +1781,12 @@ fn assigned_flags(body: &[Stmt], is_flag: fn(&Expr) -> bool) -> impl Iterator<It
 /// `x = None` flag `x is not None` is false and `x is None` true. `None` for
 /// anything else, which includes `is` tests of a `has_x = True` flag: it is
 /// `False` there, not `None`.
-fn flag_test(test: &Expr, flags: &HashSet<String>, none_flags: &HashSet<String>) -> Option<bool> {
-    let named = |expr: &Expr, names: &HashSet<String>| matches!(expr, Expr::Name(name) if names.contains(name.id.as_str()));
+fn flag_test(
+    test: &Expr,
+    flags: &FxHashSet<String>,
+    none_flags: &FxHashSet<String>,
+) -> Option<bool> {
+    let named = |expr: &Expr, names: &FxHashSet<String>| matches!(expr, Expr::Name(name) if names.contains(name.id.as_str()));
     match test {
         Expr::Compare(compare) => match (&*compare.ops, &*compare.operands) {
             ([op @ (CmpOp::Is | CmpOp::IsNot)], [flag, Expr::NoneLiteral(_)])

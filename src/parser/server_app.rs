@@ -1,9 +1,8 @@
 //! Apps handed to uvicorn in Python: `uvicorn.run("pkg.asgi:app")` and
 //! `uvicorn.Config("pkg.asgi:app")` (#1004).
 
-use std::collections::{HashMap, HashSet};
-
 use ruff_python_ast::{Alias, Expr, ExprCall};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use super::dynamic::{argument, str_constant};
 

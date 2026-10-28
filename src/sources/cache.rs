@@ -11,7 +11,6 @@
 //! exclude, parents, no global or `.ignore` files, `require_git`).
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File, FileType};
 use std::io::{BufRead, BufReader};
@@ -22,6 +21,7 @@ use globset::GlobSet;
 use ignore::Match;
 use ignore::gitignore::{Gitignore, GitignoreBuilder, Glob};
 use ignore::overrides::{Override, OverrideBuilder};
+use rustc_hash::FxHashMap as HashMap;
 
 use super::error::SourcesError;
 use super::glob::{build_glob_set, check_braces};

@@ -1,7 +1,9 @@
 //! Import resolution orchestration.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::graph::ModuleOrigin;
@@ -183,7 +185,7 @@ struct Resolver<'a> {
     venv_imports: &'a BTreeMap<String, Vec<String>>,
     scoped: &'a ScopedDeclarations,
     pytest_paths: &'a PytestImportPaths,
-    local_modules: &'a HashMap<String, bool>,
+    local_modules: &'a std::collections::HashMap<String, bool>,
     indexed_roots: &'a BTreeSet<String>,
 }
 

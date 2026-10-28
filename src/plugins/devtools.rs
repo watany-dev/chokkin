@@ -1,7 +1,8 @@
 //! Dev-tool plugin extractors for tox, nox, pre-commit, and GitHub Actions.
 
-use std::collections::HashSet;
 use std::path::Path;
+
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::config::PluginId;
 use crate::path_util::rel_to_root;
@@ -95,7 +96,7 @@ fn extract_github_actions(ctx: &PluginContext<'_>, contrib: &mut PluginContribut
     };
     let binary_map = build_binary_map(ctx.config, &VenvIndex::default());
     let known = |name: &str| binary_map.contains_key(name);
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
 
     for entry in entries.flatten() {
         let path = entry.path();
