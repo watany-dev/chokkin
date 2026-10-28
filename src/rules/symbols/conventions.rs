@@ -32,6 +32,26 @@ const ALEMBIC_NAMES: &[&str] = &[
 /// file's AST (#1223): nothing imports a module for them.
 const ANSIBLE_DOC_NAMES: &[&str] = &["DOCUMENTATION", "EXAMPLES", "RETURN"];
 
+/// The plugin directories `ansible-doc` documents. `module_utils` holds no
+/// plugins, and a `doc_fragments` `DOCUMENTATION` is a class attribute.
+const ANSIBLE_DOC_PLUGIN_TYPES: &[&str] = &[
+    "become",
+    "cache",
+    "callback",
+    "cliconf",
+    "connection",
+    "filter",
+    "httpapi",
+    "inventory",
+    "lookup",
+    "modules",
+    "netconf",
+    "shell",
+    "strategy",
+    "test",
+    "vars",
+];
+
 /// The PEP 517 and PEP 660 hooks a frontend calls on a build backend.
 const BUILD_BACKEND_HOOKS: &[&str] = &[
     "build_wheel",
@@ -87,17 +107,20 @@ pub(super) fn convention_symbols(
     symbols
 }
 
-/// `DOCUMENTATION` / `EXAMPLES` / `RETURN` in an ansible module: a file under
-/// `ansible/modules/` (ansible-core's `lib/ansible/modules/`) or
-/// `plugins/modules/` (a collection). ansible parses the file and reads the
-/// strings without importing it. Upper-case constants elsewhere stay reported.
+/// `DOCUMENTATION` / `EXAMPLES` / `RETURN` in an ansible plugin: a file under
+/// `ansible/modules/` (ansible-core's `lib/ansible/modules/`) or under
+/// `plugins/<type>/` for a documented plugin type (ansible-core's
+/// `lib/ansible/plugins/lookup/`, a collection's `plugins/modules/`).
+/// `ansible-doc -t <type>` parses the file and reads the strings without
+/// importing it (#1262). Upper-case constants elsewhere, including under a
+/// `plugins/` directory whose child is no ansible plugin type, stay reported.
 fn ansible_doc_symbols(
     modules: &[&ParsedModule],
     module_names: &HashMap<&str, String>,
 ) -> Vec<SymbolId> {
     modules
         .iter()
-        .filter(|module| is_ansible_module(&module.path))
+        .filter(|module| is_ansible_plugin(&module.path))
         .filter_map(|module| module_names.get(module.path.as_str()))
         .flat_map(|owner| {
             ANSIBLE_DOC_NAMES
@@ -107,15 +130,20 @@ fn ansible_doc_symbols(
         .collect()
 }
 
-fn is_ansible_module(path: &str) -> bool {
+fn is_ansible_plugin(path: &str) -> bool {
     let dirs: Vec<_> = Path::new(path)
         .parent()
         .into_iter()
         .flat_map(Path::components)
         .map(std::path::Component::as_os_str)
         .collect();
-    dirs.windows(2)
-        .any(|pair| pair[1] == "modules" && (pair[0] == "ansible" || pair[0] == "plugins"))
+    dirs.windows(2).any(|pair| {
+        (pair[0] == "ansible" && pair[1] == "modules")
+            || (pair[0] == "plugins"
+                && pair[1]
+                    .to_str()
+                    .is_some_and(|kind| ANSIBLE_DOC_PLUGIN_TYPES.contains(&kind)))
+    })
 }
 
 /// alembic's revision attributes and hooks in a module under `versions/`
@@ -476,22 +504,30 @@ mod tests {
     }
 
     #[test]
-    fn ansible_module_is_under_ansible_or_plugins_modules() {
+    fn ansible_plugin_is_under_ansible_modules_or_a_plugin_type_dir() {
         for path in [
             "lib/ansible/modules/apt.py",
             "ansible_collections/ns/col/plugins/modules/thing.py",
             "plugins/modules/sub/thing.py",
+            "lib/ansible/plugins/lookup/ini.py",
+            "lib/ansible/plugins/connection/ssh.py",
+            "lib/ansible/plugins/inventory/constructed.py",
+            "ansible_collections/ns/col/plugins/become/sudo.py",
+            "plugins/callback/sub/thing.py",
         ] {
-            assert!(is_ansible_module(path), "{path}");
+            assert!(is_ansible_plugin(path), "{path}");
         }
         for path in [
             "lib/ansible/module_utils/basic.py",
-            "lib/ansible/plugins/lookup/file.py",
+            "lib/ansible/plugins/__init__.py",
+            "lib/ansible/plugins/doc_fragments/files.py",
+            "plugins/module_utils/thing.py",
+            "plugins/widgets/thing.py",
             "pkg/modules/thing.py",
             "plugins/modules.py",
             "modules/plugins/thing.py",
         ] {
-            assert!(!is_ansible_module(path), "{path}");
+            assert!(!is_ansible_plugin(path), "{path}");
         }
     }
 
