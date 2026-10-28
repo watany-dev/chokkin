@@ -51,10 +51,14 @@ const JOINING_CALLS: &[&str] = &["join", "joinpath", "Path", "PurePath"];
 /// `"setup.py"` names a file in whatever directory the code runs in, which
 /// may be any file of that name.
 pub(super) fn path_refs(call: &ExprCall) -> Vec<String> {
+    let args = &call.arguments.args;
+    // Most calls hand no string literal: skip the callee lookup for them.
+    if !args.iter().any(|arg| matches!(arg, Expr::StringLiteral(_))) {
+        return Vec::new();
+    }
     let Some(callee) = callee_name(&call.func).filter(|name| PATH_CALLS.contains(name)) else {
         return Vec::new();
     };
-    let args = &call.arguments.args;
     if JOINING_CALLS.contains(&callee) {
         args.split(|arg| str_constant(arg).is_none())
             .filter_map(|run| joined_py_path(run.iter().filter_map(str_constant)))
@@ -114,7 +118,8 @@ pub(super) fn adds_computed_path(call: &ExprCall) -> bool {
 /// attribute of it, or `globals()[name]`. A store (`globals()[name] = v`)
 /// defines a name and reads none; a literal key names its one name.
 pub(super) fn reads_own_namespace(subscript: &ExprSubscript) -> bool {
-    if !subscript.ctx.is_load() {
+    if !subscript.ctx.is_load() || !matches!(&*subscript.value, Expr::Attribute(_) | Expr::Call(_))
+    {
         return false;
     }
     let own_module = is_receiver(&subscript.value, "sys.modules")

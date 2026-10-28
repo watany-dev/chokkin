@@ -1108,8 +1108,19 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
 
     /// What a call tells about names and files used without an import
     /// (#1274): `__subclasses__()` and what is handed to the functions that
-    /// call it, and a `.py` path given to a file call.
+    /// call it, a `.py` path given to a file call, a computed read of the
+    /// module's own names, and a `sys.path` edit. Not inlined, so that
+    /// `visit_expr`'s frame, paid once per nesting level, does not grow
+    /// (#1173).
+    #[inline(never)]
     fn record_by_name(&mut self, call: &'ast ExprCall) {
+        if gets_own_name(call) {
+            self.record_self_reference(call);
+        }
+        if edits_sys_path(&call.func) {
+            self.sys_path.edited = true;
+            self.parsed.adds_computed_sys_path |= adds_computed_path(call);
+        }
         self.parsed.path_refs.extend(path_refs(call));
         let Some(callee) = callee_name(&call.func) else {
             return;
@@ -1129,6 +1140,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             return;
         }
         let facts = &mut self.parsed.subclass_facts;
+        let frame = self.function_frames.last();
+        if self.module_classes.is_empty() && frame.is_none() {
+            return;
+        }
         for arg in &call.arguments.args {
             let Expr::Name(name) = arg else {
                 continue;
@@ -1143,7 +1158,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             // A method of a parameter (`self.layer(x)`) is no module-level
             // function, so it is not followed; skipping it keeps the facts of
             // a model zoo small.
-            if let Some((function, parameters)) = self.function_frames.last()
+            if let Some((function, parameters)) = frame
                 && positional_names(parameters).any(|parameter| parameter == name)
                 && !receiver_root(&call.func).is_some_and(|root| {
                     positional_names(parameters).any(|parameter| parameter == root)
@@ -1489,13 +1504,6 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 self.record_computed_getattr(call);
                 self.record_literal_getattr(call);
                 self.record_by_name(call);
-                if gets_own_name(call) {
-                    self.record_self_reference(call);
-                }
-                if edits_sys_path(&call.func) {
-                    self.sys_path.edited = true;
-                    self.parsed.adds_computed_sys_path |= adds_computed_path(call);
-                }
                 self.parsed.lists_directory |= lists_directory(&call.func);
                 if let Some((label, app, app_dir)) = self.server_names.app(call) {
                     let line = self.line_number(call);
