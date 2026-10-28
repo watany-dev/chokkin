@@ -140,6 +140,14 @@ pub(crate) fn is_test_harness_name(file_name: &str) -> bool {
         })
 }
 
+/// Whether a directory of `path` is named `examples`: a sample users copy or
+/// run by hand, which nothing imports by design (#1239, #1255).
+#[must_use]
+pub(crate) fn in_examples_dir(path: &str) -> bool {
+    path.rsplit_once('/')
+        .is_some_and(|(dirs, _)| dirs.split('/').any(|dir| dir == "examples"))
+}
+
 /// Whether `path` is input data under a test tree (`tests/data/case.py`,
 /// `test/fixtures/demo/setup.py`): tests read these as files rather than
 /// import them, so being unreachable is expected (#593).

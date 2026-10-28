@@ -2,7 +2,7 @@
 
 use crate::reachability::UnreachableFile;
 use crate::rules::types::{ExplainData, IssueCandidate, IssueSubject, RuleId, Severity};
-use crate::sources::is_test_data_path;
+use crate::sources::{in_examples_dir, is_test_data_path};
 
 /// Build CHK001 candidates from unreachable files.
 ///
@@ -58,12 +58,6 @@ pub(super) fn chk001_candidates(
     }
 
     candidates
-}
-
-/// Whether a directory of `path` is named `examples`.
-fn in_examples_dir(path: &str) -> bool {
-    path.rsplit_once('/')
-        .is_some_and(|(dirs, _)| dirs.split('/').any(|dir| dir == "examples"))
 }
 
 #[cfg(test)]

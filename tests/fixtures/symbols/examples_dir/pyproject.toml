@@ -1,0 +1,13 @@
+[project]
+name = "examples-dir"
+version = "0.1.0"
+dependencies = ["sphinx"]
+
+[project.scripts]
+acme-cli = "acme.main:main"
+
+[tool.chokkin]
+mode = "app"
+
+[tool.chokkin.plugins]
+sphinx = true

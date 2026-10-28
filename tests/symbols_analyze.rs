@@ -2147,3 +2147,24 @@ fn literal_getattr_on_a_module_counts_as_a_reference() {
         "dead_api"
     ));
 }
+
+/// A public symbol in a file under an `examples/` directory is info, as the
+/// file's CHK001 is: a sample the docs show and users copy, which nothing
+/// imports by design (#1255). A runtime module's dead class stays a warning.
+#[test]
+fn symbols_under_an_examples_dir_are_info() {
+    let report = analyze_fixture("examples_dir");
+    let severity = |module: &str, name: &str| {
+        find_symbol(&report, RuleId::Chk006, module, name).map(|candidate| candidate.severity)
+    };
+    assert_eq!(
+        severity("acme.examples.check_foo", "FooCheck"),
+        Some(Severity::Info),
+        "{report:?}"
+    );
+    assert_eq!(
+        severity("acme.checks", "DeadCheck"),
+        Some(Severity::Warning),
+        "{report:?}"
+    );
+}
