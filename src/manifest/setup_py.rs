@@ -1,10 +1,11 @@
 //! Static `setup.py` manifest extraction.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use ruff_python_ast::Stmt;
 use ruff_python_ast::visitor::{Visitor, walk_stmt};
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::path_util::rel_to_root;
 
@@ -328,7 +329,7 @@ fn push_items(
         _ => "install_requires".to_owned(),
     };
     let mut complete = items.complete;
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     for (index, item) in items.items.iter().enumerate() {
         match item {
             DependencyItem::Requirement(raw) if !seen.insert(raw.as_str()) => {},

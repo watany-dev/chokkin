@@ -1,6 +1,6 @@
 //! CHK005 misplaced dependency detection.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
@@ -54,7 +54,7 @@ pub(super) fn detect_misplaced_dependencies(
     let matcher = IgnoreMatcher::build(config, context.parse, &ResolutionIndex::default());
     // The bool: every site so far is ignored inline, file-level or vendored.
     let mut candidates: Vec<(IssueCandidate, Weight, bool)> = Vec::new();
-    let mut reported: HashMap<(String, String), usize> = HashMap::new();
+    let mut reported: HashMap<(String, String), usize> = HashMap::default();
 
     for import in &resolution.imports {
         if !is_runtime_third_party(import, reachable, sources) {
@@ -393,7 +393,7 @@ impl Weight {
 
 fn import_strengths(parse: &ParseSummary) -> HashMap<(String, u32), ImportStrength> {
     let optional = collect_optional_imports(parse);
-    let mut strengths = HashMap::new();
+    let mut strengths = HashMap::default();
     for module in &parse.modules {
         let sites = module
             .imports
@@ -460,7 +460,7 @@ fn integration_packages(
             .member_for(file)
             .map(|(member, _)| member.path.as_str())
     };
-    let mut packages: HashMap<String, Option<&str>> = HashMap::new();
+    let mut packages: HashMap<String, Option<&str>> = HashMap::default();
     for import in &dependency.rules.resolution.imports {
         if !is_runtime_third_party(import, reachable, sources) {
             continue;
@@ -624,7 +624,7 @@ fn host_loaded_files<'a>(
     layout: &LayoutInfo,
     pytest11_modules: &HashSet<&str>,
 ) -> HashSet<(&'a str, &'static str)> {
-    let mut loaded = HashSet::new();
+    let mut loaded = HashSet::default();
     for module in &parse.modules {
         let defines = |is_hook: fn(&str) -> bool| {
             module
@@ -980,7 +980,7 @@ mod tests {
     #[test]
     fn integration_packages_cover_their_subpackages() {
         let layout = LayoutInfo::new("", vec!["mlflow".to_owned()]);
-        let integrations = HashSet::from(["mlflow.genai.scorers.ragas".to_owned()]);
+        let integrations = HashSet::from_iter(["mlflow.genai.scorers.ragas".to_owned()]);
         let inside = |file: &str| in_integration(file, &layout, &integrations);
         assert!(inside("mlflow/genai/scorers/ragas/models.py"));
         assert!(inside("mlflow/genai/scorers/ragas/__init__.py"));
@@ -1009,7 +1009,7 @@ mod tests {
     /// #731: a file is host-loaded only for the host that loads it.
     #[test]
     fn host_loaded_files_pair_each_file_with_its_own_host() {
-        let pytest11 = HashSet::from(["acme.plugin", "acme.objects"]);
+        let pytest11 = HashSet::from_iter(["acme.plugin", "acme.objects"]);
         let parse = ParseSummary {
             modules: vec![
                 module("src/acme/plugin.py", &[]),

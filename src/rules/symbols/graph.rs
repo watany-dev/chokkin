@@ -1,6 +1,6 @@
 //! Symbol identity and registry for usage analysis.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
 
@@ -41,7 +41,7 @@ pub(super) fn build_registry(
     module_names: &HashMap<&str, String>,
 ) -> Vec<RegistryEntry> {
     let mut entries = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
 
     for module in modules {
         let Some(owner) = module_names.get(module.path.as_str()) else {
@@ -93,7 +93,7 @@ impl ReferenceIndex {
 
         let partials = crate::parallel::fold_per_worker(
             modules,
-            || (Self::default(), StarCache::new()),
+            || (Self::default(), StarCache::default()),
             |(index, cache), _, module| {
                 index.add_module(module, module_names, &known_modules, &stars, cache);
             },
@@ -133,14 +133,14 @@ impl ReferenceIndex {
             .map_or(module.path.as_str(), String::as_str);
         // A module reads `pkg.name` once or a thousand times, through one
         // import or one per function body: each reference is recorded once.
-        let mut names_by_receiver: HashMap<&str, HashSet<&str>> = HashMap::new();
+        let mut names_by_receiver: HashMap<&str, HashSet<&str>> = HashMap::default();
         for access in &module.attribute_accesses {
             names_by_receiver
                 .entry(access.receiver.as_str())
                 .or_default()
                 .insert(access.name.as_str());
         }
-        let mut recorded: HashSet<(&str, &str)> = HashSet::new();
+        let mut recorded: HashSet<(&str, &str)> = HashSet::default();
         let mut record = |target_module: &'m str, name: &'m str| {
             if recorded.insert((target_module, name)) {
                 self.record(importer, SymbolId::new(target_module, name), stars, cache);
@@ -288,7 +288,7 @@ impl<'a> StarImports<'a> {
             }
             stars.exports.insert(name.as_str(), &module.exports);
         }
-        let mut parsed = HashSet::new();
+        let mut parsed = HashSet::default();
         for module in modules {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
@@ -341,7 +341,7 @@ impl<'a> StarImports<'a> {
             return false;
         }
         let mut queue = vec![binder];
-        let mut seen = HashSet::from([binder]);
+        let mut seen = HashSet::from_iter([binder]);
         while let Some(current) = queue.pop() {
             for &parent in self.parents.get(current).into_iter().flatten() {
                 if self.defines[parent].contains(name) {
@@ -459,7 +459,7 @@ mod tests {
             ..ParsedModule::default()
         };
         let names = bound_names(&module);
-        assert_eq!(names, HashSet::from(["helper", "renamed", "sub"]));
+        assert_eq!(names, HashSet::from_iter(["helper", "renamed", "sub"]));
     }
 
     #[test]
@@ -480,7 +480,7 @@ mod tests {
             )],
             ..ParsedModule::default()
         };
-        let names = HashMap::from([
+        let names = HashMap::from_iter([
             (
                 utils.path.as_str(),
                 "in_container.in_container_utils".to_owned(),
@@ -510,7 +510,7 @@ mod tests {
             )],
             ..ParsedModule::default()
         };
-        let names = HashMap::from([
+        let names = HashMap::from_iter([
             (helpers.path.as_str(), "tools.helpers".to_owned()),
             (run.path.as_str(), "tools.run".to_owned()),
         ]);
@@ -731,7 +731,7 @@ mod tests {
                 .zip(module_names)
                 .collect();
             let stars = StarImports::build(&refs, &names);
-            let mut cache = StarCache::new();
+            let mut cache = StarCache::default();
             let mut sources = Sources::new();
             for index in 0..MODULES {
                 for name in NAMES {

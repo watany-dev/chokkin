@@ -1,6 +1,6 @@
 //! Library public API: symbols an outside caller can reach by declaration (#489).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::parser::{Exports, ImportKind, ParsedModule};
 
@@ -23,8 +23,8 @@ impl PublicApi {
         module_names: &HashMap<&str, String>,
         production_references: ReferenceIndex,
     ) -> Self {
-        let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut exports = HashMap::new();
+        let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::default();
+        let mut exports = HashMap::default();
         for module in modules {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
@@ -88,7 +88,7 @@ pub(super) fn star_closure<'a>(
     star_targets: &HashMap<&str, Vec<&'a str>>,
     mut seeds: Vec<&'a str>,
 ) -> HashSet<String> {
-    let mut reached = HashSet::new();
+    let mut reached = HashSet::default();
     while let Some(target) = seeds.pop() {
         if reached.insert(target.to_owned()) {
             seeds.extend(star_targets.get(target).into_iter().flatten().copied());

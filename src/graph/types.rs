@@ -1,6 +1,6 @@
 //! Project graph node and edge types.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::discovery::ProjectRoot;
 use crate::sources::{FileContext, FileKind};
@@ -102,9 +102,9 @@ impl ProjectGraph {
             files: Vec::new(),
             modules: Vec::new(),
             edges: Vec::new(),
-            path_to_file: HashMap::new(),
-            name_to_module: HashMap::new(),
-            name_to_distribution: HashMap::new(),
+            path_to_file: HashMap::default(),
+            name_to_module: HashMap::default(),
+            name_to_distribution: HashMap::default(),
         }
     }
 

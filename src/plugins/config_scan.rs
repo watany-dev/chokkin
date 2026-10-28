@@ -1,10 +1,10 @@
 //! Static config scanning for CLI / dev-tool usage (Phase 1.5 §4.A).
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use ruff_python_ast::Expr;
 use ruff_python_ast::visitor::{Visitor, walk_expr};
+use rustc_hash::FxHashSet as HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::manifest::literals::{parse_module, string_value};
@@ -94,7 +94,7 @@ pub(super) fn scan_input_paths(root: &Path) -> Vec<PathBuf> {
 pub(super) fn scan_config(ctx: &PluginContext<'_>) -> ConfigScanResult {
     let root = ctx.root.path.as_path();
     let mut result = ConfigScanResult::default();
-    let mut seen_binaries: HashSet<(String, String)> = HashSet::new();
+    let mut seen_binaries: HashSet<(String, String)> = HashSet::default();
     let pyproject = PyprojectDoc::load(root);
     let binary_map = build_binary_map(ctx.config, &VenvIndex::default());
     let known = |name: &str| {

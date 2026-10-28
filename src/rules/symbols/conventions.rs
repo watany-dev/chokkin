@@ -1,7 +1,8 @@
 //! Files and names that a tool reads by convention rather than by import (#655).
 
-use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::config::PluginId;
 use crate::entry::{EntryOrigin, EntryPlan};
@@ -246,8 +247,8 @@ pub(super) fn config_star_symbols(
     let entries = config_entry_files(plugins);
     let parts = config_part_files(plugins);
     let mut seeds = Vec::new();
-    let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut exports = HashMap::new();
+    let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::default();
+    let mut exports = HashMap::default();
     for module in modules {
         if entries.contains(module.path.as_str()) {
             seeds.extend(star_imports(module));

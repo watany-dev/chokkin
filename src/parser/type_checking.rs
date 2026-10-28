@@ -1,8 +1,7 @@
 //! `TYPE_CHECKING` block detection helpers.
 
-use std::collections::HashSet;
-
 use ruff_python_ast::Expr;
+use rustc_hash::FxHashSet as HashSet;
 
 /// Returns `true` when `expr` is `TYPE_CHECKING` (or `typing.TYPE_CHECKING`), aliases included.
 #[must_use]
@@ -31,7 +30,7 @@ mod tests {
     fn is_type_checking(source: &str, typing_aliases: &[&str]) -> bool {
         let parsed = ruff_python_parser::parse_expression(source).expect("parse");
         let typing_aliases = typing_aliases.iter().map(ToString::to_string).collect();
-        let type_checking_names = HashSet::from(["TYPE_CHECKING".to_owned()]);
+        let type_checking_names = HashSet::from_iter(["TYPE_CHECKING".to_owned()]);
         is_type_checking_test(parsed.expr(), &typing_aliases, &type_checking_names)
     }
 

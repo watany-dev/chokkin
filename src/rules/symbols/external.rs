@@ -1,8 +1,7 @@
 //! Mark symbols as externally used (decorators, entry points, plugins).
 
-use std::collections::{HashMap, HashSet};
-
 use indexmap::IndexSet;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::entry::EntryPlan;
 use crate::parser::{ImportRef, ParsedModule, SymbolKind};
@@ -296,7 +295,7 @@ fn is_registration_decorator(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use rustc_hash::FxHashMap as HashMap;
 
     use super::{decorator_target, is_registrar, is_registration_decorator, target_object};
     use crate::parser::{

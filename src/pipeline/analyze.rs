@@ -1,8 +1,10 @@
 //! Full project analysis orchestration (pipeline steps 1–13).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::ExitStatus;
 use crate::baseline::{BaselineReport, apply_baseline, write_baseline};

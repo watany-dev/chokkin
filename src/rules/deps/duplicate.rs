@@ -17,7 +17,9 @@
 //! installed on its own (`uv sync --only-group lint`) and generated extras
 //! mirror another package's, which static analysis cannot tell apart (#696).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
+
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::config::Confidence;
 use crate::manifest::{
@@ -147,7 +149,7 @@ impl<'a> Origins<'a> {
 /// `requirements-dev.txt` by `-r`) qualifies only when it is repeated in
 /// every context that reads it (#860).
 fn removable_among(declarations: &[&DeclaredDependency], repeated: &[bool]) -> Vec<bool> {
-    let mut every_read_repeated: HashMap<&DependencyOrigin, bool> = HashMap::new();
+    let mut every_read_repeated: HashMap<&DependencyOrigin, bool> = HashMap::default();
     for (dep, repeated) in declarations.iter().zip(repeated) {
         *every_read_repeated.entry(&dep.origin).or_insert(true) &= *repeated;
     }
@@ -190,7 +192,7 @@ fn marker<'k>(item: &'k Prepared<'_>) -> Option<&'k str> {
 /// read on its own) is one declaration, even when the include gives it
 /// another context; this also keeps a declaration from repeating itself.
 fn repeated_in_context(prepared: &[Prepared<'_>]) -> Vec<bool> {
-    let mut buckets: HashMap<ContextKey<'_>, Origins<'_>> = HashMap::new();
+    let mut buckets: HashMap<ContextKey<'_>, Origins<'_>> = HashMap::default();
     for item in prepared {
         buckets
             .entry(context_key(item))
@@ -217,9 +219,9 @@ fn covered_by_runtime(prepared: &[Prepared<'_>]) -> Vec<bool> {
     type SpecKey<'k> = (Option<&'k str>, &'k BTreeSet<&'k str>);
     let is_runtime = |item: &Prepared<'_>| item.dep.context == DependencyContext::Runtime;
 
-    let mut runtime_extras: HashMap<Option<&str>, BTreeSet<&str>> = HashMap::new();
-    let mut runtime_any: HashMap<Option<&str>, Origins<'_>> = HashMap::new();
-    let mut runtime_by_spec: HashMap<SpecKey<'_>, Origins<'_>> = HashMap::new();
+    let mut runtime_extras: HashMap<Option<&str>, BTreeSet<&str>> = HashMap::default();
+    let mut runtime_any: HashMap<Option<&str>, Origins<'_>> = HashMap::default();
+    let mut runtime_by_spec: HashMap<SpecKey<'_>, Origins<'_>> = HashMap::default();
     for item in prepared.iter().filter(|item| is_runtime(item)) {
         runtime_extras
             .entry(marker(item))
@@ -246,8 +248,8 @@ fn covered_by_runtime(prepared: &[Prepared<'_>]) -> Vec<bool> {
     };
     // Refinements whose extras the runtime declarations cover; a bare one
     // matches every runtime specifier.
-    let mut bare_refinements: HashMap<Option<&str>, Origins<'_>> = HashMap::new();
-    let mut refinements_by_spec: HashMap<SpecKey<'_>, Origins<'_>> = HashMap::new();
+    let mut bare_refinements: HashMap<Option<&str>, Origins<'_>> = HashMap::default();
+    let mut refinements_by_spec: HashMap<SpecKey<'_>, Origins<'_>> = HashMap::default();
     let mut covered = vec![false; prepared.len()];
     for (item, covered) in prepared.iter().zip(covered.iter_mut()) {
         if is_runtime(item) || !covered_extras(item) {

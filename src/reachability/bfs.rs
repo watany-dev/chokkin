@@ -1,8 +1,9 @@
 //! Breadth-first reachability traversal.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use indexmap::{IndexMap, IndexSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::config::ProjectMode;
 use crate::entry::EntryPlan;
@@ -391,7 +392,7 @@ pub(crate) fn module_and_parents(module: &str) -> impl Iterator<Item = &str> {
 }
 
 fn build_file_import_adjacency(graph: &ProjectGraph) -> HashMap<FileId, Vec<ImportSite>> {
-    let mut adjacency: HashMap<FileId, Vec<ImportSite>> = HashMap::new();
+    let mut adjacency: HashMap<FileId, Vec<ImportSite>> = HashMap::default();
     for edge in graph.edges() {
         if let GraphEdge::FileImportsModule { file, module, line } = edge {
             adjacency.entry(*file).or_default().push((*module, *line));
@@ -426,7 +427,7 @@ fn build_submodule_imports(
         }
         (!found.is_empty()).then_some((file_id, found))
     });
-    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::default();
     for (file_id, found) in per_module.into_iter().flatten() {
         sites.entry(file_id).or_default().extend(found);
     }
@@ -441,7 +442,7 @@ fn build_prefix_imports(
     parse: &ParseSummary,
     module_index: &ModuleIndex,
 ) -> HashMap<FileId, Vec<SubmoduleSite>> {
-    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::default();
     for module in &parse.modules {
         let Some(file_id) = graph.file_id(&module.path) else {
             continue;
@@ -468,7 +469,7 @@ fn build_prefix_imports(
 /// parse summary is what distinguishes them. A site that is also a static
 /// import on the same line stays static.
 fn build_dynamic_sites(graph: &ProjectGraph, parse: &ParseSummary) -> HashSet<ImportSiteRef> {
-    let mut sites = HashSet::new();
+    let mut sites = HashSet::default();
     for module in &parse.modules {
         let Some(file_id) = graph.file_id(&module.path) else {
             continue;
@@ -498,8 +499,8 @@ fn conditional_lines(
     graph: &ProjectGraph,
     parse: &ParseSummary,
 ) -> (HashSet<FileLine>, HashSet<FileLine>) {
-    let mut lazy = HashSet::new();
-    let mut optional = HashSet::new();
+    let mut lazy = HashSet::default();
+    let mut optional = HashSet::default();
     for module in &parse.modules {
         let Some(file_id) = graph.file_id(&module.path) else {
             continue;
@@ -1088,12 +1089,12 @@ mod tests {
         let module_index = ModuleIndex::build(&graph, &sources(&root));
         let entry = entry_plan();
         let adjacency = Adjacency {
-            file_imports: HashMap::new(),
-            submodule_imports: HashMap::new(),
-            prefix_imports: HashMap::new(),
-            dynamic_sites: HashSet::new(),
-            lazy: HashSet::new(),
-            optional: HashSet::new(),
+            file_imports: HashMap::default(),
+            submodule_imports: HashMap::default(),
+            prefix_imports: HashMap::default(),
+            dynamic_sites: HashSet::default(),
+            lazy: HashSet::default(),
+            optional: HashSet::default(),
         };
         let mut state = BfsState {
             graph: &graph,

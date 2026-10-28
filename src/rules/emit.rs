@@ -1,6 +1,8 @@
 //! Issue emission orchestration (pipeline step 12).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
+
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::ExitStatus;
 use crate::config::{ChokkinConfig, RuntimeOverrides};

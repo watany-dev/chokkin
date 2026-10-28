@@ -1,7 +1,9 @@
 //! CHK003 missing and CHK004 transitive dependency detection.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::ptr;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::ModuleOrigin;
@@ -50,7 +52,7 @@ pub(super) fn detect_missing_dependencies(
     } = *context;
     let optional_imports = collect_optional_imports(context.parse);
     let mut candidates = Vec::new();
-    let mut reported = HashSet::new();
+    let mut reported = HashSet::default();
     let mut closures = LockClosures::default();
 
     for import in &resolution.imports {
@@ -463,7 +465,7 @@ fn lock_closure<'g>(
     lock: &'g LockfileGraph,
     except: Option<&str>,
 ) -> HashSet<&'g str> {
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     let mut queue = VecDeque::new();
     for dep in declared.values().flatten() {
         let name = dep.name.as_str();
@@ -502,7 +504,7 @@ fn is_optional(optional_imports: &HashSet<(String, u32)>, import: &ResolvedImpor
 
 /// Build a set of conditional import locations from parse output.
 pub(super) fn collect_optional_imports(parse: &ParseSummary) -> HashSet<(String, u32)> {
-    let mut optional = HashSet::new();
+    let mut optional = HashSet::default();
     for module in &parse.modules {
         let flags = module
             .imports
@@ -657,7 +659,7 @@ mod tests {
                 build_scripts: &BTreeMap::new(),
                 local: &crate::sources::LocalTrees::default(),
             },
-            &HashSet::from([FILE]),
+            &HashSet::from_iter([FILE]),
             has_lockfile,
             workspace_declared,
         )
@@ -1124,7 +1126,7 @@ mod tests {
         };
         assert_eq!(
             collect_optional_imports(&parse),
-            HashSet::from([2, 3, 4, 6, 7].map(|line| (FILE.to_owned(), line)))
+            HashSet::from_iter([2, 3, 4, 6, 7].map(|line| (FILE.to_owned(), line)))
         );
     }
 
@@ -1353,7 +1355,7 @@ mod tests {
             build_scripts: &BTreeMap::new(),
             local: &crate::sources::LocalTrees::default(),
         };
-        let reachable = HashSet::from([FILE]);
+        let reachable = HashSet::from_iter([FILE]);
         let mut found = detect_missing_dependencies(
             &root_index,
             &dependency,
@@ -1366,7 +1368,7 @@ mod tests {
             &dependency,
             &reachable,
             &workspace,
-            &HashSet::new(),
+            &HashSet::default(),
         ));
         found.iter().map(formal_verdict).collect()
     }

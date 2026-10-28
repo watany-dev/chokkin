@@ -1,6 +1,8 @@
 //! CHK008 unlisted binary dependency detection.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
+
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::config::Confidence;
 use crate::manifest::{LoadedManifest, normalize_distribution_name};
@@ -140,7 +142,7 @@ pub(super) fn detect_unlisted_binaries(
     plugins: &PluginHints,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
-    let mut reported = HashSet::new();
+    let mut reported = HashSet::default();
 
     for usage in plugins.all_binary_usages() {
         if usage.inferred {

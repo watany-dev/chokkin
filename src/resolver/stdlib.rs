@@ -1,7 +1,8 @@
 //! Versioned Python standard library module sets.
 
-use std::collections::HashMap;
 use std::sync::OnceLock;
+
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::config::TargetVersion;
 use crate::manifest::{

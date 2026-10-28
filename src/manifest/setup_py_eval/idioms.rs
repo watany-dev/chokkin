@@ -6,7 +6,7 @@
 //! [`Value::Unknown`]. Add one only for a project that needs it, with tests
 //! in this file.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use super::Value;
 use crate::manifest::pep508_util::normalize_distribution_name;

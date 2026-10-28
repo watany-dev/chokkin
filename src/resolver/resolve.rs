@@ -1,7 +1,9 @@
 //! Import resolution orchestration.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::graph::ModuleOrigin;

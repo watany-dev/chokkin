@@ -28,7 +28,7 @@ pub fn trace_to_file(report: &ReachabilityReport, target: FileId) -> Option<Trac
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use rustc_hash::FxHashMap as HashMap;
 
     use indexmap::IndexSet;
 
@@ -51,7 +51,7 @@ mod tests {
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
             predecessors: indexmap::IndexMap::new(),
-            plugin_ref_files: HashMap::new(),
+            plugin_ref_files: HashMap::default(),
         };
         assert!(trace_to_file(&report, file_id).is_none());
     }
@@ -118,7 +118,7 @@ mod tests {
             used_modules: Vec::new(),
             framework_used: IndexSet::new(),
             predecessors,
-            plugin_ref_files: HashMap::new(),
+            plugin_ref_files: HashMap::default(),
         };
 
         let trace = trace_to_file(&report, child).expect("trace");
