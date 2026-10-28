@@ -11083,3 +11083,220 @@ fn binary_missing_workflow_requirements_file_is_not_a_gap() {
     assert_eq!(mypy["confidence"], "certain", "{mypy}");
     assert!(!stderr.contains("could not be read"), "{stderr}");
 }
+
+const APP_PYPROJECT: &str = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.pytest.ini_options]\naddopts = \"-q\"\n";
+
+fn issue<'a>(issues: &'a [serde_json::Value], code: &str, target: &str) -> &'a serde_json::Value {
+    let found = issues
+        .iter()
+        .find(|issue| issue["code"] == code && issue["target"] == target);
+    assert!(found.is_some(), "{code} {target} in {issues:#?}");
+    found.expect("asserted above")
+}
+
+/// mypy's `@action(parser)` hands the function to the parser the factory
+/// was given, `subparser.set_defaults(action=func)`: the decorator
+/// registers what it decorates, so it is used (#1274).
+#[test]
+fn binary_decorator_factory_handing_the_function_over_registers_it() {
+    let project = write_project(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("acme/__init__.py", ""),
+        ("acme/__main__.py", "from acme import cli\n\ncli.main()\n"),
+        (
+            "acme/cli.py",
+            "def action(subparser):\n    def register(func):\n        subparser.set_defaults(action=func)\n        return func\n    return register\n\n\
+             PARSER = object()\n\n\
+             @action(PARSER)\ndef do_check():\n    pass\n\n\
+             def main():\n    print(PARSER)\n\n\
+             def unused_helper():\n    pass\n",
+        ),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    let keys = issue_keys(&issues);
+    assert!(
+        !keys.contains(&("CHK006".to_owned(), "acme/cli.py:do_check".to_owned())),
+        "{keys:?}"
+    );
+    assert!(
+        keys.contains(&("CHK006".to_owned(), "acme/cli.py:unused_helper".to_owned())),
+        "{keys:?}"
+    );
+}
+
+/// ansible's `Group.__new__` picks a subclass by its `platform` through
+/// `get_platform_subclass(Group)`, which passes the class on to a function
+/// that walks `__subclasses__()`: the subclasses may be picked, so their
+/// unused-symbol findings are info notes, and a warning names the base
+/// (#1274). A class outside the hierarchy keeps its finding.
+#[test]
+fn binary_enumerated_subclasses_are_info_notes() {
+    let project = write_project(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("acme/__init__.py", ""),
+        (
+            "acme/__main__.py",
+            "from acme.group import Group\n\nGroup()\n",
+        ),
+        (
+            "acme/platforms.py",
+            "def all_subclasses(cls):\n    queue = [cls]\n    found = []\n    while queue:\n        parent = queue.pop()\n        for child in parent.__subclasses__():\n            queue.append(child)\n            found.append(child)\n    return found\n\n\
+             def get_platform_subclass(cls):\n    return all_subclasses(cls)[0]\n",
+        ),
+        (
+            "acme/group.py",
+            "from acme.platforms import get_platform_subclass\n\n\
+             class Group:\n    def __new__(cls):\n        return super().__new__(get_platform_subclass(Group))\n\n\
+             class Linux(Group):\n    platform = \"Linux\"\n\n\
+             class Alpine(Linux):\n    platform = \"Linux\"\n\n\
+             class Aix(Group):\n    platform = \"AIX\"\n\n\
+             class Unrelated:\n    pass\n",
+        ),
+    ]);
+    let (issues, stderr) = json_issues_and_stderr(project.path());
+    // `Linux` is read in its own module, as `Alpine`'s base.
+    for class in ["Alpine", "Aix"] {
+        let found = issue(&issues, "CHK006", &format!("acme/group.py:{class}"));
+        assert_eq!(found["severity"], "info", "{found}");
+        assert_eq!(found["confidence"], "likely", "{found}");
+    }
+    let unrelated = issue(&issues, "CHK006", "acme/group.py:Unrelated");
+    assert_eq!(unrelated["severity"], "warning", "{unrelated}");
+    assert!(
+        stderr.contains("enumerates or registers the subclasses of `Group`"),
+        "{stderr}"
+    );
+}
+
+/// A class that defines `__init_subclass__` registers its subclasses
+/// (#1274).
+#[test]
+fn binary_init_subclass_registers_subclasses() {
+    let project = write_project(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("acme/__init__.py", ""),
+        (
+            "acme/__main__.py",
+            "from acme import plugins\n\nplugins.run()\n",
+        ),
+        (
+            "acme/plugins.py",
+            "REGISTRY = {}\n\n\
+             class Plugin:\n    def __init_subclass__(cls, **kwargs):\n        REGISTRY[cls.__name__] = cls\n\n\
+             class Csv(Plugin):\n    pass\n\n\
+             def run():\n    return REGISTRY\n",
+        ),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    let csv = issue(&issues, "CHK006", "acme/plugins.py:Csv");
+    assert_eq!(csv["severity"], "info", "{csv}");
+}
+
+/// ansible reads `_ts.ClassVar` through `_ts = sys.modules[__name__]`: a
+/// module that reads its own names by a computed name may read any of
+/// them, so its unused-symbol findings are info notes (#1274).
+#[test]
+fn binary_module_self_reference_lowers_its_symbols() {
+    let project = write_project(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("acme/__init__.py", ""),
+        (
+            "acme/__main__.py",
+            "from acme import patch, other\n\npatch.apply()\nother.run()\n",
+        ),
+        (
+            "acme/patch.py",
+            "import sys\n\n_ts = sys.modules[__name__]\nClassVar = object()\n\n\
+             def apply():\n    return getattr(_ts, \"ClassVar\")\n",
+        ),
+        (
+            "acme/other.py",
+            "Unused = object()\n\ndef run():\n    pass\n",
+        ),
+    ]);
+    let (issues, stderr) = json_issues_and_stderr(project.path());
+    let class_var = issue(&issues, "CHK006", "acme/patch.py:ClassVar");
+    assert_eq!(class_var["severity"], "info", "{class_var}");
+    let unused = issue(&issues, "CHK006", "acme/other.py:Unused");
+    assert_eq!(unused["severity"], "warning", "{unused}");
+    assert!(stderr.contains("reads the module's own names"), "{stderr}");
+}
+
+/// mypyc's tests copy `test-data/driver/driver.py` by a path they join
+/// from literals: the file is used, though nothing imports it (#1274). A
+/// file no path names stays unused.
+#[test]
+fn binary_file_named_by_a_path_literal_is_used() {
+    let project = write_project(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("acme/__init__.py", ""),
+        ("acme/__main__.py", "import acme\n"),
+        (
+            "tests/test_run.py",
+            "import os\nimport shutil\n\n\
+             DRIVER = os.path.join(os.path.dirname(__file__), \"support\", \"driver\", \"driver.py\")\n\n\
+             def test_run(tmp_path):\n    shutil.copyfile(DRIVER, tmp_path / \"driver.py\")\n",
+        ),
+        ("tests/support/driver/driver.py", "import native\n"),
+        ("tests/support/other/other.py", ""),
+        (
+            "acme/orphan.py",
+            "import runpy\n\nrunpy.run_path(\"support/other/other.py\")\n",
+        ),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    let keys = issue_keys(&issues);
+    assert!(
+        !keys.contains(&(
+            "CHK001".to_owned(),
+            "tests/support/driver/driver.py".to_owned()
+        )),
+        "{keys:?}"
+    );
+    assert!(
+        !keys.iter().any(|(_, target)| target.ends_with(":native")),
+        "the copied file's imports are not followed: {keys:?}"
+    );
+    assert!(
+        keys.contains(&(
+            "CHK001".to_owned(),
+            "tests/support/other/other.py".to_owned()
+        )),
+        "an unreachable module's path names no used file: {keys:?}"
+    );
+}
+
+/// sphinx's test roots each run `sys.path.insert(0, str(Path.cwd()))` from
+/// their `conf.py`, and a test imports the module beside it by its bare
+/// name: that unresolved import is an info note, and a warning names it
+/// (#1274). An import no project file matches stays a warning.
+#[test]
+fn binary_computed_sys_path_entry_lowers_imports_of_project_modules() {
+    let project = write_project(&[
+        ("pyproject.toml", APP_PYPROJECT),
+        ("acme/__init__.py", ""),
+        ("acme/__main__.py", "import acme\n"),
+        (
+            "tests/roots/test-ext/conf.py",
+            "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path.cwd()))\n",
+        ),
+        ("tests/roots/test-ext/dummy_module.py", ""),
+        ("tests/other/elsewhere.py", ""),
+        (
+            "tests/test_ext.py",
+            "def test_ext():\n    import dummy_module\n    import not_a_project_module\n    import elsewhere\n",
+        ),
+    ]);
+    let (issues, stderr) = json_issues_and_stderr(project.path());
+    let dummy = issue(&issues, "CHK010", "tests/test_ext.py:dummy_module");
+    assert_eq!(dummy["severity"], "info", "{dummy}");
+    assert_eq!(dummy["confidence"], "likely", "{dummy}");
+    let missing = issue(&issues, "CHK010", "tests/test_ext.py:not_a_project_module");
+    assert_eq!(missing["severity"], "warning", "{missing}");
+    let elsewhere = issue(&issues, "CHK010", "tests/test_ext.py:elsewhere");
+    assert_eq!(
+        elsewhere["severity"], "warning",
+        "no computed entry beside it: {elsewhere}"
+    );
+    assert!(stderr.contains("computed `sys.path` entry"), "{stderr}");
+}

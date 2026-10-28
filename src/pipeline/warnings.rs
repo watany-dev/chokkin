@@ -134,6 +134,22 @@ pub enum ProbeWarning {
         /// How many other distributions are named so.
         more: usize,
     },
+    /// Names may be picked or files imported at runtime in a way the graph
+    /// does not follow, so the findings they may hide are info notes
+    /// (#1274). One per run and kind, at the first site.
+    RuntimeName {
+        /// What picks them.
+        kind: RuntimeNameKind,
+        /// Root-relative path of the first site.
+        path: String,
+        /// Its line, when known.
+        line: Option<u32>,
+        /// The class, or the import, it names; empty for a module's own
+        /// namespace.
+        name: String,
+        /// How many other sites of the kind there are.
+        more: usize,
+    },
     /// The baseline's `schema_version` is none this chokkin reads; its
     /// fingerprints were applied anyway (#1131).
     BaselineSchemaUnknown {
@@ -142,6 +158,17 @@ pub enum ProbeWarning {
         /// The `schema_version` as written.
         version: String,
     },
+}
+
+/// What [`ProbeWarning::RuntimeName`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuntimeNameKind {
+    /// A class's subclasses are enumerated or registered.
+    SubclassRegistry,
+    /// A module reads its own namespace by a computed name.
+    ModuleSelfReference,
+    /// An unresolved import may come from a computed `sys.path` entry.
+    ComputedSysPathImport,
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -189,6 +216,7 @@ impl ProbeWarning {
             Self::Entry(warning) => discriminant(warning).hash(&mut hasher),
             Self::Resolve(warning) => discriminant(warning).hash(&mut hasher),
             Self::SkippedSource { reason, .. } => discriminant(reason).hash(&mut hasher),
+            Self::RuntimeName { kind, .. } => kind.hash(&mut hasher),
             Self::ParseDiagnostic { message, .. } => message.hash(&mut hasher),
             Self::AutoWorkspace { .. }
             | Self::NestedProjectsSkipped { .. }
@@ -258,7 +286,8 @@ impl ProbeWarning {
             },
             Self::ArchiveRequirement { path, line, .. }
             | Self::UnreadRequirementsFile { path, line, .. }
-            | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
+            | Self::UnreadCommandTarget { path, line, .. }
+            | Self::RuntimeName { path, line, .. } => (Some(path), *line),
             Self::StringModuleRef { path, line, .. }
             | Self::StringDistributionRef { path, line, .. } => (Some(path), Some(*line)),
             Self::ParseDiagnostic { path, line, .. } => (
@@ -433,10 +462,63 @@ impl fmt::Display for ProbeWarning {
                 distribution,
                 more,
             } => write_string_distribution_ref(formatter, (path, *line), module, distribution, *more),
+            Self::RuntimeName {
+                kind,
+                path,
+                line,
+                name,
+                more,
+            } => write_runtime_name(formatter, *kind, (path, *line), name, *more),
             Self::BaselineSchemaUnknown { path, version } => {
                 write_baseline_schema_unknown(formatter, path, version)
             },
         }
+    }
+}
+
+fn write_runtime_name(
+    formatter: &mut fmt::Formatter<'_>,
+    kind: RuntimeNameKind,
+    (path, line): (&str, Option<u32>),
+    name: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, line);
+    let plural =
+        |noun: &str, nouns: &str| format!("{more} more {}", if more == 1 { noun } else { nouns });
+    match kind {
+        RuntimeNameKind::SubclassRegistry => {
+            write!(
+                formatter,
+                "parse: `{site}` enumerates or registers the subclasses of `{name}`"
+            )?;
+            if more > 0 {
+                write!(formatter, " (and {})", plural("class", "classes"))?;
+            }
+            formatter.write_str(
+                ", which may be picked at runtime; their unused-symbol findings are info notes",
+            )
+        },
+        RuntimeNameKind::ModuleSelfReference => {
+            write!(
+                formatter,
+                "parse: `{site}` reads the module's own names by a computed name"
+            )?;
+            if more > 0 {
+                write!(formatter, " (and {})", plural("module", "modules"))?;
+            }
+            formatter.write_str("; their unused-symbol findings are info notes")
+        },
+        RuntimeNameKind::ComputedSysPathImport => {
+            write!(
+                formatter,
+                "parse: `{site}` imports `{name}`, which a computed `sys.path` entry may make importable from the project"
+            )?;
+            if more > 0 {
+                write!(formatter, " (and {})", plural("import", "imports"))?;
+            }
+            formatter.write_str("; those unresolved imports are info notes")
+        },
     }
 }
 
@@ -816,7 +898,7 @@ mod tests {
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
-    use super::{ProbeWarning, SkipReason, write_probe_warnings};
+    use super::{ProbeWarning, RuntimeNameKind, SkipReason, write_probe_warnings};
 
     fn located(warning: &ProbeWarning) -> (Option<String>, Option<u32>) {
         let diagnostic = warning.diagnostic();
@@ -844,6 +926,35 @@ mod tests {
         );
         assert!(warning(1).contains("read (and 1 more requirements file);"));
         assert!(warning(2).contains("read (and 2 more requirements files);"));
+    }
+
+    /// A runtime-name warning names the first site and counts the rest, in
+    /// the singular for one (#1274).
+    #[test]
+    fn runtime_name_warning_counts_the_other_sites() {
+        let warning = |kind, more| {
+            ProbeWarning::RuntimeName {
+                kind,
+                path: "acme/group.py".to_owned(),
+                line: Some(4),
+                name: "Group".to_owned(),
+                more,
+            }
+            .to_string()
+        };
+        for (kind, noun, nouns) in [
+            (RuntimeNameKind::SubclassRegistry, "class", "classes"),
+            (RuntimeNameKind::ModuleSelfReference, "module", "modules"),
+            (RuntimeNameKind::ComputedSysPathImport, "import", "imports"),
+        ] {
+            assert!(!warning(kind, 0).contains("(and"), "{}", warning(kind, 0));
+            assert!(warning(kind, 1).contains(&format!("(and 1 more {noun})")));
+            assert!(warning(kind, 2).contains(&format!("(and 2 more {nouns})")));
+        }
+        assert_eq!(
+            warning(RuntimeNameKind::SubclassRegistry, 0),
+            "parse: `acme/group.py:4` enumerates or registers the subclasses of `Group`, which may be picked at runtime; their unused-symbol findings are info notes"
+        );
     }
 
     /// One opaque-import warning names the first module and counts the rest (#909).

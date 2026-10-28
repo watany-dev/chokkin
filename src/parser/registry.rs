@@ -17,9 +17,21 @@
 //!     return wrap
 //! ```
 //!
+//! A factory's inner function may also hand its target to what the factory
+//! was given (#1274): mypy's `@action(parser)` registers the subcommand
+//! handler through the parser it closes over.
+//!
+//! ```python
+//! def action(subparser):
+//!     def register(func):
+//!         subparser.set_defaults(action=func)
+//!         return func
+//!     return register
+//! ```
+//!
 //! A body in any other shape (wrapping the target, registering it through a
-//! helper call, returning something else) is not a registry decorator, so the
-//! symbols it decorates stay reported as before.
+//! helper call of its own, returning something else) is not a registry
+//! decorator, so the symbols it decorates stay reported as before.
 
 use ruff_python_ast::{Expr, Parameters, Stmt, StmtFunctionDef};
 
@@ -43,21 +55,38 @@ pub(super) fn registry_decorators(stmts: &[Stmt]) -> Vec<String> {
 
 /// `def f(target): <store target>; return target`.
 fn registers(function: &StmtFunctionDef) -> bool {
+    registers_with(function, &[])
+}
+
+/// [`registers`], where a method call on one of `given` (the positional
+/// parameters of the factory that defines `function`) also stores the
+/// target.
+fn registers_with(function: &StmtFunctionDef, given: &[&str]) -> bool {
     let Some(target) = first_positional(&function.parameters) else {
         return false;
     };
-    returns_name(&function.body, target) && stores(&function.body, target)
+    returns_name(&function.body, target) && stores(&function.body, target, given)
 }
 
 /// `def factory(...): def inner(target): ...; return inner`, where `inner`
-/// registers its target.
+/// registers its target, or hands it to an object the factory was given.
 fn returns_registrar(function: &StmtFunctionDef) -> bool {
+    let given = parameter_names(&function.parameters);
     function.body.iter().any(|stmt| match stmt {
         Stmt::FunctionDef(inner) => {
-            returns_name(&function.body, inner.name.as_str()) && registers(inner)
+            returns_name(&function.body, inner.name.as_str()) && registers_with(inner, &given)
         },
         _ => false,
     })
+}
+
+fn parameter_names(parameters: &Parameters) -> Vec<&str> {
+    parameters
+        .posonlyargs
+        .iter()
+        .chain(&parameters.args)
+        .map(|parameter| parameter.parameter.name.as_str())
+        .collect()
 }
 
 fn first_positional(parameters: &Parameters) -> Option<&str> {
@@ -78,9 +107,9 @@ fn returns_name(body: &[Stmt], name: &str) -> bool {
 }
 
 /// A statement of `body`, outside nested functions and classes, puts
-/// `target` (or an instance of it) in a container: a subscript assignment or
-/// a storing method call.
-fn stores(body: &[Stmt], target: &str) -> bool {
+/// `target` (or an instance of it) in a container: a subscript assignment, a
+/// storing method call, or a method call on one of `given`.
+fn stores(body: &[Stmt], target: &str, given: &[&str]) -> bool {
     body.iter().any(|stmt| match stmt {
         Stmt::Assign(assign) => {
             holds(&assign.value, target)
@@ -89,18 +118,20 @@ fn stores(body: &[Stmt], target: &str) -> bool {
                     .iter()
                     .any(|lhs| matches!(lhs, Expr::Subscript(_)))
         },
-        Stmt::Expr(expr) => stores_by_call(&expr.value, target),
-        Stmt::For(stmt) => stores(&stmt.body, target),
-        Stmt::While(stmt) => stores(&stmt.body, target),
+        Stmt::Expr(expr) => {
+            stores_by_call(&expr.value, target) || hands_over(&expr.value, target, given)
+        },
+        Stmt::For(stmt) => stores(&stmt.body, target, given),
+        Stmt::While(stmt) => stores(&stmt.body, target, given),
         Stmt::If(stmt) => {
-            stores(&stmt.body, target)
+            stores(&stmt.body, target, given)
                 || stmt
                     .elif_else_clauses
                     .iter()
-                    .any(|clause| stores(&clause.body, target))
+                    .any(|clause| stores(&clause.body, target, given))
         },
-        Stmt::With(stmt) => stores(&stmt.body, target),
-        Stmt::Try(stmt) => stores(&stmt.body, target) || stores(&stmt.orelse, target),
+        Stmt::With(stmt) => stores(&stmt.body, target, given),
+        Stmt::Try(stmt) => stores(&stmt.body, target, given) || stores(&stmt.orelse, target, given),
         _ => false,
     })
 }
@@ -116,6 +147,28 @@ fn stores_by_call(expr: &Expr, target: &str) -> bool {
     };
     STORING_METHODS.contains(&method.attr.as_str())
         && !rooted_at(&method.value, target)
+        && call
+            .arguments
+            .args
+            .iter()
+            .chain(call.arguments.keywords.iter().map(|keyword| &keyword.value))
+            .any(|arg| holds(arg, target))
+}
+
+/// `subparser.set_defaults(action=target)`, where `subparser` is one of
+/// `given`: the factory hands the target to an object its caller passed it
+/// (#1274). Calling the parameter itself (`callback(target)`) runs the
+/// function rather than keeping it.
+fn hands_over(expr: &Expr, target: &str, given: &[&str]) -> bool {
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    let Expr::Attribute(method) = &*call.func else {
+        return false;
+    };
+    given
+        .iter()
+        .any(|name| *name != target && rooted_at(&method.value, name))
         && call
             .arguments
             .args
@@ -207,6 +260,12 @@ def tried_else(cls):
     else:
         BY_NAME[name] = cls
     return cls
+
+def action(subparser):
+    def register(func):
+        subparser.set_defaults(action=func)
+        return func
+    return register
 "#;
         assert_eq!(
             found(source),
@@ -220,6 +279,7 @@ def tried_else(cls):
                 "locked",
                 "tried",
                 "tried_else",
+                "action",
             ]
         );
     }
@@ -276,6 +336,36 @@ def nested_store(cls):
 def no_params():
     REGISTRY.append(1)
     return REGISTRY
+
+def logged_factory(level):
+    def wrap(fn):
+        logger.log(level, fn)
+        return fn
+    return wrap
+
+def passes_to_own(name):
+    def wrap(fn):
+        fn.configure(name)
+        return fn
+    return wrap
+
+def calls_given(callback):
+    def wrap(fn):
+        callback(fn)
+        return fn
+    return wrap
+
+def keyword_only(*, registry):
+    def wrap(fn):
+        registry.set_defaults(action=fn)
+        return fn
+    return wrap
+
+def shadowed(fn):
+    def wrap(fn):
+        fn.setup(1)
+        return fn
+    return wrap
 
 class Registry:
     def register(self, cls):

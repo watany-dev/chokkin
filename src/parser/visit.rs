@@ -7,13 +7,17 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
-    Identifier, Operator, Parameters, Stmt, StmtIf, StmtImport, StmtImportFrom, StmtMatch, StmtTry,
+    Identifier, Operator, Parameters, Stmt, StmtClassDef, StmtIf, StmtImport, StmtImportFrom,
+    StmtMatch, StmtTry,
 };
 use ruff_text_size::{Ranged, TextSize};
 
 use crate::sources::{FileContext, LayoutInfo};
 
 use super::attributes::write_receiver;
+use super::by_name::{
+    adds_computed_path, callee_name, gets_own_name, path_refs, reads_own_namespace,
+};
 use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
@@ -167,6 +171,19 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// trees that do not outlive the walk: receiver, name and the offset of
     /// the outermost string (#1144).
     string_attribute_sites: Vec<StringAttributeSite>,
+    /// The enclosing functions, innermost last: name and parameters (#1274).
+    function_frames: Vec<(&'ast str, &'ast Parameters)>,
+    /// The module-level classes, which a call may hand to a function that
+    /// enumerates their subclasses (#1274).
+    module_classes: FxHashSet<&'ast str>,
+    /// The enclosing classes, each with the number of function frames open
+    /// when it began, so a method's `cls` names its class.
+    class_frames: Vec<(&'ast str, usize)>,
+    /// [`SubclassFacts`]' forwards and passed classes (with the first line)
+    /// while walking: most calls repeat a pair, which is kept once before
+    /// it is copied out (#1274).
+    forwards: FxHashSet<(&'ast str, &'ast str)>,
+    passed: FxHashMap<(&'ast str, &'ast str), u32>,
     parsed: ParsedModule,
 }
 
@@ -220,6 +237,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             attribute_sites: Vec::new(),
             literal_getattr_sites: Vec::new(),
             string_attribute_sites: Vec::new(),
+            function_frames: Vec::new(),
+            module_classes: FxHashSet::default(),
+            class_frames: Vec::new(),
+            forwards: FxHashSet::default(),
+            passed: FxHashMap::default(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -261,6 +283,25 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         for symbol in &mut self.parsed.symbols {
             symbol.used_in_module = self.loaded_names.contains(&symbol.name);
         }
+        let facts = &mut self.parsed.subclass_facts;
+        facts.bases.sort_unstable();
+        facts.bases.dedup_by(|later, kept| later.0 == kept.0);
+        facts.enumerators.sort_unstable();
+        facts.enumerators.dedup();
+        facts.forwards = self
+            .forwards
+            .iter()
+            .map(|&(function, callee)| (function.to_owned(), callee.to_owned()))
+            .collect();
+        facts.forwards.sort_unstable();
+        facts.passed = self
+            .passed
+            .iter()
+            .map(|(&(callee, name), &line)| (callee.to_owned(), name.to_owned(), line))
+            .collect();
+        facts.passed.sort_unstable();
+        self.parsed.path_refs.sort_unstable();
+        self.parsed.path_refs.dedup();
         self.parsed
     }
 
@@ -321,6 +362,13 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.mentions = SourceMentions::scan(source);
         self.parsed.exports = extract_exports(stmts, self.lines, &mut self.parsed.diagnostics);
         self.parsed.registry_decorators = registry_decorators(stmts);
+        self.module_classes = stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
+                Stmt::ClassDef(class) => Some(class.name.as_str()),
+                _ => None,
+            })
+            .collect();
         self.parsed.import_checks = import_checks(stmts);
         self.async_library_names = self.scope_async_library_names(None, stmts);
         // Without a plain `sys.platform`-style mention, only an aliased
@@ -1020,6 +1068,123 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.lines.line(node.start())
     }
 
+    /// The first read of the module's own namespace by a computed name.
+    fn record_self_reference<R: Ranged>(&mut self, node: &R) {
+        if self.parsed.self_reference.is_none() {
+            self.parsed.self_reference = Some(self.line_number(node));
+        }
+    }
+
+    /// A module-level class's bases, and whether it registers its
+    /// subclasses with `__init_subclass__` (#1274).
+    fn record_class_facts(&mut self, class: &'ast StmtClassDef) {
+        if !self.module_level {
+            return;
+        }
+        self.module_classes.insert(class.name.as_str());
+        let name = class.name.to_string();
+        // `Plugin[Row]` subclasses `Plugin`.
+        let bases: Vec<String> = class
+            .bases()
+            .iter()
+            .map(|base| match base {
+                Expr::Subscript(subscript) => &*subscript.value,
+                other => other,
+            })
+            .filter_map(|base| callee_name(base).map(str::to_owned))
+            .collect();
+        let facts = &mut self.parsed.subclass_facts;
+        if !bases.is_empty() {
+            facts.classes.push((name.clone(), bases));
+        }
+        let registers = class.body.iter().any(
+            |stmt| matches!(stmt, Stmt::FunctionDef(def) if def.name.as_str() == "__init_subclass__"),
+        );
+        if registers {
+            let line = self.line_number(&class.name);
+            self.parsed.subclass_facts.bases.push((name, line));
+        }
+    }
+
+    /// The class a `__subclasses__()` receiver names: the enclosing class for
+    /// the first parameter of one of its methods (`cls`, `self`), the name
+    /// itself otherwise.
+    fn receiver_class(&self, receiver: &str) -> String {
+        let method_of = self.class_frames.last().filter(|(_, depth)| {
+            *depth + 1 == self.function_frames.len()
+                && self.function_frames.last().is_some_and(|(_, parameters)| {
+                    positional_names(parameters).next() == Some(receiver)
+                })
+        });
+        method_of.map_or(receiver, |(class, _)| class).to_owned()
+    }
+
+    /// What a call tells about names and files used without an import
+    /// (#1274): `__subclasses__()` and what is handed to the functions that
+    /// call it, a `.py` path given to a file call, a computed read of the
+    /// module's own names, and a `sys.path` edit. Not inlined, so that
+    /// `visit_expr`'s frame, paid once per nesting level, does not grow
+    /// (#1173).
+    #[inline(never)]
+    fn record_by_name(&mut self, call: &'ast ExprCall) {
+        let Some(callee) = callee_name(&call.func) else {
+            return;
+        };
+        // Dispatch on the callee's last name first: the checks below run
+        // for every call of the project.
+        match callee {
+            "get" if gets_own_name(call) => self.record_self_reference(call),
+            "insert" | "append" | "extend" | "addsitedir" | "syspath_prepend"
+                if edits_sys_path(&call.func) =>
+            {
+                self.sys_path.edited = true;
+                self.parsed.adds_computed_sys_path |= adds_computed_path(call);
+            },
+            _ => {},
+        }
+        self.parsed.path_refs.extend(path_refs(call));
+        if callee == "__subclasses__"
+            && let Expr::Attribute(attribute) = &*call.func
+        {
+            if let Some((function, _)) = self.function_frames.last() {
+                let function = (*function).to_owned();
+                self.parsed.subclass_facts.enumerators.push(function);
+            }
+            if let Expr::Name(base) = &*attribute.value {
+                let base = self.receiver_class(base.id.as_str());
+                let line = self.line_number(call);
+                self.parsed.subclass_facts.bases.push((base, line));
+            }
+            return;
+        }
+        let frame = self.function_frames.last();
+        if self.module_classes.is_empty() && frame.is_none() {
+            return;
+        }
+        for arg in &call.arguments.args {
+            let Expr::Name(name) = arg else {
+                continue;
+            };
+            let name = name.id.as_str();
+            if self.module_classes.contains(name) {
+                let line = self.lines.line(call.start());
+                let first = self.passed.entry((callee, name)).or_insert(line);
+                *first = (*first).min(line);
+            }
+            // A method of a parameter (`self.layer(x)`) is no module-level
+            // function, so it is not followed; skipping it keeps the facts of
+            // a model zoo small.
+            if let Some((function, parameters)) = frame
+                && positional_names(parameters).any(|parameter| parameter == name)
+                && !receiver_root(&call.func).is_some_and(|root| {
+                    positional_names(parameters).any(|parameter| parameter == root)
+                })
+            {
+                self.forwards.insert((function, callee));
+            }
+        }
+    }
+
     /// Kept out of `visit_stmt` so its frame, paid once per nesting level,
     /// does not grow (#1173).
     fn visit_match(&mut self, match_stmt: &'ast StmtMatch) {
@@ -1097,12 +1262,15 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let modules = self.scope_platform_modules(Some(&def.parameters), &def.body);
                 let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 let outer_flags = self.enter_scope_names(Some(&def.parameters), &def.body);
+                self.function_frames
+                    .push((def.name.as_str(), &def.parameters));
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
                     &def.body,
                     SymbolKind::Function,
                 );
+                self.function_frames.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
                 self.platform_modules = outer_modules;
@@ -1119,8 +1287,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let outer_names = std::mem::replace(&mut self.async_library_names, names);
                 let modules = self.scope_platform_modules(None, &def.body);
                 let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
+                self.record_class_facts(def);
                 let outer_flags = self.enter_scope_names(None, &def.body);
+                self.class_frames
+                    .push((def.name.as_str(), self.function_frames.len()));
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
+                self.class_frames.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
                 self.platform_modules = outer_modules;
@@ -1338,11 +1510,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
         match expr {
             Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
             Expr::Attribute(attribute) => self.record_attribute(attribute),
+            Expr::Subscript(subscript) if reads_own_namespace(subscript) => {
+                self.record_self_reference(subscript);
+            },
             Expr::Call(call) => {
                 self.visit_type_expression_arguments(call);
                 self.record_computed_getattr(call);
                 self.record_literal_getattr(call);
-                self.sys_path.edited |= edits_sys_path(&call.func);
+                self.record_by_name(call);
                 self.parsed.lists_directory |= lists_directory(&call.func);
                 if let Some((label, app, app_dir)) = self.server_names.app(call) {
                     let line = self.line_number(call);
@@ -1405,6 +1580,37 @@ fn literal_getattr(call: &ExprCall) -> Option<(&Expr, &str)> {
         return None;
     };
     Some((receiver, name.value.to_str()))
+}
+
+/// The name a method call's receiver starts from: `self` for
+/// `self.layer.forward(x)`.
+fn receiver_root(func: &Expr) -> Option<&str> {
+    let Expr::Attribute(attribute) = func else {
+        return None;
+    };
+    let mut receiver = &*attribute.value;
+    loop {
+        match receiver {
+            Expr::Attribute(inner) => receiver = &inner.value,
+            Expr::Name(name) => return Some(name.id.as_str()),
+            _ => return None,
+        }
+    }
+}
+
+/// The names a call may bind positionally.
+fn positional_names(parameters: &Parameters) -> impl Iterator<Item = &str> {
+    parameters
+        .posonlyargs
+        .iter()
+        .chain(&parameters.args)
+        .map(|parameter| parameter.parameter.name.as_str())
+        .chain(
+            parameters
+                .vararg
+                .as_deref()
+                .map(|vararg| vararg.name.as_str()),
+        )
 }
 
 /// Adds `name`, allocating only the first time: a module reads most names
@@ -2400,6 +2606,127 @@ def later():
         assert!(visit_source(source).shell_commands.is_empty());
         let parsed = visit_source(&format!("import subprocess\n{source}"));
         assert_eq!(parsed.shell_commands, ["ruff", "transformers"]);
+    }
+
+    /// What tells a class's subclasses may be picked at runtime: bases,
+    /// `__init_subclass__`, `__subclasses__()` callers and what they are
+    /// handed, functions passing a parameter on (#1274).
+    #[test]
+    fn records_subclass_facts() {
+        let source = "\
+def all_subclasses(cls):
+    queue = [cls]
+    while queue:
+        for child in queue.pop().__subclasses__():
+            queue.append(child)
+
+def platform_subclass(cls, *rest):
+    return all_subclasses(cls)
+
+class Group:
+    def __new__(cls):
+        return platform_subclass(Group)
+
+class Linux(Group, base.Mixin):
+    pass
+
+class Plugin:
+    def __init_subclass__(cls):
+        pass
+
+Plugin.__subclasses__()
+print(Linux)
+
+class Backend:
+    @classmethod
+    def every(cls):
+        return cls.__subclasses__()
+
+    @classmethod
+    def others(cls):
+        return Other.__subclasses__()
+
+class RowPlugin(Plugin[Row]):
+    pass
+
+def later():
+    return all_subclasses(Defined)
+
+class Defined:
+    pass
+
+class Model:
+    def forward(self, cls):
+        return self.layer.helper(cls)
+
+def via_module(cls):
+    return registry.lookup(cls)
+";
+        let facts = visit_source(source).subclass_facts;
+        assert_eq!(
+            facts.classes,
+            [
+                (
+                    "Linux".to_owned(),
+                    vec!["Group".to_owned(), "Mixin".to_owned()]
+                ),
+                ("RowPlugin".to_owned(), vec!["Plugin".to_owned()]),
+            ]
+        );
+        assert_eq!(
+            facts.bases,
+            [
+                ("Backend".to_owned(), 27),
+                ("Other".to_owned(), 31),
+                ("Plugin".to_owned(), 17)
+            ],
+            "the first line of each class; a method's `cls` names its class"
+        );
+        assert_eq!(facts.enumerators, ["all_subclasses", "every", "others"]);
+        assert_eq!(
+            facts.forwards,
+            [
+                ("platform_subclass".to_owned(), "all_subclasses".to_owned()),
+                ("via_module".to_owned(), "lookup".to_owned()),
+            ],
+            "a method of a parameter (`self.layer.helper`) is not followed"
+        );
+        assert_eq!(
+            facts.passed,
+            [
+                ("all_subclasses".to_owned(), "Defined".to_owned(), 37),
+                ("platform_subclass".to_owned(), "Group".to_owned(), 12),
+                ("print".to_owned(), "Linux".to_owned(), 22),
+            ]
+        );
+    }
+
+    /// The module's own namespace read by a computed name, `.py` paths
+    /// handed to file calls, and a computed `sys.path` entry (#1274).
+    #[test]
+    fn records_names_and_files_used_without_an_import() {
+        let source = "\
+import os, sys
+globals()['X'] = 1
+_ts = sys.modules[__name__]
+DRIVER = os.path.join(here, 'driver', 'driver.py')
+open('native.py', 'w')
+sys.path.insert(0, 'src')
+";
+        let parsed = visit_source(source);
+        assert_eq!(parsed.self_reference, Some(3));
+        assert_eq!(parsed.path_refs, ["driver/driver.py"]);
+        assert!(!parsed.adds_computed_sys_path);
+        let parsed = visit_source("import sys\nsys.path.append(root)\nglobals()[name] = 1\n");
+        assert!(parsed.adds_computed_sys_path);
+        assert_eq!(parsed.self_reference, None);
+        let parsed = visit_source("items.append(value)\nconfig.get(name)\n");
+        assert!(!parsed.adds_computed_sys_path, "not `sys.path`");
+        assert_eq!(parsed.self_reference, None, "not `globals()`");
+        assert_eq!(
+            visit_source("x = 1\nglobals().get(name)\n").self_reference,
+            Some(2)
+        );
     }
 
     #[test]

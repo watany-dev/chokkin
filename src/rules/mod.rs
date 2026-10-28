@@ -15,6 +15,7 @@ mod types;
 
 pub use emit::{emit_issues, explain_issue};
 pub(crate) use gaps::GapKind;
+pub(crate) use gaps::lowering_gaps;
 pub use gaps::{Gap, MemberManifest, collect_gaps};
 #[cfg(test)]
 pub(crate) use metadata::default_rule_severity;

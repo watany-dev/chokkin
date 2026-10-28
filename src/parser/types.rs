@@ -445,6 +445,27 @@ pub struct ParsedModule {
     /// Top-level functions that raise when a package is missing (#1269).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub import_checks: Vec<ImportCheck>,
+    /// What tells which classes are picked from their subclasses at runtime
+    /// (#1274).
+    #[serde(default)]
+    pub subclass_facts: SubclassFacts,
+    /// The first line that reads the module's own namespace by a computed
+    /// name: `sys.modules[__name__]`, `globals()[name]` or
+    /// `globals().get(name)` (#1274). Any of its names may be read that way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_reference: Option<u32>,
+    /// Relative `.py` paths of two or more segments that string literals
+    /// hand to a path or file call (`os.path.join(d, "fixtures/ir.py")`,
+    /// `shutil.copyfile`, `open`, `runpy.run_path`), consecutive literals
+    /// joined for `join` and the `pathlib` constructors, without `.` and `..` segments (#1274). The file is
+    /// read or copied by path, not imported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_refs: Vec<String>,
+    /// Adds a computed path to `sys.path` (`sys.path.insert(0, root)`), so
+    /// a module beside the directory it names may be imported by its bare
+    /// name (#1274).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adds_computed_sys_path: bool,
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,
@@ -459,6 +480,32 @@ pub struct ParsedModule {
     /// so what the module imports is partly unknown (#902).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub has_unread_cells: bool,
+}
+
+/// What tells which classes may be picked from their subclasses at runtime
+/// (#1274). Names are as written in the module; the symbols stage matches
+/// them across modules.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubclassFacts {
+    /// Module-level classes and the last name of each base they list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub classes: Vec<(String, Vec<String>)>,
+    /// Classes whose subclasses this module enumerates or registers, with
+    /// the line: a class that defines `__init_subclass__`, a name
+    /// `__subclasses__()` is called on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bases: Vec<(String, u32)>,
+    /// Functions (by name, methods included) that call `__subclasses__()`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enumerators: Vec<String>,
+    /// A function and the last name of a callee it passes one of its own
+    /// parameters to, positionally.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<(String, String)>,
+    /// The last name of a callee, a module-level class of this module passed
+    /// to it positionally, and the line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub passed: Vec<(String, String, u32)>,
 }
 
 /// A top-level function whose body tries to import packages and raises from
