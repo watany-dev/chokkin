@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
+
 use crate::config::{Confidence, DependencyGroupsConfig, PluginId, TargetVersion};
 use crate::entry::{EntryWarning, ModuleIndex, beside_origin, resolve_module_to_path};
 use crate::graph::ProjectGraph;
@@ -1088,52 +1090,25 @@ const MAX_FORWARD_HOPS: usize = 4;
 /// registry picks a subclass by an attribute, which the name of the
 /// attribute does not tell, so every subclass may be picked.
 fn subclass_registry_gaps(parse: &ParseSummary) -> Vec<Gap> {
-    let facts = || {
-        parse
-            .modules
-            .iter()
-            .map(|module| (module.path.as_str(), &module.subclass_facts))
-    };
-    let mut enumerators: BTreeSet<&str> = facts()
-        .flat_map(|(_, facts)| facts.enumerators.iter().map(String::as_str))
-        .collect();
-    if enumerators.is_empty() && facts().all(|(_, facts)| facts.bases.is_empty()) {
+    if parse.modules.iter().all(|module| {
+        module.subclass_facts.enumerators.is_empty() && module.subclass_facts.bases.is_empty()
+    }) {
         return Vec::new();
     }
-    for _ in 0..MAX_FORWARD_HOPS {
-        let more: Vec<&str> = facts()
-            .flat_map(|(_, facts)| &facts.forwards)
-            .filter(|(function, callee)| {
-                enumerators.contains(callee.as_str()) && !enumerators.contains(function.as_str())
-            })
-            .map(|(function, _)| function.as_str())
-            .collect();
-        if more.is_empty() {
-            break;
+    // One pass over the modules: the facts of a large project do not stay in
+    // cache between passes.
+    let mut enumerators: BTreeSet<&str> = BTreeSet::new();
+    let mut callers: FxHashMap<&str, Vec<&str>> = FxHashMap::default();
+    let mut children: FxHashMap<&str, Vec<(&str, &str)>> = FxHashMap::default();
+    // Each named class, with the callee it was passed to if it was.
+    let mut named: Vec<(&str, Option<&str>, &str, u32)> = Vec::new();
+    for module in &parse.modules {
+        let path = module.path.as_str();
+        let facts = &module.subclass_facts;
+        enumerators.extend(facts.enumerators.iter().map(String::as_str));
+        for (function, callee) in &facts.forwards {
+            callers.entry(callee).or_default().push(function);
         }
-        enumerators.extend(more);
-    }
-    let mut bases: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
-    for (path, facts) in facts() {
-        let named = facts
-            .bases
-            .iter()
-            .map(|(name, line)| (name.as_str(), *line))
-            .chain(
-                facts
-                    .passed
-                    .iter()
-                    .filter(|(callee, _, _)| enumerators.contains(callee.as_str()))
-                    .map(|(_, name, line)| (name.as_str(), *line)),
-            );
-        // Every class derives from `object`, and `type` is the metaclass: a
-        // debug helper listing their subclasses picks none of the project's.
-        for (name, line) in named.filter(|(name, _)| !matches!(*name, "object" | "type")) {
-            bases.entry(name).or_insert((path, line));
-        }
-    }
-    let mut children: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
-    for (path, facts) in facts() {
         for (class, parents) in &facts.classes {
             for parent in parents {
                 children
@@ -1141,6 +1116,38 @@ fn subclass_registry_gaps(parse: &ParseSummary) -> Vec<Gap> {
                     .or_default()
                     .push((path, class.as_str()));
             }
+        }
+        named.extend(
+            facts
+                .bases
+                .iter()
+                .map(|(name, line)| (path, None, name.as_str(), *line)),
+        );
+        named.extend(
+            facts
+                .passed
+                .iter()
+                .map(|(callee, name, line)| (path, Some(callee.as_str()), name.as_str(), *line)),
+        );
+    }
+    let mut frontier: Vec<&str> = enumerators.iter().copied().collect();
+    for _ in 0..MAX_FORWARD_HOPS {
+        frontier = frontier
+            .iter()
+            .flat_map(|callee| callers.get(callee).into_iter().flatten().copied())
+            .filter(|function| enumerators.insert(function))
+            .collect();
+        if frontier.is_empty() {
+            break;
+        }
+    }
+    let mut bases: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
+    for (path, callee, name, line) in named {
+        // Every class derives from `object`, and `type` is the metaclass: a
+        // debug helper listing their subclasses picks none of the project's.
+        let enumerated = callee.is_none_or(|callee| enumerators.contains(callee));
+        if enumerated && !matches!(name, "object" | "type") {
+            bases.entry(name).or_insert((path, line));
         }
     }
     let mut gaps = Vec::new();
@@ -1672,14 +1679,76 @@ fn archive_requirement_gaps(
         .collect()
 }
 
-impl Gap {
-    /// Whether the gap lowers one of `candidates`.
-    #[must_use]
-    pub fn lowers_any(&self, candidates: &[IssueCandidate]) -> bool {
-        candidates
-            .iter()
-            .any(|candidate| self.reaches(candidate) && self.kind.lowering(candidate).is_some())
+/// Gaps by what they reach. A subclass registry has one gap per subclass,
+/// thousands for transformers' `PreTrainedModel`, so a finding meets only
+/// the ones that name it rather than testing each (#1274).
+struct GapIndex<'g> {
+    gaps: Vec<&'g Gap>,
+    /// Subclass registry gaps by their target's path and class.
+    subclasses: FxHashMap<(&'g str, &'g str), Vec<usize>>,
+    others: Vec<usize>,
+}
+
+impl<'g> GapIndex<'g> {
+    fn new(gaps: impl IntoIterator<Item = &'g Gap>) -> Self {
+        let gaps: Vec<&Gap> = gaps.into_iter().collect();
+        let mut subclasses: FxHashMap<(&str, &str), Vec<usize>> = FxHashMap::default();
+        let mut others = Vec::new();
+        for (index, gap) in gaps.iter().enumerate() {
+            match gap
+                .target
+                .as_deref()
+                .and_then(|target| target.rsplit_once(':'))
+            {
+                Some(key) if gap.kind == GapKind::SubclassRegistry => {
+                    subclasses.entry(key).or_default().push(index);
+                },
+                _ => others.push(index),
+            }
+        }
+        Self {
+            gaps,
+            subclasses,
+            others,
+        }
     }
+
+    /// The indices of the gaps whose scope covers `candidate`, in order
+    /// within each kind.
+    fn reaching(&self, candidate: &IssueCandidate) -> Vec<usize> {
+        let mut found: Vec<usize> = self
+            .others
+            .iter()
+            .copied()
+            .filter(|&index| self.gaps[index].reaches(candidate))
+            .collect();
+        if let (IssueSubject::Symbol { name, .. }, Some(Origin::Import { file, .. })) =
+            (&candidate.subject, candidate.origins.first())
+        {
+            found.extend(
+                self.subclasses
+                    .get(&(file.as_str(), name.as_str()))
+                    .into_iter()
+                    .flatten(),
+            );
+        }
+        found
+    }
+}
+
+/// Whether each of `gaps` lowers one of `candidates`.
+#[must_use]
+pub(crate) fn lowering_gaps(gaps: &[&Gap], candidates: &[IssueCandidate]) -> Vec<bool> {
+    let index = GapIndex::new(gaps.iter().copied());
+    let mut lowers = vec![false; gaps.len()];
+    for candidate in candidates {
+        for reached in index.reaching(candidate) {
+            if gaps[reached].kind.lowering(candidate).is_some() {
+                lowers[reached] = true;
+            }
+        }
+    }
+    lowers
 }
 
 /// Lower each finding a gap's scope covers and name the gap in `--explain`
@@ -1687,8 +1756,13 @@ impl Gap {
 /// reaches `Maybe`, so a severity a rule derived from confidence (a library
 /// orphan's) still matches the lowered confidence.
 pub(super) fn apply_gaps(candidates: &mut [IssueCandidate], gaps: &[Gap]) {
+    let index = GapIndex::new(gaps);
     for candidate in candidates {
-        let in_scope: Vec<&Gap> = gaps.iter().filter(|gap| gap.reaches(candidate)).collect();
+        let in_scope: Vec<&Gap> = index
+            .reaching(candidate)
+            .into_iter()
+            .map(|reached| index.gaps[reached])
+            .collect();
         let kinds: BTreeSet<GapKind> = in_scope.iter().map(|gap| gap.kind).collect();
         for &kind in &kinds {
             let Some(lowering) = kind.lowering(candidate) else {
@@ -2102,6 +2176,30 @@ mod tests {
             ]
         );
         assert_eq!(own.label(), "`acme/patch.py:3`");
+    }
+
+    /// A gap lowers a finding only when one is in its scope and its kind
+    /// lowers that rule (#1274).
+    #[test]
+    fn lowering_gaps_count_only_gaps_that_lower_a_finding() {
+        let subclass = |target: &str| {
+            let mut gap = gap("acme/group.py", GapKind::SubclassRegistry);
+            gap.target = Some(target.to_owned());
+            gap
+        };
+        let (used, unused) = (
+            subclass("acme/group.py:Linux"),
+            subclass("acme/group.py:Aix"),
+        );
+        let own = gap("acme/patch.py", GapKind::ModuleSelfReference);
+        let found = lowering_gaps(
+            &[&used, &unused, &own],
+            &[
+                symbol("acme/group.py", "acme.group", "Linux"),
+                candidate(RuleId::Chk001, file("acme/patch.py")),
+            ],
+        );
+        assert_eq!(found, [true, false, false]);
     }
 
     /// A string naming a distribution's module turns only that

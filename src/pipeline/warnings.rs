@@ -898,7 +898,7 @@ mod tests {
     use crate::plugins::PluginsWarning;
     use crate::sources::SourcesWarning;
 
-    use super::{ProbeWarning, SkipReason, write_probe_warnings};
+    use super::{ProbeWarning, RuntimeNameKind, SkipReason, write_probe_warnings};
 
     fn located(warning: &ProbeWarning) -> (Option<String>, Option<u32>) {
         let diagnostic = warning.diagnostic();
@@ -926,6 +926,35 @@ mod tests {
         );
         assert!(warning(1).contains("read (and 1 more requirements file);"));
         assert!(warning(2).contains("read (and 2 more requirements files);"));
+    }
+
+    /// A runtime-name warning names the first site and counts the rest, in
+    /// the singular for one (#1274).
+    #[test]
+    fn runtime_name_warning_counts_the_other_sites() {
+        let warning = |kind, more| {
+            ProbeWarning::RuntimeName {
+                kind,
+                path: "acme/group.py".to_owned(),
+                line: Some(4),
+                name: "Group".to_owned(),
+                more,
+            }
+            .to_string()
+        };
+        for (kind, noun, nouns) in [
+            (RuntimeNameKind::SubclassRegistry, "class", "classes"),
+            (RuntimeNameKind::ModuleSelfReference, "module", "modules"),
+            (RuntimeNameKind::ComputedSysPathImport, "import", "imports"),
+        ] {
+            assert!(!warning(kind, 0).contains("(and"), "{}", warning(kind, 0));
+            assert!(warning(kind, 1).contains(&format!("(and 1 more {noun})")));
+            assert!(warning(kind, 2).contains(&format!("(and 2 more {nouns})")));
+        }
+        assert_eq!(
+            warning(RuntimeNameKind::SubclassRegistry, 0),
+            "parse: `acme/group.py:4` enumerates or registers the subclasses of `Group`, which may be picked at runtime; their unused-symbol findings are info notes"
+        );
     }
 
     /// One opaque-import warning names the first module and counts the rest (#909).

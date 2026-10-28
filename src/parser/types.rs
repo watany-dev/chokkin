@@ -447,7 +447,7 @@ pub struct ParsedModule {
     pub import_checks: Vec<ImportCheck>,
     /// What tells which classes are picked from their subclasses at runtime
     /// (#1274).
-    #[serde(default, skip_serializing_if = "SubclassFacts::is_empty")]
+    #[serde(default)]
     pub subclass_facts: SubclassFacts,
     /// The first line that reads the module's own namespace by a computed
     /// name: `sys.modules[__name__]`, `globals()[name]` or
@@ -506,17 +506,6 @@ pub struct SubclassFacts {
     /// to it positionally, and the line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub passed: Vec<(String, String, u32)>,
-}
-
-impl SubclassFacts {
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.classes.is_empty()
-            && self.bases.is_empty()
-            && self.enumerators.is_empty()
-            && self.forwards.is_empty()
-            && self.passed.is_empty()
-    }
 }
 
 /// A top-level function whose body tries to import packages and raises from

@@ -172,7 +172,7 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// the outermost string (#1144).
     string_attribute_sites: Vec<StringAttributeSite>,
     /// The enclosing functions, innermost last: name and parameters (#1274).
-    function_frames: Vec<(&'ast str, Vec<&'ast str>)>,
+    function_frames: Vec<(&'ast str, &'ast Parameters)>,
     /// The module-level classes, which a call may hand to a function that
     /// enumerates their subclasses (#1274).
     module_classes: FxHashSet<&'ast str>,
@@ -1099,10 +1099,9 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn receiver_class(&self, receiver: &str) -> String {
         let method_of = self.class_frames.last().filter(|(_, depth)| {
             *depth + 1 == self.function_frames.len()
-                && self
-                    .function_frames
-                    .last()
-                    .is_some_and(|(_, parameters)| parameters.first() == Some(&receiver))
+                && self.function_frames.last().is_some_and(|(_, parameters)| {
+                    positional_names(parameters).next() == Some(receiver)
+                })
         });
         method_of.map_or(receiver, |(class, _)| class).to_owned()
     }
@@ -1115,32 +1114,40 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let Some(callee) = callee_name(&call.func) else {
             return;
         };
-        let line = self.line_number(call);
-        let facts = &mut self.parsed.subclass_facts;
         if callee == "__subclasses__"
             && let Expr::Attribute(attribute) = &*call.func
         {
             if let Some((function, _)) = self.function_frames.last() {
-                facts.enumerators.push((*function).to_owned());
+                let function = (*function).to_owned();
+                self.parsed.subclass_facts.enumerators.push(function);
             }
             if let Expr::Name(base) = &*attribute.value {
                 let base = self.receiver_class(base.id.as_str());
+                let line = self.line_number(call);
                 self.parsed.subclass_facts.bases.push((base, line));
             }
             return;
         }
+        let facts = &mut self.parsed.subclass_facts;
         for arg in &call.arguments.args {
             let Expr::Name(name) = arg else {
                 continue;
             };
             let name = name.id.as_str();
             if self.module_classes.contains(name) {
+                let line = self.lines.line(call.start());
                 facts
                     .passed
                     .push((callee.to_owned(), name.to_owned(), line));
             }
+            // A method of a parameter (`self.layer(x)`) is no module-level
+            // function, so it is not followed; skipping it keeps the facts of
+            // a model zoo small.
             if let Some((function, parameters)) = self.function_frames.last()
-                && parameters.contains(&name)
+                && positional_names(parameters).any(|parameter| parameter == name)
+                && !receiver_root(&call.func).is_some_and(|root| {
+                    positional_names(parameters).any(|parameter| parameter == root)
+                })
             {
                 facts
                     .forwards
@@ -1227,7 +1234,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 let outer_flags = self.enter_scope_names(Some(&def.parameters), &def.body);
                 self.function_frames
-                    .push((def.name.as_str(), positional_names(&def.parameters)));
+                    .push((def.name.as_str(), &def.parameters));
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
@@ -1553,8 +1560,24 @@ fn literal_getattr(call: &ExprCall) -> Option<(&Expr, &str)> {
     Some((receiver, name.value.to_str()))
 }
 
+/// The name a method call's receiver starts from: `self` for
+/// `self.layer.forward(x)`.
+fn receiver_root(func: &Expr) -> Option<&str> {
+    let Expr::Attribute(attribute) = func else {
+        return None;
+    };
+    let mut receiver = &*attribute.value;
+    loop {
+        match receiver {
+            Expr::Attribute(inner) => receiver = &inner.value,
+            Expr::Name(name) => return Some(name.id.as_str()),
+            _ => return None,
+        }
+    }
+}
+
 /// The names a call may bind positionally.
-fn positional_names(parameters: &Parameters) -> Vec<&str> {
+fn positional_names(parameters: &Parameters) -> impl Iterator<Item = &str> {
     parameters
         .posonlyargs
         .iter()
@@ -1566,7 +1589,6 @@ fn positional_names(parameters: &Parameters) -> Vec<&str> {
                 .as_deref()
                 .map(|vararg| vararg.name.as_str()),
         )
-        .collect()
 }
 
 /// Adds `name`, allocating only the first time: a module reads most names
@@ -2598,7 +2620,17 @@ class Backend:
     def every(cls):
         return cls.__subclasses__()
 
+    @classmethod
+    def others(cls):
+        return Other.__subclasses__()
+
 class RowPlugin(Plugin[Row]):
+    pass
+
+def later():
+    return all_subclasses(Defined)
+
+class Defined:
     pass
 ";
         let facts = visit_source(source).subclass_facts;
@@ -2614,10 +2646,14 @@ class RowPlugin(Plugin[Row]):
         );
         assert_eq!(
             facts.bases,
-            [("Backend".to_owned(), 27), ("Plugin".to_owned(), 17)],
+            [
+                ("Backend".to_owned(), 27),
+                ("Other".to_owned(), 31),
+                ("Plugin".to_owned(), 17)
+            ],
             "the first line of each class; a method's `cls` names its class"
         );
-        assert_eq!(facts.enumerators, ["all_subclasses", "every"]);
+        assert_eq!(facts.enumerators, ["all_subclasses", "every", "others"]);
         assert_eq!(
             facts.forwards,
             [("platform_subclass".to_owned(), "all_subclasses".to_owned())]
@@ -2625,6 +2661,7 @@ class RowPlugin(Plugin[Row]):
         assert_eq!(
             facts.passed,
             [
+                ("all_subclasses".to_owned(), "Defined".to_owned(), 37),
                 ("platform_subclass".to_owned(), "Group".to_owned(), 12),
                 ("print".to_owned(), "Linux".to_owned(), 22),
             ]

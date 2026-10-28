@@ -11239,6 +11239,10 @@ fn binary_file_named_by_a_path_literal_is_used() {
         ),
         ("tests/support/driver/driver.py", "import native\n"),
         ("tests/support/other/other.py", ""),
+        (
+            "acme/orphan.py",
+            "import runpy\n\nrunpy.run_path(\"support/other/other.py\")\n",
+        ),
     ]);
     let (issues, _) = json_issues_and_stderr(project.path());
     let keys = issue_keys(&issues);
@@ -11258,7 +11262,7 @@ fn binary_file_named_by_a_path_literal_is_used() {
             "CHK001".to_owned(),
             "tests/support/other/other.py".to_owned()
         )),
-        "{keys:?}"
+        "an unreachable module's path names no used file: {keys:?}"
     );
 }
 
@@ -11277,9 +11281,10 @@ fn binary_computed_sys_path_entry_lowers_imports_of_project_modules() {
             "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path.cwd()))\n",
         ),
         ("tests/roots/test-ext/dummy_module.py", ""),
+        ("tests/other/elsewhere.py", ""),
         (
             "tests/test_ext.py",
-            "def test_ext():\n    import dummy_module\n    import not_a_project_module\n",
+            "def test_ext():\n    import dummy_module\n    import not_a_project_module\n    import elsewhere\n",
         ),
     ]);
     let (issues, stderr) = json_issues_and_stderr(project.path());
@@ -11288,5 +11293,10 @@ fn binary_computed_sys_path_entry_lowers_imports_of_project_modules() {
     assert_eq!(dummy["confidence"], "likely", "{dummy}");
     let missing = issue(&issues, "CHK010", "tests/test_ext.py:not_a_project_module");
     assert_eq!(missing["severity"], "warning", "{missing}");
+    let elsewhere = issue(&issues, "CHK010", "tests/test_ext.py:elsewhere");
+    assert_eq!(
+        elsewhere["severity"], "warning",
+        "no computed entry beside it: {elsewhere}"
+    );
     assert!(stderr.contains("computed `sys.path` entry"), "{stderr}");
 }

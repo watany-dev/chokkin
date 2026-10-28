@@ -222,6 +222,8 @@ mod tests {
         assert!(computed("monkeypatch.syspath_prepend(tmp / name)"));
         assert!(!computed("sys.path.insert(0, 'src')"));
         assert!(!computed("sys.path.extend(['a', 'b'])"));
+        assert!(computed("sys.path.extend((here, 'lib'))"));
+        assert!(!computed("sys.path.extend(('a', 'b'))"));
         assert!(!computed("sys.path.insert(0)"));
     }
 

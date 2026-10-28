@@ -33,6 +33,7 @@ use crate::rules::emit::compute_exit_status;
 use crate::rules::{
     DependencyRuleContext, Gap, GapKind, Issue, IssueCandidate, IssueReport, IssueSubject,
     MemberManifest, RuleContext, RuleId, WorkspaceDependencyBoundary, collect_gaps, emit_issues,
+    lowering_gaps,
 };
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning,
@@ -716,9 +717,12 @@ fn runtime_name_warnings(gaps: &[Gap], symbols: &[IssueCandidate]) -> Vec<ProbeW
     ]
     .into_iter()
     .filter_map(|(gap_kind, kind)| {
-        let sites: BTreeSet<(&str, Option<u32>, &str)> = gaps
-            .iter()
-            .filter(|gap| gap.kind == gap_kind && gap.lowers_any(symbols))
+        let of_kind: Vec<&Gap> = gaps.iter().filter(|gap| gap.kind == gap_kind).collect();
+        let lowers = lowering_gaps(&of_kind, symbols);
+        let sites: BTreeSet<(&str, Option<u32>, &str)> = of_kind
+            .into_iter()
+            .zip(lowers)
+            .filter_map(|(gap, lowers)| lowers.then_some(gap))
             .map(|gap| {
                 let (name, line) = gap
                     .site
@@ -977,6 +981,50 @@ mod tests {
     use crate::rules::IssueSubject;
     use crate::rules::RuleId;
     use crate::rules::Severity;
+
+    /// A runtime-name warning names the first site whose gap lowers a
+    /// finding and counts the other such sites (#1274).
+    #[test]
+    fn runtime_name_warning_counts_only_sites_that_lower_a_finding() {
+        let gap = |file: &str, line, class: &str| Gap {
+            file: file.to_owned(),
+            kind: GapKind::SubclassRegistry,
+            member: None,
+            site: Some((class.to_owned(), Some(line))),
+            target: Some(format!("acme/plugins.py:{class}")),
+        };
+        let symbol = |name: &str| IssueCandidate {
+            rule: RuleId::Chk006,
+            subject: IssueSubject::Symbol {
+                module: "acme.plugins".to_owned(),
+                name: name.to_owned(),
+            },
+            severity: Severity::Warning,
+            confidence: crate::config::Confidence::Certain,
+            message: String::new(),
+            workspace_member: None,
+            origins: vec![crate::rules::Origin::Import {
+                file: "acme/plugins.py".to_owned(),
+                line: Some(1),
+                module: "acme.plugins".to_owned(),
+            }],
+            explain: crate::rules::ExplainData::default(),
+        };
+        let gaps = [
+            gap("acme/b.py", 2, "Linux"),
+            gap("acme/a.py", 9, "Unreported"),
+            gap("acme/c.py", 1, "Aix"),
+        ];
+        let warnings = runtime_name_warnings(&gaps, &[symbol("Linux"), symbol("Aix")]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        match &warnings[0] {
+            ProbeWarning::RuntimeName {
+                path, line, more, ..
+            } => assert_eq!((path.as_str(), *line, *more), ("acme/b.py", Some(2), 1)),
+            other => panic!("{other:?}"),
+        }
+        assert!(runtime_name_warnings(&gaps, &[]).is_empty());
+    }
 
     /// The first unread requirements file by site is named; the rest are counted (#1273).
     #[test]
