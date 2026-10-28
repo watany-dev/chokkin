@@ -424,6 +424,12 @@ pub struct ParsedModule {
     /// the module they name (#1026): each distinct literal at its first line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub module_refs: Vec<ModuleRef>,
+    /// List and tuple literals of three or more strings that are all whole
+    /// dotted module names, each element at its line (#1257): a plugin list
+    /// a loader may import by name, as `__import__` does with redash's
+    /// `default_query_runners`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub module_lists: Vec<Vec<ModuleRef>>,
     /// Calls a function that lists a directory or the modules of a package
     /// (`pkgutil.iter_modules`, `glob.glob`, `os.listdir`): a dotted literal
     /// here that names a package may load the modules under it (#1267).

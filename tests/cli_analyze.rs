@@ -9706,6 +9706,85 @@ fn binary_package_named_beside_a_directory_listing_lowers_its_modules() {
     );
 }
 
+/// A list of three or more strings in a runtime module that all name project
+/// modules is a plugin list a loader imports one by one (redash's
+/// `default_query_runners` handed to `__import__`), so the listed modules are
+/// reached and what they import counts as used (#1257). A list that also
+/// names a module outside the project, one of two strings, one in a test and
+/// one in a file no entry reaches reach nothing: their modules stay CHK001,
+/// lowered by the strings alone (#1026), and the distribution only they
+/// import stays unused.
+#[test]
+fn binary_list_of_project_module_names_reaches_the_modules() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"httplib2\", \"pypd\"]\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "from acme.settings import RUNNERS, MIXED, PAIR\n\n\ndef main():\n    for name in RUNNERS + MIXED + PAIR:\n        __import__(name)\n",
+        ),
+        (
+            "acme/settings.py",
+            "RUNNERS = [\n    \"acme.runners.http\",\n    \"acme.runners.sql\",\n    \"acme.runners\",\n]\nMIXED = (\"acme.mixed.one\", \"acme.mixed.two\", \"json.decoder\")\nPAIR = [\"acme.pair.one\", \"acme.pair.two\"]\n",
+        ),
+        ("acme/runners/__init__.py", ""),
+        (
+            "acme/runners/http.py",
+            "try:\n    import httplib2\nexcept ImportError:\n    httplib2 = None\n",
+        ),
+        ("acme/runners/sql.py", ""),
+        ("acme/mixed/one.py", ""),
+        ("acme/mixed/two.py", ""),
+        ("acme/pair/one.py", ""),
+        ("acme/pair/two.py", ""),
+        (
+            "acme/orphan.py",
+            "LATER = [\"acme.late.one\", \"acme.late.two\", \"acme.late.three\"]\n",
+        ),
+        ("acme/late/one.py", "import pypd\n"),
+        ("acme/late/two.py", ""),
+        ("acme/late/three.py", ""),
+        (
+            "tests/test_names.py",
+            "NAMES = [\"acme.checked.one\", \"acme.checked.two\", \"acme.checked.three\"]\n",
+        ),
+        ("acme/checked/one.py", ""),
+        ("acme/checked/two.py", ""),
+        ("acme/checked/three.py", ""),
+    ]);
+
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let findings: Vec<(String, String, String, String)> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| code == "CHK001" || code == "CHK002")
+        .collect();
+    assert_eq!(
+        findings,
+        [
+            level("CHK001", "acme/checked/one.py", "info", "likely"),
+            level("CHK001", "acme/checked/three.py", "info", "likely"),
+            level("CHK001", "acme/checked/two.py", "info", "likely"),
+            level("CHK001", "acme/late/one.py", "info", "likely"),
+            level("CHK001", "acme/late/three.py", "info", "likely"),
+            level("CHK001", "acme/late/two.py", "info", "likely"),
+            level("CHK001", "acme/mixed/one.py", "info", "likely"),
+            level("CHK001", "acme/mixed/two.py", "info", "likely"),
+            level("CHK001", "acme/orphan.py", "warning", "likely"),
+            level("CHK001", "acme/pair/one.py", "info", "likely"),
+            level("CHK001", "acme/pair/two.py", "info", "likely"),
+            level("CHK002", "pypd", "error", "certain"),
+        ]
+    );
+}
+
 /// A dotted string literal in a reachable runtime module that resolves to a
 /// declared distribution may load that distribution's module by name (a list
 /// of extensions handed to `importlib.import_module`), so its CHK002 falls

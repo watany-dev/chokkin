@@ -81,6 +81,7 @@ struct Adjacency {
     file_imports: HashMap<FileId, Vec<ImportSite>>,
     submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     prefix_imports: HashMap<FileId, Vec<SubmoduleSite>>,
+    listed_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     dynamic_sites: HashSet<ImportSiteRef>,
     /// Function-local and `TYPE_CHECKING` import lines.
     lazy: HashSet<FileLine>,
@@ -227,6 +228,7 @@ pub(super) fn run_reachability_bfs(
         file_imports: build_file_import_adjacency(graph),
         submodule_imports: build_submodule_imports(graph, parse, module_index),
         prefix_imports: build_prefix_imports(graph, parse, module_index),
+        listed_imports: build_listed_imports(graph, parse, module_index),
         dynamic_sites: build_dynamic_sites(graph, parse),
         lazy,
         optional,
@@ -344,6 +346,16 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId, class: Reach, 
             line: *line,
         });
     }
+
+    // Nothing shows when the loader runs, so a listed module loads lazily.
+    for (target, module, line) in adjacency.listed_imports.get(&file_id).into_iter().flatten() {
+        state.enqueue_file(*target, Some(file_id), Reach::Reachable, || {
+            TraceStep::DynamicImport {
+                module: module.clone(),
+                line: *line,
+            }
+        });
+    }
 }
 
 /// Importing `pkg.sub.mod` runs `pkg/__init__.py` and `pkg/sub/__init__.py`
@@ -457,6 +469,52 @@ fn build_prefix_imports(
                     .entry(file_id)
                     .or_default()
                     .push((target, name.to_owned(), prefix.line));
+            }
+        }
+    }
+    sites
+}
+
+/// A list of dotted module names in a runtime file is a plugin list some
+/// loader imports one by one (redash's `default_query_runners`, #1257), so
+/// each site reaches the module and the packages Python imports before it.
+/// Only a list whose every name resolves to a project module counts: one
+/// that also names a third-party module, a class or a typo may be anything
+/// (a log message's names, `MIDDLEWARE`), so it reaches nothing and lowers
+/// nothing, and its strings stay [`crate::parser::ModuleRef`]s.
+fn build_listed_imports(
+    graph: &ProjectGraph,
+    parse: &ParseSummary,
+    module_index: &ModuleIndex,
+) -> HashMap<FileId, Vec<SubmoduleSite>> {
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    for module in &parse.modules {
+        let Some(file_id) = graph.file_id(&module.path).filter(|id| {
+            graph
+                .file(*id)
+                .is_some_and(|node| node.context == FileContext::Runtime)
+        }) else {
+            continue;
+        };
+        for list in &module.module_lists {
+            let resolves = list.iter().all(|reference| {
+                module_index
+                    .resolve_from(&module.path, &reference.text)
+                    .is_some()
+            });
+            if !resolves {
+                continue;
+            }
+            for reference in list {
+                for name in module_and_parents(&reference.text) {
+                    if let Some(target) = module_index.resolve_from(&module.path, name) {
+                        sites.entry(file_id).or_default().push((
+                            target,
+                            name.to_owned(),
+                            reference.line,
+                        ));
+                    }
+                }
             }
         }
     }
@@ -1091,6 +1149,7 @@ mod tests {
             file_imports: HashMap::new(),
             submodule_imports: HashMap::new(),
             prefix_imports: HashMap::new(),
+            listed_imports: HashMap::new(),
             dynamic_sites: HashSet::new(),
             lazy: HashSet::new(),
             optional: HashSet::new(),
