@@ -1800,6 +1800,63 @@ mod tests {
     use super::*;
     use crate::parser::SubclassFacts;
 
+    fn at_or_below(used: &str, module: &str) -> bool {
+        used == module
+            || used
+                .strip_prefix(module)
+                .is_some_and(|rest| rest.starts_with('.'))
+    }
+
+    /// C5 of `docs/dev/formal/companions_model.py` on the bundled table: an
+    /// unread backend setting lowers exactly the peers a value of it could
+    /// make used, the closure of every module the entries listing the
+    /// setting name. A deeper provider chain, or a module shared with an
+    /// entry that does not list the setting, breaks it.
+    #[test]
+    fn backend_settings_lower_the_closure_of_their_modules() {
+        let settings: BTreeSet<&str> = RUNTIME_PEERS
+            .iter()
+            .flat_map(|entry| entry.settings.iter().copied())
+            .collect();
+        assert!(!settings.is_empty());
+        for setting in settings {
+            let selected: Vec<&str> = RUNTIME_PEERS
+                .iter()
+                .filter(|entry| entry.settings.contains(&setting))
+                .flat_map(|entry| entry.modules.iter().copied())
+                .collect();
+            let mut reach: BTreeSet<&str> = BTreeSet::new();
+            loop {
+                let before = reach.len();
+                for entry in RUNTIME_PEERS {
+                    let loads = entry
+                        .modules
+                        .iter()
+                        .any(|module| selected.iter().any(|used| at_or_below(used, module)));
+                    if loads
+                        || entry
+                            .providers
+                            .iter()
+                            .any(|provider| reach.contains(provider))
+                    {
+                        reach.insert(entry.peer);
+                    }
+                }
+                if reach.len() == before {
+                    break;
+                }
+            }
+            for entry in RUNTIME_PEERS {
+                assert_eq!(
+                    setting_may_load(setting, entry.peer),
+                    reach.contains(entry.peer),
+                    "{setting} and {}",
+                    entry.peer
+                );
+            }
+        }
+    }
+
     #[test]
     fn named_package_is_any_directory_or_module_of_that_name() {
         assert!(in_named_package("test/lib/acme_test/cli.py", "acme_test"));
