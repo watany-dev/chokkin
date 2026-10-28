@@ -1729,7 +1729,8 @@ impl<'g> GapIndex<'g> {
                 self.subclasses
                     .get(&(file.as_str(), name.as_str()))
                     .into_iter()
-                    .flatten(),
+                    .flatten()
+                    .filter(|&&index| self.gaps[index].reaches(candidate)),
             );
         }
         found
@@ -2096,6 +2097,7 @@ mod tests {
                             ("Linux".to_owned(), vec!["Group".to_owned()]),
                             ("Alpine".to_owned(), vec!["Linux".to_owned()]),
                             ("Other".to_owned(), vec!["object".to_owned()]),
+                            ("Sub".to_owned(), vec!["Other".to_owned()]),
                         ],
                         passed: vec![
                             ("platform_subclass".to_owned(), "Group".to_owned(), 7),

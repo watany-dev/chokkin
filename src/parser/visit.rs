@@ -179,6 +179,11 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// The enclosing classes, each with the number of function frames open
     /// when it began, so a method's `cls` names its class.
     class_frames: Vec<(&'ast str, usize)>,
+    /// [`SubclassFacts`]' forwards and passed classes (with the first line)
+    /// while walking: most calls repeat a pair, which is kept once before
+    /// it is copied out (#1274).
+    forwards: FxHashSet<(&'ast str, &'ast str)>,
+    passed: FxHashMap<(&'ast str, &'ast str), u32>,
     parsed: ParsedModule,
 }
 
@@ -235,6 +240,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             function_frames: Vec::new(),
             module_classes: FxHashSet::default(),
             class_frames: Vec::new(),
+            forwards: FxHashSet::default(),
+            passed: FxHashMap::default(),
             parsed: ParsedModule {
                 path: path.to_owned(),
                 ..ParsedModule::default()
@@ -281,12 +288,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         facts.bases.dedup_by(|later, kept| later.0 == kept.0);
         facts.enumerators.sort_unstable();
         facts.enumerators.dedup();
+        facts.forwards = self
+            .forwards
+            .iter()
+            .map(|&(function, callee)| (function.to_owned(), callee.to_owned()))
+            .collect();
         facts.forwards.sort_unstable();
-        facts.forwards.dedup();
-        facts.passed.sort_unstable();
-        facts
+        facts.passed = self
             .passed
-            .dedup_by(|later, kept| (&later.0, &later.1) == (&kept.0, &kept.1));
+            .iter()
+            .map(|(&(callee, name), &line)| (callee.to_owned(), name.to_owned(), line))
+            .collect();
+        facts.passed.sort_unstable();
         self.parsed.path_refs.sort_unstable();
         self.parsed.path_refs.dedup();
         self.parsed
@@ -1114,17 +1127,22 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// (#1173).
     #[inline(never)]
     fn record_by_name(&mut self, call: &'ast ExprCall) {
-        if gets_own_name(call) {
-            self.record_self_reference(call);
-        }
-        if edits_sys_path(&call.func) {
-            self.sys_path.edited = true;
-            self.parsed.adds_computed_sys_path |= adds_computed_path(call);
-        }
-        self.parsed.path_refs.extend(path_refs(call));
         let Some(callee) = callee_name(&call.func) else {
             return;
         };
+        // Dispatch on the callee's last name first: the checks below run
+        // for every call of the project.
+        match callee {
+            "get" if gets_own_name(call) => self.record_self_reference(call),
+            "insert" | "append" | "extend" | "addsitedir" | "syspath_prepend"
+                if edits_sys_path(&call.func) =>
+            {
+                self.sys_path.edited = true;
+                self.parsed.adds_computed_sys_path |= adds_computed_path(call);
+            },
+            _ => {},
+        }
+        self.parsed.path_refs.extend(path_refs(call));
         if callee == "__subclasses__"
             && let Expr::Attribute(attribute) = &*call.func
         {
@@ -1139,7 +1157,6 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             }
             return;
         }
-        let facts = &mut self.parsed.subclass_facts;
         let frame = self.function_frames.last();
         if self.module_classes.is_empty() && frame.is_none() {
             return;
@@ -1151,9 +1168,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             let name = name.id.as_str();
             if self.module_classes.contains(name) {
                 let line = self.lines.line(call.start());
-                facts
-                    .passed
-                    .push((callee.to_owned(), name.to_owned(), line));
+                let first = self.passed.entry((callee, name)).or_insert(line);
+                *first = (*first).min(line);
             }
             // A method of a parameter (`self.layer(x)`) is no module-level
             // function, so it is not followed; skipping it keeps the facts of
@@ -1164,9 +1180,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     positional_names(parameters).any(|parameter| parameter == root)
                 })
             {
-                facts
-                    .forwards
-                    .push(((*function).to_owned(), callee.to_owned()));
+                self.forwards.insert((function, callee));
             }
         }
     }
@@ -2640,6 +2654,13 @@ def later():
 
 class Defined:
     pass
+
+class Model:
+    def forward(self, cls):
+        return self.layer.helper(cls)
+
+def via_module(cls):
+    return registry.lookup(cls)
 ";
         let facts = visit_source(source).subclass_facts;
         assert_eq!(
@@ -2664,7 +2685,11 @@ class Defined:
         assert_eq!(facts.enumerators, ["all_subclasses", "every", "others"]);
         assert_eq!(
             facts.forwards,
-            [("platform_subclass".to_owned(), "all_subclasses".to_owned())]
+            [
+                ("platform_subclass".to_owned(), "all_subclasses".to_owned()),
+                ("via_module".to_owned(), "lookup".to_owned()),
+            ],
+            "a method of a parameter (`self.layer.helper`) is not followed"
         );
         assert_eq!(
             facts.passed,
