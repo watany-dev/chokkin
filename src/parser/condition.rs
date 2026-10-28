@@ -245,6 +245,9 @@ if is_psycopg3 and settings.DEBUG:
             Import(usize),
             /// `if` and `elif` branches, then the `else` body.
             If(Vec<(Cond, Vec<Self>)>, Option<Vec<Self>>),
+            /// `if <cond>: raise ImportError`: the rest of the body runs only
+            /// when the condition is false (#1272).
+            Exit(Cond),
         }
 
         const ROOTS: [&str; 3] = ["zzma", "zzmb", "zzmc"];
@@ -289,16 +292,18 @@ if is_psycopg3 and settings.DEBUG:
         }
 
         fn block() -> impl Strategy<Value = Block> {
-            (0..ROOTS.len())
-                .prop_map(Block::Import)
-                .prop_recursive(2, 8, 3, |inner| {
-                    let body = prop::collection::vec(inner, 1..3);
-                    (
-                        prop::collection::vec((cond(), body.clone()), 1..3),
-                        proptest::option::of(body),
-                    )
-                        .prop_map(|(branches, orelse)| Block::If(branches, orelse))
-                })
+            prop_oneof![
+                3 => (0..ROOTS.len()).prop_map(Block::Import),
+                1 => cond().prop_map(Block::Exit),
+            ]
+            .prop_recursive(2, 8, 3, |inner| {
+                let body = prop::collection::vec(inner, 1..3);
+                (
+                    prop::collection::vec((cond(), body.clone()), 1..3),
+                    proptest::option::of(body),
+                )
+                    .prop_map(|(branches, orelse)| Block::If(branches, orelse))
+            })
         }
 
         /// A condition whose leaves are numbered occurrences, so every
@@ -339,11 +344,19 @@ if is_psycopg3 and settings.DEBUG:
         struct Program {
             source: String,
             atoms: Vec<Atom>,
-            /// Per import in source order: its root, and per enclosing branch
-            /// the condition under which that branch runs. The branches use
-            /// disjoint leaves, so the import never runs exactly when one of
-            /// them never runs.
-            imports: Vec<(usize, Vec<Fact>)>,
+            /// Per import in source order: its root and its guards.
+            imports: Vec<(usize, Guards)>,
+        }
+
+        /// What an import runs under: per enclosing branch the condition
+        /// under which that branch runs, and per earlier exit of an enclosing
+        /// body the condition under which the body goes on. They use disjoint
+        /// leaves, so the import never runs exactly when one of them never
+        /// runs.
+        #[derive(Clone, Default)]
+        struct Guards {
+            branches: Vec<Fact>,
+            exits: Vec<Fact>,
         }
 
         /// Comments, blank lines and line breaks inside parentheses; `None`
@@ -476,15 +489,22 @@ if is_psycopg3 and settings.DEBUG:
             fn render_body(
                 &mut self,
                 indent: usize,
-                path: &[Fact],
+                guards: &Guards,
                 body: &[Block],
                 noise: &mut Noise<'_>,
             ) {
+                let mut guards = guards.clone();
                 for block in body {
                     let (branches, orelse) = match block {
+                        Block::Exit(cond) => {
+                            let fact = self.render_test(indent, "if", cond, noise);
+                            self.render_line(indent + 4, "raise ImportError", noise);
+                            guards.exits.push(Fact::Not(Box::new(fact)));
+                            continue;
+                        },
                         Block::Import(root) => {
                             let id = self.imports.len();
-                            self.imports.push((*root, path.to_vec()));
+                            self.imports.push((*root, guards.clone()));
                             self.render_line(
                                 indent,
                                 &format!("import {}.i{id}", ROOTS[*root]),
@@ -500,15 +520,15 @@ if is_psycopg3 and settings.DEBUG:
                         let fact = self.render_test(indent, keyword, cond, noise);
                         let mut runs = failed.clone();
                         runs.push(fact.clone());
-                        let mut inner = path.to_vec();
-                        inner.push(Fact::All(runs));
+                        let mut inner = guards.clone();
+                        inner.branches.push(Fact::All(runs));
                         self.render_body(indent + 4, &inner, body, noise);
                         failed.push(Fact::Not(Box::new(fact)));
                     }
                     if let Some(body) = orelse {
                         self.render_line(indent, "else:", noise);
-                        let mut inner = path.to_vec();
-                        inner.push(Fact::All(failed));
+                        let mut inner = guards.clone();
+                        inner.branches.push(Fact::All(failed));
                         self.render_body(indent + 4, &inner, body, noise);
                     }
                 }
@@ -520,7 +540,7 @@ if is_psycopg3 and settings.DEBUG:
                     ..Self::default()
                 };
                 let mut noise = Noise { choices, at: 0 };
-                program.render_body(0, &[], blocks, &mut noise);
+                program.render_body(0, &Guards::default(), blocks, &mut noise);
                 program
             }
 
@@ -577,7 +597,8 @@ if is_psycopg3 and settings.DEBUG:
                 let none = |_: Atom| false;
                 self.imports
                     .iter()
-                    .map(|(_, path)| {
+                    .map(|(_, guards)| {
+                        let path = guards.branches.as_slice();
                         let type_only = self.never_runs_on_path(path, &runtime, &none);
                         let main_only = self.never_runs_on_path(
                             path,
@@ -594,8 +615,12 @@ if is_psycopg3 and settings.DEBUG:
                         } else {
                             ImportContext::Runtime
                         };
+                        // Only an install test gates the rest of a body
+                        // (#1272): an exit on any other fact leaves the
+                        // context and the platform guard alone.
+                        let gated: Vec<Fact> = path.iter().chain(&guards.exits).cloned().collect();
                         let optional = self.never_runs_on_path(
-                            path,
+                            &gated,
                             &|atom| match atom {
                                 // A loaded-module check gates whatever the
                                 // branch imports (#1272).
@@ -625,7 +650,8 @@ if is_psycopg3 and settings.DEBUG:
 
         proptest! {
             /// An import is type-only, `__main__`-only, optional or
-            /// platform-guarded exactly when its branches prove it, so the
+            /// platform-guarded exactly when its branches (and, for optional,
+            /// the earlier exits of its bodies) prove it, so the
             /// classification never claims a runtime requirement the
             /// conditions rule out (#861). Every leaf occurs once, so the
             /// reference model's exhaustive answer is the exact one.

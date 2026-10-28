@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc c3c5e8f0774e903f330008774660065f404404104591988114e2f6d55f8f2df8 # shrinks to inputs = Inputs { name: true, dynamic_name: false, src_layout: false, packages: [], entry_points: [], files: [] }, signal = Gui("acme.cli:main")
 cc 83b5258d9d46c6784890c84444a0030725738968ce3aeb121a5c14396061670a # shrinks to inputs = Inputs { name: true, dynamic_name: false, src_layout: false, packages: [], entry_points: [(false, "acme")], files: [] }, signal = Package("acme")
+cc 3195ce969b82012000fdf36cc1ef27e7c9eb94db52a7f13e4f11e017fc6160af # shrinks to inputs = Inputs { name: true, dynamic_name: false, src_layout: false, packages: [("acme_web", true)], entry_points: [(false, "acme", false)], files: [] }, signal = Package("acme")
