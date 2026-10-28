@@ -1705,6 +1705,66 @@ mod tests {
         );
     }
 
+    /// The hook isolation `docs/dev/formal/binary_providers_model.py`
+    /// (`hook_usages`) ports: remote / local × every `language` the
+    /// project-env list names, an own-env one and none × no / empty /
+    /// non-empty `additional_dependencies`. An isolated hook provides its
+    /// binary and makes its usages config sections; a local hook's `entry`
+    /// is a usage too.
+    #[test]
+    fn hook_isolation_follows_the_formal_model() {
+        let languages = [
+            None,
+            Some("system"),
+            Some("script"),
+            Some("unsupported"),
+            Some("unsupported_script"),
+            Some("python"),
+            Some("node"),
+        ];
+        for local in [false, true] {
+            for language in languages {
+                for additional in [None, Some("[]"), Some("[mypy-extensions]")] {
+                    let repo = if local {
+                        "local"
+                    } else {
+                        "https://github.com/pre-commit/mirrors-mypy"
+                    };
+                    let language_line = language
+                        .map(|language| format!("        language: {language}\n"))
+                        .unwrap_or_default();
+                    let additional_line = additional
+                        .map(|deps| format!("        additional_dependencies: {deps}\n"))
+                        .unwrap_or_default();
+                    let hook = format!(
+                        "repos:\n  - repo: {repo}\n    hooks:\n      - id: mypy\n        \
+                         entry: mypy\n{language_line}{additional_line}"
+                    );
+                    let result = scan_files(&[(".pre-commit-config.yaml", &hook)]);
+                    let isolated = !local
+                        || (additional.is_some_and(|deps| deps != "[]")
+                            && language.is_some_and(|language| {
+                                !PRE_COMMIT_PROJECT_ENV_LANGUAGES.contains(&language)
+                            }));
+                    let label = format!("local={local} language={language:?} deps={additional:?}");
+                    let provided: &[&str] = if isolated { &["mypy"] } else { &[] };
+                    assert_eq!(result.provided_binaries, provided, "{label}");
+                    let mypy: Vec<_> = result
+                        .binary_usages
+                        .iter()
+                        .filter(|usage| usage.binary == "mypy")
+                        .map(|usage| (usage.origin.line.is_some(), usage.config_section))
+                        .collect();
+                    let mut expected = vec![(false, isolated)];
+                    if local {
+                        expected.push((true, isolated));
+                    }
+                    assert_eq!(mypy, expected, "{label}");
+                }
+            }
+        }
+    }
+
     #[test]
     fn isort_section_that_skips_every_file_is_not_a_usage() {
         let binaries = |pyproject: &str| -> Vec<String> {

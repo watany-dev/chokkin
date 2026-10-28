@@ -528,4 +528,243 @@ mod tests {
         );
         assert_eq!(found, ["nox"]);
     }
+
+    /// How the tool distribution is provided in `decisions_follow_the_formal_model`.
+    #[derive(Clone, Copy, Debug)]
+    enum Provider {
+        None,
+        Declared,
+        PipInstall,
+        LockEdge,
+        Wrapper,
+        OwnExact,
+        OwnSpelled,
+    }
+
+    /// One input of `decisions_follow_the_formal_model`: the provider, which
+    /// tool usages exist (bit 0 a command, 1 the second binary, 2 a config
+    /// section, 3 `prek` running), a pytest-style usage (`Some(inferred)`),
+    /// a hook (`Some((local, isolated))`), the root `.pre-commit-config.yaml`
+    /// and a `pre-commit` command.
+    #[derive(Clone, Copy, Debug)]
+    struct FormalCase {
+        provider: Provider,
+        bits: u8,
+        pytest: Option<bool>,
+        hook: Option<(bool, bool)>,
+        config_file: bool,
+        pre_commit_command: bool,
+    }
+
+    fn formal_usage(binary: &str, file: &str, config_section: bool, inferred: bool) -> BinaryUsage {
+        BinaryUsage {
+            binary: binary.to_owned(),
+            origin: ReferenceOrigin {
+                file: file.to_owned(),
+                line: None,
+                label: file.to_owned(),
+            },
+            config_section,
+            inferred,
+        }
+    }
+
+    /// The usages and hook binaries of `case`, as the model's `build`.
+    fn formal_usages(case: FormalCase) -> (Vec<BinaryUsage>, Vec<&'static str>) {
+        let mut usages = Vec::new();
+        let mut hook_binaries = Vec::new();
+        if case.bits & 1 != 0 {
+            usages.push(formal_usage("tox", "Makefile", false, false));
+        }
+        if case.bits & 2 != 0 {
+            usages.push(formal_usage("tox-x", "noxfile.py", false, false));
+        }
+        if case.bits & 4 != 0 {
+            usages.push(formal_usage("tox", "pyproject.toml", true, false));
+        }
+        if let Some(inferred) = case.pytest {
+            usages.push(formal_usage("tox", "tests", false, inferred));
+        }
+        if let Some((local, isolated)) = case.hook {
+            let hook = formal_usage("tox", ".pre-commit-config.yaml", isolated, false);
+            if local {
+                usages.push(hook.clone());
+            }
+            usages.push(hook);
+            if isolated {
+                hook_binaries.push("tox");
+            }
+        }
+        if case.bits & 8 != 0 {
+            usages.push(formal_usage("prek", "Makefile", false, false));
+        }
+        if case.config_file {
+            usages.push(formal_usage(
+                "pre-commit",
+                ".pre-commit-config.yaml",
+                true,
+                false,
+            ));
+        }
+        if case.pre_commit_command {
+            usages.push(formal_usage("pre-commit", "tox.ini", false, false));
+        }
+        (usages, hook_binaries)
+    }
+
+    fn formal_resolve(binary: &str) -> &'static str {
+        match binary {
+            "tox" | "tox-x" => "tox",
+            "pre-commit" => "pre-commit",
+            "prek" => "prek",
+            other => panic!("unresolved {other}"),
+        }
+    }
+
+    /// A CHK008 as the model reports it: binary, reported file, confidence.
+    type FormalVerdict = (String, String, Confidence);
+
+    /// `docs/dev/formal/binary_providers_model.py` `detect`, transcribed:
+    /// (binary, reported file, confidence) for the unprovided usages.
+    fn formal_detect(
+        usages: &[BinaryUsage],
+        provided: &BTreeSet<&str>,
+        own: &[&str],
+        hook_binaries: &[&str],
+    ) -> Vec<FormalVerdict> {
+        let prek_runs_hooks = usages.iter().any(|usage| usage.binary == "prek");
+        let is_provided = |usage: &BinaryUsage, dist: &str| {
+            provided.contains(dist)
+                || own
+                    .iter()
+                    .any(|name| normalize_distribution_name(name) == dist)
+                || (usage.config_section && hook_binaries.contains(&usage.binary.as_str()))
+                || (prek_runs_hooks
+                    && usage.binary == "pre-commit"
+                    && usage.origin.file == ".pre-commit-config.yaml")
+        };
+        let unprovided: Vec<(&BinaryUsage, &str)> = usages
+            .iter()
+            .filter(|usage| !usage.inferred)
+            .map(|usage| (usage, formal_resolve(&usage.binary)))
+            .filter(|(usage, dist)| !is_provided(usage, dist))
+            .collect();
+        let run_by_command: BTreeSet<&str> = unprovided
+            .iter()
+            .filter(|(usage, _)| !usage.config_section)
+            .map(|(_, dist)| *dist)
+            .collect();
+        let mut reported = BTreeSet::new();
+        let mut found = Vec::new();
+        for (usage, dist) in unprovided {
+            let run = run_by_command.contains(dist);
+            if (run && usage.config_section) || !reported.insert(dist) {
+                continue;
+            }
+            let confidence = if run {
+                Confidence::Certain
+            } else {
+                Confidence::Likely
+            };
+            found.push((usage.binary.clone(), usage.origin.file.clone(), confidence));
+        }
+        found
+    }
+
+    /// `detect_unlisted_binaries` on `case` as a real manifest and hints, and
+    /// the model's verdict on it.
+    fn formal_run(case: FormalCase) -> (Vec<FormalVerdict>, Vec<FormalVerdict>) {
+        let (usages, hook_binaries) = formal_usages(case);
+        let (declared, edge, own): (&[&str], bool, &[&str]) = match case.provider {
+            Provider::None | Provider::PipInstall => (&[], false, &[]),
+            Provider::Declared => (&["tox"], false, &[]),
+            Provider::LockEdge => (&["framework"], true, &[]),
+            Provider::Wrapper => (&["tox-uv"], false, &[]),
+            Provider::OwnExact => (&[], false, &["tox"]),
+            Provider::OwnSpelled => (&[], false, &["Tox"]),
+        };
+        let mut root = manifest(declared);
+        if edge {
+            root.lockfile
+                .edges
+                .insert("framework".to_owned(), vec!["tox".to_owned()]);
+        }
+        root.metadata.name = own.first().map(|name| (*name).to_owned());
+        let mut plugins = hints(usages.clone());
+        let pip_install = matches!(case.provider, Provider::PipInstall);
+        if pip_install {
+            plugins.config_declared_distributions.push("tox".to_owned());
+        }
+        plugins.config_provided_binaries = hook_binaries.iter().map(|b| (*b).to_owned()).collect();
+        let resolution = resolution(&[
+            ("tox", "tox"),
+            ("tox-x", "tox"),
+            ("pre-commit", "pre-commit"),
+            ("prek", "prek"),
+        ]);
+        let declared_index = build_declared_index(&root);
+        let providers = BinaryProviders::new(&declared_index, &root, &[], &plugins);
+        let found = detect_unlisted_binaries(&providers, &resolution, &plugins)
+            .into_iter()
+            .map(|candidate| {
+                let IssueSubject::Binary { name } = candidate.subject else {
+                    panic!("not a binary subject");
+                };
+                let Some(Origin::Binary(origin)) = candidate.origins.first().cloned() else {
+                    panic!("no binary origin");
+                };
+                (name, origin.file, candidate.confidence)
+            })
+            .collect();
+        // The model's `provider_set`: declarations, their lock edges and
+        // wrappers.
+        let mut provided: BTreeSet<&str> = declared.iter().copied().collect();
+        if pip_install || edge || matches!(case.provider, Provider::Wrapper) {
+            provided.insert("tox");
+        }
+        (
+            found,
+            formal_detect(&usages, &provided, own, &hook_binaries),
+        )
+    }
+
+    /// The CHK008 decision `docs/dev/formal/binary_providers_model.py`
+    /// checks is the one `detect_unlisted_binaries` implements: every way
+    /// the tool is provided × its command, second binary, config section and
+    /// pytest-style usage × a pre-commit hook in its own or the project's env
+    /// × `prek`, the root `.pre-commit-config.yaml` and a `pre-commit`
+    /// command. The hooks' isolation itself is `config_scan.rs`
+    /// `hook_isolation_follows_the_formal_model`.
+    #[test]
+    fn decisions_follow_the_formal_model() {
+        let providers = [
+            Provider::None,
+            Provider::Declared,
+            Provider::PipInstall,
+            Provider::LockEdge,
+            Provider::Wrapper,
+            Provider::OwnExact,
+            Provider::OwnSpelled,
+        ];
+        let hooks = [
+            None,
+            Some((false, true)),
+            Some((true, true)),
+            Some((true, false)),
+        ];
+        let pytests = [None, Some(true), Some(false)];
+        // Each index decodes to one case, the provider varying fastest.
+        for index in 0..7 * 16 * 3 * 4 * 4_usize {
+            let case = FormalCase {
+                provider: providers[index % 7],
+                bits: u8::try_from(index / 7 % 16).expect("bits"),
+                pytest: pytests[index / (7 * 16) % 3],
+                hook: hooks[index / (7 * 16 * 3) % 4],
+                config_file: index / (7 * 16 * 3 * 4) % 2 != 0,
+                pre_commit_command: index / (7 * 16 * 3 * 4 * 2) != 0,
+            };
+            let (found, expected) = formal_run(case);
+            assert_eq!(found, expected, "{case:?}");
+        }
+    }
 }
