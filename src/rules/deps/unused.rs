@@ -592,6 +592,7 @@ mod tests {
                 mode: crate::config::ProjectMode::App,
                 confidence_reason: None,
                 test_fixture: false,
+                config_mention: None,
             });
 
         let mut resolution = ResolutionIndex::default();

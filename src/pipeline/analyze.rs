@@ -22,8 +22,8 @@ use crate::parser::{
 };
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
-    ReachabilityReport, analyze_reachability, apply_distributed_surfaces, apply_member_surfaces,
-    apply_public_surface,
+    ReachabilityReport, analyze_reachability, apply_config_mentions, apply_distributed_surfaces,
+    apply_member_surfaces, apply_public_surface,
 };
 use crate::reporters::{Diagnostic, FileCounts};
 use crate::resolver::{
@@ -388,6 +388,12 @@ fn run_analysis_core(
         })
         .collect();
     apply_distributed_surfaces(&mut reachability, &distributed_surfaces, &entry);
+    apply_config_mentions(
+        &mut reachability,
+        &sources.files,
+        &sources.root.path,
+        &parse,
+    );
 
     let stdlib = StdlibRange::for_project(
         probe.effective_config.target_version.as_ref(),

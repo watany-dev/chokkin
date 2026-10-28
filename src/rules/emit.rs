@@ -416,6 +416,7 @@ mod tests {
             mode: ProjectMode::App,
             confidence_reason: None,
             test_fixture: false,
+            config_mention: None,
         });
 
         let deps = DependencyReport::default();
@@ -530,6 +531,7 @@ mod tests {
             mode: ProjectMode::App,
             confidence_reason: None,
             test_fixture: false,
+            config_mention: None,
         });
 
         let issues = emit_issues(
