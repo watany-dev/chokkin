@@ -1769,6 +1769,102 @@ mod tests {
         }
     }
 
+    /// Each known pre-commit hook `id` is a usage of its binary.
+    #[test]
+    fn hook_ids_name_their_binary() {
+        for (hook_id, binary) in [
+            ("black", "black"),
+            ("ruff", "ruff"),
+            ("ruff-format", "ruff"),
+            ("mypy", "mypy"),
+            ("isort", "isort"),
+            ("pytest", "pytest"),
+            ("bandit", "bandit"),
+            ("flake8", "flake8"),
+            ("pyupgrade", "pyupgrade"),
+            ("autopep8", "autopep8"),
+        ] {
+            let config = format!(
+                "repos:\n  - repo: https://example.com/hooks\n    rev: v1\n    hooks:\n      - id: {hook_id}\n"
+            );
+            let result = scan_files(&[(".pre-commit-config.yaml", &config)]);
+            assert!(
+                result
+                    .binary_usages
+                    .iter()
+                    .any(|usage| usage.binary == binary && usage.origin.line == Some(5)),
+                "{hook_id}: {:?}",
+                result.binary_usages
+            );
+        }
+    }
+
+    /// Each mkdocs plugin a `plugins:` item names is its distribution's use.
+    #[test]
+    fn mkdocs_plugins_name_their_distributions() {
+        let contents = "plugins:\n  - search\n  - mkdocstrings:\n      handlers: {}\n  - autorefs\n  \
+                        - include-markdown\n  - redirects:\n      redirect_maps: {}\n  - minify\n";
+        assert_eq!(
+            mkdocs_used_distributions(contents),
+            [
+                "mkdocs-autorefs",
+                "mkdocs-include-markdown-plugin",
+                "mkdocs-minify-plugin",
+                "mkdocs-redirects",
+                "mkdocstrings",
+            ]
+        );
+    }
+
+    /// A command word is known from the binary map alone, as well as from the
+    /// tool sections and hook ids: `gunicorn` is neither of those.
+    #[test]
+    fn shell_scripts_read_binaries_the_binary_map_knows() {
+        let result = scan_files(&[("scripts/serve.sh", "#!/bin/sh\ngunicorn app:app\n")]);
+        let found = usages(&result);
+        assert!(
+            found
+                .iter()
+                .any(|(binary, path, _)| binary == "gunicorn" && path == "scripts/serve.sh"),
+            "{found:?}"
+        );
+    }
+
+    /// Each `[tool.<key>]` section a known tool reads is a usage of its
+    /// binary.
+    #[test]
+    fn tool_sections_name_their_binary() {
+        for (key, binary) in [
+            ("mypy", "mypy"),
+            ("ruff", "ruff"),
+            ("black", "black"),
+            ("isort", "isort"),
+            ("pylint", "pylint"),
+            ("bandit", "bandit"),
+            ("coverage", "coverage"),
+            ("tox", "tox"),
+            ("nox", "nox"),
+            ("twine", "twine"),
+            ("towncrier", "towncrier"),
+            ("cogapp", "cogapp"),
+            ("build", "build"),
+            ("pytest", "pytest"),
+            ("mkdocs", "mkdocs"),
+            ("pre-commit", "pre-commit"),
+            ("pre_commit", "pre-commit"),
+        ] {
+            let result = scan_files(&[("pyproject.toml", &format!("[tool.{key}]\nx = 1\n"))]);
+            assert!(
+                result
+                    .binary_usages
+                    .iter()
+                    .any(|usage| usage.binary == binary),
+                "{key}: {:?}",
+                result.binary_usages
+            );
+        }
+    }
+
     #[test]
     fn isort_section_that_skips_every_file_is_not_a_usage() {
         let binaries = |pyproject: &str| -> Vec<String> {

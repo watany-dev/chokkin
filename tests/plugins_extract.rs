@@ -331,6 +331,25 @@ fn config_file_references_carry_their_line() {
     );
 }
 
+/// A lone `pytest_plugins` string names one module, on its own line (#882).
+#[test]
+fn pytest_plugins_string_names_one_module() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    std::fs::write(
+        temp.path().join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = [\"pytest\"]\n\n\
+         [tool.pytest.ini_options]\npytest_plugins = \"acme.fixtures\"\n",
+    )
+    .expect("write pyproject");
+    let hints = extract_at(temp.path());
+    let refs: Vec<(&str, Option<u32>)> = pytest_contrib(&hints)
+        .module_refs
+        .iter()
+        .map(|reference| (reference.module.as_str(), reference.origin.line))
+        .collect();
+    assert_eq!(refs, [("acme.fixtures", Some(7))]);
+}
+
 /// The `[pytest]` / `[tool:pytest]` section an INI config is read from is
 /// the line of the entries it collects (#882).
 #[test]
