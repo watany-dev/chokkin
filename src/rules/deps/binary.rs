@@ -344,9 +344,12 @@ mod tests {
             .into_iter()
             .filter_map(
                 |candidate| match (&candidate.subject, &candidate.origins[..]) {
-                    (IssueSubject::Binary { name }, [Origin::Binary(origin)]) => {
-                        Some((name.clone(), candidate.confidence, origin.line))
-                    },
+                    (IssueSubject::Binary { name }, [Origin::Binary(origin)]) => Some((
+                        name.clone(),
+                        candidate.confidence,
+                        origin.line,
+                        candidate.explain.details.len(),
+                    )),
                     _ => None,
                 },
             )
@@ -354,8 +357,8 @@ mod tests {
         assert_eq!(
             found,
             [
-                ("pylint".to_owned(), Confidence::Likely, Some(1)),
-                ("coverage".to_owned(), Confidence::Certain, Some(7)),
+                ("pylint".to_owned(), Confidence::Likely, Some(1), 2),
+                ("coverage".to_owned(), Confidence::Certain, Some(7), 1),
             ]
         );
     }
