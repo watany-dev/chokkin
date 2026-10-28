@@ -1057,9 +1057,21 @@
       ]
     },
     {
+      "distribution": "strawberry-graphql",
+      "imports": [
+        "strawberry"
+      ]
+    },
+    {
       "distribution": "strawberry-graphql-django",
       "imports": [
         "strawberry_django"
+      ]
+    },
+    {
+      "distribution": "django-pgware",
+      "imports": [
+        "django_pg_utils"
       ]
     },
     {
