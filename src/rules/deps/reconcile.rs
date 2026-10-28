@@ -1,9 +1,8 @@
 //! Dependency reconciliation orchestration (pipeline step 10).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use indexmap::IndexSet;
-use rustc_hash::FxHashSet as HashSet;
 
 use crate::manifest::{
     DeclaredDependency, DependencyContext, InlineScript, LoadedManifest, LockfileGraph,

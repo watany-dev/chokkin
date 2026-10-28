@@ -10,8 +10,9 @@
 //! test is an opaque leaf, so a branch it guards may run on every minor
 //! (ADR 0005).
 
+use std::collections::HashMap;
+
 use ruff_python_ast::{CmpOp, Expr, ExprNumberLiteral, Number, Stmt};
-use rustc_hash::FxHashMap as HashMap;
 
 use super::condition::{self, Leaf};
 use super::platform_guard::{PlatformModule, PlatformModules, bound_names, is_sys_attribute};
@@ -250,7 +251,7 @@ pub(super) fn branch_minors(
 /// true and false on (#1272). A name bound anywhere else in the module scope
 /// may hold something else by the time a test reads it, so it is left out.
 pub(super) fn version_names(stmts: &[Stmt], modules: &PlatformModules) -> VersionNames {
-    let mut names = VersionNames::default();
+    let mut names = VersionNames::new();
     let bound = bound_names(None, stmts);
     for stmt in stmts {
         let Stmt::Assign(assign) = stmt else {
@@ -312,12 +313,7 @@ mod tests {
             &tests[..branch.min(tests.len())],
             tests.get(branch).copied(),
         );
-        minor_runs(branch_minors(
-            earlier,
-            test,
-            &modules,
-            &VersionNames::default(),
-        ))
+        minor_runs(branch_minors(earlier, test, &modules, &VersionNames::new()))
     }
 
     const ALL: [u32; 2] = [0, u32::MAX];
@@ -428,7 +424,7 @@ mod tests {
         let parsed =
             ruff_python_parser::parse_expression("sys.version_info >= (3, 9)").expect("parse");
         assert_eq!(
-            branch_minors(&[], Some(parsed.expr()), &modules, &VersionNames::default()),
+            branch_minors(&[], Some(parsed.expr()), &modules, &VersionNames::new()),
             ALL_MINORS
         );
     }
@@ -506,7 +502,7 @@ mod tests {
         assert!(version_names(module.suite(), &modules).is_empty());
         // A bound name is read where `sys` is not, such as a function that
         // shadows it.
-        let names = VersionNames::from_iter([("PY2".to_owned(), (0, ALL_MINORS))]);
+        let names = VersionNames::from([("PY2".to_owned(), (0, ALL_MINORS))]);
         let parsed = ruff_python_parser::parse_expression("PY2").expect("parse");
         let minors = branch_minors(
             &[],

@@ -1,9 +1,7 @@
 //! The project's local trees: workspace members and `[tool.uv.sources]`
 //! entries the checkout provides (#547).
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::manifest::{LoadedManifest, ProjectMetadata, UvSourceKind, UvToolSettings};
@@ -161,7 +159,7 @@ pub(crate) fn importable_modules<'a>(
                 .strip_suffix("/src")
                 .is_some_and(|parent| roots.contains(parent))
     };
-    let mut modules: HashMap<String, bool> = HashMap::default();
+    let mut modules: HashMap<String, bool> = HashMap::new();
     for path in paths {
         let path = path.replace('\\', "/");
         let Some(stem) = strip_source_suffix(&path) else {
@@ -322,10 +320,10 @@ mod tests {
             ..LocalTrees::default()
         };
         let project = trees.modules(&files);
-        let mut union = HashMap::default();
+        let mut union = HashMap::new();
         for root in ["", "packages/api", "packages/api/plugins"] {
             let paths = files.iter().map(|file| file.path.as_str());
-            for (module, file) in importable_modules(paths, &HashSet::from_iter([root])) {
+            for (module, file) in importable_modules(paths, &HashSet::from([root])) {
                 *union.entry(module).or_insert(false) |= file;
             }
         }

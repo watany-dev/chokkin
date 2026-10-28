@@ -1,8 +1,6 @@
 //! CHK002 unused dependency detection.
 
-use std::collections::BTreeSet;
-
-use rustc_hash::FxHashSet as HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::GraphEdge;
@@ -477,7 +475,7 @@ mod tests {
         }));
 
         let reachability = ReachabilityReport::default();
-        let reachable = HashSet::from_iter(["src/acme/main.py"]);
+        let reachable = HashSet::from(["src/acme/main.py"]);
         let sources = empty_sources();
         let parse = crate::parser::ParseSummary::default();
         let rules = RuleContext {
@@ -599,7 +597,7 @@ mod tests {
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(legacy_boto3_import()));
 
-        let reachable = HashSet::from_iter(["src/acme/main.py"]);
+        let reachable = HashSet::from(["src/acme/main.py"]);
         let sources = empty_sources();
         let parse = crate::parser::ParseSummary::default();
         let rules = RuleContext {

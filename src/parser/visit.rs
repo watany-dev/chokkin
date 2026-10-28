@@ -1,6 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -120,7 +120,7 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     imported_guards: Vec<String>,
     /// Names the current scope binds to `sniffio.current_async_library()`
     /// (#731).
-    async_library_names: FxHashSet<String>,
+    async_library_names: HashSet<String>,
     mentions: SourceMentions,
     /// Inside `if __name__ == "__main__":` of a module other than
     /// `__main__.py`; its imports are dev context (#681).
@@ -144,8 +144,8 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// Module-level names set to `None` in an `except ImportError:` handler
     /// (`x = None`), which `x is None` also reads; scoped as `try_flags`.
     none_flags: FxHashSet<String>,
-    typing_aliases: FxHashSet<String>,
-    type_checking_names: FxHashSet<String>,
+    typing_aliases: HashSet<String>,
+    type_checking_names: HashSet<String>,
     loader_names: LoaderNames,
     server_names: ServerNames,
     /// Names the current scope binds to a module a prefixed loader call
@@ -208,9 +208,9 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             platform_guard_depth: 0,
             version_minors: ALL_MINORS,
             platform_modules: PlatformModules::default(),
-            version_names: VersionNames::default(),
+            version_names: VersionNames::new(),
             imported_guards: Vec::new(),
-            async_library_names: FxHashSet::default(),
+            async_library_names: HashSet::new(),
             mentions: SourceMentions {
                 async_library: true,
                 availability: true,
@@ -224,8 +224,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             module_level: true,
             try_flags: FxHashSet::default(),
             none_flags: FxHashSet::default(),
-            typing_aliases: FxHashSet::from_iter(["typing".to_owned()]),
-            type_checking_names: FxHashSet::from_iter(["TYPE_CHECKING".to_owned()]),
+            typing_aliases: HashSet::from(["typing".to_owned()]),
+            type_checking_names: HashSet::from(["TYPE_CHECKING".to_owned()]),
             loader_names: LoaderNames::default(),
             server_names: ServerNames::default(),
             prefix_modules: FxHashMap::default(),
@@ -392,11 +392,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         &self,
         parameters: Option<&Parameters>,
         body: &[Stmt],
-    ) -> FxHashSet<String> {
+    ) -> HashSet<String> {
         if self.mentions.async_library {
             async_library_names(parameters, body)
         } else {
-            FxHashSet::default()
+            HashSet::new()
         }
     }
 
@@ -1714,7 +1714,7 @@ impl<'a> Visitor<'a> for AnnotationNames<'_> {
 /// is the variable's own name.
 fn type_expression_arguments<'e>(
     call: &'e ExprCall,
-    typing_aliases: &FxHashSet<String>,
+    typing_aliases: &HashSet<String>,
 ) -> impl Iterator<Item = &'e Expr> {
     // Unlike `Literal[...]`, a method may share the name: `col.cast("float")`.
     let callee = match &*call.func {

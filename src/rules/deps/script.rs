@@ -1,12 +1,12 @@
 //! CHK002/CHK003 inside PEP 723 scripts, checked against the script block.
 
-use std::collections::BTreeSet;
-
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::{BTreeSet, HashSet};
 
 use super::companions::{used_companions, used_modules};
 use super::unused::is_conditional;
 use super::used::{sorted_paths, within};
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::config::Confidence;
 use crate::graph::ModuleOrigin;
 use crate::manifest::{InlineScript, normalize_distribution_name, requires_python_range};
@@ -54,7 +54,7 @@ pub(super) fn detect_script_dependency_issues(
             .filter(|dep| !dep.opaque)
             .map(|dep| normalize_distribution_name(&dep.name))
             .collect();
-        let mut local_files = HashSet::default();
+        let mut local_files = FxHashSet::default();
         let mut imports = Vec::new();
         for &import in index.imports_of(&script.path) {
             let mut found = false;
@@ -114,11 +114,11 @@ pub(super) fn detect_script_dependency_issues(
 /// import, file, and module for each script (#945).
 struct ScriptIndex<'a> {
     /// Imports by importing file, in resolution order.
-    imports: HashMap<&'a str, Vec<&'a ResolvedImport>>,
+    imports: FxHashMap<&'a str, Vec<&'a ResolvedImport>>,
     /// Inventory paths, sorted so a package's files form one range.
     paths: Vec<&'a str>,
     /// The first parsed module of each script.
-    modules: HashMap<&'a str, &'a ParsedModule>,
+    modules: FxHashMap<&'a str, &'a ParsedModule>,
 }
 
 impl<'a> ScriptIndex<'a> {
@@ -127,7 +127,7 @@ impl<'a> ScriptIndex<'a> {
         files: &'a [DiscoveredFile],
         parse: &'a ParseSummary,
     ) -> Self {
-        let mut imports: HashMap<&str, Vec<&ResolvedImport>> = HashMap::default();
+        let mut imports: FxHashMap<&str, Vec<&ResolvedImport>> = FxHashMap::default();
         for import in &resolution.imports {
             imports
                 .entry(import.file.as_str())
@@ -379,7 +379,7 @@ mod tests {
                 .collect(),
             ..ResolutionIndex::default()
         };
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -424,7 +424,7 @@ mod tests {
         detect_script_dependency_issues(
             &[script],
             &resolution,
-            &HashSet::from_iter(["scripts/tool.py"]),
+            &HashSet::from(["scripts/tool.py"]),
             &[],
             &ParseSummary::default(),
             &import_map(),
@@ -543,7 +543,7 @@ mod tests {
                 ..crate::parser::ParsedModule::default()
             }],
         };
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -575,7 +575,7 @@ mod tests {
                 ..crate::parser::ParsedModule::default()
             }],
         };
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &ResolutionIndex::default(),
@@ -609,7 +609,7 @@ mod tests {
         let found = detect_script_dependency_issues(
             &[script],
             &ResolutionIndex::default(),
-            &HashSet::default(),
+            &HashSet::new(),
             &[],
             &ParseSummary::default(),
             &import_map(),
@@ -651,7 +651,7 @@ mod tests {
             context: FileContext::Dev,
         })
         .collect();
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -730,7 +730,7 @@ mod tests {
                 context: FileContext::Dev,
             })
             .collect();
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = HashSet::from(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -801,7 +801,7 @@ mod tests {
             context: FileContext::Dev,
         })
         .collect();
-        let reachable = HashSet::from_iter(["tool.py", "scripts/run.py"]);
+        let reachable = HashSet::from(["tool.py", "scripts/run.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script("tool.py"), script("scripts/run.py")],
             &resolution,

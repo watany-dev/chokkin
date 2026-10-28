@@ -1,12 +1,12 @@
 //! Documentation tool plugin extractors.
 
 use std::cell::{OnceCell, RefCell};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use ruff_python_ast::{Expr, Stmt, Suite};
 use ruff_text_size::{Ranged, TextSize};
-use rustc_hash::FxHashMap as HashMap;
 
 use crate::config::{EntrySpec, PluginId};
 use crate::manifest::literals::{assigned_value, parse_module, string_list, string_value};
@@ -616,7 +616,7 @@ fn constant_strings(value: &Expr) -> Option<Vec<String>> {
 /// Module name → root-relative file of the discovered sources: a package
 /// over the module beside it, else the first file winning (#1108).
 fn module_files(sources: &DiscoveredSources) -> HashMap<String, String> {
-    let mut modules: HashMap<String, String> = HashMap::default();
+    let mut modules: HashMap<String, String> = HashMap::new();
     for file in &sources.files {
         if let Some(module) = path_to_module(&file.path, &sources.layout) {
             modules
@@ -906,7 +906,7 @@ mod tests {
              from common.constants import *\nfrom theme import *\nfrom .base import *\n",
         )
         .expect("valid python");
-        let module_files = HashMap::from_iter([(
+        let module_files = HashMap::from([(
             "common.constants".to_owned(),
             "src/common/constants.py".to_owned(),
         )]);
@@ -935,7 +935,7 @@ mod tests {
     fn a_local_constant_shadows_an_imported_one() {
         let stmts = parse_module("from c import BASE\nBASE = ['local']\nLIST = [f()]\n")
             .expect("valid python");
-        let imports = ConfImports::new(&stmts, &HashMap::default());
+        let imports = ConfImports::new(&stmts, &HashMap::new());
         let modules = ConfModules::new(Path::new("/nonexistent"));
         assert_eq!(
             imports.strings(&modules, &stmts, "BASE"),

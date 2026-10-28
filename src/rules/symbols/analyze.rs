@@ -1,8 +1,6 @@
 //! Symbol usage analysis orchestration (pipeline step 11).
 
-use std::collections::BTreeSet;
-
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
@@ -253,7 +251,7 @@ fn reached_from_tests<'a>(
         .filter(|module| !reachable.contains(module.path.as_str()))
         .map(|module| (module.path.as_str(), module))
         .collect();
-    let mut seen = HashSet::default();
+    let mut seen = HashSet::new();
     let mut reached = Vec::new();
     let mut queue: Vec<&ParsedModule> = tests.iter().collect();
     while let Some(module) = queue.pop() {
@@ -313,7 +311,7 @@ fn build_module_names<'a>(
     modules: &[&'a ParsedModule],
     sources: &DiscoveredSources,
 ) -> HashMap<&'a str, String> {
-    let mut names = HashMap::default();
+    let mut names = HashMap::new();
     for module in modules {
         if let Some(name) = path_to_module(&module.path, &sources.layout) {
             names.insert(module.path.as_str(), name);
@@ -473,7 +471,7 @@ fn detect_unresolved_imports(
 ) -> Vec<IssueCandidate> {
     // One issue per (file, module): lazy imports inside functions repeat the
     // same unresolved module many times in one file and bury the rest.
-    let mut sites: HashMap<(&str, &str), Vec<UnresolvedSite<'_>>> = HashMap::default();
+    let mut sites: HashMap<(&str, &str), Vec<UnresolvedSite<'_>>> = HashMap::new();
     for warning in &resolution.warnings {
         let ResolveWarning::UnresolvedImport {
             import,

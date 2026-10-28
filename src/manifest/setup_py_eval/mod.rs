@@ -7,13 +7,12 @@
 
 mod idioms;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use ruff_python_ast::{
     Comprehension, Expr, ExprCall, ExprSubscript, Operator, Stmt, StmtFunctionDef, Suite,
 };
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::path_util::rel_to_root;
 
@@ -197,14 +196,14 @@ impl SetupCall {
 pub(super) fn evaluate_setup_call(root: &Path, stmts: &Suite) -> Option<SetupCall> {
     let mut evaluator = Evaluator {
         root,
-        env: HashMap::default(),
-        functions: HashMap::default(),
+        env: HashMap::new(),
+        functions: HashMap::new(),
         depth: 0,
         steps: 0,
         objects: 0,
         probed_missing: Vec::new(),
         table_requirements: BTreeSet::new(),
-        ordered: HashSet::default(),
+        ordered: HashSet::new(),
     };
     let call = evaluator.exec_block(stmts)?;
     let unpacked = call.arguments.keywords.iter().any(|kw| kw.arg.is_none())
@@ -420,7 +419,7 @@ impl<'a> Evaluator<'a> {
         mut left: HashMap<String, Value>,
         right: HashMap<String, Value>,
     ) -> HashMap<String, Value> {
-        let mut joined = HashMap::default();
+        let mut joined = HashMap::new();
         for (name, value) in right {
             let merged = match left.remove(&name) {
                 Some(existing) => self.merge(existing, value, &mut joined),
@@ -1155,7 +1154,7 @@ mod props {
     //! assignment, and `del` made through another (#565). Lists hold only
     //! strings and dicts only lists, so no object can contain itself.
 
-    use rustc_hash::FxHashMap as HashMap;
+    use std::collections::HashMap;
     use std::fmt::Write as _;
     use std::path::Path;
 
@@ -2717,14 +2716,14 @@ table = {'other': 'y', **opaque()}
         let root = Path::new(".");
         let mut evaluator = Evaluator {
             root,
-            env: HashMap::default(),
-            functions: HashMap::default(),
+            env: HashMap::new(),
+            functions: HashMap::new(),
             depth: 0,
             steps: 0,
             objects: 0,
             probed_missing: Vec::new(),
             table_requirements: BTreeSet::new(),
-            ordered: HashSet::default(),
+            ordered: HashSet::new(),
         };
         assert!(evaluator.spend(MAX_STEPS));
         assert!(!evaluator.exhausted());

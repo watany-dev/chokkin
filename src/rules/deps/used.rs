@@ -1,9 +1,8 @@
 //! Build the set of used distributions from imports, plugins, and binaries.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use indexmap::IndexSet;
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use super::companions::used_modules;
 use crate::graph::{FileId, ModuleOrigin, ProjectGraph};
@@ -238,7 +237,7 @@ pub(super) fn mark_workspace_source_distributions(
 
     let mut provided = vec![false; members.len()];
     let mut done = vec![false; members.len()];
-    let mut modules: HashSet<&str> = HashSet::default();
+    let mut modules: HashSet<&str> = HashSet::new();
     let mut found: Vec<&str> = first_party.iter().chain(&entry_modules).copied().collect();
     // Each round marks, in declaration order, the members the modules found
     // by the end of the previous round use; their trees' imports feed the
@@ -359,8 +358,8 @@ struct Providers<'a> {
 
 impl<'a> Providers<'a> {
     fn new(members: impl IntoIterator<Item = &'a HashMap<String, bool>>) -> Self {
-        let mut by_module: HashMap<&str, Vec<usize>> = HashMap::default();
-        let mut by_parent: HashMap<&str, Vec<usize>> = HashMap::default();
+        let mut by_module: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut by_parent: HashMap<&str, Vec<usize>> = HashMap::new();
         for (index, provided) in members.into_iter().enumerate() {
             for (module, holds_file) in provided {
                 by_module.entry(module).or_default().push(index);
@@ -407,7 +406,7 @@ fn member_modules<'a>(
                     .is_some_and(|rest| rest.starts_with('/'))
         })
         .collect();
-    let mut roots = HashSet::from_iter([member_path]);
+    let mut roots = HashSet::from([member_path]);
     for path in &paths {
         roots.extend(
             path[member_path.len()..]
@@ -906,7 +905,7 @@ mod tests {
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
             },
-            &HashSet::from_iter(["src/app.py"]),
+            &HashSet::from(["src/app.py"]),
             &boundaries,
         );
         let mut used: Vec<String> = used.into_iter().collect();
@@ -965,7 +964,7 @@ mod tests {
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
             },
-            &HashSet::from_iter(["src/app.py"]),
+            &HashSet::from(["src/app.py"]),
             &boundaries,
         );
         assert_eq!(
@@ -1024,7 +1023,7 @@ mod tests {
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
             },
-            &HashSet::from_iter(["e2e/app.py"]),
+            &HashSet::from(["e2e/app.py"]),
             &[],
         );
         assert!(used.contains("streamlit"));
@@ -1074,7 +1073,7 @@ mod tests {
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
             },
-            &HashSet::default(),
+            &HashSet::new(),
             &[],
         );
         assert_eq!(used.into_iter().collect::<Vec<_>>(), ["acme"]);
@@ -1096,10 +1095,10 @@ mod tests {
             orphan("outside_wheel.py", ProjectMode::App, Confidence::Certain),
             orphan("app_orphan.py", ProjectMode::App, Confidence::Maybe),
         ];
-        let reachable = HashSet::from_iter(["main.py"]);
+        let reachable = HashSet::from(["main.py"]);
 
         let usage = usage_paths(&reachable, &report);
 
-        assert_eq!(usage, HashSet::from_iter(["main.py", "public.py"]));
+        assert_eq!(usage, HashSet::from(["main.py", "public.py"]));
     }
 }

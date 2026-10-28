@@ -1,7 +1,8 @@
 //! Reachability analysis types (pipeline step 9).
 
+use std::collections::HashMap;
+
 use indexmap::IndexSet;
-use rustc_hash::FxHashMap as HashMap;
 
 use crate::config::{Confidence, ProjectMode};
 use crate::graph::{FileId, ModuleOrigin};

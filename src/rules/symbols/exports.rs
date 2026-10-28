@@ -1,7 +1,8 @@
 //! `__init__.py` re-export detection.
 
+use std::collections::HashMap;
+
 use indexmap::IndexSet;
-use rustc_hash::FxHashMap as HashMap;
 
 use crate::parser::{ImportKind, ParsedModule};
 use crate::sources::{LayoutInfo, path_to_module};

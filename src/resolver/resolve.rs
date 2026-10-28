@@ -185,7 +185,7 @@ struct Resolver<'a> {
     venv_imports: &'a BTreeMap<String, Vec<String>>,
     scoped: &'a ScopedDeclarations,
     pytest_paths: &'a PytestImportPaths,
-    local_modules: &'a HashMap<String, bool>,
+    local_modules: &'a std::collections::HashMap<String, bool>,
     indexed_roots: &'a BTreeSet<String>,
 }
 
