@@ -2180,6 +2180,17 @@ mod tests {
         assert_eq!(own.label(), "`acme/patch.py:3`");
     }
 
+    /// A subclass registry gap reaches its one subclass: the same name in
+    /// another file, or another name in its file, is out of scope (#1274).
+    #[test]
+    fn subclass_registry_gap_reaches_only_its_target() {
+        let mut gap = gap("acme/group.py", GapKind::SubclassRegistry);
+        gap.target = Some("acme/group.py:Linux".to_owned());
+        assert!(gap.reaches(&symbol("acme/group.py", "acme.group", "Linux")));
+        assert!(!gap.reaches(&symbol("acme/other.py", "acme.other", "Linux")));
+        assert!(!gap.reaches(&symbol("acme/group.py", "acme.group", "Aix")));
+    }
+
     /// A gap lowers a finding only when one is in its scope and its kind
     /// lowers that rule (#1274).
     #[test]
