@@ -286,6 +286,9 @@ mod tests {
         );
         assert_eq!(ini_value(contents, "pytest", "addopts"), None);
         assert_eq!(ini_section_line(contents, "tool:pytest"), Some(0));
+        let contents = "[flake8]\nmax-line-length = 88\n\n[ mypy ]\nstrict = True\n";
+        assert_eq!(ini_section_line(contents, "mypy"), Some(3));
+        assert_eq!(ini_section_line(contents, "isort"), None);
     }
 
     #[test]

@@ -1151,6 +1151,39 @@ mod tests {
         assert_eq!(binaries("python manage.py migrate"), Vec::<String>::new());
     }
 
+    /// An assignment needs a shell name before `=`; a path through a
+    /// variable and a script before `-m` name no binary.
+    #[test]
+    fn unread_command_words_name_no_binary() {
+        assert_eq!(binaries("1X=1 pytest"), Vec::<String>::new());
+        assert_eq!(binaries("X-Y=1 pytest"), Vec::<String>::new());
+        assert_eq!(binaries("$VENV/bin/pytest"), Vec::<String>::new());
+        assert_eq!(binaries("{{venv}}/bin/pytest"), Vec::<String>::new());
+        assert_eq!(binaries("python manage.py -m pytest"), Vec::<String>::new());
+    }
+
+    /// The module half of an app reference is a dotted name or computed,
+    /// and the attribute half is a non-empty name, not a path or a port.
+    #[test]
+    fn app_references_need_a_module_and_an_attribute() {
+        for arg in ["pkg.app:app", "pkg:create()", "$APP_MODULE:app"] {
+            assert!(is_app_reference(arg), "{arg}");
+        }
+        for arg in ["my-pkg:app", "pkg:", "pkg:/static", "localhost:8000", "app"] {
+            assert!(!is_app_reference(arg), "{arg}");
+        }
+    }
+
+    #[test]
+    fn dotted_identifiers_take_underscores_but_no_punctuation() {
+        for module in ["pkg", "_private.mod", "pkg.sub_mod", "pkg2.v1"] {
+            assert!(is_dotted_identifier(module), "{module}");
+        }
+        for module in ["", "my-pkg", "pkg.", "1pkg", "pkg.-x"] {
+            assert!(!is_dotted_identifier(module), "{module}");
+        }
+    }
+
     #[test]
     fn backslash_continuations_stay_in_one_segment() {
         assert_eq!(binaries("echo start \\\n  pytest"), Vec::<String>::new());

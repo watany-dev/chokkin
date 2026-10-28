@@ -1218,6 +1218,60 @@ mod tests {
         assert!(text.contains("build backend    : none"));
     }
 
+    /// Each file kind is counted once, and the contexts count Python files
+    /// and notebooks but not stubs.
+    #[test]
+    fn write_probe_report_counts_files_by_kind_and_context() {
+        let temp = TempDir::new().expect("tempdir");
+        fs::write(
+            temp.path().join("pyproject.toml"),
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        for file in [
+            "src/demo/__init__.py",
+            "src/demo/core.py",
+            "src/demo/core.pyi",
+            "src/demo/types.pyi",
+            "tests/test_core.py",
+            "tests/test_more.py",
+            "noxfile.py",
+            "docs/tour.ipynb",
+        ] {
+            let path = temp.path().join(file);
+            fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+            // `{}` is an empty notebook and a valid Python file alike.
+            fs::write(path, "{}").expect("write");
+        }
+
+        let report = probe_project(temp.path(), None, &RuntimeOverrides::default()).expect("probe");
+        let mut output = Vec::new();
+        write_probe_report(&report, &mut output).expect("write");
+        let text = String::from_utf8(output).expect("utf8");
+        let lines: Vec<&str> = text
+            .lines()
+            .filter(|line| {
+                [
+                    "  python files",
+                    "  stub files",
+                    "  notebooks",
+                    "  contexts",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "  python files      : 5",
+                "  stub files (.pyi) : 2",
+                "  notebooks (.ipynb): 1",
+                "  contexts         : runtime 2, test 2, dev 1, docs 1",
+            ]
+        );
+    }
+
     /// A module directory without `__init__.py` is named, and the line is
     /// left out when there is none (#977).
     #[test]
