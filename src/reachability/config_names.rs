@@ -11,9 +11,12 @@ use std::path::Path;
 
 use rustc_hash::FxHashSet as HashSet;
 
+use crate::config::ProjectMode;
 use crate::parser::{ParseSummary, ParsedModule, SymbolKind};
 use crate::path_util::parent_rel;
-use crate::sources::DiscoveredFile;
+use crate::sources::{DiscoveredFile, FileContext, in_examples_dir, in_templates_dir};
+
+use super::types::ReachabilityReport;
 
 /// Extensions of the config files read. Docs (`.rst`, `.md`) are left out:
 /// release notes name classes long after they stop being used (airflow's
@@ -21,9 +24,41 @@ use crate::sources::DiscoveredFile;
 const CONFIG_EXTENSIONS: &[&str] = &["yml", "yaml", "cfg", "ini", "toml"];
 const MAX_DEPTH: usize = 16;
 
+/// Record where a package config names each app-mode orphan that CHK001
+/// would report as a warning, after the wheel surfaces settled its mode.
+///
+/// Test files, test fixtures, samples and library orphans are not looked
+/// up: CHK001 already lowers the first three, and a library orphan is
+/// `maybe`, hidden by default. Skipping them keeps the walk off test trees
+/// and library packages, where it found nothing on the corpus.
+pub(crate) fn apply_config_mentions(
+    report: &mut ReachabilityReport,
+    files: &[DiscoveredFile],
+    root: &Path,
+    parse: &ParseSummary,
+) {
+    let tests: HashSet<&str> = files
+        .iter()
+        .filter(|file| file.context == FileContext::Test)
+        .map(|file| file.path.as_str())
+        .collect();
+    let mut names = ConfigNames::new(root, files, parse);
+    for file in &mut report.unreachable {
+        if file.mode != ProjectMode::App
+            || file.test_fixture
+            || tests.contains(file.path.as_str())
+            || in_examples_dir(&file.path)
+            || in_templates_dir(&file.path)
+        {
+            continue;
+        }
+        file.config_mention = names.mention(&file.path);
+    }
+}
+
 /// Config text read per top-level package directory, read once for every
 /// unreachable file under it.
-pub(super) struct ConfigNames<'a> {
+struct ConfigNames<'a> {
     root: &'a Path,
     packages: HashSet<&'a str>,
     modules: HashMap<&'a str, &'a ParsedModule>,
@@ -31,11 +66,7 @@ pub(super) struct ConfigNames<'a> {
 }
 
 impl<'a> ConfigNames<'a> {
-    pub(super) fn new(
-        root: &'a Path,
-        files: &'a [DiscoveredFile],
-        parse: &'a ParseSummary,
-    ) -> Self {
+    fn new(root: &'a Path, files: &'a [DiscoveredFile], parse: &'a ParseSummary) -> Self {
         let packages = files
             .iter()
             .filter_map(|file| file.path.strip_suffix("/__init__.py"))
@@ -59,7 +90,7 @@ impl<'a> ConfigNames<'a> {
     /// A file outside a package (its directory has no `__init__.py`) or in a
     /// package at the root has no package data to read, and a config file
     /// that is not UTF-8 names nothing: the file stays a warning.
-    pub(super) fn mention(&mut self, path: &str) -> Option<String> {
+    fn mention(&mut self, path: &str) -> Option<String> {
         let top = self.top_package(path)?;
         let dotted = dotted_module(top, path)?;
         let mut names: Vec<&str> = self
@@ -264,6 +295,56 @@ mod tests {
         assert_eq!(names.mention("src/acme/log/legacy.py"), None);
         assert_eq!(names.mention("src/acme/log/private.py"), None);
         assert_eq!(names.mention("scripts/tool.py"), None);
+    }
+
+    #[test]
+    fn only_app_orphans_chk001_would_warn_on_are_looked_up() {
+        use crate::config::Confidence;
+        use crate::graph::FileId;
+        use crate::reachability::UnreachableFile;
+
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        write(
+            root,
+            "acme/config.yml",
+            "a: acme.app\nb: acme.lib\nc: acme.tests.helper\nd: acme.fixture\n",
+        );
+        let mut files = inventory(&[
+            "acme/__init__.py",
+            "acme/tests/__init__.py",
+            "acme/app.py",
+            "acme/lib.py",
+            "acme/tests/helper.py",
+            "acme/fixture.py",
+        ]);
+        files[4].context = FileContext::Test;
+        let orphan = |path: &str, mode, test_fixture| UnreachableFile {
+            file: FileId(0),
+            path: path.to_owned(),
+            max_confidence: Confidence::Certain,
+            mode,
+            confidence_reason: None,
+            test_fixture,
+            config_mention: None,
+        };
+        let mut report = ReachabilityReport {
+            unreachable: vec![
+                orphan("acme/app.py", ProjectMode::App, false),
+                orphan("acme/lib.py", ProjectMode::Library, false),
+                orphan("acme/tests/helper.py", ProjectMode::App, false),
+                orphan("acme/fixture.py", ProjectMode::App, true),
+            ],
+            ..ReachabilityReport::default()
+        };
+        apply_config_mentions(&mut report, &files, root, &ParseSummary::default());
+        let mentioned: Vec<&str> = report
+            .unreachable
+            .iter()
+            .filter(|file| file.config_mention.is_some())
+            .map(|file| file.path.as_str())
+            .collect();
+        assert_eq!(mentioned, ["acme/app.py"]);
     }
 
     #[test]
