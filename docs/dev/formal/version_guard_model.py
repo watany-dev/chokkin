@@ -4,8 +4,9 @@
 Port of ``src/parser/version_guard.rs`` (``VersionTest::read`` / ``holds``,
 ``branch_minors``, ``version_names``) and the three-valued reading of
 ``src/parser/condition.rs`` (``can`` / ``fixed`` / ``excluded``) it runs on.
-The reference is CPython itself: each generated test is evaluated with
-``eval`` against a ``sys`` whose ``version_info`` is ``(3, m, 0, "final", 0)``
+The reference is CPython's own operators: each generated test is evaluated
+(``evaluate``, a walk over its AST that applies Python's ``<`` / ``==`` /
+``not`` / ``and`` / ``or`` to the real values) against a ``sys`` whose ``version_info`` is ``(3, m, 0, "final", 0)``
 (a tuple with ``.major``), with every opaque operand (``flag``) taking both
 values. The strings are this script's own; no analyzed code is run.
 
@@ -50,6 +51,7 @@ from __future__ import annotations
 import ast
 import itertools
 import json
+import operator
 import os
 import random
 import subprocess
@@ -326,12 +328,60 @@ class FakeSys:
         self.version_info = VersionInfo((3, minor, 0, "final", 0))
 
 
+COMPARE = {
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+}
+
+
+def evaluate(node: ast.expr, env: dict):
+    """The value CPython gives ``node``: the generated tests use only names,
+    ``sys.version_info`` and its attributes, subscripts and slices, tuples,
+    literals, one comparison, ``not``, ``and`` and ``or``. Operands keep their
+    Python types, so tuple ordering and ``and`` / ``or`` truthiness are
+    CPython's own."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        return env[node.id]
+    if isinstance(node, ast.Attribute):
+        return getattr(evaluate(node.value, env), node.attr)
+    if isinstance(node, ast.Subscript):
+        return evaluate(node.value, env)[evaluate(node.slice, env)]
+    if isinstance(node, ast.Slice):
+        part = [
+            None if n is None else evaluate(n, env)
+            for n in (node.lower, node.upper, node.step)
+        ]
+        return slice(*part)
+    if isinstance(node, ast.Tuple):
+        return tuple(evaluate(e, env) for e in node.elts)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return not evaluate(node.operand, env)
+    if isinstance(node, ast.BoolOp):
+        value = None
+        for operand in node.values:
+            value = evaluate(operand, env)
+            if bool(value) != isinstance(node.op, ast.And):
+                return value
+        return value
+    if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        return COMPARE[type(node.ops[0])](
+            evaluate(node.left, env), evaluate(node.comparators[0], env)
+        )
+    raise ValueError(f"not generated: {ast.dump(node)}")
+
+
 def runs(chain, branch, defs, minor, flag) -> bool:
     env = {"sys": FakeSys(minor), "flag": flag, "minor": 0}
     for name, text in defs:
-        env[name] = eval(text, env)
+        env[name] = evaluate(expr(text), env)
     for position, text in enumerate(chain):
-        if eval(text, env):
+        if evaluate(expr(text), env):
             return position == branch
     return branch == len(chain)
 
@@ -434,7 +484,7 @@ def check_v1() -> list[str]:
         if read is None:
             continue
         for m in MINORS + [200]:
-            want = bool(eval(text, {"sys": FakeSys(m), "minor": 0}))
+            want = bool(evaluate(expr(text), {"sys": FakeSys(m), "minor": 0}))
             if read.holds(min(m, LAST_MINOR)) != want:
                 bad.append(f"V1 {text!r} on 3.{m}: model {not want}, CPython {want}")
     return bad

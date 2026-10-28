@@ -24,7 +24,7 @@ v0.7.12 の差分 (`ad66f83..35ee2f1`、`src/` で +5233 行) のうち、入力
 
 - **C1 version guard は CPython と一致する** (`version_guard_model.py` V1〜V3)。読む 5 形 × 6 演算子 ×
   左右 × 境界の literal と、`not` / `and` / `or`・`if` / `elif` / `else`・`PY2` / `PY3 = not PY2` の名前を
-  3.0〜3.30 と最後の bit (3.127 以降) で `eval` と比べ、走りうる minor を落とす例 (健全性違反) も、
+  3.0〜3.30 と最後の bit (3.127 以降) で CPython の演算子による評価と比べ、走りうる minor を落とす例 (健全性違反) も、
   opaque な operand が無いのに走らない minor を残す例も無かった。`sys.version_info > (3, 9)` が 3.9 で
   真になる (`(3, 9, 0, ...) > (3, 9)`) ことも含む。`--trace` で実バイナリにも同じ 2512 本の chain を
   `requires-python = "==3.m.*"` (m = 0〜20) ごとに流し、info / warning がモデルと全件一致した。
