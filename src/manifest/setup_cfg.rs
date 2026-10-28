@@ -8,6 +8,7 @@ use crate::path_util::rel_to_root;
 use super::entry_points::EntryPoints;
 use super::error::ManifestError;
 use super::extract::unreadable_reason;
+use super::pep508::is_python_whitespace;
 use super::requirements::extract_requirements_path;
 use super::setuptools_reqs::{SetuptoolsItem, setuptools_requirement_items};
 use super::types::{
@@ -240,13 +241,13 @@ pub(crate) fn one_line_options(contents: &str) -> BTreeSet<(&str, String)> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IniLine<'a> {
     /// Blank, a comment, or a line `configparser` would reject (no
-    /// delimiter, or a continuation with no option before it): setuptools
-    /// cannot read such a file either, so no declaration hides in it.
+    /// delimiter): setuptools cannot read such a file either, so no
+    /// declaration hides in it.
     Skipped,
     /// `[name]`, trimmed.
     Section(&'a str),
     /// Part of an option's value: the `key = value` line itself
-    /// (`continuation == false`) or an indented line after it.
+    /// (`continuation == false`) or a line indented deeper after it.
     Value {
         section: &'a str,
         /// Lowercased, except in `[options.entry_points]`: setuptools reads
@@ -260,29 +261,37 @@ pub(crate) enum IniLine<'a> {
 
 /// Classify each line of `setup.cfg`, paired with the line as written
 /// (end-of-line bytes included): an option line splits at its first `=` or
-/// `:`, and an indented line continues the previous option. Lines before any
-/// header belong to `default`.
+/// `:`. As in `configparser`, a line continues the previous option only when
+/// it is indented deeper than that option's line; otherwise it is read as a
+/// header or an option whatever its indent, so `  install_requires = a`
+/// right after `[options]` is an option. Lines before any header belong to
+/// `default`.
 pub(crate) fn ini_lines(contents: &str) -> impl Iterator<Item = (&str, IniLine<'_>)> {
     let mut current = "default";
     let mut last_key: Option<String> = None;
+    // `configparser`'s `indent_level`: the indent of the last header or
+    // option line. Blank and comment lines leave it alone.
+    let mut indent_level = 0;
     contents.split_inclusive('\n').map(move |raw| {
         let trimmed = raw.trim();
-        let line = if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            IniLine::Skipped
-        } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            return (raw, IniLine::Skipped);
+        }
+        let indent = raw.chars().take_while(|&c| is_python_whitespace(c)).count();
+        if let Some(key) = last_key.as_ref().filter(|_| indent > indent_level) {
+            let line = IniLine::Value {
+                section: current,
+                key: key.clone(),
+                value: trimmed,
+                continuation: true,
+            };
+            return (raw, line);
+        }
+        indent_level = indent;
+        let line = if trimmed.starts_with('[') && trimmed.ends_with(']') {
             current = trimmed[1..trimmed.len() - 1].trim();
             last_key = None;
             IniLine::Section(current)
-        } else if raw.starts_with([' ', '\t']) {
-            match &last_key {
-                Some(key) => IniLine::Value {
-                    section: current,
-                    key: key.clone(),
-                    value: trimmed,
-                    continuation: true,
-                },
-                None => IniLine::Skipped,
-            }
         } else if let Some((key, value)) = trimmed.split_once(['=', ':']) {
             let key = if current == "options.entry_points" {
                 key.trim().to_owned()
@@ -557,6 +566,44 @@ install_requires =
             .and_then(|options| options.get("install_requires"))
             .expect("install_requires");
         assert_eq!(item_texts(requires), ["requests[security]", "flask"]);
+    }
+
+    /// `configparser` continues an option only with a line indented deeper
+    /// than the option's own line: an indented key right after a header is
+    /// an option, and a line no deeper than the option opens the next one.
+    #[test]
+    fn indented_keys_are_options_like_configparser() {
+        let contents = "[options]\n  install_requires =\n    requests\n  # c\n\n      flask\n  python_requires = >=3.9\n\
+                        zip_safe = no\n[options.extras_require]\n\ttest = pytest\n";
+        let sections = parse_ini_sections(contents);
+        let options = &sections["options"];
+        assert_eq!(options["install_requires"], "requests\nflask");
+        assert_eq!(options["python_requires"], ">=3.9");
+        assert_eq!(options["zip_safe"], "no");
+        assert_eq!(sections["options.extras_require"]["test"], "pytest");
+        let one_line = one_line_options(contents);
+        assert!(!one_line.contains(&("options", "install_requires".to_owned())));
+        assert!(one_line.contains(&("options.extras_require", "test".to_owned())));
+    }
+
+    #[test]
+    fn indented_install_requires_declares_its_dependencies() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let path = temp.path().join("setup.cfg");
+        std::fs::write(
+            &path,
+            "[options]\n  install_requires = requests; rich\n  packages = find:\n",
+        )
+        .expect("write setup.cfg");
+
+        let result = extract_setup_cfg(temp.path(), &path).expect("extract");
+        let names: Vec<&str> = result
+            .dependencies
+            .iter()
+            .map(|dep| dep.name.as_str())
+            .collect();
+        assert_eq!(names, ["requests", "rich"]);
+        assert_eq!(result.warnings, []);
     }
 
     #[test]
