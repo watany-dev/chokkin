@@ -47,13 +47,14 @@ v0.7.12 の差分 (`ad66f83..35ee2f1`、`src/` で +5233 行) のうち、入力
 | D4 | (暗黙) `finally` は見ない | `finally: return` が handler の `raise` を握りつぶすのに check 扱い |
 | D5 | `version_names`: module の scope で他に束縛される名前は除く | 関数内の `global NEW; NEW = True`、および後の `from helpers import *` は数えないので、`if NEW:` の import は requires-python が 3.12 未満だけを許すとき「走らない」(info) になる |
 
-D1〜D4 は `install_check_model.py` が G1 の既知の例外として witness ごと固定している (直すとモデルが
-落ちるので、docstring と `KNOWN` から外す)。D5 は scope の解析なのでモデルの外に置き、
+D1〜D4 は直した (`import_checks` は最初に数える `try` だけで抜け方を決め、その前と handler の途中の
+`return` は falsy なら test でだけ check、それ以外なら check にしない。`finally` が `return` する `try` は
+数えない)。`install_check_model.py` は例外なしで G1 が成り立つ。D5 は scope の解析なのでモデルの外に置き、
 `version_guard_model.py` の docstring に書いた。
 
 ## 確認したいこと (ドメイン判断)
 
-- **Q1 D1〜D4 を直すか**。直すなら、`import_checks` は最初の数える `try` より前に return しうる文
+- **Q1 D1〜D4 を直すか** (直した。下は当時の案)。直すなら、`import_checks` は最初の数える `try` より前に return しうる文
   (`return` を含む文、handler が return する `try`) があれば check にしない、`import_failure` は handler の
   途中に `return` があれば `None`、`finally` に `return` があれば `None`、文の呼び出しは「最初の数える
   `try` が raise する」ときだけ gate する、で足りる。いずれも certain を増やす方向なので、OSS corpus の
