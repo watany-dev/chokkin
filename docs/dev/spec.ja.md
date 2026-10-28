@@ -787,8 +787,9 @@ runtime peer (例: python-multipart)
      (accelerate は transformers。device_map="auto" で transformers が読む、#984)
      transformers の model/tokenizer/audio backend、evaluate の metric backend、
      datasets の archive backend、torchmetrics の COCO backend、inspect-ai の
-     provider/plugin、redis-py の hiredis parser、python-lsp-server の plugin
-     も同じ表で扱う。project と PEP 723 の両 scope に適用する
+     provider/plugin、redis-py の hiredis parser、python-lsp-server の plugin、
+     `dg dev` / `dagster dev` が UI を出す dagster-webserver (provider は
+     dagster-dg-cli / dagster-dg / dagster、#1256) も同じ表で扱う。project と PEP 723 の両 scope に適用する
   -> module が読み込む peer は、その module かその下の名前の使用で used 扱い
      (#1240)。settings の文字列も import と同じく使用に数えるので、`DATABASES`
      の `django.db.backends.postgresql` は psycopg / psycopg2 を、`CACHES` の
