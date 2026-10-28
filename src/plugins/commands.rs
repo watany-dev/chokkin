@@ -1432,6 +1432,27 @@ mod tests {
             .collect()
     }
 
+    /// An option glued to a variable is its value, and the `:` inside
+    /// `${...}` splits no module from an attribute.
+    #[test]
+    fn command_targets_skip_option_values_and_variable_defaults() {
+        for (command, app) in [
+            ("gunicorn -w${W:-$N} mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn -b \"$BIND\" mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn ${APP:-mypkg.wsgi}", "opaque ${APP:-mypkg.wsgi}"),
+            ("gunicorn ${APP}:app", "opaque ${APP}:app"),
+            ("gunicorn $APP_MODULE:app", "opaque $APP_MODULE:app"),
+            (
+                "gunicorn -b$HOST:$PORT mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            ("gunicorn ${ARGS:-$D} mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn $OPTS ${APP}:app", "opaque ${APP}:app"),
+        ] {
+            assert_eq!(targets(command), [app], "{command}");
+        }
+    }
+
     #[test]
     fn command_targets_read_server_apps() {
         for (command, app) in [
@@ -1483,19 +1504,6 @@ mod tests {
             ("uvicorn --no-access-log mypkg.asgi", "app mypkg.asgi"),
             ("gunicorn -w4 mypkg.wsgi", "app mypkg.wsgi:application"),
             ("hypercorn --reload mypkg.asgi", "app mypkg.asgi:app"),
-            // An option glued to a defaulted variable is its value, and the
-            // `:` inside `${...}` splits no module from an attribute.
-            ("gunicorn -w${W:-$N} mypkg.wsgi:app", "app mypkg.wsgi:app"),
-            ("gunicorn -b \"$BIND\" mypkg.wsgi:app", "app mypkg.wsgi:app"),
-            ("gunicorn ${APP:-mypkg.wsgi}", "opaque ${APP:-mypkg.wsgi}"),
-            ("gunicorn ${APP}:app", "opaque ${APP}:app"),
-            ("gunicorn $APP_MODULE:app", "opaque $APP_MODULE:app"),
-            (
-                "gunicorn -b$HOST:$PORT mypkg.wsgi:app",
-                "app mypkg.wsgi:app",
-            ),
-            ("gunicorn ${ARGS:-$D} mypkg.wsgi:app", "app mypkg.wsgi:app"),
-            ("gunicorn $OPTS ${APP}:app", "opaque ${APP}:app"),
             (
                 "gunicorn -b127.0.0.1:8000 -D mypkg.wsgi",
                 "app mypkg.wsgi:application",
