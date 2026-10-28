@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-10-28
+
 ### Added
 - `pyrefly.toml` and `[tool.pyrefly]` mark `pyrefly` used, as `ty.toml` and
   `pyrightconfig.json` do for their type checkers.
