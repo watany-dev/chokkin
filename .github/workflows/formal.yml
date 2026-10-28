@@ -34,6 +34,12 @@ on:
       - "src/fix/pyproject.rs"
       - "src/rules/deps/reconcile.rs"
       - "src/rules/deps/used.rs"
+      # version_guard_model.py
+      - "src/parser/version_guard.rs"
+      - "src/parser/condition.rs"
+      # install_check_model.py
+      - "src/parser/visit.rs"
+      - "src/parser/import_check.rs"
       # Reachability.tla
       - "src/reachability/bfs.rs"
       - "src/reachability/build.rs"
@@ -90,6 +96,8 @@ jobs:
           exit_status_z3 src/rules/emit.rs src/rules/filter.rs src/rules/types.rs src/baseline/store.rs
           ignore_model src/rules/ignore.rs
           fix_plan_model src/fix/plan.rs src/fix/pyproject.rs src/rules/deps/misplaced.rs src/rules/deps/missing.rs src/rules/deps/reconcile.rs src/rules/deps/used.rs
+          version_guard_model src/parser/version_guard.rs src/parser/condition.rs
+          install_check_model src/parser/visit.rs src/parser/import_check.rs
           Reachability src/reachability/bfs.rs src/reachability/build.rs src/reachability/trace.rs src/reachability/module_index.rs src/sources/layout.rs src/graph/edges.rs
           EOF
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
