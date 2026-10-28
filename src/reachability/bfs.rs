@@ -495,10 +495,11 @@ fn build_prefix_imports(
 /// A list of dotted module names in a runtime file is a plugin list some
 /// loader imports one by one (redash's `default_query_runners`, #1257), so
 /// each site reaches the module and, when the walk follows it, the packages
-/// Python imports before it. Only a list whose every name resolves to a project module counts: one
-/// that also names a third-party module, a class or a typo may be anything
-/// (a log message's names, `MIDDLEWARE`), so it reaches nothing and lowers
-/// nothing, and its strings stay [`crate::parser::ModuleRef`]s.
+/// Python imports before it. Only a list whose every name resolves to a
+/// project module counts: one that also names a third-party module, a class
+/// or a typo may be anything (a log message's names, `MIDDLEWARE`), so it
+/// reaches nothing and lowers nothing, and its strings stay
+/// [`crate::parser::ModuleRef`]s.
 fn build_listed_imports(
     graph: &ProjectGraph,
     parse: &ParseSummary,

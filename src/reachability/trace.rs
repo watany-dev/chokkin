@@ -28,7 +28,6 @@ pub fn trace_to_file(report: &ReachabilityReport, target: FileId) -> Option<Trac
 
 #[cfg(test)]
 mod tests {
-
     use indexmap::IndexSet;
 
     use super::*;
