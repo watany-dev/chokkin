@@ -9,7 +9,7 @@ use super::context::PluginContext;
 use super::types::{PluginContribution, ReferenceOrigin};
 use super::util::{
     decorator_suffix, push_app_ref, push_binary, push_decorated_modules, push_used_symbol,
-    read_pyproject_table,
+    read_pyproject_table, toml_origin,
 };
 
 /// Attributes Celery looks up in the module `-A` names.
@@ -55,11 +55,7 @@ fn extract_pyproject_scripts(root: &Path, contrib: &mut PluginContribution) {
         let Some(app) = celery_app_arg(command) else {
             continue;
         };
-        let origin = ReferenceOrigin {
-            file: "pyproject.toml".to_owned(),
-            line: None,
-            label: format!("project.scripts.{name}"),
-        };
+        let origin = toml_origin(root, &path, format!("project.scripts.{name}"));
         push_celery_app(contrib, app, &origin);
         push_binary(contrib, "celery", origin);
     }

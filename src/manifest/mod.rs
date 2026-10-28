@@ -52,6 +52,7 @@ pub use script::discover_inline_scripts;
 pub(crate) use script::{InlineScript, inline_script_target};
 pub(crate) use setup_cfg::{IniLine, ini_lines, one_line_options, setup_cfg_requirement_items};
 pub(crate) use setup_py::builds_distribution;
+pub(crate) use toml_lines::toml_label_line;
 #[cfg(any(test, kani))]
 pub(crate) use types::GroupInclude;
 pub(crate) use types::{

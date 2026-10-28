@@ -389,7 +389,9 @@ mod golden {
         match origin {
             EntryOrigin::Config => "config".to_owned(),
             EntryOrigin::Manifest { name, group } => format!("manifest:{group}:{name}"),
-            EntryOrigin::Plugin { plugin, label } => format!("plugin:{}:{label}", plugin.as_key()),
+            EntryOrigin::Plugin { plugin, label, .. } => {
+                format!("plugin:{}:{label}", plugin.as_key())
+            },
             EntryOrigin::Auto { rule } => format!("auto:{rule}"),
             EntryOrigin::SymbolRef { label, .. } => format!("symbol:{label}"),
             EntryOrigin::Script => "script".to_owned(),

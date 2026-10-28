@@ -372,6 +372,7 @@ fn scan_pre_commit_config(
         } else if let Some(hook_id) = item.strip_prefix("id:") {
             hook.binaries
                 .extend(hook_id_to_binary(unquote_yaml_scalar(hook_id)));
+            hook.id_line = Some(index);
         } else if let Some(entry) = item.strip_prefix("entry:") {
             hook.entry = Some((unquote_yaml_scalar(entry).to_owned(), index));
         } else if let Some(language) = item.strip_prefix("language:") {
@@ -399,6 +400,8 @@ struct PreCommitHook {
     local_repo: bool,
     /// The binary of a known hook `id`.
     binaries: Vec<&'static str>,
+    /// The 0-based line of `id`.
+    id_line: Option<usize>,
     /// `entry` with its 0-based line.
     entry: Option<(String, usize)>,
     language: Option<String>,
@@ -435,7 +438,7 @@ impl PreCommitHook {
                     .is_some_and(|language| !PRE_COMMIT_PROJECT_ENV_LANGUAGES.contains(&language)));
         let origin = ReferenceOrigin {
             file: rel.to_owned(),
-            line: None,
+            line: hook.id_line.and_then(|index| u32::try_from(index + 1).ok()),
             label: PRE_COMMIT_CONFIG.to_owned(),
         };
         for binary in hook.binaries {
@@ -1640,7 +1643,7 @@ mod tests {
             [
                 ("pre-commit".to_owned(), None),
                 ("ruff".to_owned(), Some(5)),
-                ("black".to_owned(), None),
+                ("black".to_owned(), Some(8)),
             ]
         );
     }
@@ -1696,10 +1699,10 @@ mod tests {
             sections,
             [
                 ("pre-commit", None, false),
-                ("bandit", None, true),
+                ("bandit", Some(4), true),
                 ("bandit", Some(6), true),
                 ("ruff", Some(12), false),
-                ("mypy", None, false),
+                ("mypy", Some(15), false),
                 ("mypy", Some(16), false),
             ]
         );
@@ -1710,7 +1713,7 @@ mod tests {
     /// project-env list names, an own-env one and none × no / empty /
     /// non-empty `additional_dependencies`. An isolated hook provides its
     /// binary and makes its usages config sections; a local hook's `entry`
-    /// is a usage too.
+    /// is a usage too. Each usage carries its own line (#882).
     #[test]
     fn hook_isolation_follows_the_formal_model() {
         let languages = [
@@ -1753,11 +1756,12 @@ mod tests {
                         .binary_usages
                         .iter()
                         .filter(|usage| usage.binary == "mypy")
-                        .map(|usage| (usage.origin.line.is_some(), usage.config_section))
+                        .map(|usage| (usage.origin.line, usage.config_section))
                         .collect();
-                    let mut expected = vec![(false, isolated)];
+                    // The hook's `id` on line 4, its `entry` on line 5.
+                    let mut expected = vec![(Some(4), isolated)];
                     if local {
-                        expected.push((true, isolated));
+                        expected.push((Some(5), isolated));
                     }
                     assert_eq!(mypy, expected, "{label}");
                 }

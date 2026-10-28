@@ -7,13 +7,14 @@ use crate::path_util::rel_to_root;
 use crate::sources::{FileContext, build_glob_set};
 use globset::GlobSet;
 
+use super::config_text::ini_section_line;
 use super::context::PluginContext;
 use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
 };
 use super::util::{
     IniSection, origin_for_file, parse_path_list, pytest_options_from_pyproject, pytest_test_globs,
-    read_ini_section, read_pyproject_table,
+    read_ini_section, read_pyproject_table, toml_origin,
 };
 use super::warnings::PluginsWarning;
 
@@ -39,7 +40,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
             Ok(table) => {
                 if let Some((options, label)) = pytest_options_from_pyproject(&table) {
                     has_explicit_config = true;
-                    config_origin = Some(origin_for_file(root, &pyproject_path, label));
+                    config_origin = Some(toml_origin(root, &pyproject_path, label));
                     testpaths = str_list(options, "testpaths");
                     python_files = str_list(options, "python_files");
                 }
@@ -78,7 +79,12 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
             },
             Ok(section) => {
                 has_explicit_config = true;
-                config_origin = Some(origin_for_file(root, &path, label));
+                let mut origin = origin_for_file(root, &path, label);
+                origin.line = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|contents| ini_section_line(&contents, section_name))
+                    .and_then(|index| u32::try_from(index + 1).ok());
+                config_origin = Some(origin);
                 if let Some(value) = section.get("testpaths") {
                     testpaths = parse_path_list(value);
                 }
@@ -156,14 +162,20 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     }
 
     if let Some(table) = pyproject_table.as_ref()
-        && let Some((options, _)) = pytest_options_from_pyproject(table)
+        && let Some((options, label)) = pytest_options_from_pyproject(table)
         && let Some(plugins) = options.get("pytest_plugins")
     {
-        let plugin_modules = collect_pytest_plugins(plugins);
-        for module in plugin_modules {
+        // Each module takes the line of its own string (#882); the label
+        // stays the table's, which messages name.
+        let contents = std::fs::read_to_string(&pyproject_path).unwrap_or_default();
+        for (module, item) in collect_pytest_plugins(plugins) {
+            let path = format!("{label}.pytest_plugins{item}");
             contrib.module_refs.push(ModuleReference {
                 module,
-                origin: origin.clone(),
+                origin: ReferenceOrigin {
+                    line: crate::manifest::toml_label_line(&contents, &path),
+                    ..origin.clone()
+                },
             });
         }
     }
@@ -342,12 +354,15 @@ fn str_list(options: &toml::Table, key: &str) -> Vec<String> {
     }
 }
 
-fn collect_pytest_plugins(value: &toml::Value) -> Vec<String> {
+/// Each module `pytest_plugins` names, with the suffix of its label: empty
+/// for a lone string, `[index]` for an array element.
+fn collect_pytest_plugins(value: &toml::Value) -> Vec<(String, String)> {
     match value {
-        toml::Value::String(module) => vec![module.clone()],
+        toml::Value::String(module) => vec![(module.clone(), String::new())],
         toml::Value::Array(items) => items
             .iter()
-            .filter_map(|item| item.as_str().map(str::to_owned))
+            .enumerate()
+            .filter_map(|(index, item)| Some((item.as_str()?.to_owned(), format!("[{index}]"))))
             .collect(),
         _ => Vec::new(),
     }

@@ -267,7 +267,16 @@ fn format_entry_origin(origin: &EntryOrigin) -> String {
     match origin {
         EntryOrigin::Config => "config".to_owned(),
         EntryOrigin::Manifest { name, group } => format!("manifest: [{group}].{name}"),
-        EntryOrigin::Plugin { plugin, label } => format!("plugin: {} ({label})", plugin.as_key()),
+        EntryOrigin::Plugin {
+            plugin,
+            label,
+            site: Some(site),
+        } => format!("plugin: {} ({label} at {site})", plugin.as_key()),
+        EntryOrigin::Plugin {
+            plugin,
+            label,
+            site: None,
+        } => format!("plugin: {} ({label})", plugin.as_key()),
         EntryOrigin::Auto { rule } => format!("auto: {rule}"),
         EntryOrigin::SymbolRef { label, .. } => format!("symbol: {label}"),
         EntryOrigin::Script => "script: PEP 723".to_owned(),

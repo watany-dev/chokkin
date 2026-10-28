@@ -258,6 +258,97 @@ fn pytest_setup_cfg_fixture() {
     assert!(entry_paths(contrib).contains(&"tests/test_cfg.py"));
 }
 
+/// References and entries read from TOML, INI and YAML settings carry the
+/// line that names them: each `pytest_plugins` string, `[tool.uvicorn]`
+/// `app`, a `project.scripts` command, a pre-commit hook `id`, and the
+/// section a pytest config is read from (#882).
+#[test]
+fn config_file_references_carry_their_line() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let files = [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\n\
+             dependencies = [\"fastapi\", \"celery\"]\n\n\
+             [project.scripts]\n\
+             web = \"uvicorn acme.api:app\"\n\
+             worker = \"celery -A acme.tasks:app worker\"\n\n\
+             [tool.chokkin.plugins]\ncelery = true\nfastapi = true\n\n\
+             [tool.uvicorn]\nport = 8000\napp = \"acme.main:app\"\n\n\
+             [tool.pytest.ini_options]\n\
+             pytest_plugins = [\n    \"acme.fixtures\",\n    \"acme.more\",\n]\n",
+        ),
+        (
+            ".pre-commit-config.yaml",
+            "repos:\n  - repo: https://github.com/astral-sh/ruff-pre-commit\n    rev: v0.11.0\n    hooks:\n      - id: ruff\n",
+        ),
+        ("src/acme/__init__.py", ""),
+        ("tests/test_a.py", "def test_a():\n    pass\n"),
+    ];
+    for (file, text) in files {
+        let path = temp.path().join(file);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, text).expect("write file");
+    }
+    let hints = extract_at(temp.path());
+
+    let pytest = pytest_contrib(&hints);
+    let plugin_lines: Vec<(&str, Option<u32>)> = pytest
+        .module_refs
+        .iter()
+        .map(|reference| (reference.module.as_str(), reference.origin.line))
+        .collect();
+    assert_eq!(
+        plugin_lines,
+        [("acme.fixtures", Some(20)), ("acme.more", Some(21))]
+    );
+    assert!(
+        pytest
+            .entries
+            .iter()
+            .any(|entry| entry.spec.path == "tests/test_a.py" && entry.origin.line == Some(18)),
+        "{:?}",
+        pytest.entries
+    );
+
+    let symbol_line = |plugin: PluginId, module: &str| {
+        plugin_contrib(&hints, plugin)
+            .symbol_refs
+            .iter()
+            .find(|reference| reference.module == module)
+            .and_then(|reference| reference.origin.line)
+    };
+    assert_eq!(symbol_line(PluginId::Fastapi, "acme.main"), Some(16));
+    assert_eq!(symbol_line(PluginId::Fastapi, "acme.api"), Some(7));
+    assert_eq!(symbol_line(PluginId::Celery, "acme.tasks"), Some(8));
+
+    let ruff = hints
+        .all_binary_usages()
+        .find(|usage| usage.binary == "ruff")
+        .expect("ruff hook usage");
+    assert_eq!(
+        (ruff.origin.file.as_str(), ruff.origin.line),
+        (".pre-commit-config.yaml", Some(5))
+    );
+}
+
+/// The `[pytest]` / `[tool:pytest]` section an INI config is read from is
+/// the line of the entries it collects (#882).
+#[test]
+fn pytest_ini_config_origin_has_the_section_line() {
+    let hints = extract_fixture("pytest_ini");
+    let contrib = pytest_contrib(&hints);
+    assert!(
+        contrib
+            .entries
+            .iter()
+            .filter(|entry| entry.origin.file == "pytest.ini")
+            .all(|entry| entry.origin.line == Some(1)),
+        "{:?}",
+        contrib.entries
+    );
+}
+
 #[test]
 fn django_installed_apps() {
     let hints = extract_fixture("django_manage");
@@ -1773,13 +1864,13 @@ fn celery_plugin_reads_bare_app_modules() {
             (
                 "worker.instance",
                 "pyproject.toml",
-                None,
+                Some(7),
                 "project.scripts.worker"
             ),
             (
                 "worker.instance.celery",
                 "pyproject.toml",
-                None,
+                Some(7),
                 "project.scripts.worker"
             ),
             ("worker.monitor", "scripts/flower.sh", Some(2), "celery app"),
