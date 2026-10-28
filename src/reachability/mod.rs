@@ -2,6 +2,7 @@
 
 mod bfs;
 mod build;
+mod config_names;
 mod error;
 mod module_index;
 mod trace;

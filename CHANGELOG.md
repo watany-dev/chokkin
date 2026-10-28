@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CHK001 reports at info a file users select or copy from their own
+  settings: one under a `templates/` or `*_templates/` directory, and one a
+  YAML / cfg / ini / TOML file of its own package names by a public class or
+  its dotted module path (airflow's `config.yml` naming
+  `TaskHandlerWithCustomFormatter`). `--explain` shows the naming line
+  (#1258).
+
 ## [0.7.12] - 2026-10-28
 
 ### Added

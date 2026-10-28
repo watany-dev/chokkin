@@ -14,6 +14,7 @@ use crate::sources::{
 };
 
 use super::bfs::run_reachability_bfs;
+use super::config_names::ConfigNames;
 use super::error::ReachabilityError;
 use super::module_index::ModuleIndex;
 use super::types::{ReachPredecessor, ReachabilityReport, TraceStep, UnreachableFile};
@@ -68,6 +69,7 @@ pub fn analyze_reachability(
         .collect();
     let reachable_dirs = reachable_dirs(graph, &reachable);
     let path_refs = path_refs(graph, &reachable, parse);
+    let mut config_names = ConfigNames::new(&sources.root.path, &sources.files, parse);
     let mut unreachable = Vec::new();
     let mut unread = Vec::new();
     for file in &sources.files {
@@ -88,13 +90,15 @@ pub fn analyze_reachability(
             continue;
         }
 
+        let test_fixture = is_test_fixture(file, &reachable_dirs);
         let orphan = UnreachableFile {
             file: file_id,
             path: file.path.clone(),
             max_confidence: confidence_for_unreachable(mode),
             mode,
             confidence_reason: None,
-            test_fixture: is_test_fixture(file, &reachable_dirs),
+            test_fixture,
+            config_mention: config_names.mention(&file.path).filter(|_| !test_fixture),
         };
         if skipped.contains(file.path.as_str()) {
             unread.push(orphan);
