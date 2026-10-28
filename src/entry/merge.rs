@@ -100,7 +100,6 @@ mod tests {
                 origin: EntryOrigin::Plugin {
                     plugin: PluginId::Django,
                     label: "manage.py".to_owned(),
-                    site: None,
                 },
             },
         ]);

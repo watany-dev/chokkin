@@ -23,11 +23,9 @@ pub enum EntryOrigin {
     Plugin {
         /// Contributing plugin.
         plugin: PluginId,
-        /// Human-readable origin label.
+        /// Human-readable origin label, with `at file:line` of the setting
+        /// that names the entry when its line is known (#882).
         label: String,
-        /// `file:line` of the setting that names the entry, when its line
-        /// is known (#882).
-        site: Option<String>,
     },
     /// §8 automatic path rules (`manage.py`, `__main__.py`, …).
     Auto {

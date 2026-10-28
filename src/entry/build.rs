@@ -461,11 +461,12 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
                 context: entry.context,
                 origin: EntryOrigin::Plugin {
                     plugin: contrib.plugin,
-                    label: entry.origin.label.clone(),
-                    site: entry
-                        .origin
-                        .line
-                        .map(|line| format!("{}:{line}", entry.origin.file)),
+                    label: match entry.origin.line {
+                        Some(line) => {
+                            format!("{} at {}:{line}", entry.origin.label, entry.origin.file)
+                        },
+                        None => entry.origin.label.clone(),
+                    },
                 },
             });
         }
