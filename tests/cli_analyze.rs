@@ -11070,6 +11070,7 @@ fn binary_missing_workflow_requirements_file_is_not_a_gap() {
     let project = write_project(&[
         ("pyproject.toml", MYPY_PYPROJECT),
         ("acme.py", ""),
+        ("Makefile", "lint:\n\tmypy acme.py\n"),
         (
             ".github/workflows/downstream.yml",
             "jobs:\n  t:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          repository: other/project\n      - run: pip install -r requirements-tests.txt\n",
@@ -11082,6 +11083,25 @@ fn binary_missing_workflow_requirements_file_is_not_a_gap() {
         .expect("CHK008 mypy");
     assert_eq!(mypy["confidence"], "certain", "{mypy}");
     assert!(!stderr.contains("could not be read"), "{stderr}");
+}
+
+/// transformers keeps a `[tool.coverage]` table nothing runs: a config
+/// section alone is weak evidence of running the tool, so the unlisted binary
+/// is likely, and a command running it makes it certain (#1260).
+#[test]
+fn binary_config_section_alone_is_likely() {
+    let project = write_project(&[("pyproject.toml", MYPY_PYPROJECT), ("acme.py", "")]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    assert_eq!(issue(&issues, "CHK008", "mypy")["confidence"], "likely");
+
+    let project = write_project(&[
+        ("pyproject.toml", MYPY_PYPROJECT),
+        ("acme.py", ""),
+        ("Makefile", "lint:\n\tmypy acme.py\n"),
+    ]);
+    let (issues, _) = json_issues_and_stderr(project.path());
+    let mypy = issue(&issues, "CHK008", "mypy");
+    assert_eq!(mypy["confidence"], "certain", "{mypy}");
 }
 
 const APP_PYPROJECT: &str = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n\n[tool.chokkin]\nmode = \"app\"\n\n[tool.pytest.ini_options]\naddopts = \"-q\"\n";
