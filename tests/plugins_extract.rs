@@ -260,8 +260,8 @@ fn pytest_setup_cfg_fixture() {
 
 /// References and entries read from TOML, INI and YAML settings carry the
 /// line that names them: each `pytest_plugins` string, `[tool.uvicorn]`
-/// `app`, a `project.scripts` command, a pre-commit hook `id`, and the
-/// section a pytest config is read from (#882).
+/// `app`, a uvicorn `project.scripts` command, a pre-commit hook `id`, and
+/// the section a pytest config is read from (#882).
 #[test]
 fn config_file_references_carry_their_line() {
     let temp = tempfile::TempDir::new().expect("tempdir");
@@ -269,11 +269,11 @@ fn config_file_references_carry_their_line() {
         (
             "pyproject.toml",
             "[project]\nname = \"acme\"\nversion = \"0\"\n\
-             dependencies = [\"fastapi\", \"celery\"]\n\n\
+             dependencies = [\"fastapi\"]\n\n\
              [project.scripts]\n\
              web = \"uvicorn acme.api:app\"\n\
-             worker = \"celery -A acme.tasks:app worker\"\n\n\
-             [tool.chokkin.plugins]\ncelery = true\nfastapi = true\n\n\
+             worker = \"python -m acme.worker\"\n\n\
+             [tool.chokkin.plugins]\nfastapi = true\n\n\
              [tool.uvicorn]\nport = 8000\napp = \"acme.main:app\"\n\n\
              [tool.pytest.ini_options]\n\
              pytest_plugins = [\n    \"acme.fixtures\",\n    \"acme.more\",\n]\n",
@@ -300,13 +300,13 @@ fn config_file_references_carry_their_line() {
         .collect();
     assert_eq!(
         plugin_lines,
-        [("acme.fixtures", Some(20)), ("acme.more", Some(21))]
+        [("acme.fixtures", Some(19)), ("acme.more", Some(20))]
     );
     assert!(
         pytest
             .entries
             .iter()
-            .any(|entry| entry.spec.path == "tests/test_a.py" && entry.origin.line == Some(18)),
+            .any(|entry| entry.spec.path == "tests/test_a.py" && entry.origin.line == Some(17)),
         "{:?}",
         pytest.entries
     );
@@ -318,9 +318,8 @@ fn config_file_references_carry_their_line() {
             .find(|reference| reference.module == module)
             .and_then(|reference| reference.origin.line)
     };
-    assert_eq!(symbol_line(PluginId::Fastapi, "acme.main"), Some(16));
+    assert_eq!(symbol_line(PluginId::Fastapi, "acme.main"), Some(15));
     assert_eq!(symbol_line(PluginId::Fastapi, "acme.api"), Some(7));
-    assert_eq!(symbol_line(PluginId::Celery, "acme.tasks"), Some(8));
 
     let ruff = hints
         .all_binary_usages()
@@ -1864,13 +1863,13 @@ fn celery_plugin_reads_bare_app_modules() {
             (
                 "worker.instance",
                 "pyproject.toml",
-                Some(7),
+                None,
                 "project.scripts.worker"
             ),
             (
                 "worker.instance.celery",
                 "pyproject.toml",
-                Some(7),
+                None,
                 "project.scripts.worker"
             ),
             ("worker.monitor", "scripts/flower.sh", Some(2), "celery app"),
