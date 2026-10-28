@@ -35,22 +35,27 @@ D2  An entry the glob matches nothing for stays as written, so a directory
     (``testpath_entries``); pytest's glob reads ``[1]`` as a class and
     collects nothing from that entry.
 
-Open divergences (README "v0.7.10 の台帳"):
-
-Q3  A component globset rejects but Python reads: an unclosed ``[`` (a
+D3  A component globset rejects but Python reads: an unclosed ``[`` (a
     directory named ``t[1``) or a reversed range ``[z-a]`` (Python: matches
     nothing). chokkin matches nothing for that component, so the entry falls
     back to D2. (``a**`` is ``a*`` in both.)
-Q4  ``[^a]``: globset negates the class, Python's ``fnmatch`` reads ``^`` as
+D4  ``[^a]``: globset negates the class, Python's ``fnmatch`` reads ``^`` as
     a literal character, as ``[\\^a]``.
+D6  A last ``**`` component yields only directories; Python's yields the
+    files too. Below a directory it makes no difference (the directory
+    covers them), but ``testpaths = **`` covers no file at the root.
+
+D3, D4 and D6 need forms ``testpaths`` hardly ever holds, and reading them
+as Python does would take a layer translating globset syntax; they were
+accepted as they are (README "v0.7.10 の台帳").
+
+Open divergence (README "v0.7.10 の台帳"):
+
 Q5  ``**`` after a component that matched a file (``tests/*/**`` with
     ``tests/test_x.py``) keeps the file: ``dirs_from`` pushes its base without
     asking whether it is a directory, while Python's ``_glob2`` yields the
     base only for a directory. The file becomes test code through an entry
     pytest collects nothing from.
-Q6  A last ``**`` component yields only directories; Python's yields the
-    files too. Below a directory it makes no difference (the directory
-    covers them), but ``testpaths = **`` covers no file at the root.
 
 Run:  python3 docs/dev/formal/testpaths_glob_model.py
       python3 docs/dev/formal/testpaths_glob_model.py --broken
@@ -282,14 +287,14 @@ def outcome(root: str, files: list[str], entry: str) -> tuple[frozenset[str], bo
     return covered(files, paths), warned
 
 
-REASONS = {"links": "D1", "nolit": "D2", "isdir": "Q5", "files": "Q6"}
+REASONS = {"links": "D1", "nolit": "D2", "isdir": "Q5", "files": "D6"}
 
 
 def accepted(root: str, files: list[str], entry: str, theirs: frozenset, yields: bool) -> str | None:
     """The divergences an entry shows, named by the smallest set of changes
     to the port that removes them (``fnmatch``: Python's matcher for the
-    components holding a ``[`` class, Q3 for a component globset rejects and
-    Q4 otherwise)."""
+    components holding a ``[`` class, D3 for a component globset rejects and
+    D4 otherwise)."""
     names = list(REASONS) + ["fnmatch"]
     for size in range(1, len(names) + 1):
         for fixes in itertools.combinations(names, size):
@@ -304,7 +309,7 @@ def accepted(root: str, files: list[str], entry: str, theirs: frozenset, yields:
             reasons = [REASONS[fix] for fix in fixes if fix in REASONS]
             if "fnmatch" in fixes:
                 rejected = any(c in ("t[1", "[z-a]") for c in entry.split("/"))
-                reasons.append("Q3" if rejected else "Q4")
+                reasons.append("D3" if rejected else "D4")
             return "+".join(reasons)
     return None
 
@@ -355,7 +360,7 @@ def main() -> int:
     failures, seen, checked = run()
     for failure in failures[:20]:
         print(failure)
-    expected = {"D1", "D2", "Q3", "Q4", "Q5", "Q6"}
+    expected = {"D1", "D2", "D3", "D4", "Q5", "D6"}
     if seen != expected:
         print(f"stale accepted divergences: {sorted(expected - seen)}")
         return 1
