@@ -483,7 +483,7 @@ mod tests {
                 mode: ProjectMode::App,
                 confidence_reason: None,
                 test_fixture: false,
-                config_mention: None,
+                selected_by: None,
             },
             UnreachableFile {
                 file: old_api_id,
@@ -492,7 +492,7 @@ mod tests {
                 mode: ProjectMode::App,
                 confidence_reason: None,
                 test_fixture: false,
-                config_mention: None,
+                selected_by: None,
             },
         ];
 

@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its dotted module path (airflow's `config.yml` naming
   `TaskHandlerWithCustomFormatter`). `--explain` shows the naming line
   (#1258).
+- CHK001 also reports at info a module that defines a public class beside
+  modules a list of module names loads: an opt-in plugin the same loader
+  takes when users add it to their own list (redash's `big_query_gce.py`)
+  (#1258).
 
 ## [0.7.12] - 2026-10-28
 

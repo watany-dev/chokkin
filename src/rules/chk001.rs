@@ -18,9 +18,9 @@ use crate::sources::{in_examples_dir, in_templates_dir, is_test_data_path};
 /// loads by path or directory convention (#1268). A helper beside the test
 /// modules that forgot to import it stays a warning. So, too, is a file
 /// users select or copy from their own settings, which the tree does not
-/// hold (#1258): one under a `templates/` or `*_templates/` directory, and
-/// one a config file of its package names by a public class or its dotted
-/// module path.
+/// hold (#1258): one under a `templates/` or `*_templates/` directory, a
+/// plugin beside the modules a list of module names loads, and one a config
+/// file of its package names by a public class or its dotted module path.
 #[must_use]
 pub(super) fn chk001_candidates(
     unreachable: &[UnreachableFile],
@@ -35,8 +35,8 @@ pub(super) fn chk001_candidates(
         let example = in_examples_dir(&file.path);
         let template = !example && in_templates_dir(&file.path);
         let fixture = !example && !template && file.test_fixture;
-        // Set only for files none of the above lowers (`apply_config_mentions`).
-        let named = file.config_mention.as_ref();
+        // Set only for files none of the above lowers (`apply_user_selected`).
+        let named = file.selected_by.as_ref();
         candidates.push(IssueCandidate {
             rule: RuleId::Chk001,
             subject: IssueSubject::File {
@@ -90,7 +90,7 @@ mod tests {
             mode: ProjectMode::App,
             confidence_reason: None,
             test_fixture: false,
-            config_mention: None,
+            selected_by: None,
         });
         let paths = |strict| {
             chk001_candidates(&unreachable, strict)
@@ -120,7 +120,7 @@ mod tests {
             mode: ProjectMode::App,
             confidence_reason: None,
             test_fixture: false,
-            config_mention: None,
+            selected_by: None,
         });
         let severities: Vec<Severity> = chk001_candidates(&unreachable, false)
             .into_iter()
@@ -159,7 +159,7 @@ mod tests {
             mode: ProjectMode::App,
             confidence_reason: None,
             test_fixture: false,
-            config_mention: mention.map(str::to_owned),
+            selected_by: mention.map(str::to_owned),
         });
         let candidates = chk001_candidates(&unreachable, false);
         let severities: Vec<Severity> = candidates.iter().map(|c| c.severity).collect();
@@ -194,7 +194,7 @@ mod tests {
             mode: ProjectMode::App,
             confidence_reason: None,
             test_fixture,
-            config_mention: None,
+            selected_by: None,
         });
         let severities: Vec<Severity> = chk001_candidates(&unreachable, false)
             .into_iter()
@@ -216,7 +216,7 @@ mod tests {
                     mode,
                     confidence_reason: None,
                     test_fixture: false,
-                    config_mention: None,
+                    selected_by: None,
                 }];
                 let candidates = chk001_candidates(&unreachable, false);
                 assert_eq!(

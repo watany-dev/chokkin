@@ -3042,7 +3042,7 @@ mod tests {
             mode,
             confidence_reason: None,
             test_fixture: false,
-            config_mention: None,
+            selected_by: None,
         };
         let mut reachability = ReachabilityReport::default();
         reachability.unread = vec![

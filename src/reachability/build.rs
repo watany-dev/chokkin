@@ -95,7 +95,7 @@ pub fn analyze_reachability(
             mode,
             confidence_reason: None,
             test_fixture: is_test_fixture(file, &reachable_dirs),
-            config_mention: None,
+            selected_by: None,
         };
         if skipped.contains(file.path.as_str()) {
             unread.push(orphan);
