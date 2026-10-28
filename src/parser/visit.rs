@@ -23,8 +23,8 @@ use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
     LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path, lists_directory,
-    literal_target, module_prefix, module_ref_literal, named_load, pytest_plugin_names, python_run,
-    sys_path_hint,
+    literal_target, module_list, module_prefix, module_ref_literal, named_load,
+    pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -785,6 +785,20 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    fn record_module_list(&mut self, elts: &[Expr]) {
+        let Some(elts) = module_list(elts) else {
+            return;
+        };
+        let list = elts
+            .into_iter()
+            .map(|(text, elt)| ModuleRef {
+                text: text.to_owned(),
+                line: self.line_number(elt),
+            })
+            .collect();
+        self.parsed.module_lists.push(list);
+    }
+
     fn record_dynamic_imports(&mut self, call: &ExprCall) {
         if let Some((callee, name, lazy_command)) = named_load(call) {
             let load = DynamicImport {
@@ -1530,8 +1544,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 self.record_dynamic_imports(call);
             },
-            Expr::List(list) => self.record_python_run(expr, &list.elts),
-            Expr::Tuple(tuple) => self.record_python_run(expr, &tuple.elts),
+            Expr::List(list) => {
+                self.record_python_run(expr, &list.elts);
+                self.record_module_list(&list.elts);
+            },
+            Expr::Tuple(tuple) => {
+                self.record_python_run(expr, &tuple.elts);
+                self.record_module_list(&tuple.elts);
+            },
             Expr::StringLiteral(_) => {
                 if let Some(hint) = sys_path_hint(expr)
                     && !self.sys_path.literals.contains(hint.as_ref())
@@ -2018,6 +2038,32 @@ mod tests {
         let mut visitor = ModuleVisitor::new(path, &layout, file_context, &lines);
         visitor.visit_module(source, module.suite());
         visitor.into_parsed()
+    }
+
+    /// A list or tuple of three or more whole dotted module names is kept with
+    /// each element's line; a shorter one, or one holding `pkg:attr`, a
+    /// `python:` name, one segment or a computed string, is not (#1257).
+    #[test]
+    fn collects_lists_of_dotted_module_names() {
+        let parsed = visit_source(
+            "RUNNERS = [\n    \"pkg.a\",\n    \"pkg.b.c\",\n    \"pkg.d\",\n]\nONE = [\"pkg.a\", \"pkg.b\", \"pkg\"]\nX = (\"pkg.a\", \"pkg.b\", \"pkg.c\")\nPAIR = [\"pkg.a\", \"pkg.b\"]\nATTR = [\"pkg.a\", \"pkg.b\", \"pkg.c:f\"]\nPY = [\"pkg.a\", \"pkg.b\", \"python:pkg.c\"]\nNAME = \"c\"\nF = [\"pkg.a\", \"pkg.b\", f\"pkg.{NAME}\"]\n",
+        );
+        let lists: Vec<Vec<(&str, u32)>> = parsed
+            .module_lists
+            .iter()
+            .map(|list| {
+                list.iter()
+                    .map(|reference| (reference.text.as_str(), reference.line))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            lists,
+            [
+                vec![("pkg.a", 2), ("pkg.b.c", 3), ("pkg.d", 4)],
+                vec![("pkg.a", 7), ("pkg.b", 7), ("pkg.c", 7)],
+            ]
+        );
     }
 
     /// Dotted string literals, `pkg.mod:attr` included (#493), are kept once

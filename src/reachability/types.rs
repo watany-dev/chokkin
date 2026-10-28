@@ -1,6 +1,6 @@
 //! Reachability analysis types (pipeline step 9).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexSet;
 
@@ -140,4 +140,7 @@ pub struct ReachabilityReport {
     /// The file each plugin module reference, keyed by its origin file and
     /// module, resolves to: the one the host loads under that name (#779).
     pub(crate) plugin_ref_files: HashMap<(String, String), String>,
+    /// Files a reached file names in a list of module names, which a loader
+    /// imports by name and may then call by a conventional name (#1257).
+    pub(crate) listed_files: HashSet<String>,
 }

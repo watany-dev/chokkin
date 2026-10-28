@@ -316,6 +316,32 @@ pub(super) fn module_ref_literal(expr: &Expr) -> Option<&str> {
         .then_some(text)
 }
 
+/// Fewest elements a [`module_list`] has: one or two dotted strings side by
+/// side are as likely a coincidence (a log message's module names, a pair of
+/// defaults) as a plugin list (#1257).
+const MIN_MODULE_LIST: usize = 3;
+
+/// The elements of a list or tuple literal that names modules a loader may
+/// import one by one (#1257): three or more elements, every one a string
+/// literal that is a whole dotted module name of two or more segments, with
+/// no `python:` prefix and no `:attr` (redash's `default_query_runners`
+/// handed to `__import__`). A list with any other element (a name, a
+/// computed string, `pkg:attr`, one segment) is no such list, so nothing it
+/// holds is read as a module.
+#[must_use]
+pub(super) fn module_list(elts: &[Expr]) -> Option<Vec<(&str, &Expr)>> {
+    if elts.len() < MIN_MODULE_LIST {
+        return None;
+    }
+    elts.iter()
+        .map(|elt| {
+            module_ref_literal(elt)
+                .filter(|text| !text.contains(':'))
+                .map(|text| (text, elt))
+        })
+        .collect()
+}
+
 /// The module a [`module_ref_literal`] names: without its `python:` prefix
 /// and its `:attr`.
 #[must_use]
