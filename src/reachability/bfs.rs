@@ -644,6 +644,7 @@ mod tests {
                     version_minors: None,
                     called_before: Vec::new(),
                     tested_before: Vec::new(),
+                    caller_guarded: false,
                 })
                 .collect(),
             dynamic_imports: dynamic
@@ -1006,6 +1007,7 @@ mod tests {
             version_minors: None,
             called_before: Vec::new(),
             tested_before: Vec::new(),
+            caller_guarded: false,
         };
         let modules = vec![ParsedModule {
             path: "src/acme/main.py".to_owned(),

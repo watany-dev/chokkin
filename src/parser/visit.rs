@@ -97,6 +97,20 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// failed import only while they run, so a nested function's body is
     /// outside them (#968).
     caught_depth: u32,
+    /// Inside a `try:` body with a handler a failed import lands in
+    /// (`except Exception:`), or `with suppress(ImportError):`, as
+    /// `caught_depth` is: where calls of private functions are guarded
+    /// (#1259).
+    broad_caught_depth: u32,
+    /// The module-level private function whose body the walk is in, unless
+    /// a decorator other than a cache may hand it to other callers (#1259).
+    private_function: Option<&'ast str>,
+    /// The non-optional imports in [`Self::private_function`] bodies: index
+    /// in `parsed.imports` and the function.
+    private_function_imports: Vec<(usize, &'ast str)>,
+    /// For each private name, how often it is read, and how often as the
+    /// callee of a call under `broad_caught_depth`.
+    private_name_uses: FxHashMap<&'ast str, (u32, u32)>,
     /// Inside code that runs only once some package imported: a `try`'s
     /// `else:`, a branch a flag or availability check rules out, or the
     /// statements after `if not is_x_available(): raise ImportError`. A
@@ -203,6 +217,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             default_context,
             in_type_checking: false,
             caught_depth: 0,
+            broad_caught_depth: 0,
+            private_function: None,
+            private_function_imports: Vec::new(),
+            private_name_uses: FxHashMap::default(),
             gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
@@ -253,6 +271,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     #[must_use]
     pub(super) fn into_parsed(mut self) -> ParsedModule {
         self.parsed.attribute_accesses = self.import_attribute_accesses();
+        self.mark_guarded_private_imports();
         let runs_commands = self
             .parsed
             .imports
@@ -567,6 +586,48 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         (self.try_flags, self.none_flags, self.version_names) = outer;
     }
 
+    /// A module-level private function read only as the callee of calls
+    /// under a handler a failed import lands in (`_load()` in `try: ...
+    /// except Exception:`) runs its imports only there, so CHK005 weighs
+    /// them as it would an import in that `try` body (#1259). Only the
+    /// direct callers count: further up, nearly everything is guarded by
+    /// some broad handler. A function read any other way (passed as a
+    /// callback, called unguarded, decorated by a registry) keeps its
+    /// imports' strength.
+    fn mark_guarded_private_imports(&mut self) {
+        for &(index, function) in &self.private_function_imports {
+            let guarded = self
+                .private_name_uses
+                .get(function)
+                .is_some_and(|&(reads, guarded_calls)| guarded_calls > 0 && reads == guarded_calls);
+            if guarded && let Some(import) = self.parsed.imports.get_mut(index) {
+                import.caller_guarded = true;
+            }
+        }
+    }
+
+    /// Count a read of a private name for
+    /// [`Self::mark_guarded_private_imports`], and a guarded call of one.
+    fn record_private_read(&mut self, expr: &'ast Expr) {
+        let (name, guarded_call) = match expr {
+            Expr::Name(name) if name.ctx.is_load() => (name.id.as_str(), false),
+            Expr::Call(call) if self.broad_caught_depth > 0 => match &*call.func {
+                Expr::Name(name) => (name.id.as_str(), true),
+                _ => return,
+            },
+            _ => return,
+        };
+        if !is_private_name(name) {
+            return;
+        }
+        let uses = self.private_name_uses.entry(name).or_default();
+        if guarded_call {
+            uses.1 += 1;
+        } else {
+            uses.0 += 1;
+        }
+    }
+
     /// Whether an import at `node` runs only when some package is installed.
     fn is_optional_at<R: Ranged>(&self, node: &R) -> bool {
         self.caught_depth > 0
@@ -611,12 +672,14 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
         let saved_literal_modules = std::mem::take(&mut self.literal_modules);
         let saved_caught_depth = self.caught_depth;
+        let saved_broad_caught_depth = self.broad_caught_depth;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
             // The body runs when called, after the enclosing `try` is gone.
             // `fallback_for` stays: a handler that never runs defines nothing.
             self.caught_depth = 0;
+            self.broad_caught_depth = 0;
             // A function that asks whether a package is installed treats the
             // packages it imports after the check as optional (#695, #713).
             // A nested function runs when called, possibly after the outer
@@ -637,6 +700,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.prefix_modules = saved_prefix_modules;
         self.literal_modules = saved_literal_modules;
         self.caught_depth = saved_caught_depth;
+        self.broad_caught_depth = saved_broad_caught_depth;
     }
 
     /// Track `name = import_module("pkg." + x)` for a later
@@ -778,6 +842,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     version_minors: None,
                     called_before: Vec::new(),
                     tested_before: Vec::new(),
+                    caller_guarded: false,
                 });
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
@@ -914,6 +979,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 version_minors: self.version_minor_runs(),
                 called_before: Vec::new(),
                 tested_before: Vec::new(),
+                caller_guarded: false,
             });
         }
     }
@@ -997,6 +1063,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 version_minors: self.version_minor_runs(),
                 called_before: Vec::new(),
                 tested_before: Vec::new(),
+                caller_guarded: false,
             });
         }
     }
@@ -1021,6 +1088,12 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     }
                 }
             }
+        }
+        if !import.optional
+            && let Some(function) = self.private_function
+        {
+            self.private_function_imports
+                .push((self.parsed.imports.len(), function));
         }
         self.parsed.imports.push(import);
     }
@@ -1278,12 +1351,20 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let outer_flags = self.enter_scope_names(Some(&def.parameters), &def.body);
                 self.function_frames
                     .push((def.name.as_str(), &def.parameters));
+                let outer_private = self.private_function;
+                // A nested function may be returned and called after the
+                // guard is gone.
+                self.private_function = (self.module_level
+                    && is_private_name(def.name.as_str())
+                    && def.decorator_list.iter().all(caches_calls))
+                .then_some(def.name.as_str());
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
                     &def.body,
                     SymbolKind::Function,
                 );
+                self.private_function = outer_private;
                 self.function_frames.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
@@ -1414,8 +1495,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                         |value| matches!(value, Expr::BooleanLiteral(literal) if literal.value),
                     ));
                 }
+                let broad = try_stmt.handlers.iter().any(|handler| {
+                    let ExceptHandler::ExceptHandler(handler) = handler;
+                    handler.type_.as_deref().is_none_or(catches_import_error)
+                });
                 self.caught_depth = self.caught_depth.saturating_add(1);
+                self.broad_caught_depth = self.broad_caught_depth.saturating_add(u32::from(broad));
                 self.visit_body(&try_stmt.body);
+                self.broad_caught_depth = self.broad_caught_depth.saturating_sub(u32::from(broad));
                 self.caught_depth = self.caught_depth.saturating_sub(1);
                 let primaries = imported_roots(&try_stmt.body);
                 let imports = try_stmt
@@ -1466,10 +1553,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     .any(|item| suppresses_import_error(&item.context_expr));
                 if suppresses {
                     self.caught_depth = self.caught_depth.saturating_add(1);
+                    self.broad_caught_depth = self.broad_caught_depth.saturating_add(1);
                 }
                 self.visit_body(&with_stmt.body);
                 if suppresses {
                     self.caught_depth = self.caught_depth.saturating_sub(1);
+                    self.broad_caught_depth = self.broad_caught_depth.saturating_sub(1);
                 }
             },
             Stmt::Match(match_stmt) => self.visit_match(match_stmt),
@@ -1522,12 +1611,16 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             self.command_words.insert(word.to_owned());
         }
         match expr {
-            Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
+            Expr::Name(name) if name.ctx.is_load() => {
+                insert_name(&mut self.loaded_names, &name.id);
+                self.record_private_read(expr);
+            },
             Expr::Attribute(attribute) => self.record_attribute(attribute),
             Expr::Subscript(subscript) if reads_own_namespace(subscript) => {
                 self.record_self_reference(subscript);
             },
             Expr::Call(call) => {
+                self.record_private_read(expr);
                 self.visit_type_expression_arguments(call);
                 self.record_computed_getattr(call);
                 self.record_literal_getattr(call);
@@ -1576,10 +1669,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             self.visit_parameters(parameters);
         }
         let caught_depth = std::mem::take(&mut self.caught_depth);
+        let broad_caught_depth = std::mem::take(&mut self.broad_caught_depth);
         self.function_depth += 1;
         self.visit_expr(&lambda.body);
         self.function_depth -= 1;
         self.caught_depth = caught_depth;
+        self.broad_caught_depth = broad_caught_depth;
     }
 }
 
@@ -1961,6 +2056,27 @@ fn statement_callee(stmt: &Stmt) -> Option<&Expr> {
         return None;
     };
     is_module_path(&call.func).then_some(&*call.func)
+}
+
+/// `_name` but not `__name`: module-private, so its callers sit in the
+/// module (#1259).
+fn is_private_name(name: &str) -> bool {
+    name.starts_with('_') && !name.starts_with("__")
+}
+
+/// `@cache` / `@functools.lru_cache(maxsize=8)`: calls the function only when
+/// the caller calls it, so its callers stay the module's own (#1259).
+fn caches_calls(decorator: &Decorator) -> bool {
+    let expr = match &decorator.expression {
+        Expr::Call(call) => &*call.func,
+        expr => expr,
+    };
+    let name = match expr {
+        Expr::Name(name) => name.id.as_str(),
+        Expr::Attribute(attribute) => attribute.attr.as_str(),
+        _ => return false,
+    };
+    matches!(name, "cache" | "lru_cache")
 }
 
 /// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class
@@ -3376,6 +3492,35 @@ g = lambda x=utils.G: x
                 ("importlib_metadata", Some(vec![[0, 8]])),
                 ("cPickle", Some(vec![])),
                 ("shadowed", None),
+            ]
+        );
+    }
+
+    /// #1259: mlflow's `_cached_evaluate_load` imports `evaluate`, and every
+    /// call of it sits in `try: ... except Exception:`. Only a private
+    /// module-level function read solely as such a call counts.
+    #[test]
+    fn imports_of_private_functions_called_only_under_broad_handlers_are_caller_guarded() {
+        let parsed = visit_source(
+            "import functools\n\n@functools.lru_cache(maxsize=8)\ndef _load(path):\n    import evaluate\n\ndef _github(path):\n    import evaluate_github\n\ndef _unguarded():\n    import unguarded\n\ndef _narrow():\n    import narrow\n\ndef _passed():\n    import passed\n\ndef public():\n    import public_lib\n\n@register\ndef _registered():\n    import registered\n\ndef _outer():\n    def _inner():\n        import inner\n    return _inner\n\ndef _uncalled():\n    import uncalled\n\ndef toxicity():\n    try:\n        _load(\"toxicity\")\n        _github(\"x\")\n        _unguarded()\n        public()\n        _registered()\n        f = _outer()\n        try:\n            _inner()\n        except Exception:\n            pass\n    except Exception:\n        return\n    try:\n        _narrow()\n    except ValueError:\n        pass\n    with suppress(ImportError):\n        _passed()\n    run(_passed)\n    _unguarded()\n    try:\n        _load(\"rouge\")\n    except:\n        pass\n\ntry:\n    def later():\n        _github(\"y\")\nexcept Exception:\n    pass\n",
+        );
+        assert_eq!(
+            parsed
+                .imports
+                .iter()
+                .map(|import| (import.module.as_str(), import.caller_guarded))
+                .collect::<Vec<_>>(),
+            [
+                ("functools", false),
+                ("evaluate", true),
+                ("evaluate_github", false),
+                ("unguarded", false),
+                ("narrow", false),
+                ("passed", false),
+                ("public_lib", false),
+                ("registered", false),
+                ("inner", false),
+                ("uncalled", false),
             ]
         );
     }
