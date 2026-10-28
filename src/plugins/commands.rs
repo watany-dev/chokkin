@@ -704,9 +704,7 @@ fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
     let Some(app) = app else {
         return PythonTarget::Opaque(runner.to_owned());
     };
-    let (module, attr) = app
-        .split_once(':')
-        .map_or((app, None), |(module, attr)| (module, Some(attr)));
+    let (module, attr) = split_app(app).map_or((app, None), |(module, attr)| (module, Some(attr)));
     if is_computed(app) || !is_dotted_identifier(module) {
         return PythonTarget::Opaque(app.to_owned());
     }
@@ -826,15 +824,32 @@ fn takes_value(arg: &str) -> bool {
 }
 
 /// `module:attr`, `module:factory()` or a computed `$APP_MODULE`-like word
-/// with a colon.
+/// with a colon. A word starting with `-` is an option, perhaps glued to its
+/// value (`-w${WORKERS:-4}`), and names no app.
 fn is_app_reference(arg: &str) -> bool {
-    arg.split_once(':').is_some_and(|(module, attr)| {
-        (is_dotted_identifier(module) || is_computed(module))
+    !arg.starts_with('-')
+        && split_app(arg).is_some_and(|(module, attr)| {
+            (is_dotted_identifier(module) || is_computed(module))
             && !attr.is_empty()
             && !attr.starts_with('/')
             // `-b localhost:8000` binds a port; it names no app.
             && !attr.bytes().all(|byte| byte.is_ascii_digit())
-    })
+        })
+}
+
+/// Splits at the first `:` outside braces: the one in `${APP:-default}`
+/// separates no module from an attribute.
+fn split_app(arg: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let (colon, _) = arg.char_indices().find(|&(_, char)| {
+        match char {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {},
+        }
+        char == ':' && depth == 0
+    })?;
+    Some((&arg[..colon], &arg[colon + 1..]))
 }
 
 fn uv_run_target(args: &[&str]) -> Option<Run> {
@@ -1415,6 +1430,29 @@ mod tests {
                 PythonTarget::Opaque(text) => format!("opaque {text}"),
             })
             .collect()
+    }
+
+    /// An option glued to a variable is its value, and the `:` inside
+    /// `${...}` splits no module from an attribute.
+    #[test]
+    fn command_targets_skip_option_values_and_variable_defaults() {
+        for (command, app) in [
+            ("gunicorn -w${W:-$N} mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn -b \"$BIND\" mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn ${APP:-mypkg.wsgi}", "opaque ${APP:-mypkg.wsgi}"),
+            ("gunicorn ${APP}:app", "opaque ${APP}:app"),
+            ("gunicorn $APP_MODULE:app", "opaque $APP_MODULE:app"),
+            (
+                "gunicorn -b$HOST:$PORT mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            ("gunicorn ${ARGS:-$D} mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn $OPTS ${APP}:app", "opaque ${APP}:app"),
+            // A colon word whose left side names no module is no reference.
+            ("gunicorn my-pkg.wsgi:app", "opaque gunicorn"),
+        ] {
+            assert_eq!(targets(command), [app], "{command}");
+        }
     }
 
     #[test]
