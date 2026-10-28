@@ -596,10 +596,12 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// imports' strength.
     fn mark_guarded_private_imports(&mut self) {
         for &(index, function) in &self.private_function_imports {
+            // A guarded call reads its callee's name too, so a listed name
+            // has been read at least once.
             let guarded = self
                 .private_name_uses
                 .get(function)
-                .is_some_and(|&(reads, guarded_calls)| guarded_calls > 0 && reads == guarded_calls);
+                .is_some_and(|&(reads, guarded_calls)| reads == guarded_calls);
             if guarded && let Some(import) = self.parsed.imports.get_mut(index) {
                 import.caller_guarded = true;
             }
@@ -610,7 +612,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// [`Self::mark_guarded_private_imports`], and a guarded call of one.
     fn record_private_read(&mut self, expr: &'ast Expr) {
         let (name, guarded_call) = match expr {
-            Expr::Name(name) if name.ctx.is_load() => (name.id.as_str(), false),
+            Expr::Name(name) => (name.id.as_str(), false),
             Expr::Call(call) if self.broad_caught_depth > 0 => match &*call.func {
                 Expr::Name(name) => (name.id.as_str(), true),
                 _ => return,
@@ -3502,7 +3504,7 @@ g = lambda x=utils.G: x
     #[test]
     fn imports_of_private_functions_called_only_under_broad_handlers_are_caller_guarded() {
         let parsed = visit_source(
-            "import functools\n\n@functools.lru_cache(maxsize=8)\ndef _load(path):\n    import evaluate\n\ndef _github(path):\n    import evaluate_github\n\ndef _unguarded():\n    import unguarded\n\ndef _narrow():\n    import narrow\n\ndef _passed():\n    import passed\n\ndef public():\n    import public_lib\n\n@register\ndef _registered():\n    import registered\n\ndef _outer():\n    def _inner():\n        import inner\n    return _inner\n\ndef _uncalled():\n    import uncalled\n\ndef toxicity():\n    try:\n        _load(\"toxicity\")\n        _github(\"x\")\n        _unguarded()\n        public()\n        _registered()\n        f = _outer()\n        try:\n            _inner()\n        except Exception:\n            pass\n    except Exception:\n        return\n    try:\n        _narrow()\n    except ValueError:\n        pass\n    with suppress(ImportError):\n        _passed()\n    run(_passed)\n    _unguarded()\n    try:\n        _load(\"rouge\")\n    except:\n        pass\n\ntry:\n    def later():\n        _github(\"y\")\nexcept Exception:\n    pass\n",
+            "import functools\n\n@functools.lru_cache(maxsize=8)\ndef _load(path):\n    import evaluate\n\n@cache\ndef _cached():\n    import cached_lib\n\ndef _github(path):\n    import evaluate_github\n\ndef _unguarded():\n    import unguarded\n\ndef _narrow():\n    import narrow\n\ndef _passed():\n    import passed\n\ndef public():\n    import public_lib\n\n@register\ndef _registered():\n    import registered\n\ndef _outer():\n    def _inner():\n        import inner\n    return _inner\n\ndef _uncalled():\n    import uncalled\n\ndef toxicity():\n    try:\n        _load(\"toxicity\")\n        _cached()\n        _github(\"x\")\n        _unguarded()\n        public()\n        _registered()\n        f = _outer()\n        try:\n            _inner()\n        except Exception:\n            pass\n    except Exception:\n        return\n    try:\n        _narrow()\n    except ValueError:\n        pass\n    with suppress(ImportError):\n        _passed()\n    run(_passed)\n    _unguarded()\n    try:\n        _load(\"rouge\")\n    except:\n        pass\n\ntry:\n    def later():\n        _github(\"y\")\nexcept Exception:\n    pass\n",
         );
         assert_eq!(
             parsed
@@ -3513,6 +3515,7 @@ g = lambda x=utils.G: x
             [
                 ("functools", false),
                 ("evaluate", true),
+                ("cached_lib", true),
                 ("evaluate_github", false),
                 ("unguarded", false),
                 ("narrow", false),
