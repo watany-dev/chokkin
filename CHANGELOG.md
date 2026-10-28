@@ -28,6 +28,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a test harness loads by path, such as fixture projects and plugins (#1268).
 
 ### Fixed
+- Names picked at runtime without an import are no longer reported as
+  certain. A first-party decorator factory whose inner function hands the
+  function to an object the factory was given
+  (`subparser.set_defaults(action=func)`) registers it, so it is used. A
+  `.py` file a reachable module names by a path (`os.path.join(d,
+  "fixtures/ir.py")`, `shutil.copyfile`, `open`, `runpy.run_path`) is no
+  CHK001. Three new gaps lower findings to info notes at likely, each named
+  in one warning: the subclasses of a class whose subclasses are enumerated
+  (`__subclasses__()`, also through functions that pass the class on) or
+  registered (`__init_subclass__`) for CHK006; a module that reads its own
+  names by a computed name (`sys.modules[__name__]`, `globals()[name]`) for
+  CHK006; and an unresolved import naming a project module beside a file
+  that adds a computed path to `sys.path` for CHK010. mypy's dmypy
+  subcommands and mypyc test data, ansible's platform subclasses and
+  `sys.modules[__name__]` module, and sphinx's test-root modules are no
+  longer reported as warnings (#1274).
 - Requirements files are followed by reference, wherever they are: `pip
   install -r` in commands and workflows, tox `deps = -r file` and nox
   `session.install("-r", file)` read the file's names like a requirements

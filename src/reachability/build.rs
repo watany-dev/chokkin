@@ -4,7 +4,7 @@ use indexmap::IndexSet;
 
 use crate::config::{Confidence, ProjectMode};
 use crate::entry::EntryPlan;
-use crate::graph::ProjectGraph;
+use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
 use crate::plugins::PluginHints;
 use crate::sources::{
@@ -66,6 +66,7 @@ pub fn analyze_reachability(
         .map(|module| module.path.as_str())
         .collect();
     let reachable_dirs = reachable_dirs(graph, &reachable);
+    let path_refs = path_refs(graph, &reachable, parse);
     let mut unreachable = Vec::new();
     let mut unread = Vec::new();
     for file in &sources.files {
@@ -82,7 +83,7 @@ pub fn analyze_reachability(
         let Some(file_id) = graph.file_id(&file.path) else {
             continue;
         };
-        if reachable.contains(&file_id) {
+        if reachable.contains(&file_id) || is_path_referenced(&file.path, &path_refs) {
             continue;
         }
 
@@ -277,6 +278,40 @@ fn reachable_dirs<'g>(
         .filter_map(|id| graph.file(*id))
         .map(|file| parent_dir(&file.path))
         .collect()
+}
+
+/// The `.py` paths reachable modules hand to a path or file call (#1274).
+fn path_refs<'p>(
+    graph: &ProjectGraph,
+    reachable: &IndexSet<FileId>,
+    parse: &'p ParseSummary,
+) -> Vec<&'p str> {
+    let mut refs: Vec<&str> = parse
+        .modules
+        .iter()
+        .filter(|module| {
+            !module.path_refs.is_empty()
+                && graph
+                    .file_id(&module.path)
+                    .is_some_and(|file_id| reachable.contains(&file_id))
+        })
+        .flat_map(|module| module.path_refs.iter().map(String::as_str))
+        .collect();
+    refs.sort_unstable();
+    refs.dedup();
+    refs
+}
+
+/// Whether a reachable module reads, copies or runs the file by a path its
+/// own trailing segments spell (`os.path.join(data, "fixtures/ir.py")`), so
+/// it is used though nothing imports it (#1274). Its imports are not
+/// followed: such a file is copied or run in another tree (a test driver,
+/// a builtins stub).
+fn is_path_referenced(path: &str, refs: &[&str]) -> bool {
+    refs.iter().any(|reference| {
+        path.strip_suffix(reference)
+            .is_some_and(|head| head.is_empty() || head.ends_with('/'))
+    })
 }
 
 /// Whether an unreachable file is test input a harness loads by path: a

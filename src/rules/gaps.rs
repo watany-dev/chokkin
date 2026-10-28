@@ -193,6 +193,23 @@ pub enum GapKind {
     /// be read (#1273): a URL, a computed path, a missing file. Any binary
     /// it may provide or import it may make third-party is unknown.
     UnreadRequirementsFile,
+    /// A class's subclasses are enumerated (`__subclasses__()`, directly or
+    /// through the functions that pass it on) or registered
+    /// (`__init_subclass__`), so code may pick any of them by an attribute
+    /// (#1274). `site` is the class and its line; `target` is one project
+    /// subclass, at any depth, as `path:Name`, whose CHK006 alone it lowers
+    /// to an info note at likely.
+    SubclassRegistry,
+    /// A module reads its own namespace by a computed name
+    /// (`sys.modules[__name__]`, `globals()[name]`, #1274): any of its names
+    /// may be read that way, so it lowers that module's CHK006 to info notes
+    /// at likely.
+    ModuleSelfReference,
+    /// An unresolved import names a module the project has as a file, and a
+    /// file beside that module adds a computed path to `sys.path` (#1274): a
+    /// test root's `sys.path.insert(0, root)` may make it importable. `target` is the file; it lowers that import's
+    /// CHK010 alone to an info note at likely.
+    ComputedSysPathImport,
 }
 
 /// How a gap changes a finding in its scope.
@@ -315,13 +332,23 @@ impl GapKind {
                 IssueSubject::ScriptDistribution { .. },
             ) => Some(Lowering::Hint(Confidence::Maybe)),
             (Self::StringModuleRef, RuleId::Chk001, IssueSubject::File { .. })
-            | (Self::StringDistributionRef, RuleId::Chk002, IssueSubject::Distribution { .. }) => {
+            | (Self::StringDistributionRef, RuleId::Chk002, IssueSubject::Distribution { .. })
+            | (
+                Self::SubclassRegistry | Self::ModuleSelfReference,
+                RuleId::Chk006,
+                IssueSubject::Symbol { .. },
+            )
+            | (Self::ComputedSysPathImport, RuleId::Chk010, IssueSubject::Import { .. }) => {
                 Some(Lowering::Hint(Confidence::Likely))
             },
             _ => None,
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind, so each reason is read beside its kind's"
+    )]
     const fn reason(self) -> &'static str {
         match self {
             Self::UnreadModule => "a reachable module could not be read",
@@ -401,6 +428,17 @@ impl GapKind {
                 "a command installs from a requirements file that could not be read, which may \
                  provide it"
             },
+            Self::SubclassRegistry => {
+                "a class it derives from has its subclasses enumerated or registered, so it may \
+                 be picked at runtime"
+            },
+            Self::ModuleSelfReference => {
+                "the module reads its own names by a computed name (`sys.modules[__name__]` or \
+                 `globals()`)"
+            },
+            Self::ComputedSysPathImport => {
+                "a computed `sys.path` entry may make the project file of that name importable"
+            },
         }
     }
 }
@@ -413,6 +451,10 @@ impl Gap {
     /// on the distribution it names, an archive requirement those and the
     /// unresolved imports whose root is that name, and a string naming a
     /// module that file alone.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one table, so each gap's scope is read in one place"
+    )]
     fn reaches(&self, candidate: &IssueCandidate) -> bool {
         let in_member = self.member.is_none() || self.member == candidate.workspace_member;
         let in_site = match (self.kind, &candidate.subject) {
@@ -490,6 +532,17 @@ impl Gap {
             (GapKind::StringDistributionRef, subject) => {
                 matches!(subject, IssueSubject::Distribution { name } if self.target.as_deref() == Some(name))
             },
+            (GapKind::SubclassRegistry, IssueSubject::Symbol { name, .. }) => {
+                self.target.as_deref().and_then(|target| target.rsplit_once(':')).is_some_and(
+                    |(path, class)| class == name && defined_in(candidate, path),
+                )
+            },
+            (GapKind::ModuleSelfReference, IssueSubject::Symbol { .. }) => {
+                defined_in(candidate, &self.file)
+            },
+            (GapKind::ComputedSysPathImport, IssueSubject::Import { module, file, .. }) => {
+                *file == self.file && self.names_root(module)
+            },
             _ => true,
         };
         in_member && in_site
@@ -513,11 +566,19 @@ impl Gap {
     /// the file; nothing for a gap of the whole project.
     fn label(&self) -> String {
         match &self.site {
+            Some((what, line)) if what.is_empty() => {
+                format!("`{}`", import_site(&self.file, *line))
+            },
             Some((what, line)) => format!("`{what}` in `{}`", import_site(&self.file, *line)),
             None if self.file.is_empty() => String::new(),
             None => format!("`{}`", self.file),
         }
     }
+}
+
+/// Whether a symbol finding is about a name `path` defines.
+fn defined_in(candidate: &IssueCandidate, path: &str) -> bool {
+    matches!(candidate.origins.first(), Some(Origin::Import { file, .. }) if file == path)
 }
 
 /// Whether `path` lies in a directory named `package`, or is the module
@@ -588,6 +649,9 @@ pub fn collect_gaps(
     gaps.extend(image_tree_gaps(context, &plugins.config_command_targets));
     gaps.extend(string_module_ref_gaps(context));
     gaps.extend(string_distribution_ref_gaps(context));
+    gaps.extend(subclass_registry_gaps(context.parse));
+    gaps.extend(self_reference_gaps(context.parse));
+    gaps.extend(computed_sys_path_gaps(context));
     gaps.extend(
         plugins
             .unread_settings()
@@ -1009,6 +1073,200 @@ fn string_distribution_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         .collect()
 }
 
+/// Enumerators are followed through at most this many functions that pass
+/// their parameter on (`get_platform_subclass(cls)` calling
+/// `get_all_subclasses(cls)`).
+const MAX_FORWARD_HOPS: usize = 4;
+
+/// One gap per project subclass, at any depth, of a class whose subclasses
+/// are enumerated or registered (#1274): a class that defines
+/// `__init_subclass__`, a name `__subclasses__()` is called on, or a
+/// module-level class passed to a function that calls `__subclasses__()`
+/// or passes its parameter on to one that does. Functions and bases are
+/// matched by name across the project, as the parser records them; a
+/// registry picks a subclass by an attribute, which the name of the
+/// attribute does not tell, so every subclass may be picked.
+fn subclass_registry_gaps(parse: &ParseSummary) -> Vec<Gap> {
+    let facts = || {
+        parse
+            .modules
+            .iter()
+            .map(|module| (module.path.as_str(), &module.subclass_facts))
+    };
+    let mut enumerators: BTreeSet<&str> = facts()
+        .flat_map(|(_, facts)| facts.enumerators.iter().map(String::as_str))
+        .collect();
+    if enumerators.is_empty() && facts().all(|(_, facts)| facts.bases.is_empty()) {
+        return Vec::new();
+    }
+    for _ in 0..MAX_FORWARD_HOPS {
+        let more: Vec<&str> = facts()
+            .flat_map(|(_, facts)| &facts.forwards)
+            .filter(|(function, callee)| {
+                enumerators.contains(callee.as_str()) && !enumerators.contains(function.as_str())
+            })
+            .map(|(function, _)| function.as_str())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        enumerators.extend(more);
+    }
+    let mut bases: BTreeMap<&str, (&str, u32)> = BTreeMap::new();
+    for (path, facts) in facts() {
+        let named = facts
+            .bases
+            .iter()
+            .map(|(name, line)| (name.as_str(), *line))
+            .chain(
+                facts
+                    .passed
+                    .iter()
+                    .filter(|(callee, _, _)| enumerators.contains(callee.as_str()))
+                    .map(|(_, name, line)| (name.as_str(), *line)),
+            );
+        for (name, line) in named {
+            bases.entry(name).or_insert((path, line));
+        }
+    }
+    let mut children: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
+    for (path, facts) in facts() {
+        for (class, parents) in &facts.classes {
+            for parent in parents {
+                children
+                    .entry(parent.as_str())
+                    .or_default()
+                    .push((path, class.as_str()));
+            }
+        }
+    }
+    let mut gaps = Vec::new();
+    for (base, (file, line)) in bases {
+        let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
+        let mut queue = vec![base];
+        while let Some(parent) = queue.pop() {
+            for &(path, class) in children.get(parent).into_iter().flatten() {
+                if seen.insert((path, class)) {
+                    queue.push(class);
+                }
+            }
+        }
+        gaps.extend(seen.into_iter().map(|(path, class)| Gap {
+            file: file.to_owned(),
+            kind: GapKind::SubclassRegistry,
+            member: None,
+            site: Some((base.to_owned(), Some(line))),
+            target: Some(format!("{path}:{class}")),
+        }));
+    }
+    gaps
+}
+
+/// One gap per module that reads its own namespace by a computed name, at
+/// its first such read (#1274).
+fn self_reference_gaps(parse: &ParseSummary) -> Vec<Gap> {
+    parse
+        .modules
+        .iter()
+        .filter_map(|module| {
+            let line = module.self_reference?;
+            Some(Gap {
+                file: module.path.clone(),
+                kind: GapKind::ModuleSelfReference,
+                member: None,
+                site: Some((String::new(), Some(line))),
+                target: None,
+            })
+        })
+        .collect()
+}
+
+/// One gap per unresolved import, at its first line in each file, whose
+/// root names a project module (`name.py` or `name/__init__.py`, the first
+/// by path) beside a file that adds a computed path to `sys.path` (#1274).
+/// sphinx's test roots are the shape: each root's `conf.py` runs
+/// `sys.path.insert(0, str(Path.cwd()))` in that root, and a test imports
+/// the module beside it by its bare name. An importer's own computed entry
+/// names no directory: airflow's test writes `airflow_local_settings.py`
+/// into a temporary one, which a project file of that name does not tell.
+/// The import may still be a missing third-party one, so it is a hint.
+fn computed_sys_path_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
+    let adders: BTreeSet<&str> = context
+        .parse
+        .modules
+        .iter()
+        .filter(|module| module.adds_computed_sys_path)
+        .map(|module| module.path.as_str())
+        .collect();
+    if adders.is_empty() {
+        return Vec::new();
+    }
+    let adding_dirs: BTreeSet<&str> = adders.iter().map(|path| parent_dir(path)).collect();
+    let mut modules: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for file in &context.sources.files {
+        let path = file.path.as_str();
+        let name = match path.rsplit_once('/').map_or(path, |(_, name)| name) {
+            "__init__.py" => parent_dir(path)
+                .rsplit_once('/')
+                .map_or_else(|| parent_dir(path), |(_, dir)| dir),
+            name => match name.strip_suffix(".py") {
+                Some(stem) => stem,
+                None => continue,
+            },
+        };
+        modules.entry(name).or_default().push(path);
+    }
+    let mut sites: BTreeMap<(&str, &str), (Option<u32>, &str)> = BTreeMap::new();
+    for warning in &context.resolution.warnings {
+        let ResolveWarning::UnresolvedImport {
+            import, file, line, ..
+        } = warning
+        else {
+            continue;
+        };
+        let root = import_root(import);
+        let Some(target) = modules
+            .get(root)
+            .into_iter()
+            .flatten()
+            .copied()
+            .find(|path| {
+                let dir = parent_dir(path);
+                let dir = if path.ends_with("/__init__.py") {
+                    parent_dir(dir)
+                } else {
+                    dir
+                };
+                adding_dirs.contains(dir)
+            })
+        else {
+            continue;
+        };
+        let kept = sites
+            .entry((file.as_str(), root))
+            .or_insert((*line, target));
+        kept.0 = match (kept.0, *line) {
+            (Some(kept), Some(line)) => Some(kept.min(line)),
+            (kept, line) => kept.or(line),
+        };
+    }
+    sites
+        .into_iter()
+        .map(|((file, root), (line, target))| Gap {
+            file: file.to_owned(),
+            kind: GapKind::ComputedSysPathImport,
+            member: None,
+            site: Some((root.to_owned(), line)),
+            target: Some(target.to_owned()),
+        })
+        .collect()
+}
+
+/// The directory part of a root-relative path, `""` at the root.
+fn parent_dir(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
 /// The project file `module` names, or else the one its longest prefix of
 /// at least two segments names. A package's `__init__.py` is never a CHK001
 /// candidate, so a name that stops at a package lowers nothing.
@@ -1423,6 +1681,16 @@ fn archive_requirement_gaps(
         .collect()
 }
 
+impl Gap {
+    /// Whether the gap lowers one of `candidates`.
+    #[must_use]
+    pub fn lowers_any(&self, candidates: &[IssueCandidate]) -> bool {
+        candidates
+            .iter()
+            .any(|candidate| self.reaches(candidate) && self.kind.lowering(candidate).is_some())
+    }
+}
+
 /// Lower each finding a gap's scope covers and name the gap in `--explain`
 /// (ADR 0005 §4). Exit codes still follow severity alone (§7). A cap never
 /// reaches `Maybe`, so a severity a rule derived from confidence (a library
@@ -1464,6 +1732,7 @@ fn gap_detail(kind: GapKind, gaps: &[&Gap]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::SubclassFacts;
 
     #[test]
     fn named_package_is_any_directory_or_module_of_that_name() {
@@ -1710,6 +1979,138 @@ mod tests {
                 (Severity::Error, Confidence::Certain),
             ]
         );
+    }
+
+    fn symbol(file: &str, module: &str, name: &str) -> IssueCandidate {
+        let mut found = candidate(
+            RuleId::Chk006,
+            IssueSubject::Symbol {
+                module: module.to_owned(),
+                name: name.to_owned(),
+            },
+        );
+        found.origins = vec![Origin::Import {
+            file: file.to_owned(),
+            line: Some(1),
+            module: module.to_owned(),
+        }];
+        found
+    }
+
+    fn with_facts(path: &str, facts: SubclassFacts) -> ParsedModule {
+        ParsedModule {
+            path: path.to_owned(),
+            subclass_facts: facts,
+            ..ParsedModule::default()
+        }
+    }
+
+    /// A class handed to a function that passes it on to one calling
+    /// `__subclasses__()` has every project subclass, at any depth, as a gap
+    /// target; a class defining `__init_subclass__` too; an unrelated class
+    /// none (#1274).
+    #[test]
+    fn subclass_registry_follows_forwarding_functions_and_bases() {
+        let parse = ParseSummary {
+            modules: vec![
+                with_facts(
+                    "acme/util.py",
+                    SubclassFacts {
+                        enumerators: vec!["all_subclasses".to_owned()],
+                        forwards: vec![
+                            ("platform_subclass".to_owned(), "all_subclasses".to_owned()),
+                            ("unrelated".to_owned(), "print".to_owned()),
+                        ],
+                        ..SubclassFacts::default()
+                    },
+                ),
+                with_facts(
+                    "acme/group.py",
+                    SubclassFacts {
+                        classes: vec![
+                            ("Linux".to_owned(), vec!["Group".to_owned()]),
+                            ("Alpine".to_owned(), vec!["Linux".to_owned()]),
+                            ("Other".to_owned(), vec!["object".to_owned()]),
+                        ],
+                        passed: vec![
+                            ("platform_subclass".to_owned(), "Group".to_owned(), 7),
+                            ("print".to_owned(), "Other".to_owned(), 9),
+                        ],
+                        ..SubclassFacts::default()
+                    },
+                ),
+                with_facts(
+                    "acme/plugins.py",
+                    SubclassFacts {
+                        classes: vec![("Csv".to_owned(), vec!["Plugin".to_owned()])],
+                        bases: vec![("Plugin".to_owned(), 3)],
+                        ..SubclassFacts::default()
+                    },
+                ),
+            ],
+        };
+        let targets: Vec<(String, Option<String>)> = subclass_registry_gaps(&parse)
+            .into_iter()
+            .map(|gap| (gap.label(), gap.target))
+            .collect();
+        assert_eq!(
+            targets,
+            [
+                (
+                    "`Group` in `acme/group.py:7`".to_owned(),
+                    Some("acme/group.py:Alpine".to_owned())
+                ),
+                (
+                    "`Group` in `acme/group.py:7`".to_owned(),
+                    Some("acme/group.py:Linux".to_owned())
+                ),
+                (
+                    "`Plugin` in `acme/plugins.py:3`".to_owned(),
+                    Some("acme/plugins.py:Csv".to_owned())
+                ),
+            ]
+        );
+    }
+
+    /// A subclass registry lowers only its subclass's CHK006, a module's
+    /// self-reference only the symbols that module defines, and a computed
+    /// `sys.path` import only that import's CHK010, each to a likely hint
+    /// (#1274).
+    #[test]
+    fn runtime_name_gaps_lower_only_their_own_findings() {
+        let mut subclass = gap("acme/group.py", GapKind::SubclassRegistry);
+        subclass.site = Some(("Group".to_owned(), Some(7)));
+        subclass.target = Some("acme/group.py:Linux".to_owned());
+        let mut own = gap("acme/patch.py", GapKind::ModuleSelfReference);
+        own.site = Some((String::new(), Some(3)));
+        let mut sys_path = gap("acme/main.py", GapKind::ComputedSysPathImport);
+        sys_path.site = Some(("dummy_module".to_owned(), Some(2)));
+        sys_path.target = Some("tests/roots/test-ext/dummy_module.py".to_owned());
+        let found = lowered(
+            &[subclass, own.clone(), sys_path],
+            vec![
+                symbol("acme/group.py", "acme.group", "Linux"),
+                symbol("acme/group.py", "acme.group", "Other"),
+                symbol("acme/patch.py", "acme.patch", "ClassVar"),
+                symbol("acme/other.py", "acme.other", "Linux"),
+                candidate(RuleId::Chk010, import("dummy_module.sub")),
+                candidate(RuleId::Chk010, import("other_module")),
+                candidate(RuleId::Chk001, file("acme/patch.py")),
+            ],
+        );
+        assert_eq!(
+            found,
+            [
+                (Severity::Info, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Info, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Info, Confidence::Likely),
+                (Severity::Error, Confidence::Certain),
+                (Severity::Error, Confidence::Certain),
+            ]
+        );
+        assert_eq!(own.label(), "`acme/patch.py:3`");
     }
 
     /// A string naming a distribution's module turns only that
@@ -2670,7 +3071,7 @@ mod tests {
         const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 31] = [
+        const KINDS: [GapKind; 34] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
@@ -2702,6 +3103,9 @@ mod tests {
             GapKind::StringModuleRef,
             GapKind::StringDistributionRef,
             GapKind::UnreadRequirementsFile,
+            GapKind::SubclassRegistry,
+            GapKind::ModuleSelfReference,
+            GapKind::ComputedSysPathImport,
         ];
 
         /// The rules each kind's documentation says it may lower, written
@@ -2753,6 +3157,8 @@ mod tests {
                     RuleId::Chk005,
                 ],
                 GapKind::UnreadRequirementsFile => &[RuleId::Chk008, RuleId::Chk010],
+                GapKind::SubclassRegistry | GapKind::ModuleSelfReference => &[RuleId::Chk006],
+                GapKind::ComputedSysPathImport => &[RuleId::Chk010],
             }
         }
 

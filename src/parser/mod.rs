@@ -1,6 +1,7 @@
 //! Python source parser (pipeline step 6).
 
 mod attributes;
+mod by_name;
 mod condition;
 mod decorators;
 mod deprecation;
@@ -40,6 +41,8 @@ pub(crate) use types::DynamicImport;
 pub(crate) use types::ImportRef;
 #[cfg(test)]
 pub(crate) use types::ParseDiagnostic;
+#[cfg(test)]
+pub(crate) use types::SubclassFacts;
 pub(crate) use types::import_context_for_file;
 pub use types::{Exports, ImportContext, ImportKind, ParseSeverity, ParseSummary, ParsedModule};
 pub(crate) use types::{IgnoreDirective, SymbolDef, SymbolKind};

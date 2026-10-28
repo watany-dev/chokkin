@@ -134,6 +134,22 @@ pub enum ProbeWarning {
         /// How many other distributions are named so.
         more: usize,
     },
+    /// Names may be picked or files imported at runtime in a way the graph
+    /// does not follow, so the findings they may hide are info notes
+    /// (#1274). One per run and kind, at the first site.
+    RuntimeName {
+        /// What picks them.
+        kind: RuntimeNameKind,
+        /// Root-relative path of the first site.
+        path: String,
+        /// Its line, when known.
+        line: Option<u32>,
+        /// The class, or the import, it names; empty for a module's own
+        /// namespace.
+        name: String,
+        /// How many other sites of the kind there are.
+        more: usize,
+    },
     /// The baseline's `schema_version` is none this chokkin reads; its
     /// fingerprints were applied anyway (#1131).
     BaselineSchemaUnknown {
@@ -142,6 +158,17 @@ pub enum ProbeWarning {
         /// The `schema_version` as written.
         version: String,
     },
+}
+
+/// What [`ProbeWarning::RuntimeName`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuntimeNameKind {
+    /// A class's subclasses are enumerated or registered.
+    SubclassRegistry,
+    /// A module reads its own namespace by a computed name.
+    ModuleSelfReference,
+    /// An unresolved import may come from a computed `sys.path` entry.
+    ComputedSysPathImport,
 }
 
 /// Why [`ProbeWarning::SkippedSource`] left a source out.
@@ -189,6 +216,7 @@ impl ProbeWarning {
             Self::Entry(warning) => discriminant(warning).hash(&mut hasher),
             Self::Resolve(warning) => discriminant(warning).hash(&mut hasher),
             Self::SkippedSource { reason, .. } => discriminant(reason).hash(&mut hasher),
+            Self::RuntimeName { kind, .. } => kind.hash(&mut hasher),
             Self::ParseDiagnostic { message, .. } => message.hash(&mut hasher),
             Self::AutoWorkspace { .. }
             | Self::NestedProjectsSkipped { .. }
@@ -258,7 +286,8 @@ impl ProbeWarning {
             },
             Self::ArchiveRequirement { path, line, .. }
             | Self::UnreadRequirementsFile { path, line, .. }
-            | Self::UnreadCommandTarget { path, line, .. } => (Some(path), *line),
+            | Self::UnreadCommandTarget { path, line, .. }
+            | Self::RuntimeName { path, line, .. } => (Some(path), *line),
             Self::StringModuleRef { path, line, .. }
             | Self::StringDistributionRef { path, line, .. } => (Some(path), Some(*line)),
             Self::ParseDiagnostic { path, line, .. } => (
@@ -433,10 +462,63 @@ impl fmt::Display for ProbeWarning {
                 distribution,
                 more,
             } => write_string_distribution_ref(formatter, (path, *line), module, distribution, *more),
+            Self::RuntimeName {
+                kind,
+                path,
+                line,
+                name,
+                more,
+            } => write_runtime_name(formatter, *kind, (path, *line), name, *more),
             Self::BaselineSchemaUnknown { path, version } => {
                 write_baseline_schema_unknown(formatter, path, version)
             },
         }
+    }
+}
+
+fn write_runtime_name(
+    formatter: &mut fmt::Formatter<'_>,
+    kind: RuntimeNameKind,
+    (path, line): (&str, Option<u32>),
+    name: &str,
+    more: usize,
+) -> fmt::Result {
+    let site = crate::rules::import_site(path, line);
+    let plural =
+        |noun: &str, nouns: &str| format!("{more} more {}", if more == 1 { noun } else { nouns });
+    match kind {
+        RuntimeNameKind::SubclassRegistry => {
+            write!(
+                formatter,
+                "parse: `{site}` enumerates or registers the subclasses of `{name}`"
+            )?;
+            if more > 0 {
+                write!(formatter, " (and {})", plural("class", "classes"))?;
+            }
+            formatter.write_str(
+                ", which may be picked at runtime; their unused-symbol findings are info notes",
+            )
+        },
+        RuntimeNameKind::ModuleSelfReference => {
+            write!(
+                formatter,
+                "parse: `{site}` reads the module's own names by a computed name"
+            )?;
+            if more > 0 {
+                write!(formatter, " (and {})", plural("module", "modules"))?;
+            }
+            formatter.write_str("; their unused-symbol findings are info notes")
+        },
+        RuntimeNameKind::ComputedSysPathImport => {
+            write!(
+                formatter,
+                "parse: `{site}` imports `{name}`, which a computed `sys.path` entry may make importable from the project"
+            )?;
+            if more > 0 {
+                write!(formatter, " (and {})", plural("import", "imports"))?;
+            }
+            formatter.write_str("; those unresolved imports are info notes")
+        },
     }
 }
 

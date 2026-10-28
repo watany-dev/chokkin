@@ -40,7 +40,7 @@ use crate::sources::{
 
 use super::error::AnalyzeError;
 use super::probe::{ProbeReport, WorkspaceMemberInputs, probe_project_with_cache};
-use super::warnings::{ProbeWarning, SkipReason, diagnostic_lines};
+use super::warnings::{ProbeWarning, RuntimeNameKind, SkipReason, diagnostic_lines};
 
 /// Outcome of running the full analysis pipeline (steps 1–12, optional 13).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -478,6 +478,7 @@ fn run_analysis_core(
     warnings.extend(command_target_warnings(&gaps));
     warnings.extend(string_module_ref_warning(&gaps));
     warnings.extend(string_distribution_ref_warning(&gaps, &deps.candidates));
+    warnings.extend(runtime_name_warnings(&gaps, &symbols));
     let issues = emit_issues(
         &reachability,
         &deps,
@@ -695,6 +696,47 @@ fn string_distribution_ref_warning(
         distribution: distribution.to_owned(),
         more: sites.len() - 1,
     })
+}
+
+/// The gaps of names picked or imported at runtime have no warning of their
+/// own either: one per run and kind, at the first site by file and line,
+/// counting only the sites that lower a finding (#1274), since the rest
+/// hide nothing. Their findings, CHK006 and CHK010, are the symbol rules'.
+fn runtime_name_warnings(gaps: &[Gap], symbols: &[IssueCandidate]) -> Vec<ProbeWarning> {
+    [
+        (GapKind::SubclassRegistry, RuntimeNameKind::SubclassRegistry),
+        (
+            GapKind::ModuleSelfReference,
+            RuntimeNameKind::ModuleSelfReference,
+        ),
+        (
+            GapKind::ComputedSysPathImport,
+            RuntimeNameKind::ComputedSysPathImport,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(gap_kind, kind)| {
+        let sites: BTreeSet<(&str, Option<u32>, &str)> = gaps
+            .iter()
+            .filter(|gap| gap.kind == gap_kind && gap.lowers_any(symbols))
+            .map(|gap| {
+                let (name, line) = gap
+                    .site
+                    .as_ref()
+                    .map_or(("", None), |(name, line)| (name.as_str(), *line));
+                (gap.file.as_str(), line, name)
+            })
+            .collect();
+        let &(path, line, name) = sites.first()?;
+        Some(ProbeWarning::RuntimeName {
+            kind,
+            path: path.to_owned(),
+            line,
+            name: name.to_owned(),
+            more: sites.len() - 1,
+        })
+    })
+    .collect()
 }
 
 /// What the user needs to know about one parsed module: a skipped module is
