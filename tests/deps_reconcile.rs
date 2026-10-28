@@ -832,6 +832,15 @@ fn command_files_and_arguments_mark_distributions_used() {
     );
 }
 
+/// A dbt `profiles.yml` anywhere in the tree names the adapter dbt loads
+/// for each target (#1256); an adapter no target names stays unused.
+#[test]
+fn dbt_profiles_mark_their_adapters_used() {
+    let report = reconcile_fixture("dbt_profiles");
+    assert_used(&report, &["dbt-snowflake"]);
+    assert!(has_dist_rule(&report, RuleId::Chk002, "dbt-postgres"));
+}
+
 #[test]
 fn gitlab_ci_scripts_mark_binaries_used() {
     let report = reconcile_fixture("binary_gitlab_ci");

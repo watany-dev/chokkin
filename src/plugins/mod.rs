@@ -10,6 +10,7 @@ mod config_scan;
 mod config_text;
 mod context;
 mod dagster;
+mod dbt_profiles;
 mod devtools;
 mod django;
 mod doctools;

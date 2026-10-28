@@ -11,6 +11,9 @@
 //! usages (an undeclared one is no CHK008), and its scripts, modules,
 //! classes, opaque commands and installs are dropped.
 //!
+//! A dbt `profiles.yml` anywhere in the tree names the adapters dbt loads
+//! (#1256); it adds those distributions and nothing else.
+//!
 //! A candidate that is neither a shell script (`.sh` / `.bash` / `.zsh` /
 //! `.ksh`, or a sh-family shebang) nor a supervisor config (a `[program:x]`,
 //! `[eventlistener:x]` or `[fcgi-program:x]` section) adds nothing, and so
@@ -23,11 +26,12 @@ use std::path::Path;
 use crate::config::ChokkinConfig;
 use crate::manifest::normalize_distribution_name;
 use crate::resolver::{VenvIndex, build_binary_map};
-use crate::sources::{is_dockerfile, is_requirements_dir_file};
+use crate::sources::{is_dbt_profiles, is_dockerfile, is_requirements_dir_file};
 
 use super::commands::{KnownBinary, SourceHits};
 use super::config_scan::{ConfigScanResult, is_shell_script, strip_shell_comment};
 use super::config_text::{logical_lines, origin_at};
+use super::dbt_profiles;
 use super::task_files::scan_dockerfile;
 use super::types::{CommandTarget, RequirementsRef};
 
@@ -51,6 +55,11 @@ fn scan(root: &Path, paths: &[String], binaries: &BTreeMap<String, String>) -> S
         let Some(contents) = read_candidate(&root.join(rel)) else {
             continue;
         };
+        if is_dbt_profiles(Path::new(rel)) {
+            hits.distributions
+                .extend(dbt_profiles::adapter_distributions(&contents));
+            continue;
+        }
         if rel.contains('/') {
             let mut file_hits = SourceHits::default();
             scan_file(rel, &contents, &known, &mut file_hits);
