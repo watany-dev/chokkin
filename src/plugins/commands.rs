@@ -1448,6 +1448,8 @@ mod tests {
             ),
             ("gunicorn ${ARGS:-$D} mypkg.wsgi:app", "app mypkg.wsgi:app"),
             ("gunicorn $OPTS ${APP}:app", "opaque ${APP}:app"),
+            // A colon word whose left side names no module is no reference.
+            ("gunicorn my-pkg.wsgi:app", "opaque gunicorn"),
         ] {
             assert_eq!(targets(command), [app], "{command}");
         }
