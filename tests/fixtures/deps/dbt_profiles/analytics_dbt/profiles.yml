@@ -1,0 +1,8 @@
+analytics:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    prod:
+      type: snowflake  # dbt loads dbt-snowflake for this target
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+    dev:
+      type: 'snowflake'

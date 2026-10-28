@@ -2080,6 +2080,15 @@
         "storages.backends.apache_libcloud"
       ],
       "source": "django-storages libcloud backend imports libcloud"
+    },
+    {
+      "peer": "dagster-webserver",
+      "providers": [
+        "dagster-dg-cli",
+        "dagster-dg",
+        "dagster"
+      ],
+      "source": "`dg dev` / `dagster dev` serve the UI from dagster-webserver (#1256)"
     }
   ]
 }

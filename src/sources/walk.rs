@@ -395,6 +395,11 @@ fn forms_loop(path: &Path) -> bool {
     true
 }
 
+/// A dbt `profiles.yml`, which names the adapter each target loads (#1256).
+pub(crate) fn is_dbt_profiles(path: &Path) -> bool {
+    path.file_name() == Some(std::ffi::OsStr::new("profiles.yml"))
+}
+
 pub(crate) fn is_dockerfile(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -432,6 +437,8 @@ fn command_file(entry: &DirEntry, rel: &Path, exclude_matcher: &GlobSet) -> Opti
     let path = entry.path();
     let wanted = if is_dockerfile(path) {
         entry.depth() >= 2
+    } else if is_dbt_profiles(path) {
+        true
     } else {
         let extension = path.extension().and_then(|ext| ext.to_str());
         let is = |wanted: &[&str]| {
@@ -746,6 +753,8 @@ mod tests {
         ] {
             write_file(&root.join(file), "#!/bin/sh\n");
         }
+        write_file(&root.join("analytics/profiles.yml"), "");
+        write_file(&root.join("analytics/dbt_project.yml"), "");
 
         let layout = LayoutInfo {
             inferred_globs: vec![
@@ -783,10 +792,12 @@ mod tests {
         // Dockerfiles below the root ignore the project globs, not the
         // exclusions (#1061); the root's own are read by `task_files`. So do
         // shell script and supervisor config candidates, but for the ones
-        // the config scan reads under `scripts/` and `bin/` (#1240).
+        // the config scan reads under `scripts/` and `bin/` (#1240), and
+        // dbt's `profiles.yml` (#1256).
         assert_eq!(
             collected.command_files,
             [
+                "analytics/profiles.yml",
                 "bin/supervisord.conf",
                 "entrypoint.sh",
                 "local/api.dockerfile",

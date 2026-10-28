@@ -787,8 +787,9 @@ runtime peer (例: python-multipart)
      (accelerate は transformers。device_map="auto" で transformers が読む、#984)
      transformers の model/tokenizer/audio backend、evaluate の metric backend、
      datasets の archive backend、torchmetrics の COCO backend、inspect-ai の
-     provider/plugin、redis-py の hiredis parser、python-lsp-server の plugin
-     も同じ表で扱う。project と PEP 723 の両 scope に適用する
+     provider/plugin、redis-py の hiredis parser、python-lsp-server の plugin、
+     `dg dev` / `dagster dev` が UI を出す dagster-webserver (provider は
+     dagster-dg-cli / dagster-dg / dagster、#1256) も同じ表で扱う。project と PEP 723 の両 scope に適用する
   -> module が読み込む peer は、その module かその下の名前の使用で used 扱い
      (#1240)。settings の文字列も import と同じく使用に数えるので、`DATABASES`
      の `django.db.backends.postgresql` は psycopg / psycopg2 を、`CACHES` の
@@ -1512,8 +1513,8 @@ backend の driver は runtime peer として読むようになった (#1240、4
 残る誤検知の大半は docker や shell からだけ起動する CLI の依存で、chokkin がまだ読まない
 形なので、gate に入れると既知の gap を測ることになるため。
 orchestration plugin の節 (Dagster / Prefect / Scrapy の利用側 project、#1057) も
-同じ理由で記録だけにする。誤検知は `profiles.yml` の `type:` が名指す dbt adapter と、
-`dg dev` が起動する `dagster-webserver` で、どちらも chokkin がまだ読まない。
+同じ理由で記録だけにする。誤検知だった `profiles.yml` の `type:` が名指す dbt adapter と、
+`dg dev` が起動する `dagster-webserver` は #1256 で読むようになった。
 最新の §17 CHK002 scorecard は `docs/dev/oss-validation-report.md` に残す。
 
 severity が `info` の finding (例: optional try-import の CHK003) はヒットとして
@@ -1927,6 +1928,8 @@ R-06 で binary / plugin usage の情報源を拡充した。共通の command �
 - どの command でも、`pip install` / `uv pip install` / `python -m pip install` / `pipx install` / `uv tool install` が install する distribution は CI workflow の install (#725) と同じく CHK008 の provider にする (#1241。requests の Makefile は `twine upload` の直前に `python -m pip install twine` する)。usage は足さない。
 
 shell script と supervisor の設定は、root の `scripts/` / `bin/` (config scan が読む) の外でも読む (#1240)。discovery の walk が除外と ignore の規則に従って候補 (`.sh` / `.bash` / `.zsh` / `.ksh`、拡張子の無い file、`.conf`。`scripts/` / `bin/` 直下は `.conf` だけ) を集め、config-scan cache の外で毎回読む。拡張子の無い file は `#!` で始まるものだけを読み、shell script は sh 系の shebang か拡張子で、supervisor の設定は `[program:x]` / `[eventlistener:x]` / `[fcgi-program:x]` の `command` (indent した継続行を含む。supervisord の parser と同じく空行では切らない。行頭か空白の後の `;` 以降はコメント) で判定する。どちらでもない file は何も足さない。root 直下の file は project の tree で動くので `scripts/` と同じに読み、supervisor の command は deploy の command (#912) にする。root より下の file (wger の `extras/docker/production/celery/start-flower`) は image や別 service の tree で動きうるので、root の依存について言えることだけを残す。root より下の Dockerfile (#1061) もこの規則で読む。binary はその distribution を used にするだけで usage にしない (宣言されていない binary を CHK008 にしない)。引数が名指す distribution と server の app は残し、script・module・class・opaque な command・install は捨てる。nested project の下の file は読まない。
+
+dbt の `profiles.yml` も同じ walk が tree のどこからでも候補に集め、cache の外で毎回読む (#1256)。dbt は target ごとの `type:` (`outputs.<target>.type`、indent の無い行は profile 名なので読まない) が名指す adapter を名前で読み込み、project はそれを import しないので、`type: snowflake` を `dbt-snowflake` の使用にする。adapter の distribution は `dbt-<type>` の名前に従うので、表 (`src/plugins/dbt_profiles.rs` の `ADAPTERS`) に無い type も `dbt-<type>` にする (`athena` は `dbt-athena` と `dbt-athena-community` の両方)。値が Jinja (`{{ env_var(...) }}`) か YAML alias で計算されるときはどの adapter も選びうるので、表の adapter すべてを使用にする (表に無い adapter は報告のまま)。`profiles.yml` は distribution を足すだけで、binary usage・entry・gap にはしない。
 
 - `src/plugins/task_files.rs`: `[tool.pdm.scripts]` (文字列 / `cmd` 文字列・配列 / `shell` / `composite`、`call` は module reference、`_` は無視)、`GNUmakefile` / `makefile` / `Makefile` の tab 付き recipe 行、`justfile` / `Justfile` / `.justfile` の recipe 本体 (`sh` 以外の shebang recipe は除外)、`Dockerfile` / `Containerfile` / `*.Dockerfile` / `Dockerfile.*` の `RUN` / `CMD` / `ENTRYPOINT` (shell form と exec form。root の file は全部、root より下の file は server の app と command が名指す distribution だけ、下記 #1240)、`Procfile`、`.gitlab-ci.yml` の `script` / `before_script` / `after_script` (list・inline 配列・block scalar、`!reference` は無視)。`[tool.poe.tasks]` (文字列と配列は `[tool.poe]` の `default_task_type` / `default_array_item_task_type` に従う。`cmd` / `shell` は command、`script` は module reference、`expr` の `imports` は module、`sequence` / `parallel` / `switch` は中の task を読み、`ref` などそれ以外は無視)、`[tool.hatch.envs.<env>.scripts]` (文字列・配列、先頭の `- ` は外す)。`hatch.toml` と poe の `include` は読まない。Makefile / justfile の変数・include は追わない。
 - `src/plugins/config_scan.rs` (generic scanner): `tox.ini` / `[tool.tox]` / `tox.toml` は `commands*` キーの値だけを command として読み (`{envpython}` は python、`{envbindir}/x` は x、他の `{...}` 置換は落とす)、`deps` / `description` / `allowlist_externals` のような一覧の語は command ではないので拾わない。`.pre-commit-config.yaml` は hook `id` と `repo: local` の `entry` だけを読む。`deps` の distribution 名 (`-r` や `{[env]deps}` 参照は除く) と `noxfile.py` の `session.install(...)` の文字列リテラル (`-` で始まる option は除く) は CHK008 の provider 宣言として集める。`scripts/` / `bin/` 配下は `.sh` 拡張子か sh 系 shebang を持つ file だけを shell script として command 解析し (`#` コメント以降は無視)、Python script は parser が読む (それより外の shell script は上記 #1240)。いずれも語が binary map にあるだけでは usage にしない (#494)。

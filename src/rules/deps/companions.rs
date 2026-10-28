@@ -161,4 +161,25 @@ mod tests {
             &BTreeSet::new()
         ));
     }
+
+    #[test]
+    fn dagster_dev_servers_use_the_webserver() {
+        // `dg dev` and `dagster dev` serve the UI from dagster-webserver,
+        // which nothing imports or runs by name (#1256).
+        for provider in ["dagster-dg-cli", "dagster-dg", "dagster"] {
+            assert!(
+                companion_is_used(
+                    "dagster-webserver",
+                    |name| name == provider,
+                    &BTreeSet::new()
+                ),
+                "{provider}"
+            );
+        }
+        assert!(!companion_is_used(
+            "dagster-webserver",
+            |name| name == "dagster-dbt",
+            &BTreeSet::new()
+        ));
+    }
 }
