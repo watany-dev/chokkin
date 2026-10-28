@@ -590,6 +590,16 @@ install_requires =
     }
 
     #[test]
+    fn section_header_needs_a_name_between_the_brackets() {
+        assert_eq!(section_header("[a]"), Some("a"));
+        // `.+` needs a character, so `[]` is no header (configparser
+        // rejects the line).
+        assert_eq!(section_header("[]"), None);
+        assert_eq!(section_header("[a"), None);
+        assert_eq!(section_header("a]"), None);
+    }
+
+    #[test]
     fn merges_repeated_sections_and_keeps_empty_ones() {
         let contents =
             "[options]\ninstall_requires = a\n[empty]\n[options]\ninstall_requires =\n    b\n";
