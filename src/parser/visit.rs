@@ -2720,6 +2720,13 @@ sys.path.insert(0, 'src')
         let parsed = visit_source("import sys\nsys.path.append(root)\nglobals()[name] = 1\n");
         assert!(parsed.adds_computed_sys_path);
         assert_eq!(parsed.self_reference, None);
+        let parsed = visit_source("items.append(value)\nconfig.get(name)\n");
+        assert!(!parsed.adds_computed_sys_path, "not `sys.path`");
+        assert_eq!(parsed.self_reference, None, "not `globals()`");
+        assert_eq!(
+            visit_source("x = 1\nglobals().get(name)\n").self_reference,
+            Some(2)
+        );
     }
 
     #[test]
