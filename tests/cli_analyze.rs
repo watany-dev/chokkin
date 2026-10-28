@@ -10734,6 +10734,83 @@ fn binary_unresolved_relative_import_is_no_certain_unused_file() {
     );
 }
 
+/// Inputs where the evidence a certain finding needs is missing (#1113, ADR
+/// 0005): each emits no certain finding and says on stderr what it could
+/// not read. One row per shape the issue reported.
+#[test]
+fn binary_missing_evidence_catalog_emits_no_certain_finding() {
+    let app = "[project]\nname = \"pkg\"\nversion = \"0\"\n[tool.chokkin]\nmode = \"app\"\n";
+    let guessed = "[project]\nname = \"proj\"\nversion = \"0\"\n";
+    let guessed_app =
+        "[project]\nname = \"proj\"\nversion = \"0\"\n[tool.chokkin]\nmode = \"app\"\n";
+    let main_imports_mod = "from pkg import mod\nif __name__ == \"__main__\":\n    pass\n";
+    let cases = [
+        (
+            "no entry root",
+            vec![
+                ("pyproject.toml", app),
+                ("pkg/__init__.py", ""),
+                ("pkg/a.py", ""),
+                ("pkg/b.py", "from . import a\n"),
+            ],
+            "entry: no entry root was found",
+        ),
+        (
+            "guessed package, library mode",
+            vec![
+                ("pyproject.toml", guessed),
+                ("pkg/__init__.py", ""),
+                ("pkg/mod.py", ""),
+                ("main.py", main_imports_mod),
+            ],
+            "guessed `pkg`",
+        ),
+        (
+            "guessed package, app mode",
+            vec![
+                ("pyproject.toml", guessed_app),
+                ("pkg/__init__.py", ""),
+                ("pkg/mod.py", ""),
+                ("main.py", main_imports_mod),
+            ],
+            "guessed `pkg`",
+        ),
+        (
+            "unresolved relative import",
+            vec![
+                ("pyproject.toml", app),
+                (
+                    "main.py",
+                    "from ns.sub import a\nif __name__ == \"__main__\":\n    pass\n",
+                ),
+                ("ns/sub/a.py", "from .. import b\n"),
+                ("ns/b.py", ""),
+            ],
+            "could not resolve relative import",
+        ),
+    ];
+    for (name, files, warning) in cases {
+        let project = write_project(&files);
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args([
+                "--no-cache",
+                "--reporter",
+                "json",
+                "--confidence",
+                "certain",
+            ])
+            .arg(project.path())
+            .output()
+            .expect("run chokkin");
+        let stdout = String::from_utf8(output.stdout).expect("utf8");
+        let stderr = String::from_utf8(output.stderr).expect("utf8");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+        let issues = parsed["issues"].as_array().cloned().unwrap_or_default();
+        assert_eq!(issue_keys(&issues), Vec::new(), "{name}: {stdout}");
+        assert!(stderr.contains(warning), "{name}: {stderr}");
+    }
+}
+
 /// #1269: an import after a call to a first-party function that tries the
 /// import and raises from `except ImportError:` runs only with the package,
 /// so an undeclared one is an optional import (info), whatever the helper is
