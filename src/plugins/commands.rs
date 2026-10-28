@@ -826,15 +826,33 @@ fn takes_value(arg: &str) -> bool {
 }
 
 /// `module:attr`, `module:factory()` or a computed `$APP_MODULE`-like word
-/// with a colon.
+/// with a colon. A word starting with `-` is an option, perhaps glued to its
+/// value (`-w${WORKERS:-4}`), and names no app.
 fn is_app_reference(arg: &str) -> bool {
-    arg.split_once(':').is_some_and(|(module, attr)| {
-        (is_dotted_identifier(module) || is_computed(module))
+    !arg.starts_with('-')
+        && split_app(arg).is_some_and(|(module, attr)| {
+            (is_dotted_identifier(module) || is_computed(module))
             && !attr.is_empty()
             && !attr.starts_with('/')
             // `-b localhost:8000` binds a port; it names no app.
             && !attr.bytes().all(|byte| byte.is_ascii_digit())
-    })
+        })
+}
+
+/// Splits at the first `:` outside `${...}`: the one in `${APP:-default}`
+/// separates no module from an attribute.
+fn split_app(arg: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let bytes = arg.as_bytes();
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'{' if index > 0 && bytes[index - 1] == b'$' => depth += 1,
+            b'}' if depth > 0 => depth -= 1,
+            b':' if depth == 0 => return Some((&arg[..index], &arg[index + 1..])),
+            _ => {},
+        }
+    }
+    None
 }
 
 fn uv_run_target(args: &[&str]) -> Option<Run> {
@@ -1468,6 +1486,13 @@ mod tests {
             ("uvicorn --no-access-log mypkg.asgi", "app mypkg.asgi"),
             ("gunicorn -w4 mypkg.wsgi", "app mypkg.wsgi:application"),
             ("hypercorn --reload mypkg.asgi", "app mypkg.asgi:app"),
+            // An option glued to a defaulted variable is its value, and the
+            // `:` inside `${...}` splits no module from an attribute.
+            ("gunicorn -w${W:-$N} mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn -b \"$BIND\" mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn ${APP:-mypkg.wsgi}", "opaque ${APP:-mypkg.wsgi}"),
+            ("gunicorn ${APP}:app", "opaque ${APP}:app"),
+            ("gunicorn $APP_MODULE:app", "opaque $APP_MODULE:app"),
             (
                 "gunicorn -b127.0.0.1:8000 -D mypkg.wsgi",
                 "app mypkg.wsgi:application",
