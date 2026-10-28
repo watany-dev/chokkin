@@ -704,9 +704,7 @@ fn runner_target(runner: &str, args: &[&str]) -> PythonTarget {
     let Some(app) = app else {
         return PythonTarget::Opaque(runner.to_owned());
     };
-    let (module, attr) = app
-        .split_once(':')
-        .map_or((app, None), |(module, attr)| (module, Some(attr)));
+    let (module, attr) = split_app(app).map_or((app, None), |(module, attr)| (module, Some(attr)));
     if is_computed(app) || !is_dotted_identifier(module) {
         return PythonTarget::Opaque(app.to_owned());
     }
@@ -839,20 +837,19 @@ fn is_app_reference(arg: &str) -> bool {
         })
 }
 
-/// Splits at the first `:` outside `${...}`: the one in `${APP:-default}`
+/// Splits at the first `:` outside braces: the one in `${APP:-default}`
 /// separates no module from an attribute.
 fn split_app(arg: &str) -> Option<(&str, &str)> {
     let mut depth = 0usize;
-    let bytes = arg.as_bytes();
-    for (index, &byte) in bytes.iter().enumerate() {
-        match byte {
-            b'{' if index > 0 && bytes[index - 1] == b'$' => depth += 1,
-            b'}' if depth > 0 => depth -= 1,
-            b':' if depth == 0 => return Some((&arg[..index], &arg[index + 1..])),
+    let (colon, _) = arg.char_indices().find(|&(_, char)| {
+        match char {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
             _ => {},
         }
-    }
-    None
+        char == ':' && depth == 0
+    })?;
+    Some((&arg[..colon], &arg[colon + 1..]))
 }
 
 fn uv_run_target(args: &[&str]) -> Option<Run> {
@@ -1493,6 +1490,12 @@ mod tests {
             ("gunicorn ${APP:-mypkg.wsgi}", "opaque ${APP:-mypkg.wsgi}"),
             ("gunicorn ${APP}:app", "opaque ${APP}:app"),
             ("gunicorn $APP_MODULE:app", "opaque $APP_MODULE:app"),
+            (
+                "gunicorn -b$HOST:$PORT mypkg.wsgi:app",
+                "app mypkg.wsgi:app",
+            ),
+            ("gunicorn ${ARGS:-$D} mypkg.wsgi:app", "app mypkg.wsgi:app"),
+            ("gunicorn $OPTS ${APP}:app", "opaque ${APP}:app"),
             (
                 "gunicorn -b127.0.0.1:8000 -D mypkg.wsgi",
                 "app mypkg.wsgi:application",
