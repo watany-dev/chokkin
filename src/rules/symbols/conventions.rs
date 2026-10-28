@@ -369,7 +369,7 @@ pub(super) fn host_hook_symbols(
         name if name.starts_with("pytest_") => {
             pytest_plugins.contains(module) || pytest_files.contains(path)
         },
-        "setup" => extension_files.contains(path),
+        "setup" => extension_files.contains(path) || reachability.listed_files.contains(path),
         name if BUILD_BACKEND_HOOKS.contains(&name) => backend_files.contains(path),
         _ => false,
     };

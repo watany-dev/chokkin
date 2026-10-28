@@ -117,6 +117,7 @@ pub fn analyze_reachability(
         framework_used: framework.files,
         predecessors: bfs.predecessors,
         plugin_ref_files,
+        listed_files: bfs.listed,
     })
 }
 

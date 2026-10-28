@@ -9713,7 +9713,9 @@ fn binary_package_named_beside_a_directory_listing_lowers_its_modules() {
 /// names a module outside the project, one of two strings, one in a test and
 /// one in a file no entry reaches reach nothing: their modules stay CHK001,
 /// lowered by the strings alone (#1026), and the distribution only they
-/// import stays unused.
+/// import stays unused. A loader calls a listed module's `setup` by name
+/// (Sphinx's `builtin_extensions`), so it is no CHK006, unlike its other
+/// unused functions.
 #[test]
 fn binary_list_of_project_module_names_reaches_the_modules() {
     let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"httplib2\", \"pypd\"]\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
@@ -9731,9 +9733,12 @@ fn binary_list_of_project_module_names_reaches_the_modules() {
         ("acme/runners/__init__.py", ""),
         (
             "acme/runners/http.py",
-            "try:\n    import httplib2\nexcept ImportError:\n    httplib2 = None\n",
+            "try:\n    import httplib2  # noqa: F401\nexcept ImportError:\n    pass\n",
         ),
-        ("acme/runners/sql.py", ""),
+        (
+            "acme/runners/sql.py",
+            "def setup(app):\n    return app\n\n\ndef helper():\n    return 1\n",
+        ),
         ("acme/mixed/one.py", ""),
         ("acme/mixed/two.py", ""),
         ("acme/pair/one.py", ""),
@@ -9764,7 +9769,7 @@ fn binary_list_of_project_module_names_reaches_the_modules() {
     };
     let findings: Vec<(String, String, String, String)> = issue_levels(project.path())
         .into_iter()
-        .filter(|(code, ..)| code == "CHK001" || code == "CHK002")
+        .filter(|(code, ..)| ["CHK001", "CHK002", "CHK006"].contains(&code.as_str()))
         .collect();
     assert_eq!(
         findings,
@@ -9781,6 +9786,7 @@ fn binary_list_of_project_module_names_reaches_the_modules() {
             level("CHK001", "acme/pair/one.py", "info", "likely"),
             level("CHK001", "acme/pair/two.py", "info", "likely"),
             level("CHK002", "pypd", "error", "certain"),
+            level("CHK006", "acme/runners/sql.py:helper", "warning", "likely"),
         ]
     );
 }

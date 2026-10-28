@@ -37,6 +37,10 @@ pub(super) struct BfsOutcome {
     /// Exposed files that some path reaches from a root the package or its
     /// host loads, not only from public subpackages or tests (#802).
     pub certain: IndexSet<FileId>,
+    /// Paths of the files a reached file names in a list of module names
+    /// (#1257): the modules a loader imports by name, not the packages above
+    /// them.
+    pub listed: HashSet<String>,
 }
 
 /// One import site on a file: the module it names and the line it sits on.
@@ -100,6 +104,7 @@ struct BfsState<'a> {
     reached: IndexMap<FileId, Visit>,
     predecessors: IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
+    listed: IndexSet<FileId>,
 }
 
 impl BfsState<'_> {
@@ -182,6 +187,11 @@ impl BfsState<'_> {
             eager,
             exposed,
             certain,
+            listed: self
+                .listed
+                .iter()
+                .filter_map(|file| Some(self.graph.file(*file)?.path.clone()))
+                .collect(),
         }
     }
 
@@ -242,6 +252,7 @@ pub(super) fn run_reachability_bfs(
         reached: IndexMap::new(),
         predecessors: IndexMap::new(),
         used_modules: Vec::new(),
+        listed: IndexSet::new(),
     };
 
     for root in &entry.roots {
@@ -348,13 +359,19 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId, class: Reach, 
     }
 
     // Nothing shows when the loader runs, so a listed module loads lazily.
-    for (target, module, line) in adjacency.listed_imports.get(&file_id).into_iter().flatten() {
-        state.enqueue_file(*target, Some(file_id), Reach::Reachable, || {
-            TraceStep::DynamicImport {
-                module: module.clone(),
-                line: *line,
-            }
-        });
+    for (listed, module, line) in adjacency.listed_imports.get(&file_id).into_iter().flatten() {
+        state.listed.insert(*listed);
+        for name in module_and_parents(module) {
+            let Some(target) = state.module_index.resolve_from(source_path, name) else {
+                continue;
+            };
+            state.enqueue_file(target, Some(file_id), Reach::Reachable, || {
+                TraceStep::DynamicImport {
+                    module: name.to_owned(),
+                    line: *line,
+                }
+            });
+        }
     }
 }
 
@@ -477,8 +494,8 @@ fn build_prefix_imports(
 
 /// A list of dotted module names in a runtime file is a plugin list some
 /// loader imports one by one (redash's `default_query_runners`, #1257), so
-/// each site reaches the module and the packages Python imports before it.
-/// Only a list whose every name resolves to a project module counts: one
+/// each site reaches the module and, when the walk follows it, the packages
+/// Python imports before it. Only a list whose every name resolves to a project module counts: one
 /// that also names a third-party module, a class or a typo may be anything
 /// (a log message's names, `MIDDLEWARE`), so it reaches nothing and lowers
 /// nothing, and its strings stay [`crate::parser::ModuleRef`]s.
@@ -497,24 +514,19 @@ fn build_listed_imports(
             continue;
         };
         for list in &module.module_lists {
-            let resolves = list.iter().all(|reference| {
-                module_index
-                    .resolve_from(&module.path, &reference.text)
-                    .is_some()
-            });
-            if !resolves {
+            let Some(targets) = list
+                .iter()
+                .map(|reference| module_index.resolve_from(&module.path, &reference.text))
+                .collect::<Option<Vec<_>>>()
+            else {
                 continue;
-            }
-            for reference in list {
-                for name in module_and_parents(&reference.text) {
-                    if let Some(target) = module_index.resolve_from(&module.path, name) {
-                        sites.entry(file_id).or_default().push((
-                            target,
-                            name.to_owned(),
-                            reference.line,
-                        ));
-                    }
-                }
+            };
+            for (reference, target) in list.iter().zip(targets) {
+                sites.entry(file_id).or_default().push((
+                    target,
+                    reference.text.clone(),
+                    reference.line,
+                ));
             }
         }
     }
@@ -1163,6 +1175,7 @@ mod tests {
             reached: IndexMap::new(),
             predecessors: IndexMap::new(),
             used_modules: Vec::new(),
+            listed: IndexSet::new(),
         };
         let file_id = graph.file_id(PATHS[1]).expect("a.py");
         let step = || TraceStep::File {
