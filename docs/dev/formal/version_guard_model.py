@@ -24,7 +24,12 @@ The universe:
 * every ``if`` / ``elif`` / ``else`` chain of up to 3 tests drawn from a pool
   of version comparisons, their negations, an opaque test and their
   ``and`` / ``or``, nested 1 or 2 deep, against every ``requires-python``
-  window ``[floor, max]`` with 6 <= floor <= max <= 16.
+  window ``[floor, max]`` with 6 <= floor <= max <= 16, and with no upper
+  bound (``max == u32::MAX``).
+
+Out of scope: module-level names bound to a version test (``PY2 =
+sys.version_info[0] == 2``, #1272, after v0.7.10). ``version_leaf`` reads
+them through ``VersionNames``; this model does not.
 
 V1  ``holds`` is Python's comparison: for every comparison chokkin reads and
     every minor, ``holds(minor)`` equals the comparison's value; the last
@@ -331,7 +336,8 @@ def check_v4(failures: list[str]) -> None:
         for chain in itertools.product(tests, repeat=n)
         for at in range(n + 1)  # `at == n` is the `else`
     ]
-    windows = [(floor, top) for floor in range(6, 17) for top in range(floor, 17)]
+    # `top = U32_MAX` is a `requires-python` with no upper bound.
+    windows = [(floor, top) for floor in range(6, 17) for top in [*range(floor, 17), U32_MAX]]
     checked = 0
     nests = [[c] for c in chains] + [
         [a, b] for a, b in itertools.product(chains[:: max(1, len(chains) // 40)], repeat=2)
@@ -345,15 +351,15 @@ def check_v4(failures: list[str]) -> None:
             if not excludes_minors(floor, top, runs):
                 continue
             checked += 1
-            for minor in range(floor, top + 1):
+            for minor in range(floor, min(top, LAST_MINOR + 8) + 1):
                 for x in (False, True):
                     env = {"X": x}
                     for i, comparison in enumerate(POOL):
                         env[f"v{i}"] = python_value(*comparison, minor)
                     if all(runs_branch(earlier, test, env) for earlier, test in nest):
                         failures.append(
-                            f"V4: never_runs for {nest} with requires-python "
-                            f">=3.{floor},<3.{top + 1}, but it runs on 3.{minor} (X={x})"
+                            f"V4: never_runs for {nest} with requires-python >=3.{floor}"
+                            f"{'' if top == U32_MAX else f',<3.{top + 1}'}, but it runs on 3.{minor} (X={x})"
                         )
     if checked == 0:
         failures.append("V4: no import was ever found to never run; the check is vacuous")

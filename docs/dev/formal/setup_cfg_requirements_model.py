@@ -49,7 +49,7 @@ Q2  A section header followed by other text (``[options] ; c``):
 Run:  python3 docs/dev/formal/setup_cfg_requirements_model.py
       python3 docs/dev/formal/setup_cfg_requirements_model.py --broken
 ``--broken`` swaps in the reader before #989 (every value split at line ends)
-and exits 0 only when P1 catches it.
+and exits 0 only when P1 catches it outside the accepted divergences.
 Exit status 1 when a property is violated (counterexamples are printed).
 """
 
@@ -268,7 +268,7 @@ def run(broken: bool) -> tuple[list[str], set[str], int]:
             if ours == theirs:
                 continue
             reason = accepted(text, ours, theirs)
-            if reason and not broken:
+            if reason:
                 seen.add(reason)
                 continue
             failures.append(f"P1 counterexample: {text!r}: chokkin {ours}, setuptools {theirs}")

@@ -55,7 +55,8 @@ Q6  A last ``**`` component yields only directories; Python's yields the
 Run:  python3 docs/dev/formal/testpaths_glob_model.py
       python3 docs/dev/formal/testpaths_glob_model.py --broken
 ``--broken`` swaps in an expansion that lets a wildcard match names starting
-with ``.`` and exits 0 only when T1 catches it.
+with ``.`` and exits 0 only when T1 catches it outside the accepted
+divergences.
 Exit status 1 when a property is violated (counterexamples are printed).
 """
 
@@ -102,8 +103,8 @@ class GlobError(Exception):
 
 def globset_regex(pattern: str) -> str:
     """The regex globset compiles a one-component pattern to, or GlobError
-    where `Glob::new` fails (UnclosedClass, InvalidRange, UnopenedAlternates /
-    UnclosedAlternates)."""
+    where `Glob::new` fails (UnclosedClass, InvalidRange). Braces never reach
+    it: ``matching_children`` escapes them as ``[{]`` / ``[}]`` first."""
     out = []
     i, n = 0, len(pattern)
     while i < n:
@@ -142,15 +143,6 @@ def globset_regex(pattern: str) -> str:
                     items.append(re.escape(ch))
                     i += 1
             out.append(f"[{'^' if negated else ''}{''.join(items)}]")
-        elif c == "{":
-            j = pattern.find("}", i)
-            if j < 0:
-                raise GlobError("UnclosedAlternates")
-            alternates = pattern[i + 1 : j].split(",")
-            out.append("(?:" + "|".join(re.escape(a) for a in alternates) + ")")
-            i = j + 1
-        elif c == "}":
-            raise GlobError("UnopenedAlternates")
         else:
             out.append(re.escape(c))
             i += 1
@@ -188,7 +180,7 @@ FIXES: set[str] = set()
 
 def matching_children(root: str, base: str, component: str) -> list[str]:
     literal_braces = component.replace("{", "[{]").replace("}", "[}]")
-    if "fnmatch" in FIXES:
+    if "fnmatch" in FIXES and "[" in component:
         matches = lambda name: fnmatch.fnmatchcase(name, component)
     else:
         try:
@@ -295,8 +287,9 @@ REASONS = {"links": "D1", "nolit": "D2", "isdir": "Q5", "files": "Q6"}
 
 def accepted(root: str, files: list[str], entry: str, theirs: frozenset, yields: bool) -> str | None:
     """The divergences an entry shows, named by the smallest set of changes
-    to the port that removes them (``fnmatch``: Python's class syntax, Q3 for
-    a component globset rejects and Q4 otherwise)."""
+    to the port that removes them (``fnmatch``: Python's matcher for the
+    components holding a ``[`` class, Q3 for a component globset rejects and
+    Q4 otherwise)."""
     names = list(REASONS) + ["fnmatch"]
     for size in range(1, len(names) + 1):
         for fixes in itertools.combinations(names, size):
@@ -341,7 +334,7 @@ def run() -> tuple[list[str], set[str], int]:
                     )
                 if not problems:
                     continue
-                reason = None if BROKEN else accepted(root, files, entry, theirs, bool(theirs_paths))
+                reason = accepted(root, files, entry, theirs, bool(theirs_paths))
                 if reason:
                     seen.update(reason.split("+"))
                     continue
