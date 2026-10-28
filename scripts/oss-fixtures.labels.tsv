@@ -2487,9 +2487,9 @@ scikit-learn	CHK003	sklearn/inspection/_plot/partial_dependence.py:matplotlib	in
 scikit-learn	CHK003	sklearn/utils/estimator_checks.py:pytest	info-expected	optional-import	only on mark == "xfail", a pytest-only code path of the public check helper
 scikit-learn	CHK003	sklearn/model_selection/_plot.py:matplotlib.pyplot	info-expected	optional-import	check_matplotlib_support(...) on the line above (#1269)
 scikit-learn	CHK003	sklearn/datasets/_openml.py:pandas.errors	info-expected	optional-import	only when parser == "pandas", after check_pandas_support in fetch_openml
-rich	CHK004	rich/jupyter.py:IPython.display	fp	optional-import	inside try/except ModuleNotFoundError (:88-95)
-rich	CHK004	rich/pretty.py:IPython.core.formatters	fp	optional-import	in the else branch of try get_ipython() / except NameError, i.e. only inside IPython
-rich	CHK004	rich/live.py:IPython.display	fp	optional-import	inside `if self.console.is_jupyter:` try block (:254-256)
+rich	CHK004	rich/jupyter.py:IPython.display	tp	-	inside try/except ModuleNotFoundError (:88-95); locked via extra jupyter (ipywidgets), CHK004 like mlflow langgraph (#504, #1276)
+rich	CHK004	rich/pretty.py:IPython.core.formatters	tp	-	in the else branch of try get_ipython() / except NameError, i.e. only inside IPython; locked via extra jupyter (ipywidgets), CHK004 like mlflow langgraph (#504, #1276)
+rich	CHK004	rich/live.py:IPython.display	tp	-	inside `if self.console.is_jupyter:` try block (:254-256); locked via extra jupyter (ipywidgets), CHK004 like mlflow langgraph (#504, #1276)
 sphinx	CHK004	sphinx/util/requests.py:urllib3.exceptions	tp	-	top-level import of urllib3, which sphinx gets only through requests
 pandas	CHK005	ipython	fp	optional-import	runtime use in pandas/io/formats/printing.py:309 runs only after `"IPython" not in sys.modules` returns early (:306)
 ansible	CHK006	lib/ansible/utils/listify.py:display	info-expected	library-public-api	display = Display() is used only in commented-out code (:30); library mode since #1271 (the build backend declares the second package the console script targets) keeps the package's public API at info
