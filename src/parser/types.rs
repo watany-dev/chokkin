@@ -456,8 +456,8 @@ pub struct ParsedModule {
     pub self_reference: Option<u32>,
     /// Relative `.py` paths of two or more segments that string literals
     /// hand to a path or file call (`os.path.join(d, "fixtures/ir.py")`,
-    /// `shutil.copyfile`, `open`, `runpy.run_path`), consecutive literal
-    /// arguments joined, without `.` and `..` segments (#1274). The file is
+    /// `shutil.copyfile`, `open`, `runpy.run_path`), consecutive literals
+    /// joined for `join` and the `pathlib` constructors, without `.` and `..` segments (#1274). The file is
     /// read or copied by path, not imported.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path_refs: Vec<String>,
@@ -509,7 +509,6 @@ pub struct SubclassFacts {
 }
 
 impl SubclassFacts {
-    /// Nothing recorded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.classes.is_empty()

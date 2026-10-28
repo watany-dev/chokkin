@@ -58,8 +58,9 @@ fn registers(function: &StmtFunctionDef) -> bool {
     registers_with(function, &[])
 }
 
-/// [`registers`], where a call on or of one of `given` (the parameters of
-/// the factory that defines `function`) also stores the target.
+/// [`registers`], where a method call on one of `given` (the positional
+/// parameters of the factory that defines `function`) also stores the
+/// target.
 fn registers_with(function: &StmtFunctionDef, given: &[&str]) -> bool {
     let Some(target) = first_positional(&function.parameters) else {
         return false;
@@ -68,7 +69,7 @@ fn registers_with(function: &StmtFunctionDef, given: &[&str]) -> bool {
 }
 
 /// `def factory(...): def inner(target): ...; return inner`, where `inner`
-/// registers its target, or hands it to a parameter of the factory.
+/// registers its target, or hands it to an object the factory was given.
 fn returns_registrar(function: &StmtFunctionDef) -> bool {
     let given = parameter_names(&function.parameters);
     function.body.iter().any(|stmt| match stmt {
@@ -107,7 +108,7 @@ fn returns_name(body: &[Stmt], name: &str) -> bool {
 
 /// A statement of `body`, outside nested functions and classes, puts
 /// `target` (or an instance of it) in a container: a subscript assignment, a
-/// storing method call, or a call on or of one of `given`.
+/// storing method call, or a method call on one of `given`.
 fn stores(body: &[Stmt], target: &str, given: &[&str]) -> bool {
     body.iter().any(|stmt| match stmt {
         Stmt::Assign(assign) => {

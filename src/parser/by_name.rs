@@ -135,7 +135,6 @@ pub(super) fn gets_own_name(call: &ExprCall) -> bool {
         .is_some_and(|name| str_constant(name).is_none())
 }
 
-/// `globals()`.
 fn is_globals_call(expr: &Expr) -> bool {
     matches!(
         expr,
