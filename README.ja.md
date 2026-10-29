@@ -12,6 +12,8 @@
 uvx chokkin
 ```
 
+![FastAPI プロジェクトで chokkin が未使用ファイル・依存を検出し、根拠を説明し、修正をプレビューする様子](https://raw.githubusercontent.com/watany-dev/chokkin/main/docs/demo/demo.gif)
+
 セットアップはこれだけです。chokkin は `pyproject.toml`、requirements 系ファイル、lockfile、各種ツール設定を読み、entry point からプロジェクト全体の到達性グラフを組み立てて、どこからも到達しないものを報告します。Python 版の [Knip](https://knip.dev/) です。コマンド1つ、設定ゼロ、必要になったら CI gate まで一直線に進めます。
 
 - **設定ゼロ。** layout、entry point、dependency group、framework は自動で検出します。`[tool.chokkin]` を書くのは精度を詰めたくなってからで十分です。
