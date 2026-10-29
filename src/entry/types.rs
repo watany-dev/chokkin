@@ -23,7 +23,8 @@ pub enum EntryOrigin {
     Plugin {
         /// Contributing plugin.
         plugin: PluginId,
-        /// Human-readable origin label.
+        /// Human-readable origin label, with `at file:line` of the setting
+        /// that names the entry when its line is known (#882).
         label: String,
     },
     /// §8 automatic path rules (`manage.py`, `__main__.py`, …).
@@ -151,6 +152,8 @@ pub enum EntryWarning {
         module: String,
         /// Root-relative file that declares the target.
         file: String,
+        /// 1-based line of the declaration in `file`, when known.
+        line: Option<u32>,
         /// Where in `file` the target is declared.
         label: String,
     },
@@ -169,6 +172,16 @@ impl fmt::Display for EntryWarning {
             Self::UnresolvedModuleTarget {
                 module,
                 file,
+                line: Some(line),
+                label,
+            } => write!(
+                formatter,
+                "entry: could not map `{module}` to a source file (`{label}` in `{file}:{line}`)"
+            ),
+            Self::UnresolvedModuleTarget {
+                module,
+                file,
+                line: None,
                 label,
             } => write!(
                 formatter,

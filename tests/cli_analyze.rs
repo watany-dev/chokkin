@@ -6701,8 +6701,8 @@ fn binary_entry_warnings_reach_stderr() {
         .expect("run chokkin");
     let stderr = String::from_utf8(output.stderr).expect("utf8");
     for line in [
-        "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml`)",
-        "entry: could not map `tool.missing` to a source file (`project.scripts.tool` in `packages/tool/pyproject.toml`)",
+        "entry: could not map `acme.cli` to a source file (`project.scripts.acme` in `pyproject.toml:7`)",
+        "entry: could not map `tool.missing` to a source file (`project.scripts.tool` in `packages/tool/pyproject.toml:7`)",
         "entry: skipped entry `acme/excluded.py`: not a discovered source file; unused files and dependencies are reported below certain",
     ] {
         assert!(stderr.lines().any(|seen| seen == line), "{line}\n{stderr}");
@@ -8844,6 +8844,47 @@ fn binary_trace_reports_path_outside_root() {
             root.display()
         )
     );
+}
+
+/// A plugin entry names the line of the setting that made it one: the
+/// `DJANGO_SETTINGS_MODULE` value for the settings and `ROOT_URLCONF` for
+/// the `URLconf` (#882).
+#[test]
+fn binary_trace_names_the_setting_line_of_a_plugin_entry() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0\"\ndependencies = [\"django\"]\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\n\ndef main():\n    os.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "INSTALLED_APPS = []\n\nROOT_URLCONF = \"mysite.urls\"\n",
+        ),
+        ("mysite/urls.py", "urlpatterns = []\n"),
+        ("mysite/legacy.py", "X = 1\n"),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args([
+            "--no-cache",
+            "--no-exit-code",
+            "--trace",
+            "mysite/legacy.py",
+        ])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    for origin in [
+        "mysite/settings.py (plugin: django (settings.py at manage.py:5))",
+        "mysite/urls.py (plugin: django (ROOT_URLCONF at mysite/settings.py:3))",
+    ] {
+        assert!(stderr.contains(origin), "{origin}\n{stderr}");
+    }
 }
 
 #[test]

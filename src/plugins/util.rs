@@ -668,6 +668,16 @@ pub(super) fn origin_for_file(
     }
 }
 
+/// [`origin_for_file`] for the TOML item `label` names in `path`, with the
+/// line it is written on when the file reads and the label leads there.
+pub(super) fn toml_origin(root: &Path, path: &Path, label: impl Into<String>) -> ReferenceOrigin {
+    let mut origin = origin_for_file(root, path, label);
+    origin.line = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| crate::manifest::toml_label_line(&contents, &origin.label));
+    origin
+}
+
 /// Collect partial-parse field names from list literal scans.
 pub(super) fn partial_fields(scans: &BTreeMap<String, LiteralScan>) -> Vec<String> {
     scans

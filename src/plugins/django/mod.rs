@@ -196,10 +196,14 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         dir: first.and_then(|(_, setter, _)| setter_dir(setter)),
     };
     let mut resolved = None;
-    for (module, setter, _) in &settings_module.literals {
+    // The `DJANGO_SETTINGS_MODULE` value that named the settings read, so
+    // the settings entry shows where it came from (#882).
+    let mut named_at = None;
+    for (module, setter, line) in &settings_module.literals {
         lookup.dir = setter_dir(setter);
         resolved = module_path(root, module, ctx, &lookup);
         if resolved.is_some() {
+            named_at = line.map(|line| (setter.clone(), line));
             break;
         }
     }
@@ -279,10 +283,17 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
             symbol: None,
         },
         context: FileContext::Runtime,
-        origin: ReferenceOrigin {
-            file: settings_rel.clone(),
-            line: None,
-            label: SETTINGS_LABEL.to_owned(),
+        origin: match named_at {
+            Some((setter, line)) => ReferenceOrigin {
+                file: setter,
+                line: Some(line),
+                label: SETTINGS_LABEL.to_owned(),
+            },
+            None => ReferenceOrigin {
+                file: settings_rel.clone(),
+                line: None,
+                label: SETTINGS_LABEL.to_owned(),
+            },
         },
     });
 
@@ -780,11 +791,7 @@ fn read_settings(
                         symbol: None,
                     },
                     context: FileContext::Runtime,
-                    origin: ReferenceOrigin {
-                        file: rel.clone(),
-                        line: None,
-                        label: "ROOT_URLCONF".to_owned(),
-                    },
+                    origin: urlconf_origin.clone(),
                 });
                 let urlconf_module =
                     crate::sources::path_to_module(&urls_path, &ctx.sources.layout)
