@@ -303,6 +303,9 @@ impl ReferenceIndex {
 #[derive(Default)]
 struct StarImports<'a> {
     chain: StarChain<&'a str, &'a Exports>,
+    /// The modules each module star-imports: [`StarChain::parents`] turned
+    /// around.
+    children: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules that define or import each name. A forwarded
     /// reference can only meet a symbol or a re-export there, so the
     /// packages a name merely passes through are never recorded (#803).
@@ -346,30 +349,81 @@ impl<'a> StarImports<'a> {
             .copied()
             .filter(|module| !parsed.contains(module))
             .collect();
+        for (&child, parents) in &stars.chain.parents {
+            for &parent in parents {
+                stars.children.entry(parent).or_default().push(child);
+            }
+        }
         stars
     }
 
-    /// Cached per symbol: a module that imports a package in many function
-    /// bodies records each `pkg.name` access once per import.
+    /// The parsed modules whose binding of `target.name` the star imports
+    /// carry into `target.module`. Cached per symbol: a module that imports
+    /// a package in many function bodies records each `pkg.name` access once
+    /// per import.
+    ///
+    /// The same as [`StarChain::reaches`] from each binder, in two walks
+    /// shared by all of them (#810): up from every binder to the modules the
+    /// name climbs to, then down from `target.module` through those. Binders
+    /// of a common name share their ancestors, which one walk per binder
+    /// would climb again each time.
     fn sources<'c>(&self, target: &SymbolId, cache: &'c mut StarCache<'a>) -> &'c [&'a str] {
         if !self.chain.defines.contains_key(target.module.as_str()) {
             return &[];
         }
         if !cache.contains_key(target) {
-            let sources = self
-                .binders
-                .get(target.name.as_str())
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|&binder| {
-                    self.chain
-                        .reaches(binder, &target.name, true, |parent| parent == target.module)
-                })
-                .collect();
+            let sources = self.climb_down(&target.module, &target.name);
             cache.insert(target.clone(), sources);
         }
         &cache[target]
+    }
+
+    fn climb_down(&self, goal: &str, name: &str) -> Vec<&'a str> {
+        let binders = self.binders.get(name).map_or(&[][..], Vec::as_slice);
+        let mut climbed: FxHashSet<&str> = binders
+            .iter()
+            .copied()
+            .filter(|&binder| self.chain.hands_on(binder, name))
+            .collect();
+        let mut queue: Vec<&str> = climbed.iter().copied().collect();
+        let mut arrives = false;
+        while let Some(current) = queue.pop() {
+            for &parent in self.chain.parents.get(current).into_iter().flatten() {
+                if self.chain.shadows(parent, name) {
+                    continue;
+                }
+                if parent == goal {
+                    arrives = true;
+                } else if self.chain.hands_on(parent, name) && climbed.insert(parent) {
+                    queue.push(parent);
+                }
+            }
+        }
+        if !arrives {
+            return Vec::new();
+        }
+        // Every module the walk down meets hands `name` on to `goal`.
+        let mut carried = FxHashSet::default();
+        let mut queue = vec![goal];
+        let mut expanded = FxHashSet::from_iter([goal]);
+        while let Some(current) = queue.pop() {
+            if self.chain.shadows(current, name) {
+                continue;
+            }
+            for &child in self.children.get(current).into_iter().flatten() {
+                if climbed.contains(child) {
+                    carried.insert(child);
+                    if expanded.insert(child) {
+                        queue.push(child);
+                    }
+                }
+            }
+        }
+        binders
+            .iter()
+            .copied()
+            .filter(|binder| carried.contains(binder))
+            .collect()
     }
 }
 
