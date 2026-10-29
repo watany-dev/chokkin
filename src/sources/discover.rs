@@ -11,9 +11,10 @@ use super::cache::SourcesCache;
 use super::error::SourcesError;
 use super::glob::{build_glob_set, effective_exclude};
 use super::layout::{
-    ENTRY_TREE_GLOBS, infer_layout, pytest_python_file_globs, pytest_testpaths, unmatched_testpaths,
+    ENTRY_TREE_GLOBS, PytestConfigs, infer_layout, pytest_python_file_globs, pytest_testpaths,
+    unmatched_testpaths,
 };
-use super::types::{DiscoveredFile, DiscoveredSources};
+use super::types::{DiscoveredFile, DiscoveredSources, LayoutInfo};
 use super::walk::{
     CollectOptions, Collected, collect_files, large_project_warning, matches_source,
     root_gitignore_warning, validate_entries,
@@ -52,21 +53,18 @@ pub(crate) fn discover_sources_cached(
     manifest: &LoadedManifest,
     cache: &SourcesCache,
 ) -> Result<Discovery, SourcesError> {
-    let (mut layout, layout_warning) = infer_layout(&root.path, &manifest.metadata, &manifest.uv);
+    let configs = PytestConfigs::default();
+    let (mut layout, layout_warning) =
+        infer_layout(&root.path, &manifest.metadata, &manifest.uv, &configs);
     // Only inferred globs take testpaths: the parse cache keys on the globs,
     // so testpaths outside them would change file contexts unnoticed.
     let mut testpath_warnings = Vec::new();
     let (test_globs, effective_globs) = if config.effective.project.is_empty() {
-        testpath_warnings = unmatched_testpaths(&root.path, &layout)
+        testpath_warnings = unmatched_testpaths(&root.path, &layout, &configs)
             .into_iter()
             .map(|entry| SourcesWarning::TestpathsUnmatched { entry })
             .collect();
-        let test_globs: Vec<String> = pytest_testpaths(&root.path, &layout)
-            .iter()
-            .map(|path| globset::escape(path))
-            .flat_map(|path| [format!("{path}/**/*.{{py,pyi,ipynb}}"), path])
-            .chain(pytest_python_file_globs(&root.path, &layout))
-            .collect();
+        let test_globs = pytest_test_globs(&root.path, &layout, &configs);
         let mut globs = layout.inferred_globs.clone();
         let fresh = test_globs
             .iter()
@@ -139,6 +137,17 @@ pub(crate) fn discover_sources_cached(
         held_tests: collected.held_tests,
         command_files: collected.command_files,
     })
+}
+
+/// The globs of the files pytest collects as tests: its `testpaths` trees
+/// and the files its `python_files` names.
+fn pytest_test_globs(root: &Path, layout: &LayoutInfo, configs: &PytestConfigs) -> Vec<String> {
+    pytest_testpaths(root, layout, configs)
+        .iter()
+        .map(|path| globset::escape(path))
+        .flat_map(|path| [format!("{path}/**/*.{{py,pyi,ipynb}}"), path])
+        .chain(pytest_python_file_globs(root, layout, configs))
+        .collect()
 }
 
 /// The files at `paths` (root-relative) that discovery would collect if the

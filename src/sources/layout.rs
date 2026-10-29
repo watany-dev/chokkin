@@ -1,8 +1,9 @@
 //! Project layout inference and default globs.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use globset::Glob;
 
@@ -11,7 +12,7 @@ use crate::manifest::{
     normalize_distribution_name,
 };
 use crate::path_util::{join_rel, strip_py_suffix};
-use crate::plugins::pytest_import_settings;
+use crate::plugins::{PytestImportSettings, pytest_import_settings};
 
 use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
 use super::glob::check_braces;
@@ -32,6 +33,25 @@ pub(crate) const ROOT_ENTRY_NAMES: [&str; 6] = [
     "noxfile.py",
 ];
 
+/// The pytest config of each directory a discovery asks about, read once.
+///
+/// Layout inference and the testpath globs consult the same one or two
+/// configs about eight times per discovery, and a workspace member's
+/// `pyproject.toml` is a full TOML parse each time (#843).
+#[derive(Default)]
+pub(crate) struct PytestConfigs(RefCell<HashMap<PathBuf, PytestImportSettings>>);
+
+impl PytestConfigs {
+    /// [`pytest_import_settings`] of `dir`, the default when it has no config.
+    fn settings(&self, dir: &Path) -> PytestImportSettings {
+        self.0
+            .borrow_mut()
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| pytest_import_settings(dir).unwrap_or_default())
+            .clone()
+    }
+}
+
 /// Infer project layout and default `project` globs (§3.1), plus a warning
 /// when the package directory was guessed rather than declared.
 ///
@@ -44,17 +64,18 @@ pub(crate) fn infer_layout(
     root: &Path,
     metadata: &ProjectMetadata,
     uv: &UvToolSettings,
+    configs: &PytestConfigs,
 ) -> (LayoutInfo, Option<SourcesWarning>) {
     let (mut layout, warning) = declared_layout(root, metadata.wheel_targets.as_ref(), metadata)
         .map_or_else(
             || {
-                let heuristic = heuristic_layout(root, metadata);
+                let heuristic = heuristic_layout(root, metadata, configs);
                 // A package named after the project beats a uv source that
                 // only shares its prefix (`acme_api/` over `acme = { path }`).
                 if heuristic.1.is_none() && heuristic.0.layout != ProjectLayout::Unknown {
                     return heuristic;
                 }
-                uv_source_layout(root, metadata, uv).unwrap_or(heuristic)
+                uv_source_layout(root, metadata, uv, configs).unwrap_or(heuristic)
             },
             |layout| (layout, None),
         );
@@ -68,7 +89,7 @@ pub(crate) fn infer_layout(
         .collect();
     // A suite package `testpaths` names (celery's `t/`) imports itself by
     // absolute name, as `tests/` does (#978).
-    for path in pytest_testpaths(root, &layout) {
+    for path in pytest_testpaths(root, &layout, configs) {
         if !path.contains('/')
             && root.join(&path).join("__init__.py").is_file()
             && !layout.local_packages.contains(&path)
@@ -278,6 +299,7 @@ fn uv_source_layout(
     root: &Path,
     metadata: &ProjectMetadata,
     uv: &UvToolSettings,
+    configs: &PytestConfigs,
 ) -> Option<(LayoutInfo, Option<SourcesWarning>)> {
     let names: Vec<String> = metadata
         .name
@@ -299,7 +321,7 @@ fn uv_source_layout(
             name: Some(source.name.clone()),
             ..ProjectMetadata::default()
         };
-        let (inner, warning) = heuristic_layout(&root.join(&path), &member);
+        let (inner, warning) = heuristic_layout(&root.join(&path), &member, configs);
         (inner.layout != ProjectLayout::Unknown).then(|| {
             let package_root = if inner.package_root.is_empty() {
                 path.clone()
@@ -335,6 +357,7 @@ fn in_root_dir(path: &str) -> Option<String> {
 fn heuristic_layout(
     root: &Path,
     metadata: &ProjectMetadata,
+    configs: &PytestConfigs,
 ) -> (LayoutInfo, Option<SourcesWarning>) {
     let src_packages = packages_with_init(&root.join("src"), false);
     if !src_packages.is_empty() {
@@ -351,9 +374,9 @@ fn heuristic_layout(
     // the project below still wins, as pandas' `testpaths = "pandas"` does
     // (#978). A widened top with modules of its own (`core/api.py` beside
     // `core/tests`) stays a candidate: it may be the runtime package.
-    let mut suites = testpath_entries(root, "");
+    let mut suites = testpath_entries(root, "", configs);
     suites.extend(
-        testpath_tops(root, "")
+        testpath_tops(root, "", configs)
             .into_iter()
             .filter(|top| !holds_own_modules(&root.join(top))),
     );
@@ -574,10 +597,14 @@ fn is_main_guard_line(line: &str) -> bool {
 /// config's directory (#978): celery's `t/unit` is package `t.unit`, so its
 /// sibling suites under `t/` are tests too. A glob entry (`packages/*/tests`)
 /// stands for the paths it matches, as pytest expands it (#998).
-pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+pub(super) fn pytest_testpaths(
+    root: &Path,
+    layout: &LayoutInfo,
+    configs: &PytestConfigs,
+) -> Vec<String> {
     let mut testpaths = Vec::new();
     for dir in testpath_config_dirs(layout) {
-        for path in testpath_tops(root, dir) {
+        for path in testpath_tops(root, dir, configs) {
             let overlaps_package = layout.packages.iter().any(|package| {
                 let package = layout.package_dir(package);
                 Path::new(&path).starts_with(&package) || Path::new(&package).starts_with(&path)
@@ -595,16 +622,18 @@ pub(super) fn pytest_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> 
 /// when it sets them and its whole directory otherwise (#1242). The default
 /// patterns are left out: `test_*.py` / `*_test.py` are test files by path
 /// already.
-pub(super) fn pytest_python_file_globs(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+pub(super) fn pytest_python_file_globs(
+    root: &Path,
+    layout: &LayoutInfo,
+    configs: &PytestConfigs,
+) -> Vec<String> {
     let mut globs = Vec::new();
     for dir in testpath_config_dirs(layout) {
-        let patterns = pytest_import_settings(&root.join(dir))
-            .unwrap_or_default()
-            .python_files;
+        let patterns = configs.settings(&root.join(dir)).python_files;
         let patterns = patterns
             .iter()
             .filter(|pattern| !matches!(pattern.as_str(), "test_*.py" | "*_test.py"));
-        let mut roots = testpath_entries(root, dir);
+        let mut roots = testpath_entries(root, dir, configs);
         if roots.is_empty() {
             roots.push(dir.to_owned());
         }
@@ -632,10 +661,14 @@ pub(super) fn pytest_python_file_globs(root: &Path, layout: &LayoutInfo) -> Vec<
 /// [`pytest_testpaths`] reads that name no file or directory, literally or as
 /// a glob: pytest collects nothing from them, and the tests they meant get no
 /// test context (#998).
-pub(super) fn unmatched_testpaths(root: &Path, layout: &LayoutInfo) -> Vec<String> {
+pub(super) fn unmatched_testpaths(
+    root: &Path,
+    layout: &LayoutInfo,
+    configs: &PytestConfigs,
+) -> Vec<String> {
     let mut unmatched = Vec::new();
     for dir in testpath_config_dirs(layout) {
-        for entry in raw_testpaths(root, dir) {
+        for entry in raw_testpaths(root, dir, configs) {
             let names_nothing =
                 expand_testpath(root, &entry).is_empty() && !root.join(&entry).exists();
             if names_nothing && !unmatched.contains(&entry) {
@@ -657,9 +690,9 @@ fn testpath_config_dirs(layout: &LayoutInfo) -> Vec<&str> {
 }
 
 /// Root-relative `testpaths` of the pytest config in `dir`, as written.
-fn raw_testpaths(root: &Path, dir: &str) -> Vec<String> {
-    pytest_import_settings(&root.join(dir))
-        .unwrap_or_default()
+fn raw_testpaths(root: &Path, dir: &str, configs: &PytestConfigs) -> Vec<String> {
+    configs
+        .settings(&root.join(dir))
         .testpaths
         .iter()
         .filter_map(|path| in_root_dir(path))
@@ -670,8 +703,8 @@ fn raw_testpaths(root: &Path, dir: &str) -> Vec<String> {
 /// [`raw_testpaths`] with each entry replaced by the paths it matches as a
 /// glob. An entry that matches nothing stays as written, whether or not it
 /// exists (`t[1]` names a directory called that, not `t1`).
-fn testpath_entries(root: &Path, dir: &str) -> Vec<String> {
-    raw_testpaths(root, dir)
+fn testpath_entries(root: &Path, dir: &str, configs: &PytestConfigs) -> Vec<String> {
+    raw_testpaths(root, dir, configs)
         .into_iter()
         .flat_map(|entry| {
             let matched = expand_testpath(root, &entry);
@@ -753,9 +786,9 @@ fn dirs_from(root: &Path, base: &str, out: &mut Vec<String>) {
 
 /// [`testpath_entries`] of `dir`, each widened to the top of its
 /// `__init__.py` chain without climbing above `dir`.
-fn testpath_tops(root: &Path, dir: &str) -> Vec<String> {
+fn testpath_tops(root: &Path, dir: &str, configs: &PytestConfigs) -> Vec<String> {
     let floor = dir.split('/').filter(|part| !part.is_empty()).count();
-    testpath_entries(root, dir)
+    testpath_entries(root, dir, configs)
         .into_iter()
         .map(|path| {
             let parts: Vec<&str> = path.split('/').collect();
@@ -1106,6 +1139,7 @@ mod tests {
             temp.path(),
             &ProjectMetadata::default(),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
@@ -1131,6 +1165,30 @@ mod tests {
     }
 
     #[test]
+    fn pytest_configs_read_each_directory_once() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let pyproject = temp.path().join("pyproject.toml");
+        fs::write(
+            &pyproject,
+            "[tool.pytest.ini_options]\ntestpaths = [\"t\"]\n",
+        )
+        .expect("write");
+        let configs = PytestConfigs::default();
+        assert_eq!(raw_testpaths(temp.path(), "", &configs), ["t"]);
+        // A discovery's later questions get the answer of its first read.
+        fs::write(
+            &pyproject,
+            "[tool.pytest.ini_options]\ntestpaths = [\"u\"]\n",
+        )
+        .expect("write");
+        assert_eq!(raw_testpaths(temp.path(), "", &configs), ["t"]);
+        assert_eq!(
+            raw_testpaths(temp.path(), "", &PytestConfigs::default()),
+            ["u"]
+        );
+    }
+
+    #[test]
     fn testpaths_widen_to_their_test_package_and_index_it() {
         let temp = tree(&["celery", "t", "t/unit", "t/integration"]);
         fs::write(
@@ -1138,10 +1196,17 @@ mod tests {
             "[tool.pytest.ini_options]\ntestpaths = \"t/unit/\"\n",
         )
         .expect("write");
-        let (layout, warning) =
-            infer_layout(temp.path(), &metadata("celery"), &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("celery"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(warning, None);
-        assert_eq!(pytest_testpaths(temp.path(), &layout), vec!["t".to_owned()]);
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
+            vec!["t".to_owned()]
+        );
         assert_eq!(layout.local_packages, vec!["t".to_owned()]);
         assert_eq!(
             path_to_module("t/integration/test_app.py", &layout),
@@ -1163,9 +1228,10 @@ mod tests {
             temp.path(),
             &metadata("weblate"),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(
-            pytest_python_file_globs(temp.path(), &layout),
+            pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()),
             ["**/tests.py"]
         );
 
@@ -1179,9 +1245,10 @@ mod tests {
             temp.path(),
             &metadata("weblate"),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(
-            pytest_python_file_globs(temp.path(), &layout),
+            pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()),
             ["t/**/check_*.py"]
         );
     }
@@ -1196,9 +1263,14 @@ mod tests {
             "[tool.pytest.ini_options]\ntestpaths = \"tests\"\n",
         )
         .expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(
-            pytest_python_file_globs(temp.path(), &layout),
+            pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()),
             Vec::<String>::new()
         );
     }
@@ -1214,9 +1286,14 @@ mod tests {
             "[pytest]\ntestpaths = tests suite docs/t/unit\n",
         )
         .expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(
-            pytest_testpaths(temp.path(), &layout),
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
             ["tests", "suite", "docs/t"]
         );
         assert_eq!(layout.local_packages, ["tests"]);
@@ -1230,8 +1307,12 @@ mod tests {
             "[pytest]\ntestpaths = t/unit\n",
         )
         .expect("write");
-        let (layout, warning) =
-            infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.packages, vec!["worker".to_owned()]);
         assert!(matches!(
             warning,
@@ -1248,10 +1329,17 @@ mod tests {
             "[tool.pytest.ini_options]\ntestpaths = \"pandas\"\n",
         )
         .expect("write");
-        let (layout, _) =
-            infer_layout(temp.path(), &metadata("pandas"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("pandas"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.packages, vec!["pandas".to_owned()]);
-        assert_eq!(pytest_testpaths(temp.path(), &layout), Vec::<String>::new());
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
+            Vec::<String>::new()
+        );
         assert_eq!(layout.local_packages, Vec::<String>::new());
     }
 
@@ -1265,7 +1353,7 @@ mod tests {
         .expect("write");
         let layout = LayoutInfo::new("lib", vec!["streamlit".to_owned()]);
         assert_eq!(
-            pytest_testpaths(temp.path(), &layout),
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
             vec!["lib/tests".to_owned()]
         );
     }
@@ -1290,9 +1378,14 @@ mod tests {
             "[pytest]\ntestpaths = packages/*/tests suites/**/unit odd/{x} odd/{y} t?sts\n",
         )
         .expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(
-            pytest_testpaths(temp.path(), &layout),
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
             [
                 "packages/a/tests",
                 "packages/b/tests",
@@ -1305,7 +1398,7 @@ mod tests {
         // Neither names a path: `odd/{y}` is literal and missing, `t?sts`
         // matches nothing. Both stay, as a literal entry always has.
         assert_eq!(
-            unmatched_testpaths(temp.path(), &layout),
+            unmatched_testpaths(temp.path(), &layout, &PytestConfigs::default()),
             ["odd/{y}", "t?sts"]
         );
     }
@@ -1349,11 +1442,19 @@ mod tests {
             "[pytest]\ntestpaths = */unit acme/tests\n",
         )
         .expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
-        assert_eq!(pytest_testpaths(temp.path(), &layout), ["t"]);
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
+        assert_eq!(
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
+            ["t"]
+        );
         assert_eq!(layout.local_packages, ["t"]);
         assert_eq!(
-            unmatched_testpaths(temp.path(), &layout),
+            unmatched_testpaths(temp.path(), &layout, &PytestConfigs::default()),
             Vec::<String>::new()
         );
     }
@@ -1373,9 +1474,14 @@ mod tests {
             "[pytest]\ntestpaths = tests/**\n",
         )
         .expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(
-            pytest_testpaths(temp.path(), &layout),
+            pytest_testpaths(temp.path(), &layout, &PytestConfigs::default()),
             ["tests", "tests/unit"]
         );
     }
@@ -1509,6 +1615,7 @@ mod tests {
             temp.path(),
             &ProjectMetadata::default(),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
@@ -1519,6 +1626,7 @@ mod tests {
             temp.path(),
             &ProjectMetadata::default(),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(layout.layout, ProjectLayout::Unknown);
     }
@@ -1536,6 +1644,7 @@ mod tests {
             temp.path(),
             &metadata("babybuddy"),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(layout.packages, ["api", "babybuddy", "core"]);
@@ -1551,6 +1660,7 @@ mod tests {
             temp.path(),
             &metadata("babybuddy"),
             &UvToolSettings::default(),
+            &PytestConfigs::default(),
         );
         assert_eq!(layout.packages, ["babybuddy"]);
     }
@@ -1568,7 +1678,12 @@ mod tests {
             wheel_targets: Some(find_in("lib")),
             ..metadata("SQLAlchemy")
         };
-        let (layout, warning) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.layout, ProjectLayout::PackageRoot);
         assert_eq!(layout.package_root, "lib");
         assert_eq!(layout.packages, vec!["sqlalchemy".to_owned()]);
@@ -1595,7 +1710,12 @@ mod tests {
             }),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "pkgs");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
     }
@@ -1612,7 +1732,12 @@ mod tests {
             }),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "pkgs");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
     }
@@ -1629,7 +1754,12 @@ mod tests {
             wheel_targets: Some(targets.clone()),
             ..metadata("acme")
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.layout, ProjectLayout::Src);
         assert_eq!(layout.package_root, "src");
         assert_eq!(layout.packages, ["acme", "extra"]);
@@ -1660,7 +1790,12 @@ mod tests {
             wheel_targets: Some(targets),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "other");
         assert_eq!(layout.package_dir("acme"), "src/acme");
     }
@@ -1680,7 +1815,12 @@ mod tests {
             }),
             ..ProjectMetadata::default()
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "beta");
         assert_eq!(layout.package_dir("one"), "alpha/one");
     }
@@ -1696,7 +1836,12 @@ mod tests {
             }),
             ..metadata("acme")
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "src");
         assert_eq!(layout.package_dir("tools_pkg"), "tools_pkg");
         assert_eq!(
@@ -1722,7 +1867,12 @@ mod tests {
             }),
             ..metadata("acme")
         };
-        let (layout, warning) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(warning, None);
         assert_eq!(layout.layout, ProjectLayout::PackageRoot);
         assert_eq!(layout.package_root, "lib");
@@ -1754,13 +1904,23 @@ mod tests {
             }),
             ..metadata("acme")
         };
-        let (layout, _) = infer_layout(temp.path(), &find("acme*"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &find("acme*"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(layout.packages, ["acme", "acmec"]);
         assert!(layout.package_roots.is_empty());
         // The default `*` would take `tests/` and `tools/`: the heuristics
         // pick the project package instead.
-        let (layout, _) = infer_layout(temp.path(), &find("*"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &find("*"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.packages, ["acme"]);
     }
 
@@ -1780,7 +1940,12 @@ mod tests {
                 },
             ],
         };
-        let (layout, warning) = infer_layout(temp.path(), &metadata("streamlit-dev"), &uv);
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("streamlit-dev"),
+            &uv,
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "lib");
         assert_eq!(layout.packages, vec!["streamlit".to_owned()]);
         assert_eq!(warning, None);
@@ -1801,7 +1966,12 @@ mod tests {
                     kind: UvSourceKind::Path(path.to_owned()),
                 }],
             };
-            let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+            let (layout, _) = infer_layout(
+                temp.path(),
+                &metadata("acme"),
+                &uv,
+                &PytestConfigs::default(),
+            );
             assert_eq!(layout.package_root, "lib", "{path}");
             assert_eq!(
                 path_to_module("lib/acme_api/app.py", &layout),
@@ -1820,14 +1990,24 @@ mod tests {
                 kind: UvSourceKind::Path("packages/acme".to_owned()),
             }],
         };
-        let (layout, warning) = infer_layout(temp.path(), &metadata("acme"), &uv);
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &uv,
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "packages/acme");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
         assert_eq!(warning, None);
 
         fs::create_dir(temp.path().join("acme")).expect("create dir");
         fs::write(temp.path().join("acme/__init__.py"), "").expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &uv,
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
     }
@@ -1851,7 +2031,12 @@ mod tests {
                     kind: UvSourceKind::Path(path.to_owned()),
                 }],
             };
-            let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+            let (layout, _) = infer_layout(
+                temp.path(),
+                &metadata("acme"),
+                &uv,
+                &PytestConfigs::default(),
+            );
             assert_eq!(layout.layout, ProjectLayout::Unknown, "{name} = {path}");
         }
     }
@@ -1866,7 +2051,12 @@ mod tests {
                 kind: UvSourceKind::Path("packages/acme".to_owned()),
             }],
         };
-        let (layout, warning) = infer_layout(temp.path(), &metadata("acme-api"), &uv);
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("acme-api"),
+            &uv,
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "");
         assert_eq!(layout.packages, vec!["acme_api".to_owned()]);
         assert_eq!(warning, None);
@@ -1883,7 +2073,12 @@ mod tests {
             }),
             ..metadata("acme")
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "src");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
         assert_eq!(
@@ -1907,7 +2102,12 @@ mod tests {
             }),
             ..metadata("locust")
         };
-        let (layout, warning) = infer_layout(temp.path(), &metadata, &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata,
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(warning, None);
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(
@@ -1930,7 +2130,12 @@ mod tests {
             fs::write(temp.path().join(file), "").expect("write");
         }
         fs::write(temp.path().join("data/schema.json"), "{}").expect("write");
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
         assert_eq!(
             unpackaged_module_dirs(temp.path(), &layout),
@@ -1948,7 +2153,12 @@ mod tests {
                 kind: UvSourceKind::Path("../acme".to_owned()),
             }],
         };
-        let (layout, _) = infer_layout(temp.path(), &metadata("acme"), &uv);
+        let (layout, _) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &uv,
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.layout, ProjectLayout::Flat);
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
     }
@@ -1956,8 +2166,12 @@ mod tests {
     #[test]
     fn lib_package_named_after_project_beats_unrelated_root_package() {
         let temp = tree(&["tools", "lib/acme"]);
-        let (layout, warning) =
-            infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.package_root, "lib");
         assert_eq!(layout.packages, vec!["acme".to_owned()]);
         assert_eq!(warning, None);
@@ -1966,8 +2180,12 @@ mod tests {
     #[test]
     fn non_package_dirs_are_never_candidates() {
         let temp = tree(&["examples", "benchmarks", "e2e_playwright", "docs"]);
-        let (layout, warning) =
-            infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.layout, ProjectLayout::Unknown);
         assert_eq!(warning, None);
     }
@@ -1975,8 +2193,12 @@ mod tests {
     #[test]
     fn single_unrelated_candidate_is_reported_as_a_guess() {
         let temp = tree(&["lib/other"]);
-        let (layout, warning) =
-            infer_layout(temp.path(), &metadata("acme"), &UvToolSettings::default());
+        let (layout, warning) = infer_layout(
+            temp.path(),
+            &metadata("acme"),
+            &UvToolSettings::default(),
+            &PytestConfigs::default(),
+        );
         assert_eq!(layout.packages, vec!["other".to_owned()]);
         assert_eq!(
             warning,
@@ -2247,7 +2469,7 @@ mod tests {
             fn heuristic_layout_matches_reference_model(tree in tree()) {
                 let temp = build(&tree);
                 let (layout, warning) =
-                    infer_layout(temp.path(), &metadata_for(&tree), &UvToolSettings::default());
+                    infer_layout(temp.path(), &metadata_for(&tree), &UvToolSettings::default(), &PytestConfigs::default());
                 match model_heuristic(&tree) {
                     None => {
                         prop_assert_eq!(layout.layout, ProjectLayout::Unknown);
@@ -2273,9 +2495,9 @@ mod tests {
             fn chosen_packages_round_trip_through_globs_and_module_names(tree in tree()) {
                 let temp = build(&tree);
                 let (layout, warning) =
-                    infer_layout(temp.path(), &metadata_for(&tree), &uv_for(&tree));
+                    infer_layout(temp.path(), &metadata_for(&tree), &uv_for(&tree), &PytestConfigs::default());
                 prop_assert_eq!(
-                    infer_layout(temp.path(), &metadata_for(&tree), &uv_for(&tree)),
+                    infer_layout(temp.path(), &metadata_for(&tree), &uv_for(&tree), &PytestConfigs::default()),
                     (layout.clone(), warning)
                 );
                 if layout.layout == ProjectLayout::Unknown {
