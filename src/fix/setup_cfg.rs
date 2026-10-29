@@ -127,6 +127,17 @@ mod tests {
         );
     }
 
+    /// An indented key right after the header is an option (configparser),
+    /// so its items are found and the key keeps its indent.
+    #[test]
+    fn removes_from_an_indented_key() {
+        let contents = "[options]\n  install_requires = bar\n  extras =\n    x\n";
+        assert_eq!(
+            remove(contents, "options.install_requires[0]", "bar").as_deref(),
+            Ok("[options]\n  install_requires =\n  extras =\n    x\n")
+        );
+    }
+
     #[test]
     fn bom_manifest_is_edited_and_keeps_its_bom() {
         let contents = "\u{feff}[options]\ninstall_requires =\n    flask\n    requests\n";
