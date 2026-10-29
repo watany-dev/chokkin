@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "chokkin"
-version = "0.7.12"
+version = "0.7.13"
 dependencies = [
  "clap",
  "criterion",
