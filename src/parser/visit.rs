@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
+use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr, walk_stmt};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
     Identifier, Operator, Parameters, Stmt, StmtClassDef, StmtIf, StmtImport, StmtImportFrom,
-    StmtMatch, StmtTry,
+    StmtMatch, StmtReturn, StmtTry,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -1941,7 +1941,9 @@ fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
 /// one returns only when they are installed (#1269). The shape decides, not
 /// the name. A handler that returns `None` / `False` instead lets the call
 /// return either way, so only a caller that tests the result knows the
-/// packages are there (#1272); a function with both kinds of `try` raises.
+/// packages are there (#1272). The first such `try` decides: a call that
+/// gets past it with its package missing checks nothing, and one that may
+/// return before it is a check only when that is `None` / `False`.
 fn import_checks(stmts: &[Stmt]) -> Vec<ImportCheck> {
     stmts
         .iter()
@@ -1949,17 +1951,22 @@ fn import_checks(stmts: &[Stmt]) -> Vec<ImportCheck> {
             let Stmt::FunctionDef(def) = stmt else {
                 return None;
             };
-            let tries: Vec<(&StmtTry, ImportFailure)> = def
-                .body
-                .iter()
-                .filter_map(|stmt| match stmt {
-                    Stmt::Try(try_stmt) => Some((try_stmt, import_failure(try_stmt)?)),
-                    _ => None,
-                })
-                .collect();
-            let returns_falsy = tries
-                .iter()
-                .all(|(_, failure)| *failure == ImportFailure::ReturnsFalsy);
+            let mut tries: Vec<(&StmtTry, ImportFailure)> = Vec::new();
+            let mut returns_early = false;
+            for stmt in &def.body {
+                if let Stmt::Try(try_stmt) = stmt
+                    && let Some(failure) = import_failure(try_stmt)
+                {
+                    tries.push((try_stmt, failure));
+                } else if tries.is_empty() {
+                    let early = returns(std::slice::from_ref(stmt));
+                    if !early.iter().all(|ret| returns_falsy(ret)) {
+                        return None;
+                    }
+                    returns_early |= !early.is_empty();
+                }
+            }
+            let returns_falsy = returns_early || tries.first()?.1 == ImportFailure::ReturnsFalsy;
             let mut modules: Vec<String> = tries
                 .iter()
                 .flat_map(|(try_stmt, _)| &try_stmt.body)
@@ -1996,8 +2003,14 @@ enum ImportFailure {
 
 /// How the first handler a missing package lands in ends, when it raises or
 /// returns a falsy value: a later `except ImportError: raise` never sees the
-/// `ModuleNotFoundError` an earlier handler logs and swallows.
+/// `ModuleNotFoundError` an earlier handler logs and swallows. A handler
+/// that may return before its last statement returns falsy only if every
+/// such `return` is falsy; `None` for any other value, or when `finally`
+/// returns and so swallows the `raise`.
 fn import_failure(try_stmt: &StmtTry) -> Option<ImportFailure> {
+    if !returns(&try_stmt.finalbody).is_empty() {
+        return None;
+    }
     let handler = try_stmt
         .handlers
         .iter()
@@ -2006,17 +2019,48 @@ fn import_failure(try_stmt: &StmtTry) -> Option<ImportFailure> {
             handler
         })
         .find(|handler| handler.type_.as_deref().is_none_or(catches_import_error))?;
-    match handler.body.last()? {
-        Stmt::Raise(_) => Some(ImportFailure::Raises),
-        Stmt::Return(ret) => match ret.value.as_deref() {
-            None | Some(Expr::NoneLiteral(_)) => Some(ImportFailure::ReturnsFalsy),
-            Some(Expr::BooleanLiteral(literal)) if !literal.value => {
-                Some(ImportFailure::ReturnsFalsy)
-            },
-            Some(_) => None,
-        },
+    let (last, leading) = handler.body.split_last()?;
+    let early = returns(leading);
+    if !early.iter().all(|ret| returns_falsy(ret)) {
+        return None;
+    }
+    match last {
+        Stmt::Raise(_) if early.is_empty() => Some(ImportFailure::Raises),
+        Stmt::Raise(_) => Some(ImportFailure::ReturnsFalsy),
+        Stmt::Return(ret) if returns_falsy(ret) => Some(ImportFailure::ReturnsFalsy),
         _ => None,
     }
+}
+
+/// `return`, `return None` or `return False`.
+fn returns_falsy(ret: &StmtReturn) -> bool {
+    match ret.value.as_deref() {
+        None | Some(Expr::NoneLiteral(_)) => true,
+        Some(Expr::BooleanLiteral(literal)) => !literal.value,
+        Some(_) => false,
+    }
+}
+
+/// The `return` statements in `body`, outside nested functions and classes.
+fn returns(body: &[Stmt]) -> Vec<&StmtReturn> {
+    #[derive(Default)]
+    struct Returns<'a>(Vec<&'a StmtReturn>);
+
+    impl<'a> Visitor<'a> for Returns<'a> {
+        fn visit_stmt(&mut self, stmt: &'a Stmt) {
+            match stmt {
+                Stmt::Return(ret) => self.0.push(ret),
+                Stmt::FunctionDef(_) | Stmt::ClassDef(_) => {},
+                _ => walk_stmt(self, stmt),
+            }
+        }
+
+        fn visit_expr(&mut self, _: &'a Expr) {}
+    }
+
+    let mut found = Returns::default();
+    found.visit_body(body);
+    found.0
 }
 
 /// The dotted callees of the calls in the tests of an `if` chain that must be
@@ -3383,7 +3427,35 @@ g = lambda x=utils.G: x
                 ("returns", vec!["a"], true),
                 ("returns_none", vec!["d"], true),
                 ("returns_bare", vec!["e"], true),
-                ("mixed", vec!["h", "i"], false),
+                ("mixed", vec!["h", "i"], true),
+            ]
+        );
+    }
+
+    /// A function that can return a truthy value with a package missing is
+    /// no check: a truthy `return` before the first counted `try` (D1), a
+    /// handler that may return a truthy value before its `raise` (D2), or a
+    /// `finally` that returns (D4). Only the first counted `try` decides how
+    /// a missing package leaves (D3), and a falsy `return` before it or in
+    /// its handler makes the check return falsy.
+    #[test]
+    fn install_checks_need_every_path_to_check() {
+        let parsed = visit_source(
+            "def early(name):\n    if name != 'x':\n        return\n    try:\n        import a\n    except ImportError:\n        raise\n\ndef after_true():\n    try:\n        import b\n    except ImportError:\n        return True\n    try:\n        import c\n    except ImportError:\n        raise\n\ndef strict(strict=True):\n    try:\n        import d\n    except ImportError:\n        if not strict:\n            return True\n        raise\n\ndef lenient(strict=True):\n    try:\n        import e\n    except ImportError:\n        if not strict:\n            return False\n        raise\n\ndef swallowed():\n    try:\n        import f\n    except ImportError:\n        raise\n    finally:\n        return\n\ndef first_raises():\n    try:\n        import g\n    except ImportError:\n        raise\n    try:\n        import h\n    except ImportError:\n        return False\n\ndef guarded(name):\n    if not name:\n        raise ValueError(name)\n    try:\n        import i\n    except ImportError:\n        log()\n    try:\n        import j\n    except ImportError:\n        raise\n    finally:\n        log()\n    return j\n\ndef nested_return():\n    def inner():\n        return 1\n    try:\n        import k\n    except ImportError:\n        raise\n",
+        );
+        let checks: Vec<(&str, bool)> = parsed
+            .import_checks
+            .iter()
+            .map(|check| (check.function.as_str(), check.returns_falsy))
+            .collect();
+        assert_eq!(
+            checks,
+            [
+                ("early", true),
+                ("lenient", true),
+                ("first_raises", false),
+                ("guarded", false),
+                ("nested_return", false),
             ]
         );
     }

@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`[options] ; runtime`), as configparser does: the header runs to the
   last `]`. The options under it were read as part of the previous section,
   so declared `install_requires` were reported as CHK004.
+- `setup.cfg` reads an indented key as an option, as configparser does: a
+  line continues the previous option only when it is indented deeper than
+  that option's line. `  install_requires = requests` right after
+  `[options]` was skipped, so its dependencies were reported as CHK004.
 
 ## [0.7.12] - 2026-10-28
 

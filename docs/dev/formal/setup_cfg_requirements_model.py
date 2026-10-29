@@ -33,15 +33,6 @@ D1  A value whose last line ends in ``\\`` with nothing to join: setuptools
     drops the item, chokkin keeps it so it is reported as an invalid
     requirement line (``setuptools_reqs.rs``, #928, ADR 0005).
 
-Open divergences (counterexamples the reconcile step has not settled; see
-``ledger-v0.7.10.ja.md``). They are listed so the run stays green while the
-question is open; an entry that stops occurring is reported as stale.
-
-Q1  A key line indented before any option of its section
-    (``[options]`` then ``  install_requires = a``): configparser reads the
-    option, chokkin skips the line, so every requirement it holds is
-    undeclared.
-
 Run:  python3 docs/dev/formal/setup_cfg_requirements_model.py
       python3 docs/dev/formal/setup_cfg_requirements_model.py --broken
 ``--broken`` swaps in the reader before #989 (every value split at line ends)
@@ -64,6 +55,9 @@ LINES = (
     "install_requires =",
     "install_requires: a",
     "  install_requires = z",
+    "\tinstall_requires = t",
+    "  other = q",
+    "   e",
     "other = q",
     "    c;d",
     "    e \\",
@@ -137,28 +131,32 @@ def ini_lines(contents: str):
     """setup_cfg.rs `ini_lines`: (section, key, value, continuation) or None."""
     current = "default"
     last_key = None
+    # configparser's `indent_level`: the indent of the last header or option
+    # line; blank and comment lines leave it alone (#1311).
+    indent_level = 0
     for raw in contents.splitlines(keepends=True):
         trimmed = raw.strip()
         if not trimmed or trimmed.startswith(("#", ";")):
             yield None
-        elif trimmed.startswith("[") and trimmed.rfind("]") > 1:
+            continue
+        indent = len(raw) - len(raw.lstrip())
+        if last_key is not None and indent > indent_level:
+            yield (current, last_key, trimmed, True)
+            continue
+        indent_level = indent
+        if trimmed.startswith("[") and trimmed.rfind("]") > 1:
             # section_header: SECTCRE's greedy name runs to the last `]`.
             current = trimmed[1 : trimmed.rfind("]")].strip()
             last_key = None
             yield ("section", current)
-        elif raw.startswith((" ", "\t")):
-            if last_key is None:
-                yield None
-            else:
-                yield (current, last_key, trimmed, True)
-        else:
-            cut = min((i for i in (trimmed.find("="), trimmed.find(":")) if i >= 0), default=-1)
-            if cut < 0:
-                yield None
-                continue
-            key = trimmed[:cut].strip().lower()
-            last_key = key
-            yield (current, key, trimmed[cut + 1 :].strip(), False)
+            continue
+        cut = min((i for i in (trimmed.find("="), trimmed.find(":")) if i >= 0), default=-1)
+        if cut < 0:
+            yield None
+            continue
+        key = trimmed[:cut].strip().lower()
+        last_key = key
+        yield (current, key, trimmed[cut + 1 :].strip(), False)
 
 
 def parse_ini_sections(contents: str) -> dict[str, dict[str, str]]:
@@ -222,16 +220,6 @@ def chokkin_requirements(text: str, broken: bool = False) -> list[str] | None:
 
 
 def accepted(text: str, ours, theirs) -> str | None:
-    _, *lines = text.splitlines()
-    missed = ours is None and theirs is not None
-    for line in lines:
-        if line.startswith("["):
-            break
-        if line.startswith("  install_requires"):
-            return "Q1" if missed else None
-        if line and not line[0].isspace() and not line.startswith("#"):
-            # An option opened first: the indented key continues it.
-            break
     if (
         ours is not None
         and theirs is not None
@@ -282,7 +270,7 @@ def main() -> int:
     failures, seen, checked = run(broken=False)
     for failure in failures[:20]:
         print(failure)
-    expected = {"D1", "Q1"}
+    expected = {"D1"}
     if seen != expected:
         print(f"stale accepted divergences: {sorted(expected - seen)}")
         return 1
