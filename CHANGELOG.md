@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A pre-commit hook (`.pre-commit-hooks.yaml`, id `chokkin`) that analyzes
+  the whole project on every commit.
+
 ### Changed
 - CHK001 reports at info a file users select or copy from their own
   settings: one under a `templates/` or `*_templates/` directory, and one a

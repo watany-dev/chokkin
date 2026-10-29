@@ -305,6 +305,40 @@ Without the action, pin the version with `uvx`:
       - run: uvx chokkin@0.7.12 --baseline chokkin-baseline.json --reporter github
 ```
 
+### pre-commit
+
+chokkin also ships a [pre-commit](https://pre-commit.com/) hook. It analyzes
+the whole project, so it runs on every commit regardless of which files
+changed and ignores the file list pre-commit passes:
+
+```yaml
+repos:
+  - repo: https://github.com/watany-dev/chokkin
+    rev: v0.7.13 # the first release with the hook
+    hooks:
+      - id: chokkin
+        args: [--baseline, chokkin-baseline.json]
+```
+
+pre-commit installs a remote hook from its source, so the first run builds
+chokkin with Rust (maturin downloads a toolchain when none is installed) and
+takes a few minutes; later runs reuse the environment. To install the
+prebuilt wheel from PyPI instead, declare a local hook:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: chokkin
+        name: chokkin
+        entry: chokkin
+        language: python
+        additional_dependencies: [chokkin==0.7.12]
+        args: [--baseline, chokkin-baseline.json]
+        pass_filenames: false
+        always_run: true
+```
+
 Baseline files and `--reporter json` output carry `schema_version: "1"` and
 follow the published JSON Schemas under [`docs/schema/`](./docs/schema/).
 
