@@ -542,6 +542,60 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
     assert_eq!(skipped.len(), 5, "{stderr}");
 }
 
+/// An import through a directory link inside the root reaches the file
+/// behind it, and `--trace` names the link it went through (#1001).
+#[cfg(unix)]
+#[test]
+fn binary_imports_through_a_symlink_inside_the_root_reach_its_target() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    fs::create_dir_all(root.join("acme/_impl/compat")).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\
+         [tool.chokkin]\nentry = [\"acme/main.py\"]\n",
+    )
+    .expect("write pyproject");
+    for package in ["acme", "acme/_impl", "acme/_impl/compat"] {
+        fs::write(root.join(package).join("__init__.py"), "").expect("write package");
+    }
+    fs::write(
+        root.join("acme/main.py"),
+        "from acme.compat.core import helper\n\nhelper()\n",
+    )
+    .expect("write main");
+    fs::write(
+        root.join("acme/_impl/compat/core.py"),
+        "def helper(): ...\n",
+    )
+    .expect("write core");
+    symlink("_impl/compat", root.join("acme/compat")).expect("symlink");
+
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--strict"])
+            .args(args)
+            .arg(root)
+            .output()
+            .expect("run chokkin");
+        // The report goes to stdout and the trace to stderr.
+        [output.stdout, output.stderr]
+            .map(|bytes| String::from_utf8(bytes).expect("utf8"))
+            .concat()
+    };
+    let report = run(&["--reporter", "json"]);
+    assert!(!report.contains("core.py"), "{report}");
+    let trace = run(&["--trace", "acme/_impl/compat/core.py"]);
+    assert!(
+        trace.contains(
+            "import acme.compat.core (line 1, through symlink `acme/compat` -> `acme/_impl/compat`)"
+        ),
+        "{trace}"
+    );
+}
+
 /// A source file whose path is not UTF-8 is skipped with a warning, not
 /// read back under its lossy name, which fails the whole run (#1146). Linux
 /// only: macOS and Windows file systems refuse such names.
