@@ -1,5 +1,5 @@
 name: chokkin
-description: Report unused files, dependencies, and symbols in a Python project.
+description: Find unused files, dependencies, and symbols in Python projects. Zero config, with PR annotations, SARIF, and baselines.
 author: watany-dev
 branding:
   icon: scissors

@@ -277,7 +277,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: watany-dev/chokkin@f6d097a5595fa4c1d6a7d3b67154d9b30e5c1d46 # v0.7.3
+      - uses: watany-dev/chokkin@35ee2f13a9c56ee2ebd15c2c91d0245862a4979a # v0.7.12
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
@@ -289,6 +289,11 @@ jobs:
 
 Pin the action to a full commit SHA with the tag as a comment, as above: a tag
 can be moved, a SHA cannot, and Dependabot still bumps both.
+
+Every input is optional. With no `with:` block the action runs chokkin with
+the `github` reporter, annotates each finding on the pull request, and fails
+the job on reportable findings (see the exit codes above); add `baseline` once
+you have one.
 
 | Input | Default | Description |
 | --- | --- | --- |

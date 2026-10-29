@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: watany-dev/chokkin@f6d097a5595fa4c1d6a7d3b67154d9b30e5c1d46 # v0.7.3
+      - uses: watany-dev/chokkin@35ee2f13a9c56ee2ebd15c2c91d0245862a4979a # v0.7.12
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
@@ -198,6 +198,8 @@ jobs:
 ```
 
 上の例のように、action はタグをコメントに残してフルコミット SHA で固定してください。タグは付け替えられますが SHA は変わらず、Dependabot は両方を更新します。
+
+input はすべて省略できます。`with:` を書かなければ `github` reporter で chokkin を実行し、各 finding を pull request に annotation として出して、reportable な finding があれば job を失敗させます(上記の exit code を参照)。baseline ができたら `baseline` を足してください。
 
 | Input | Default | 説明 |
 | --- | --- | --- |
