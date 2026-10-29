@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes when users add it to their own list (redash's `big_query_gce.py`)
   (#1258).
 
+### Fixed
+- `setup.cfg` opens a section whose header has text after the `]`
+  (`[options] ; runtime`), as configparser does: the header runs to the
+  last `]`. The options under it were read as part of the previous section,
+  so declared `install_requires` were reported as CHK004.
+
 ## [0.7.12] - 2026-10-28
 
 ### Added

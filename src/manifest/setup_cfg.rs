@@ -269,8 +269,8 @@ pub(crate) fn ini_lines(contents: &str) -> impl Iterator<Item = (&str, IniLine<'
         let trimmed = raw.trim();
         let line = if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             IniLine::Skipped
-        } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            current = trimmed[1..trimmed.len() - 1].trim();
+        } else if let Some(header) = section_header(trimmed) {
+            current = header.trim();
             last_key = None;
             IniLine::Section(current)
         } else if raw.starts_with([' ', '\t']) {
@@ -301,6 +301,15 @@ pub(crate) fn ini_lines(contents: &str) -> impl Iterator<Item = (&str, IniLine<'
         };
         (raw, line)
     })
+}
+
+/// The name in a `[name]` header line, as `configparser`'s `SECTCRE`
+/// (`\[(?P<header>.+)\]`) reads it: a prefix match whose greedy group runs to
+/// the last `]`, so text after it (`[options] ; runtime`) is ignored.
+fn section_header(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix('[')?;
+    let end = rest.rfind(']')?;
+    (end > 0).then(|| &rest[..end])
 }
 
 /// Split `setup.cfg` into sections the way `configparser` does (see
@@ -557,6 +566,37 @@ install_requires =
             .and_then(|options| options.get("install_requires"))
             .expect("install_requires");
         assert_eq!(item_texts(requires), ["requests[security]", "flask"]);
+    }
+
+    #[test]
+    fn headers_ignore_text_after_the_last_bracket_like_configparser() {
+        let contents = "[options] ; runtime\ninstall_requires = a\n[x]y] #z\nk = v\n";
+        let sections = parse_ini_sections(contents);
+        assert_eq!(
+            sections
+                .get("options")
+                .and_then(|o| o.get("install_requires"))
+                .map(String::as_str),
+            Some("a")
+        );
+        // The group is greedy, so it runs to the last `]` on the line.
+        assert_eq!(
+            sections
+                .get("x]y")
+                .and_then(|o| o.get("k"))
+                .map(String::as_str),
+            Some("v")
+        );
+    }
+
+    #[test]
+    fn section_header_needs_a_name_between_the_brackets() {
+        assert_eq!(section_header("[a]"), Some("a"));
+        // `.+` needs a character, so `[]` is no header (configparser
+        // rejects the line).
+        assert_eq!(section_header("[]"), None);
+        assert_eq!(section_header("[a"), None);
+        assert_eq!(section_header("a]"), None);
     }
 
     #[test]
