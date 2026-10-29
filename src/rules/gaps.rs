@@ -858,7 +858,6 @@ fn unresolved_import_gaps(
                 ))
             && !is_first_party_import(import, &context.sources.layout, &manifest.metadata)
             && (is_script(file)
-                || file_context(file, context.sources) != FileContext::Test
                 || !name_loaded
                     .get_or_init(|| context.name_loaded_test_files())
                     .contains(file.as_str()));
