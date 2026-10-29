@@ -416,6 +416,8 @@ mod tests {
             ("mptt", "django-mptt"),
             ("strawberry_django", "strawberry-graphql-django"),
             ("graphql", "graphql-core"),
+            ("strawberry", "strawberry-graphql"),
+            ("django_pg_utils", "django-pgware"),
             ("storages", "django-storages"),
             ("phonenumber_field", "django-phonenumber-field"),
             ("i18naddress", "google-i18n-address"),

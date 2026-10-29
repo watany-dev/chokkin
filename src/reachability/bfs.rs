@@ -37,6 +37,10 @@ pub(super) struct BfsOutcome {
     /// Exposed files that some path reaches from a root the package or its
     /// host loads, not only from public subpackages or tests (#802).
     pub certain: IndexSet<FileId>,
+    /// Paths of the files a reached file names in a list of module names
+    /// (#1257): the modules a loader imports by name, not the packages above
+    /// them.
+    pub listed: HashSet<String>,
 }
 
 /// One import site on a file: the module it names and the line it sits on.
@@ -81,6 +85,7 @@ struct Adjacency {
     file_imports: HashMap<FileId, Vec<ImportSite>>,
     submodule_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     prefix_imports: HashMap<FileId, Vec<SubmoduleSite>>,
+    listed_imports: HashMap<FileId, Vec<SubmoduleSite>>,
     dynamic_sites: HashSet<ImportSiteRef>,
     /// Function-local and `TYPE_CHECKING` import lines.
     lazy: HashSet<FileLine>,
@@ -99,6 +104,7 @@ struct BfsState<'a> {
     reached: IndexMap<FileId, Visit>,
     predecessors: IndexMap<FileId, ReachPredecessor>,
     used_modules: Vec<UsedModule>,
+    listed: IndexSet<FileId>,
 }
 
 impl BfsState<'_> {
@@ -181,6 +187,11 @@ impl BfsState<'_> {
             eager,
             exposed,
             certain,
+            listed: self
+                .listed
+                .iter()
+                .filter_map(|file| Some(self.graph.file(*file)?.path.clone()))
+                .collect(),
         }
     }
 
@@ -227,6 +238,7 @@ pub(super) fn run_reachability_bfs(
         file_imports: build_file_import_adjacency(graph),
         submodule_imports: build_submodule_imports(graph, parse, module_index),
         prefix_imports: build_prefix_imports(graph, parse, module_index),
+        listed_imports: build_listed_imports(graph, parse, module_index),
         dynamic_sites: build_dynamic_sites(graph, parse),
         lazy,
         optional,
@@ -240,6 +252,7 @@ pub(super) fn run_reachability_bfs(
         reached: IndexMap::new(),
         predecessors: IndexMap::new(),
         used_modules: Vec::new(),
+        listed: IndexSet::new(),
     };
 
     for root in &entry.roots {
@@ -343,6 +356,22 @@ fn record_file_imports(state: &mut BfsState<'_>, file_id: FileId, class: Reach, 
             module: module.clone(),
             line: *line,
         });
+    }
+
+    // Nothing shows when the loader runs, so a listed module loads lazily.
+    for (listed, module, line) in adjacency.listed_imports.get(&file_id).into_iter().flatten() {
+        state.listed.insert(*listed);
+        for name in module_and_parents(module) {
+            let Some(target) = state.module_index.resolve_from(source_path, name) else {
+                continue;
+            };
+            state.enqueue_file(target, Some(file_id), Reach::Reachable, || {
+                TraceStep::DynamicImport {
+                    module: name.to_owned(),
+                    line: *line,
+                }
+            });
+        }
     }
 }
 
@@ -463,6 +492,48 @@ fn build_prefix_imports(
     sites
 }
 
+/// A list of dotted module names in a runtime file is a plugin list some
+/// loader imports one by one (redash's `default_query_runners`, #1257), so
+/// each site reaches the module and, when the walk follows it, the packages
+/// Python imports before it. Only a list whose every name resolves to a
+/// project module counts: one that also names a third-party module, a class
+/// or a typo may be anything (a log message's names, `MIDDLEWARE`), so it
+/// reaches nothing and lowers nothing, and its strings stay
+/// [`crate::parser::ModuleRef`]s.
+fn build_listed_imports(
+    graph: &ProjectGraph,
+    parse: &ParseSummary,
+    module_index: &ModuleIndex,
+) -> HashMap<FileId, Vec<SubmoduleSite>> {
+    let mut sites: HashMap<FileId, Vec<SubmoduleSite>> = HashMap::new();
+    for module in &parse.modules {
+        let Some(file_id) = graph.file_id(&module.path).filter(|id| {
+            graph
+                .file(*id)
+                .is_some_and(|node| node.context == FileContext::Runtime)
+        }) else {
+            continue;
+        };
+        for list in &module.module_lists {
+            let Some(targets) = list
+                .iter()
+                .map(|reference| module_index.resolve_from(&module.path, &reference.text))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            for (reference, target) in list.iter().zip(targets) {
+                sites.entry(file_id).or_default().push((
+                    target,
+                    reference.text.clone(),
+                    reference.line,
+                ));
+            }
+        }
+    }
+    sites
+}
+
 /// Import sites that came from `importlib.import_module("m")` rather than an
 /// `import` statement. Both kinds share one `FileImportsModule` edge, so the
 /// parse summary is what distinguishes them. A site that is also a static
@@ -573,6 +644,7 @@ mod tests {
                     version_minors: None,
                     called_before: Vec::new(),
                     tested_before: Vec::new(),
+                    caller_guarded: false,
                 })
                 .collect(),
             dynamic_imports: dynamic
@@ -935,6 +1007,7 @@ mod tests {
             version_minors: None,
             called_before: Vec::new(),
             tested_before: Vec::new(),
+            caller_guarded: false,
         };
         let modules = vec![ParsedModule {
             path: "src/acme/main.py".to_owned(),
@@ -1091,6 +1164,7 @@ mod tests {
             file_imports: HashMap::new(),
             submodule_imports: HashMap::new(),
             prefix_imports: HashMap::new(),
+            listed_imports: HashMap::new(),
             dynamic_sites: HashSet::new(),
             lazy: HashSet::new(),
             optional: HashSet::new(),
@@ -1104,6 +1178,7 @@ mod tests {
             reached: IndexMap::new(),
             predecessors: IndexMap::new(),
             used_modules: Vec::new(),
+            listed: IndexSet::new(),
         };
         let file_id = graph.file_id(PATHS[1]).expect("a.py");
         let step = || TraceStep::File {

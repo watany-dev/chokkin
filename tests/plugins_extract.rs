@@ -2485,6 +2485,18 @@ fn alembic_ini_origin_line_and_absolute_package_dir() {
         ("src/acme/migrations/env.py", ""),
     ]);
     assert!(paths.is_empty(), "{paths:?}");
+
+    // A package name must be a dotted identifier, even when a directory of
+    // that name has an `__init__.py`.
+    let paths = alembic_entries(&[
+        ("src/my-db/__init__.py", ""),
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = my-db:migrations\n",
+        ),
+        ("src/my-db/migrations/env.py", ""),
+    ]);
+    assert!(paths.is_empty(), "{paths:?}");
 }
 
 /// alembic 1.16 reads `[tool.alembic]` from `pyproject.toml`, relative paths

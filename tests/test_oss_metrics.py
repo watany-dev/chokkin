@@ -111,10 +111,10 @@ class PrecisionMissesTest(unittest.TestCase):
         self.assertEqual(om.precision_misses([finding("CHK007", "fp")]), [])
 
     def test_chk001_is_floored_once_app_projects_carry_labels(self) -> None:
-        findings = [finding("CHK001", "fp")] * 3 + [finding("CHK001", "tp")] * 17  # 85%
+        findings = [finding("CHK001", "fp")] + [finding("CHK001", "tp")] * 23  # 95.8%
         self.assertEqual(om.precision_misses(findings), [])
-        findings.append(finding("CHK001", "fp"))  # 81.0%
-        self.assertEqual(om.precision_misses(findings), ["CHK001=81.0%<85%"])
+        findings.append(finding("CHK001", "fp"))  # 92.0%
+        self.assertEqual(om.precision_misses(findings), ["CHK001=92.0%<95%"])
 
     def test_chk005_and_chk008_are_floored(self) -> None:
         findings = [finding("CHK005", "fp")] * 2 + [finding("CHK005", "tp")] * 8  # 80%

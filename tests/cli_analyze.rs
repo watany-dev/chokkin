@@ -4577,6 +4577,39 @@ fn binary_django_backend_settings_use_their_drivers() {
     );
 }
 
+/// A stdlib import uses the peer it loads (`zoneinfo` reads tzdata), a
+/// library the peers it loads without an import (Flask's CLI reads `.env`
+/// through python-dotenv), and a `-types` stub is a stub (#1256).
+#[test]
+fn binary_peers_of_stdlib_modules_and_types_stubs_are_used() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            concat!(
+                "[project]\nname = 'app'\nversion = '0'\n",
+                "dependencies = ['flask', 'python-dotenv', 'tzdata', 'celery', 'rich']\n",
+                "\n[dependency-groups]\ntypes = ['celery-types']\n",
+                "\n[tool.chokkin]\nmode = 'app'\n",
+            ),
+        ),
+        (
+            "app.py",
+            "from zoneinfo import ZoneInfo\nimport celery\nfrom flask.cli import FlaskGroup\n",
+        ),
+    ]);
+    let found: Vec<_> = json_issues(project.path(), &["--no-cache", "--strict"])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| {
+            issue["distribution"]
+                .as_str()
+                .expect("distribution")
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(found, ["rich"]);
+}
+
 /// A backend setting not read may select any driver it loads, and only those:
 /// other unused dependencies stay certain (#1240).
 #[test]
@@ -9743,6 +9776,91 @@ fn binary_package_named_beside_a_directory_listing_lowers_its_modules() {
             level("acme/plugins/net/deep/far.py", "warning", "certain"),
             level("acme/plugins/net/http.py", "info", "likely"),
             level("acme/themes/dark.py", "warning", "certain"),
+        ]
+    );
+}
+
+/// A list of three or more strings in a runtime module that all name project
+/// modules is a plugin list a loader imports one by one (redash's
+/// `default_query_runners` handed to `__import__`), so the listed modules are
+/// reached and what they import counts as used (#1257). A list that also
+/// names a module outside the project, one of two strings, one in a test and
+/// one in a file no entry reaches reach nothing: their modules stay CHK001,
+/// lowered by the strings alone (#1026), and the distribution only they
+/// import stays unused. A loader calls a listed module's `setup` by name
+/// (Sphinx's `builtin_extensions`), so it is no CHK006, unlike its other
+/// unused functions.
+#[test]
+fn binary_list_of_project_module_names_reaches_the_modules() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"httplib2\", \"pypd\"]\n\n[project.scripts]\nacme = \"acme.cli:main\"\n\n[tool.chokkin]\nmode = \"app\"\n";
+    let project = write_project(&[
+        ("pyproject.toml", pyproject),
+        ("acme/__init__.py", ""),
+        (
+            "acme/cli.py",
+            "from acme.settings import RUNNERS, MIXED, PAIR\n\n\ndef main():\n    for name in RUNNERS + MIXED + PAIR:\n        __import__(name)\n",
+        ),
+        (
+            "acme/settings.py",
+            "RUNNERS = [\n    \"acme.runners.http\",\n    \"acme.runners.sql\",\n    \"acme.runners\",\n]\nMIXED = (\"acme.mixed.one\", \"acme.mixed.two\", \"json.decoder\")\nPAIR = [\"acme.pair.one\", \"acme.pair.two\"]\n",
+        ),
+        ("acme/runners/__init__.py", ""),
+        (
+            "acme/runners/http.py",
+            "try:\n    import httplib2  # noqa: F401\nexcept ImportError:\n    pass\n",
+        ),
+        (
+            "acme/runners/sql.py",
+            "def setup(app):\n    return app\n\n\ndef helper():\n    return 1\n",
+        ),
+        ("acme/mixed/one.py", ""),
+        ("acme/mixed/two.py", ""),
+        ("acme/pair/one.py", ""),
+        ("acme/pair/two.py", ""),
+        (
+            "acme/orphan.py",
+            "LATER = [\"acme.late.one\", \"acme.late.two\", \"acme.late.three\"]\n",
+        ),
+        ("acme/late/one.py", "import pypd\n"),
+        ("acme/late/two.py", ""),
+        ("acme/late/three.py", ""),
+        (
+            "tests/test_names.py",
+            "NAMES = [\"acme.checked.one\", \"acme.checked.two\", \"acme.checked.three\"]\n",
+        ),
+        ("acme/checked/one.py", ""),
+        ("acme/checked/two.py", ""),
+        ("acme/checked/three.py", ""),
+    ]);
+
+    let level = |code: &str, target: &str, severity: &str, confidence: &str| {
+        (
+            code.to_owned(),
+            target.to_owned(),
+            severity.to_owned(),
+            confidence.to_owned(),
+        )
+    };
+    let findings: Vec<(String, String, String, String)> = issue_levels(project.path())
+        .into_iter()
+        .filter(|(code, ..)| ["CHK001", "CHK002", "CHK006"].contains(&code.as_str()))
+        .collect();
+    assert_eq!(
+        findings,
+        [
+            level("CHK001", "acme/checked/one.py", "info", "likely"),
+            level("CHK001", "acme/checked/three.py", "info", "likely"),
+            level("CHK001", "acme/checked/two.py", "info", "likely"),
+            level("CHK001", "acme/late/one.py", "info", "likely"),
+            level("CHK001", "acme/late/three.py", "info", "likely"),
+            level("CHK001", "acme/late/two.py", "info", "likely"),
+            level("CHK001", "acme/mixed/one.py", "info", "likely"),
+            level("CHK001", "acme/mixed/two.py", "info", "likely"),
+            level("CHK001", "acme/orphan.py", "warning", "likely"),
+            level("CHK001", "acme/pair/one.py", "info", "likely"),
+            level("CHK001", "acme/pair/two.py", "info", "likely"),
+            level("CHK002", "pypd", "error", "certain"),
+            level("CHK006", "acme/runners/sql.py:helper", "warning", "likely"),
         ]
     );
 }

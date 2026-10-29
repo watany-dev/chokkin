@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr};
+use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr, walk_stmt};
 use ruff_python_ast::{
     Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
     Identifier, Operator, Parameters, Stmt, StmtClassDef, StmtIf, StmtImport, StmtImportFrom,
-    StmtMatch, StmtTry,
+    StmtMatch, StmtReturn, StmtTry,
 };
 use ruff_text_size::{Ranged, TextSize};
 
@@ -23,8 +23,8 @@ use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
     LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path, lists_directory,
-    literal_target, module_prefix, module_ref_literal, named_load, pytest_plugin_names, python_run,
-    sys_path_hint,
+    literal_target, module_list, module_prefix, module_ref_literal, named_load,
+    pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
 use super::lines::LineIndex;
@@ -97,6 +97,20 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// failed import only while they run, so a nested function's body is
     /// outside them (#968).
     caught_depth: u32,
+    /// Inside a `try:` body with a handler a failed import lands in
+    /// (`except Exception:`), or `with suppress(ImportError):`, as
+    /// `caught_depth` is: where calls of private functions are guarded
+    /// (#1259).
+    broad_caught_depth: u32,
+    /// The module-level private function whose body the walk is in, unless
+    /// a decorator other than a cache may hand it to other callers (#1259).
+    private_function: Option<&'ast str>,
+    /// The non-optional imports in [`Self::private_function`] bodies: index
+    /// in `parsed.imports` and the function.
+    private_function_imports: Vec<(usize, &'ast str)>,
+    /// For each private name, how often it is read, and how often as the
+    /// callee of a call under `broad_caught_depth`.
+    private_name_uses: FxHashMap<&'ast str, (u32, u32)>,
     /// Inside code that runs only once some package imported: a `try`'s
     /// `else:`, a branch a flag or availability check rules out, or the
     /// statements after `if not is_x_available(): raise ImportError`. A
@@ -203,6 +217,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             default_context,
             in_type_checking: false,
             caught_depth: 0,
+            broad_caught_depth: 0,
+            private_function: None,
+            private_function_imports: Vec::new(),
+            private_name_uses: FxHashMap::default(),
             gated_depth: 0,
             fallback_for: Vec::new(),
             platform_guard_depth: 0,
@@ -253,6 +271,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     #[must_use]
     pub(super) fn into_parsed(mut self) -> ParsedModule {
         self.parsed.attribute_accesses = self.import_attribute_accesses();
+        self.mark_guarded_private_imports();
         let runs_commands = self
             .parsed
             .imports
@@ -567,6 +586,50 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         (self.try_flags, self.none_flags, self.version_names) = outer;
     }
 
+    /// A module-level private function read only as the callee of calls
+    /// under a handler a failed import lands in (`_load()` in `try: ...
+    /// except Exception:`) runs its imports only there, so CHK005 weighs
+    /// them as it would an import in that `try` body (#1259). Only the
+    /// direct callers count: further up, nearly everything is guarded by
+    /// some broad handler. A function read any other way (passed as a
+    /// callback, called unguarded, decorated by a registry) keeps its
+    /// imports' strength.
+    fn mark_guarded_private_imports(&mut self) {
+        for &(index, function) in &self.private_function_imports {
+            // A guarded call reads its callee's name too, so a listed name
+            // has been read at least once.
+            let guarded = self
+                .private_name_uses
+                .get(function)
+                .is_some_and(|&(reads, guarded_calls)| reads == guarded_calls);
+            if guarded && let Some(import) = self.parsed.imports.get_mut(index) {
+                import.caller_guarded = true;
+            }
+        }
+    }
+
+    /// Count a read of a private name for
+    /// [`Self::mark_guarded_private_imports`], and a guarded call of one.
+    fn record_private_read(&mut self, expr: &'ast Expr) {
+        let (name, guarded_call) = match expr {
+            Expr::Name(name) => (name.id.as_str(), false),
+            Expr::Call(call) if self.broad_caught_depth > 0 => match &*call.func {
+                Expr::Name(name) => (name.id.as_str(), true),
+                _ => return,
+            },
+            _ => return,
+        };
+        if !is_private_name(name) {
+            return;
+        }
+        let uses = self.private_name_uses.entry(name).or_default();
+        if guarded_call {
+            uses.1 += 1;
+        } else {
+            uses.0 += 1;
+        }
+    }
+
     /// Whether an import at `node` runs only when some package is installed.
     fn is_optional_at<R: Ranged>(&self, node: &R) -> bool {
         self.caught_depth > 0
@@ -611,12 +674,14 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
         let saved_literal_modules = std::mem::take(&mut self.literal_modules);
         let saved_caught_depth = self.caught_depth;
+        let saved_broad_caught_depth = self.broad_caught_depth;
         self.module_level = false;
         if matches!(kind, SymbolKind::Function) {
             self.function_depth += 1;
             // The body runs when called, after the enclosing `try` is gone.
             // `fallback_for` stays: a handler that never runs defines nothing.
             self.caught_depth = 0;
+            self.broad_caught_depth = 0;
             // A function that asks whether a package is installed treats the
             // packages it imports after the check as optional (#695, #713).
             // A nested function runs when called, possibly after the outer
@@ -637,6 +702,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.prefix_modules = saved_prefix_modules;
         self.literal_modules = saved_literal_modules;
         self.caught_depth = saved_caught_depth;
+        self.broad_caught_depth = saved_broad_caught_depth;
     }
 
     /// Track `name = import_module("pkg." + x)` for a later
@@ -778,11 +844,26 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     version_minors: None,
                     called_before: Vec::new(),
                     tested_before: Vec::new(),
+                    caller_guarded: false,
                 });
             },
             Some(PythonRun::File) => self.parsed.runs_python_file = true,
             None => {},
         }
+    }
+
+    fn record_module_list(&mut self, elts: &[Expr]) {
+        let Some(elts) = module_list(elts) else {
+            return;
+        };
+        let list = elts
+            .into_iter()
+            .map(|(text, elt)| ModuleRef {
+                text: text.to_owned(),
+                line: self.line_number(elt),
+            })
+            .collect();
+        self.parsed.module_lists.push(list);
     }
 
     fn record_dynamic_imports(&mut self, call: &ExprCall) {
@@ -900,6 +981,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 version_minors: self.version_minor_runs(),
                 called_before: Vec::new(),
                 tested_before: Vec::new(),
+                caller_guarded: false,
             });
         }
     }
@@ -983,6 +1065,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 version_minors: self.version_minor_runs(),
                 called_before: Vec::new(),
                 tested_before: Vec::new(),
+                caller_guarded: false,
             });
         }
     }
@@ -1007,6 +1090,12 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     }
                 }
             }
+        }
+        if !import.optional
+            && let Some(function) = self.private_function
+        {
+            self.private_function_imports
+                .push((self.parsed.imports.len(), function));
         }
         self.parsed.imports.push(import);
     }
@@ -1264,12 +1353,20 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let outer_flags = self.enter_scope_names(Some(&def.parameters), &def.body);
                 self.function_frames
                     .push((def.name.as_str(), &def.parameters));
+                let outer_private = self.private_function;
+                // A nested function may be returned and called after the
+                // guard is gone.
+                self.private_function = (self.module_level
+                    && is_private_name(def.name.as_str())
+                    && def.decorator_list.iter().all(caches_calls))
+                .then_some(def.name.as_str());
                 self.visit_def_body(
                     &def.name,
                     &def.decorator_list,
                     &def.body,
                     SymbolKind::Function,
                 );
+                self.private_function = outer_private;
                 self.function_frames.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
@@ -1400,8 +1497,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                         |value| matches!(value, Expr::BooleanLiteral(literal) if literal.value),
                     ));
                 }
+                let broad = try_stmt.handlers.iter().any(|handler| {
+                    let ExceptHandler::ExceptHandler(handler) = handler;
+                    handler.type_.as_deref().is_none_or(catches_import_error)
+                });
                 self.caught_depth = self.caught_depth.saturating_add(1);
+                self.broad_caught_depth = self.broad_caught_depth.saturating_add(u32::from(broad));
                 self.visit_body(&try_stmt.body);
+                self.broad_caught_depth = self.broad_caught_depth.saturating_sub(u32::from(broad));
                 self.caught_depth = self.caught_depth.saturating_sub(1);
                 let primaries = imported_roots(&try_stmt.body);
                 let imports = try_stmt
@@ -1452,10 +1555,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     .any(|item| suppresses_import_error(&item.context_expr));
                 if suppresses {
                     self.caught_depth = self.caught_depth.saturating_add(1);
+                    self.broad_caught_depth = self.broad_caught_depth.saturating_add(1);
                 }
                 self.visit_body(&with_stmt.body);
                 if suppresses {
                     self.caught_depth = self.caught_depth.saturating_sub(1);
+                    self.broad_caught_depth = self.broad_caught_depth.saturating_sub(1);
                 }
             },
             Stmt::Match(match_stmt) => self.visit_match(match_stmt),
@@ -1508,12 +1613,16 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             self.command_words.insert(word.to_owned());
         }
         match expr {
-            Expr::Name(name) if name.ctx.is_load() => insert_name(&mut self.loaded_names, &name.id),
+            Expr::Name(name) if name.ctx.is_load() => {
+                insert_name(&mut self.loaded_names, &name.id);
+                self.record_private_read(expr);
+            },
             Expr::Attribute(attribute) => self.record_attribute(attribute),
             Expr::Subscript(subscript) if reads_own_namespace(subscript) => {
                 self.record_self_reference(subscript);
             },
             Expr::Call(call) => {
+                self.record_private_read(expr);
                 self.visit_type_expression_arguments(call);
                 self.record_computed_getattr(call);
                 self.record_literal_getattr(call);
@@ -1530,8 +1639,14 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 }
                 self.record_dynamic_imports(call);
             },
-            Expr::List(list) => self.record_python_run(expr, &list.elts),
-            Expr::Tuple(tuple) => self.record_python_run(expr, &tuple.elts),
+            Expr::List(list) => {
+                self.record_python_run(expr, &list.elts);
+                self.record_module_list(&list.elts);
+            },
+            Expr::Tuple(tuple) => {
+                self.record_python_run(expr, &tuple.elts);
+                self.record_module_list(&tuple.elts);
+            },
             Expr::StringLiteral(_) => {
                 if let Some(hint) = sys_path_hint(expr)
                     && !self.sys_path.literals.contains(hint.as_ref())
@@ -1556,10 +1671,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             self.visit_parameters(parameters);
         }
         let caught_depth = std::mem::take(&mut self.caught_depth);
+        let broad_caught_depth = std::mem::take(&mut self.broad_caught_depth);
         self.function_depth += 1;
         self.visit_expr(&lambda.body);
         self.function_depth -= 1;
         self.caught_depth = caught_depth;
+        self.broad_caught_depth = broad_caught_depth;
     }
 }
 
@@ -1824,7 +1941,9 @@ fn imported_roots(body: &[Stmt]) -> Option<Vec<String>> {
 /// one returns only when they are installed (#1269). The shape decides, not
 /// the name. A handler that returns `None` / `False` instead lets the call
 /// return either way, so only a caller that tests the result knows the
-/// packages are there (#1272); a function with both kinds of `try` raises.
+/// packages are there (#1272). The first such `try` decides: a call that
+/// gets past it with its package missing checks nothing, and one that may
+/// return before it is a check only when that is `None` / `False`.
 fn import_checks(stmts: &[Stmt]) -> Vec<ImportCheck> {
     stmts
         .iter()
@@ -1832,17 +1951,22 @@ fn import_checks(stmts: &[Stmt]) -> Vec<ImportCheck> {
             let Stmt::FunctionDef(def) = stmt else {
                 return None;
             };
-            let tries: Vec<(&StmtTry, ImportFailure)> = def
-                .body
-                .iter()
-                .filter_map(|stmt| match stmt {
-                    Stmt::Try(try_stmt) => Some((try_stmt, import_failure(try_stmt)?)),
-                    _ => None,
-                })
-                .collect();
-            let returns_falsy = tries
-                .iter()
-                .all(|(_, failure)| *failure == ImportFailure::ReturnsFalsy);
+            let mut tries: Vec<(&StmtTry, ImportFailure)> = Vec::new();
+            let mut returns_early = false;
+            for stmt in &def.body {
+                if let Stmt::Try(try_stmt) = stmt
+                    && let Some(failure) = import_failure(try_stmt)
+                {
+                    tries.push((try_stmt, failure));
+                } else if tries.is_empty() {
+                    let early = returns(std::slice::from_ref(stmt));
+                    if !early.iter().all(|ret| returns_falsy(ret)) {
+                        return None;
+                    }
+                    returns_early |= !early.is_empty();
+                }
+            }
+            let returns_falsy = returns_early || tries.first()?.1 == ImportFailure::ReturnsFalsy;
             let mut modules: Vec<String> = tries
                 .iter()
                 .flat_map(|(try_stmt, _)| &try_stmt.body)
@@ -1879,8 +2003,14 @@ enum ImportFailure {
 
 /// How the first handler a missing package lands in ends, when it raises or
 /// returns a falsy value: a later `except ImportError: raise` never sees the
-/// `ModuleNotFoundError` an earlier handler logs and swallows.
+/// `ModuleNotFoundError` an earlier handler logs and swallows. A handler
+/// that may return before its last statement returns falsy only if every
+/// such `return` is falsy; `None` for any other value, or when `finally`
+/// returns and so swallows the `raise`.
 fn import_failure(try_stmt: &StmtTry) -> Option<ImportFailure> {
+    if !returns(&try_stmt.finalbody).is_empty() {
+        return None;
+    }
     let handler = try_stmt
         .handlers
         .iter()
@@ -1889,17 +2019,48 @@ fn import_failure(try_stmt: &StmtTry) -> Option<ImportFailure> {
             handler
         })
         .find(|handler| handler.type_.as_deref().is_none_or(catches_import_error))?;
-    match handler.body.last()? {
-        Stmt::Raise(_) => Some(ImportFailure::Raises),
-        Stmt::Return(ret) => match ret.value.as_deref() {
-            None | Some(Expr::NoneLiteral(_)) => Some(ImportFailure::ReturnsFalsy),
-            Some(Expr::BooleanLiteral(literal)) if !literal.value => {
-                Some(ImportFailure::ReturnsFalsy)
-            },
-            Some(_) => None,
-        },
+    let (last, leading) = handler.body.split_last()?;
+    let early = returns(leading);
+    if !early.iter().all(|ret| returns_falsy(ret)) {
+        return None;
+    }
+    match last {
+        Stmt::Raise(_) if early.is_empty() => Some(ImportFailure::Raises),
+        Stmt::Raise(_) => Some(ImportFailure::ReturnsFalsy),
+        Stmt::Return(ret) if returns_falsy(ret) => Some(ImportFailure::ReturnsFalsy),
         _ => None,
     }
+}
+
+/// `return`, `return None` or `return False`.
+fn returns_falsy(ret: &StmtReturn) -> bool {
+    match ret.value.as_deref() {
+        None | Some(Expr::NoneLiteral(_)) => true,
+        Some(Expr::BooleanLiteral(literal)) => !literal.value,
+        Some(_) => false,
+    }
+}
+
+/// The `return` statements in `body`, outside nested functions and classes.
+fn returns(body: &[Stmt]) -> Vec<&StmtReturn> {
+    #[derive(Default)]
+    struct Returns<'a>(Vec<&'a StmtReturn>);
+
+    impl<'a> Visitor<'a> for Returns<'a> {
+        fn visit_stmt(&mut self, stmt: &'a Stmt) {
+            match stmt {
+                Stmt::Return(ret) => self.0.push(ret),
+                Stmt::FunctionDef(_) | Stmt::ClassDef(_) => {},
+                _ => walk_stmt(self, stmt),
+            }
+        }
+
+        fn visit_expr(&mut self, _: &'a Expr) {}
+    }
+
+    let mut found = Returns::default();
+    found.visit_body(body);
+    found.0
 }
 
 /// The dotted callees of the calls in the tests of an `if` chain that must be
@@ -1941,6 +2102,27 @@ fn statement_callee(stmt: &Stmt) -> Option<&Expr> {
         return None;
     };
     is_module_path(&call.func).then_some(&*call.func)
+}
+
+/// `_name` but not `__name`: module-private, so its callers sit in the
+/// module (#1259).
+fn is_private_name(name: &str) -> bool {
+    name.starts_with('_') && !name.starts_with("__")
+}
+
+/// `@cache` / `@functools.lru_cache(maxsize=8)`: calls the function only when
+/// the caller calls it, so its callers stay the module's own (#1259).
+fn caches_calls(decorator: &Decorator) -> bool {
+    let expr = match &decorator.expression {
+        Expr::Call(call) => &*call.func,
+        expr => expr,
+    };
+    let name = match expr {
+        Expr::Name(name) => name.id.as_str(),
+        Expr::Attribute(attribute) => attribute.attr.as_str(),
+        _ => return false,
+    };
+    matches!(name, "cache" | "lru_cache")
 }
 
 /// `except ImportError:` / `except (ModuleNotFoundError, ...):`, or a class
@@ -2018,6 +2200,32 @@ mod tests {
         let mut visitor = ModuleVisitor::new(path, &layout, file_context, &lines);
         visitor.visit_module(source, module.suite());
         visitor.into_parsed()
+    }
+
+    /// A list or tuple of three or more whole dotted module names is kept with
+    /// each element's line; a shorter one, or one holding `pkg:attr`, a
+    /// `python:` name, one segment or a computed string, is not (#1257).
+    #[test]
+    fn collects_lists_of_dotted_module_names() {
+        let parsed = visit_source(
+            "RUNNERS = [\n    \"pkg.a\",\n    \"pkg.b.c\",\n    \"pkg.d\",\n]\nONE = [\"pkg.a\", \"pkg.b\", \"pkg\"]\nX = (\"pkg.a\", \"pkg.b\", \"pkg.c\")\nPAIR = [\"pkg.a\", \"pkg.b\"]\nATTR = [\"pkg.a\", \"pkg.b\", \"pkg.c:f\"]\nPY = [\"pkg.a\", \"pkg.b\", \"python:pkg.c\"]\nNAME = \"c\"\nF = [\"pkg.a\", \"pkg.b\", f\"pkg.{NAME}\"]\n",
+        );
+        let lists: Vec<Vec<(&str, u32)>> = parsed
+            .module_lists
+            .iter()
+            .map(|list| {
+                list.iter()
+                    .map(|reference| (reference.text.as_str(), reference.line))
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            lists,
+            [
+                vec![("pkg.a", 2), ("pkg.b.c", 3), ("pkg.d", 4)],
+                vec![("pkg.a", 7), ("pkg.b", 7), ("pkg.c", 7)],
+            ]
+        );
     }
 
     /// Dotted string literals, `pkg.mod:attr` included (#493), are kept once
@@ -3219,7 +3427,35 @@ g = lambda x=utils.G: x
                 ("returns", vec!["a"], true),
                 ("returns_none", vec!["d"], true),
                 ("returns_bare", vec!["e"], true),
-                ("mixed", vec!["h", "i"], false),
+                ("mixed", vec!["h", "i"], true),
+            ]
+        );
+    }
+
+    /// A function that can return a truthy value with a package missing is
+    /// no check: a truthy `return` before the first counted `try` (D1), a
+    /// handler that may return a truthy value before its `raise` (D2), or a
+    /// `finally` that returns (D4). Only the first counted `try` decides how
+    /// a missing package leaves (D3), and a falsy `return` before it or in
+    /// its handler makes the check return falsy.
+    #[test]
+    fn install_checks_need_every_path_to_check() {
+        let parsed = visit_source(
+            "def early(name):\n    if name != 'x':\n        return\n    try:\n        import a\n    except ImportError:\n        raise\n\ndef after_true():\n    try:\n        import b\n    except ImportError:\n        return True\n    try:\n        import c\n    except ImportError:\n        raise\n\ndef strict(strict=True):\n    try:\n        import d\n    except ImportError:\n        if not strict:\n            return True\n        raise\n\ndef lenient(strict=True):\n    try:\n        import e\n    except ImportError:\n        if not strict:\n            return False\n        raise\n\ndef swallowed():\n    try:\n        import f\n    except ImportError:\n        raise\n    finally:\n        return\n\ndef first_raises():\n    try:\n        import g\n    except ImportError:\n        raise\n    try:\n        import h\n    except ImportError:\n        return False\n\ndef guarded(name):\n    if not name:\n        raise ValueError(name)\n    try:\n        import i\n    except ImportError:\n        log()\n    try:\n        import j\n    except ImportError:\n        raise\n    finally:\n        log()\n    return j\n\ndef nested_return():\n    def inner():\n        return 1\n    try:\n        import k\n    except ImportError:\n        raise\n",
+        );
+        let checks: Vec<(&str, bool)> = parsed
+            .import_checks
+            .iter()
+            .map(|check| (check.function.as_str(), check.returns_falsy))
+            .collect();
+        assert_eq!(
+            checks,
+            [
+                ("early", true),
+                ("lenient", true),
+                ("first_raises", false),
+                ("guarded", false),
+                ("nested_return", false),
             ]
         );
     }
@@ -3330,6 +3566,36 @@ g = lambda x=utils.G: x
                 ("importlib_metadata", Some(vec![[0, 8]])),
                 ("cPickle", Some(vec![])),
                 ("shadowed", None),
+            ]
+        );
+    }
+
+    /// #1259: mlflow's `_cached_evaluate_load` imports `evaluate`, and every
+    /// call of it sits in `try: ... except Exception:`. Only a private
+    /// module-level function read solely as such a call counts.
+    #[test]
+    fn imports_of_private_functions_called_only_under_broad_handlers_are_caller_guarded() {
+        let parsed = visit_source(
+            "import functools\n\n@functools.lru_cache(maxsize=8)\ndef _load(path):\n    import evaluate\n\n@cache\ndef _cached():\n    import cached_lib\n\ndef _github(path):\n    import evaluate_github\n\ndef _unguarded():\n    import unguarded\n\ndef _narrow():\n    import narrow\n\ndef _passed():\n    import passed\n\ndef public():\n    import public_lib\n\n@register\ndef _registered():\n    import registered\n\ndef _outer():\n    def _inner():\n        import inner\n    return _inner\n\ndef _uncalled():\n    import uncalled\n\ndef toxicity():\n    try:\n        _load(\"toxicity\")\n        _cached()\n        _github(\"x\")\n        _unguarded()\n        public()\n        _registered()\n        f = _outer()\n        try:\n            _inner()\n        except Exception:\n            pass\n    except Exception:\n        return\n    try:\n        _narrow()\n    except ValueError:\n        pass\n    with suppress(ImportError):\n        _passed()\n    run(_passed)\n    _unguarded()\n    try:\n        _load(\"rouge\")\n    except:\n        pass\n\ntry:\n    def later():\n        _github(\"y\")\nexcept Exception:\n    pass\n",
+        );
+        assert_eq!(
+            parsed
+                .imports
+                .iter()
+                .map(|import| (import.module.as_str(), import.caller_guarded))
+                .collect::<Vec<_>>(),
+            [
+                ("functools", false),
+                ("evaluate", true),
+                ("cached_lib", true),
+                ("evaluate_github", false),
+                ("unguarded", false),
+                ("narrow", false),
+                ("passed", false),
+                ("public_lib", false),
+                ("registered", false),
+                ("inner", false),
+                ("uncalled", false),
             ]
         );
     }
@@ -4255,12 +4521,41 @@ value = t\"{utils.C}\"
             Opaque,
         }
 
+        /// What a generated availability flag holds (#1242).
+        #[derive(Clone, Copy, Debug)]
+        enum FlagValue {
+            /// `x = importlib.util.find_spec("c")`, `None` without `c`.
+            FindSpec,
+            /// `x = find_spec("c") and find_spec("d")`.
+            FindSpecAnd,
+            /// `x = is_c_available()`, `False` without `c`.
+            Available,
+        }
+
+        /// How the `if` after a flag tests it.
+        #[derive(Clone, Copy, Debug)]
+        enum FlagTest {
+            Truthy,
+            Falsy,
+            IsNotNone,
+            IsNone,
+        }
+
         #[derive(Clone, Debug)]
         enum Block {
-            Import { from: bool },
+            Import {
+                from: bool,
+            },
             Check,
+            /// `check_c_installed()`, which raises without `c` (#1242).
+            InstallCheck,
+            /// An availability flag assigned and then tested by an `if`.
+            Flag(FlagValue, FlagTest, Vec<Self>),
             Try(Try),
-            With { suppress: bool, body: Vec<Self> },
+            With {
+                suppress: bool,
+                body: Vec<Self>,
+            },
             If(Guard, Vec<Self>),
             Def(Vec<Self>),
             Class(Vec<Self>),
@@ -4283,6 +4578,7 @@ value = t\"{utils.C}\"
             prop_oneof![
                 3 => any::<bool>().prop_map(|from| Block::Import { from }),
                 1 => Just(Block::Check),
+                1 => Just(Block::InstallCheck),
             ]
             .prop_recursive(4, 24, 3, |inner| {
                 let body = prop::collection::vec(inner, 0..3);
@@ -4299,7 +4595,20 @@ value = t\"{utils.C}\"
                     Just(Guard::Main),
                     Just(Guard::Opaque),
                 ];
+                let value = prop_oneof![
+                    Just(FlagValue::FindSpec),
+                    Just(FlagValue::FindSpecAnd),
+                    Just(FlagValue::Available),
+                ];
+                let test = prop_oneof![
+                    Just(FlagTest::Truthy),
+                    Just(FlagTest::Falsy),
+                    Just(FlagTest::IsNotNone),
+                    Just(FlagTest::IsNone),
+                ];
                 prop_oneof![
+                    (value, test, body.clone())
+                        .prop_map(|(value, test, body)| Block::Flag(value, test, body)),
                     (
                         body.clone(),
                         handler,
@@ -4328,11 +4637,14 @@ value = t\"{utils.C}\"
         }
 
         /// Whether `blocks` check for a package outside nested scopes, as
-        /// `first_availability_check` looks for one.
+        /// `first_availability_check` looks for one: a flag's `find_spec` /
+        /// `is_c_available` call is one, an install check's name is not.
         fn checks(blocks: &[Block]) -> bool {
             blocks.iter().any(|block| match block {
-                Block::Check => true,
-                Block::Import { .. } | Block::Def(_) | Block::Class(_) => false,
+                Block::Check | Block::Flag(..) => true,
+                Block::Import { .. } | Block::InstallCheck | Block::Def(_) | Block::Class(_) => {
+                    false
+                },
                 Block::Try(Try {
                     body,
                     handled,
@@ -4370,6 +4682,9 @@ value = t\"{utils.C}\"
             main_block: bool,
             /// The innermost def / class is a function.
             function_scope: bool,
+            /// Inside a def / class, where an assignment is no module-level
+            /// flag.
+            nested: bool,
             /// Roots of the `try` body an enclosing `except ImportError:`
             /// falls back for (#721).
             fallback_for: Vec<String>,
@@ -4416,7 +4731,7 @@ value = t\"{utils.C}\"
                 let mut frame = frame.clone();
                 for block in blocks {
                     self.block(block, depth, &frame);
-                    if matches!(block, Block::Check) {
+                    if matches!(block, Block::Check | Block::InstallCheck) {
                         frame.gated = true;
                     }
                 }
@@ -4449,6 +4764,55 @@ value = t\"{utils.C}\"
                     fallback_for: frame.fallback_for.clone(),
                 };
                 self.expected.push((module, flags));
+            }
+
+            /// A package check in a function makes the imports after it in
+            /// that function optional (#713).
+            fn check_seen(&mut self, frame: &Frame) {
+                if frame.function_scope
+                    && let Some(function) = self.functions.last_mut()
+                {
+                    function.seen = true;
+                }
+            }
+
+            /// A module-level flag guards the `if` body when the test is
+            /// false without the package: truthiness for both values, and
+            /// `is not None` only for `find_spec`'s `None`. In a def or class
+            /// the name is a plain local, but its call is a check (#713).
+            fn flag(
+                &mut self,
+                (value, test): (FlagValue, FlagTest),
+                body: &[Block],
+                depth: usize,
+                frame: &Frame,
+            ) {
+                let name = self.fresh("zzf");
+                let assigned = match value {
+                    FlagValue::FindSpec => "importlib.util.find_spec(\"zzc\")",
+                    FlagValue::FindSpecAnd => {
+                        "importlib.util.find_spec(\"zzc\") and importlib.util.find_spec(\"zzd\")"
+                    },
+                    FlagValue::Available => "is_zzc_available()",
+                };
+                self.line(depth, &format!("{name} = {assigned}"));
+                self.check_seen(frame);
+                let tested = match test {
+                    FlagTest::Truthy => name,
+                    FlagTest::Falsy => format!("not {name}"),
+                    FlagTest::IsNotNone => format!("{name} is not None"),
+                    FlagTest::IsNone => format!("{name} is None"),
+                };
+                self.line(depth, &format!("if {tested}:"));
+                let find_spec = matches!(value, FlagValue::FindSpec | FlagValue::FindSpecAnd);
+                let guards = match test {
+                    FlagTest::Truthy => true,
+                    FlagTest::IsNotNone => find_spec,
+                    FlagTest::Falsy | FlagTest::IsNone => false,
+                };
+                let mut inner = frame.clone();
+                inner.gated |= guards && !frame.nested;
+                self.body(body, depth + 1, &inner);
             }
 
             fn try_block(&mut self, block: &Try, depth: usize, frame: &Frame) {
@@ -4504,11 +4868,14 @@ value = t\"{utils.C}\"
                     Block::Check => {
                         self.line(depth, "if importlib.util.find_spec(\"zzc\") is None:");
                         self.line(depth + 1, "raise ImportError(\"zzc\")");
-                        if frame.function_scope
-                            && let Some(function) = self.functions.last_mut()
-                        {
-                            function.seen = true;
-                        }
+                        self.check_seen(frame);
+                    },
+                    Block::InstallCheck => {
+                        let name = self.fresh("check_zzc");
+                        self.line(depth, &format!("{name}_installed()"));
+                    },
+                    Block::Flag(value, test, body) => {
+                        self.flag((*value, *test), body, depth, frame);
                     },
                     Block::Try(block) => self.try_block(block, depth, frame),
                     Block::With { suppress, body } => {
@@ -4556,6 +4923,7 @@ value = t\"{utils.C}\"
                         let inner = Frame {
                             caught: false,
                             function_scope: true,
+                            nested: true,
                             ..frame.clone()
                         };
                         self.body(body, depth + 1, &inner);
@@ -4566,6 +4934,7 @@ value = t\"{utils.C}\"
                         self.line(depth, &format!("class {name}:"));
                         let inner = Frame {
                             function_scope: false,
+                            nested: true,
                             ..frame.clone()
                         };
                         self.body(body, depth + 1, &inner);
@@ -4613,7 +4982,9 @@ value = t\"{utils.C}\"
                 };
                 // A module-level check that raises makes the rest of the
                 // module optional; nothing else outlives its statement.
-                let checked = blocks.iter().any(|block| matches!(block, Block::Check));
+                let checked = blocks
+                    .iter()
+                    .any(|block| matches!(block, Block::Check | Block::InstallCheck));
                 let mut blocks = blocks;
                 blocks.push(Block::Import { from: false });
                 model.body(&blocks, 0, &Frame::default());

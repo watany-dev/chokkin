@@ -1377,6 +1377,22 @@ mod tests {
     }
 
     #[test]
+    fn mkdocs_plugins_name_their_distributions() {
+        let result = scan_files(&[(
+            "mkdocs.yml",
+            "site_name: demo\nplugins:\n  - include-markdown\n  - redirects:\n      redirect_maps: {}\n  - minify\n  - search\n",
+        )]);
+        assert_eq!(
+            result.used_distributions,
+            [
+                "mkdocs-include-markdown-plugin",
+                "mkdocs-minify-plugin",
+                "mkdocs-redirects",
+            ]
+        );
+    }
+
+    #[test]
     fn tox_extras_mark_optional_dependencies_used() {
         let dir = std::env::temp_dir().join("chokkin-config-scan-tox");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1769,100 +1785,108 @@ mod tests {
         }
     }
 
-    /// Each known pre-commit hook `id` is a usage of its binary.
+    /// Every `[tool.*]` table chokkin knows names its tool's binary.
     #[test]
-    fn hook_ids_name_their_binary() {
-        for (hook_id, binary) in [
-            ("black", "black"),
-            ("ruff", "ruff"),
-            ("ruff-format", "ruff"),
-            ("mypy", "mypy"),
-            ("isort", "isort"),
-            ("pytest", "pytest"),
-            ("bandit", "bandit"),
-            ("flake8", "flake8"),
-            ("pyupgrade", "pyupgrade"),
-            ("autopep8", "autopep8"),
-        ] {
-            let config = format!(
-                "repos:\n  - repo: https://example.com/hooks\n    rev: v1\n    hooks:\n      - id: {hook_id}\n"
-            );
-            let result = scan_files(&[(".pre-commit-config.yaml", &config)]);
-            assert!(
-                result
-                    .binary_usages
-                    .iter()
-                    .any(|usage| usage.binary == binary && usage.origin.line == Some(5)),
-                "{hook_id}: {:?}",
-                result.binary_usages
-            );
-        }
+    fn known_tool_tables_name_their_binaries() {
+        let keys = [
+            "mypy",
+            "ruff",
+            "black",
+            "isort",
+            "pylint",
+            "bandit",
+            "coverage",
+            "pytest",
+            "tox",
+            "nox",
+            "twine",
+            "towncrier",
+            "cogapp",
+            "build",
+            "mkdocs",
+            "pre-commit",
+            "pre_commit",
+            "unknown-tool",
+        ];
+        let pyproject: String = keys
+            .iter()
+            .map(|key| format!("[tool.{key}]\nx = 1\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let result = scan_files(&[("pyproject.toml", &pyproject)]);
+        let binaries: BTreeSet<&str> = result
+            .binary_usages
+            .iter()
+            .map(|usage| usage.binary.as_str())
+            .collect();
+        // `pre_commit` names the same binary as `pre-commit`.
+        let expected: BTreeSet<&str> = keys
+            .into_iter()
+            .filter(|key| !matches!(*key, "pre_commit" | "unknown-tool"))
+            .collect();
+        assert_eq!(binaries, expected);
     }
 
-    /// Each mkdocs plugin a `plugins:` item names is its distribution's use.
+    /// A remote hook's id names the binary it provides.
     #[test]
-    fn mkdocs_plugins_name_their_distributions() {
-        let contents = "plugins:\n  - search\n  - mkdocstrings:\n      handlers: {}\n  - autorefs\n  \
-                        - include-markdown\n  - redirects:\n      redirect_maps: {}\n  - minify\n";
-        assert_eq!(
-            mkdocs_used_distributions(contents),
-            [
-                "mkdocs-autorefs",
-                "mkdocs-include-markdown-plugin",
-                "mkdocs-minify-plugin",
-                "mkdocs-redirects",
-                "mkdocstrings",
-            ]
-        );
+    fn known_remote_hook_ids_provide_their_binaries() {
+        let ids = [
+            "black",
+            "ruff",
+            "ruff-format",
+            "mypy",
+            "isort",
+            "pytest",
+            "bandit",
+            "flake8",
+            "pyupgrade",
+            "autopep8",
+            "unknown-hook",
+        ];
+        let hooks = ids
+            .iter()
+            .map(|id| format!("      - id: {id}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let result = scan_files(&[(
+            ".pre-commit-config.yaml",
+            &format!("repos:\n  - repo: https://example.com/hooks\n    hooks:\n{hooks}"),
+        )]);
+        let provided: BTreeSet<&str> = result
+            .provided_binaries
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let expected: BTreeSet<&str> = [
+            "black",
+            "ruff",
+            "mypy",
+            "isort",
+            "pytest",
+            "bandit",
+            "flake8",
+            "pyupgrade",
+            "autopep8",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(provided, expected);
     }
 
-    /// A command word is known from the binary map alone, as well as from the
-    /// tool sections and hook ids: `gunicorn` is neither of those.
+    /// A command finds a tool chokkin knows only from its `[tool.*]` table
+    /// or only as a hook id, not just the ones the binary map lists.
     #[test]
-    fn shell_scripts_read_binaries_the_binary_map_knows() {
-        let result = scan_files(&[("scripts/serve.sh", "#!/bin/sh\ngunicorn app:app\n")]);
-        let found = usages(&result);
-        assert!(
-            found
-                .iter()
-                .any(|(binary, path, _)| binary == "gunicorn" && path == "scripts/serve.sh"),
-            "{found:?}"
-        );
-    }
-
-    /// Each `[tool.<key>]` section a known tool reads is a usage of its
-    /// binary.
-    #[test]
-    fn tool_sections_name_their_binary() {
-        for (key, binary) in [
-            ("mypy", "mypy"),
-            ("ruff", "ruff"),
-            ("black", "black"),
-            ("isort", "isort"),
-            ("pylint", "pylint"),
-            ("bandit", "bandit"),
-            ("coverage", "coverage"),
-            ("tox", "tox"),
-            ("nox", "nox"),
-            ("twine", "twine"),
-            ("towncrier", "towncrier"),
-            ("cogapp", "cogapp"),
-            ("build", "build"),
-            ("pytest", "pytest"),
-            ("mkdocs", "mkdocs"),
-            ("pre-commit", "pre-commit"),
-            ("pre_commit", "pre-commit"),
-        ] {
-            let result = scan_files(&[("pyproject.toml", &format!("[tool.{key}]\nx = 1\n"))]);
-            assert!(
-                result
-                    .binary_usages
-                    .iter()
-                    .any(|usage| usage.binary == binary),
-                "{key}: {:?}",
-                result.binary_usages
-            );
-        }
+    fn commands_find_tools_known_from_tables_or_hook_ids() {
+        let result = scan_files(&[(
+            "scripts/check.sh",
+            "#!/bin/sh\ntowncrier build\npyupgrade src/a.py\n",
+        )]);
+        let binaries: Vec<&str> = result
+            .binary_usages
+            .iter()
+            .map(|usage| usage.binary.as_str())
+            .collect();
+        assert_eq!(binaries, ["towncrier", "pyupgrade"]);
     }
 
     #[test]

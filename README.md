@@ -12,6 +12,8 @@
 uvx chokkin
 ```
 
+![chokkin finding unused files and dependencies in a FastAPI project, explaining one finding, and previewing fixes](https://raw.githubusercontent.com/watany-dev/chokkin/main/docs/demo/demo.gif)
+
 That is the whole setup. chokkin reads your `pyproject.toml`, requirements
 files, lockfile, and tool configs, builds a reachability graph of the entire
 project from its entry points, and reports what nothing reaches. It is

@@ -150,6 +150,7 @@ mod tests {
             version_minors: None,
             called_before: Vec::new(),
             tested_before: Vec::new(),
+            caller_guarded: false,
         }
     }
 }

@@ -28,6 +28,10 @@ pub enum ImportContext {
 }
 
 /// One import statement extracted from a module.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about where one import statement sits"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportRef {
     /// Imported module name (normalized dotted name; empty = unresolved relative).
@@ -79,6 +83,12 @@ pub struct ImportRef {
     /// optional when one of them is any first-party install check (#1272).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tested_before: Vec<String>,
+    /// In the body of a module-level private function that the module
+    /// calls only under a handler a failed import lands in (`try: _load()
+    /// except Exception:`). Only CHK005 reads it, as optional (#1259): a
+    /// missing or transitive package is still not declared.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub caller_guarded: bool,
 }
 
 impl ImportRef {
@@ -424,6 +434,12 @@ pub struct ParsedModule {
     /// the module they name (#1026): each distinct literal at its first line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub module_refs: Vec<ModuleRef>,
+    /// List and tuple literals of three or more strings that are all whole
+    /// dotted module names, each element at its line (#1257): a plugin list
+    /// a loader may import by name, as `__import__` does with redash's
+    /// `default_query_runners`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub module_lists: Vec<Vec<ModuleRef>>,
     /// Calls a function that lists a directory or the modules of a package
     /// (`pkgutil.iter_modules`, `glob.glob`, `os.listdir`): a dotted literal
     /// here that names a package may load the modules under it (#1267).
@@ -565,6 +581,7 @@ mod tests {
             version_minors: None,
             called_before: Vec::new(),
             tested_before: Vec::new(),
+            caller_guarded: false,
         }
     }
 

@@ -95,6 +95,7 @@ pub fn analyze_reachability(
             mode,
             confidence_reason: None,
             test_fixture: is_test_fixture(file, &reachable_dirs),
+            selected_by: None,
         };
         if skipped.contains(file.path.as_str()) {
             unread.push(orphan);
@@ -117,6 +118,7 @@ pub fn analyze_reachability(
         framework_used: framework.files,
         predecessors: bfs.predecessors,
         plugin_ref_files,
+        listed_files: bfs.listed,
     })
 }
 
@@ -415,6 +417,7 @@ mod tests {
                     version_minors: None,
                     called_before: Vec::new(),
                     tested_before: Vec::new(),
+                    caller_guarded: false,
                 })
                 .collect(),
             has_opaque_dynamic_import: opaque,
