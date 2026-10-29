@@ -690,6 +690,31 @@ mod tests {
     }
 
     #[test]
+    fn a_stub_parses_to_an_empty_module_at_its_path() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(temp.path(), "x.pyi", "import os\n");
+        let file = DiscoveredFile {
+            path: "x.pyi".to_owned(),
+            kind: FileKind::Stub,
+            context: FileContext::Runtime,
+        };
+        let parsed = parse_discovered_file(
+            &root,
+            &file,
+            &empty_layout(),
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+        assert_eq!(
+            parsed,
+            ParsedModule {
+                path: "x.pyi".to_owned(),
+                ..ParsedModule::default()
+            }
+        );
+    }
+
+    #[test]
     fn ipython_cells_keep_every_cell_on_its_notebook_lines() {
         let notebook = NotebookSource {
             cells: vec![
