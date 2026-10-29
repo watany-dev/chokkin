@@ -305,31 +305,42 @@ fn is_versioned(name: &str, program: &str) -> bool {
     })
 }
 
-/// `python [options] -m pip …`: the interpreter options before `-m`.
+/// `python [options] -m pip …`: the interpreter options before `-m`, which
+/// may cluster (`-Im`, `-mpip`). A script or `-c` code runs no pip.
 fn python_m_pip(words: &[Word]) -> Option<Vec<Install>> {
     let mut index = 0;
-    while let Some(word) = words.get(index) {
-        let text = word.text.as_str();
-        if text == "-mpip" {
-            return pip_command(&words[index + 1..]);
+    loop {
+        let flags = words.get(index)?.text.strip_prefix('-')?;
+        index += 1;
+        if flags.starts_with('-') {
+            continue;
         }
-        // `-m` alone or ending a cluster (`-Im`).
-        if text.len() > 1
-            && text.starts_with('-')
-            && text.ends_with('m')
-            && text[1..].chars().all(|char| char.is_ascii_alphabetic())
-        {
-            return (words.get(index + 1)?.text == "pip")
-                .then(|| pip_command(&words[index + 2..]))
-                .flatten();
+        for (at, flag) in flags.char_indices() {
+            let value = &flags[at + flag.len_utf8()..];
+            match flag {
+                'm' => {
+                    let module = if value.is_empty() {
+                        index += 1;
+                        words.get(index - 1)?.text.as_str()
+                    } else {
+                        value
+                    };
+                    return (module == "pip")
+                        .then(|| pip_command(&words[index..]))
+                        .flatten();
+                },
+                'c' => return None,
+                // `-W` and `-X` take the rest of the cluster or the next word.
+                'W' | 'X' => {
+                    if value.is_empty() {
+                        index += 1;
+                    }
+                    break;
+                },
+                _ => {},
+            }
         }
-        if !text.starts_with('-') || (text.contains('c') && !text.starts_with("--")) {
-            // A script, or `-c` code: no pip runs.
-            return None;
-        }
-        index += if matches!(text, "-W" | "-X") { 2 } else { 1 };
     }
-    None
 }
 
 /// `pip [global options] install …`; `None` for any other subcommand.
@@ -447,13 +458,14 @@ fn split_option<'a>(text: &'a str, installer: &Installer) -> (&'a str, Option<&'
     }
     if text.len() > 2 && text.is_char_boundary(2) {
         let option = &text[..2];
-        let takes_value = installer
-            .valued
-            .iter()
-            .chain(installer.files)
-            .chain(installer.arguments)
-            .chain(installer.elsewhere)
-            .any(|known| *known == option);
+        let takes_value = [
+            installer.valued,
+            installer.files,
+            installer.arguments,
+            installer.elsewhere,
+        ]
+        .iter()
+        .any(|options| options.contains(&option));
         if takes_value {
             return (option, Some(&text[2..]));
         }
@@ -578,6 +590,21 @@ mod tests {
             ),
             ("python3 -Im pip install requests", &["requests"]),
             ("/usr/bin/python -mpip install requests", &["requests"]),
+            ("python -u -B -m pip install requests", &["requests"]),
+            (
+                "python -W ignore -X dev -mpip install requests",
+                &["requests"],
+            ),
+            (
+                "python -Wignore --isolated -m pip install requests",
+                &["requests"],
+            ),
+            ("python -m pipx install black", &[]),
+            ("python -m venv .venv", &[]),
+            ("python -Ic 'import x' -m pip install x", &[]),
+            ("python -W", &[]),
+            ("pip --log pip.log install requests", &["requests"]),
+            ("pip --log=pip.log install requests", &["requests"]),
             ("uv pip install --system requests", &["requests"]),
             ("PIP_NO_INPUT=1 pip install requests", &["requests"]),
             (
@@ -604,6 +631,47 @@ mod tests {
                 .collect();
             assert_eq!(&names, expected, "{command}");
         }
+    }
+
+    /// Redirections and their targets are no arguments, and a descriptor
+    /// (`2>&1`) or `&>` keeps the segment going.
+    #[test]
+    fn shell_redirections_are_not_arguments() {
+        for command in [
+            "pip install a > /dev/null b",
+            "pip install a 2>&1 b",
+            "pip install a &> log.txt b",
+            "pip install a >>log.txt b <in.txt",
+        ] {
+            assert_eq!(
+                read(&shell(command)),
+                [("a", Some("a")), ("b", Some("b"))],
+                "{command}"
+            );
+        }
+    }
+
+    /// A word `IPython` expands installs what the expansion names, quoted or
+    /// not, even when the text alone reads as a requirement.
+    #[test]
+    fn expanded_words_stay_unread() {
+        assert_eq!(
+            read(&shell(
+                "pip install pkg@https://h/$v.whl 'other@https://h/{v}.whl'"
+            )),
+            [
+                ("pkg@https://h/$v.whl", None),
+                ("other@https://h/{v}.whl", None)
+            ]
+        );
+    }
+
+    /// Only `NAME=value` words lead a command as assignments.
+    #[test]
+    fn leading_words_that_are_not_assignments_name_the_program() {
+        assert!(shell("a.b=1 pip install x").is_empty());
+        assert!(shell("=1 pip install x").is_empty());
+        assert_eq!(read(&shell("A_1=x pip install y")), [("y", Some("y"))]);
     }
 
     #[test]

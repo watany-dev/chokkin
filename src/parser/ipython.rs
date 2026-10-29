@@ -623,6 +623,25 @@ mod tests {
         );
     }
 
+    /// Each install magic and shell escape reports what it installs at its
+    /// line; other magics install nothing (#991).
+    #[test]
+    fn install_commands_report_their_installs() {
+        let cell = "%pip install a\n%conda install b\n%mamba install c\n%sx pip install d\n%system pip install e\n!pip install f\nx = !pip install g\n%env pip install h\n";
+        let installs: Vec<(usize, String)> = rewrite_cell(cell)
+            .expect("read")
+            .installs
+            .into_iter()
+            .filter_map(|(line, install)| install.distribution.map(|name| (line, name)))
+            .collect();
+        let expected: Vec<(usize, String)> = ["a", "b", "c", "d", "e", "f", "g"]
+            .into_iter()
+            .enumerate()
+            .map(|(line, name)| (line, name.to_owned()))
+            .collect();
+        assert_eq!(installs, expected);
+    }
+
     #[test]
     fn plain_python_is_left_alone() {
         let cell = "x = 5 % 3\nif x == !y: pass\nprint('why?')\nd = {'a': 1}\n";

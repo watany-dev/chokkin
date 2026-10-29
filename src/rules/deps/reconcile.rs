@@ -240,18 +240,17 @@ fn without_notebook_installs(
     resolution: &ResolutionIndex,
     installs: &NotebookInstalls<'_>,
 ) -> Option<ResolutionIndex> {
-    (!installs.is_empty()
-        && resolution
-            .imports
-            .iter()
-            .any(|import| installs.provides(import)))
-    .then(|| {
-        let mut resolution = resolution.clone();
-        resolution
-            .imports
-            .retain(|import| !installs.provides(import));
-        resolution
-    })
+    resolution
+        .imports
+        .iter()
+        .any(|import| installs.provides(import))
+        .then(|| {
+            let mut resolution = resolution.clone();
+            resolution
+                .imports
+                .retain(|import| !installs.provides(import));
+            resolution
+        })
 }
 
 /// `(file, group)` of each dependency group that declares a

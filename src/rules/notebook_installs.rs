@@ -37,10 +37,6 @@ impl<'a> NotebookInstalls<'a> {
         Self { by_file }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.by_file.is_empty()
-    }
-
     /// Whether the importing notebook installs the distribution the import
     /// resolved to, or one its module names (`llama-index-llms-openai` for
     /// `llama_index.llms.openai`).
