@@ -385,7 +385,11 @@ fn parsed_notebook_commands<'p>(
     parse: &'p ParseSummary,
     files: &'p [DiscoveredFile],
 ) -> impl Iterator<Item = CommandTargetRef> + 'p {
-    parse.modules.iter().flat_map(move |parsed| {
+    let notebooks = parse
+        .modules
+        .iter()
+        .filter(|parsed| !parsed.notebook_commands.is_empty());
+    notebooks.flat_map(move |parsed| {
         let deploy = files
             .iter()
             .any(|file| file.path == parsed.path && file.context == FileContext::Runtime);
