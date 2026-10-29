@@ -23,6 +23,10 @@ const MAX_CALL_DEPTH: usize = 16;
 const MAX_COMPREHENSION_ITEMS: usize = 10_000;
 /// Largest value kept, in nodes; `x = x + x` doubles without it.
 const MAX_VALUE_NODES: usize = 100_000;
+/// A string costs one node more per this many bytes, so long strings count
+/// against the caps: `s = s + s` would otherwise double in one node until
+/// the allocation fails.
+const STR_BYTES_PER_NODE: usize = 32;
 /// Total work allowed per file, so fan-out helpers and nested
 /// comprehensions end as `Unknown` instead of running away.
 const MAX_STEPS: usize = 5_000_000;
@@ -61,9 +65,13 @@ impl Value {
         match self {
             Self::List(items, _) => 1 + items.iter().map(Self::nodes).sum::<usize>(),
             Self::Dict { items, .. } => {
-                1 + items.iter().map(|(_, value)| value.nodes()).sum::<usize>()
+                1 + items
+                    .iter()
+                    .map(|(key, value)| str_nodes(key.len()) - 1 + value.nodes())
+                    .sum::<usize>()
             },
-            Self::Str(_) | Self::RequirementsFile(_) | Self::Unknown => 1,
+            Self::Str(text) => str_nodes(text.len()),
+            Self::RequirementsFile(_) | Self::Unknown => 1,
         }
     }
 
@@ -395,6 +403,12 @@ impl<'a> Evaluator<'a> {
         branches: &[&'a [Stmt]],
         fallthrough: bool,
     ) -> Option<&'a ExprCall> {
+        // Every branch copies the environment. Once the budget is spent no
+        // stored value is read again, so nested branches drop them instead.
+        let copies = branches.len() + usize::from(fallthrough) + 1;
+        if !self.spend(copies.saturating_mul(self.env_nodes())) {
+            self.env.clear();
+        }
         let saved = self.env.clone();
         let mut merged: Option<HashMap<String, Value>> = fallthrough.then(|| saved.clone());
         for branch in branches {
@@ -1119,10 +1133,20 @@ fn insert_entry(items: &mut Vec<(String, Value)>, key: String, value: Value) {
     }
 }
 
-/// `left + right`; a list result is the object `identity`.
+const fn str_nodes(len: usize) -> usize {
+    1 + len / STR_BYTES_PER_NODE
+}
+
+/// `left + right`; a list result is the object `identity`. A string over
+/// the size cap is `Unknown` before it is built.
 fn add(left: Value, right: Value, identity: Identity) -> Value {
     match (left, right) {
-        (Value::Str(left), Value::Str(right)) => Value::Str(left + &right),
+        (Value::Str(left), Value::Str(right)) => {
+            if str_nodes(left.len().saturating_add(right.len())) > MAX_VALUE_NODES {
+                return Value::Unknown;
+            }
+            Value::Str(left + &right)
+        },
         (Value::List(mut left, _), Value::List(right, _)) => {
             left.extend(right);
             Value::List(left, identity)
@@ -2729,5 +2753,73 @@ table = {'other': 'y', **opaque()}
         assert!(!evaluator.exhausted());
         assert!(!evaluator.spend(1));
         assert!(evaluator.exhausted());
+    }
+
+    /// A string is charged by length, so doubling one ends as `Unknown`
+    /// at the size cap instead of allocating until the process aborts.
+    #[test]
+    fn string_doubling_is_capped_by_length() {
+        let doubled = |times: usize| {
+            format!(
+                "s = '{}'\n{}setup(install_requires=[s])\n",
+                "x".repeat(1024),
+                "s = s + s\n".repeat(times)
+            )
+        };
+        // 2 MiB fits; 4 MiB is over 100,000 nodes of 32 bytes.
+        assert!(install_requires(&doubled(11)).is_some());
+        assert_eq!(install_requires(&doubled(12)), None);
+        assert_eq!(install_requires(&doubled(40)), None);
+        let augmented = format!(
+            "s = '{}'\n{}setup(install_requires=[s])\n",
+            "x".repeat(1024),
+            "s += s\n".repeat(40)
+        );
+        assert_eq!(install_requires(&augmented), None);
+    }
+
+    /// Many copies of one long string count every copy's length.
+    #[test]
+    fn list_of_long_strings_is_capped_by_total_length() {
+        let source = |copies: usize| {
+            format!(
+                "s = '{}'\nreqs = [{}]\nsetup(install_requires=reqs)\n",
+                "x".repeat(128 * 1024),
+                vec!["s"; copies].join(", ")
+            )
+        };
+        // 4,097 nodes per string and 1 for the list.
+        assert!(install_requires(&source(24)).is_some());
+        assert_eq!(install_requires(&source(25)), None);
+    }
+
+    #[test]
+    fn nodes_count_string_and_key_lengths() {
+        assert_eq!(Value::Str("x".repeat(31)).nodes(), 1);
+        assert_eq!(Value::Str("x".repeat(32)).nodes(), 2);
+        let dict = Value::Dict {
+            items: vec![("k".repeat(64), Value::Str("a".to_owned()))],
+            partial: false,
+            id: Identity(None),
+        };
+        assert_eq!(dict.nodes(), 4);
+    }
+
+    /// Each branch copies the environment, so nested `if`s over a large
+    /// one are charged per copy: 20 levels of three copies of 70 strings
+    /// of 2,049 nodes spend the budget, and the rest stop copying.
+    #[test]
+    fn nested_branches_are_charged_for_copying_the_environment() {
+        let mut source = format!("s = '{}'\n", "x".repeat(64 * 1024));
+        for i in 0..70 {
+            writeln!(source, "v{i} = s").expect("write to String");
+        }
+        let mut indent = String::new();
+        for _ in 0..20 {
+            writeln!(source, "{indent}if c:").expect("write to String");
+            indent.push_str("    ");
+        }
+        writeln!(source, "{indent}setup(install_requires=['a'])").expect("write to String");
+        assert_eq!(install_requires(&source), None);
     }
 }
