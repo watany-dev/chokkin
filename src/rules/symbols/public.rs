@@ -2,17 +2,19 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::parser::{Exports, ImportKind, ParsedModule};
 
 use super::exports::ReExport;
-use super::graph::{ReferenceIndex, RegistryEntry};
+use super::graph::{ReferenceIndex, RegistryEntry, SymbolId};
 
-/// Modules whose names a public module re-exports with `from m import *`.
+/// What an outside caller can import from the library's public modules.
 #[derive(Debug, Default)]
 pub(super) struct PublicApi {
-    star_reached: HashSet<String>,
-    /// `__all__` of the modules that bind one.
-    exports: HashMap<String, Exports>,
+    /// Names `from m import *` puts into a public module, by their defining
+    /// module.
+    star_reached: HashSet<SymbolId>,
     /// References that `--production` left out of reachability (#588).
     production_references: ReferenceIndex,
 }
@@ -23,30 +25,30 @@ impl PublicApi {
         module_names: &HashMap<&str, String>,
         production_references: ReferenceIndex,
     ) -> Self {
-        let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut exports = HashMap::new();
-        for module in modules {
-            let Some(name) = module_names.get(module.path.as_str()) else {
-                continue;
-            };
-            if module.exports != Exports::Absent {
-                exports.insert(name.clone(), module.exports.clone());
-            }
-            star_targets
-                .entry(name.as_str())
-                .or_default()
-                .extend(star_imports(module).filter(|target| target != name));
-        }
-
-        let seeds = star_targets
+        let named: Vec<_> = modules
             .iter()
-            .filter(|(importer, _)| is_public_module(importer))
-            .flat_map(|(_, targets)| targets.iter().copied())
+            .filter_map(|&module| {
+                module_names
+                    .get(module.path.as_str())
+                    .map(|name| (name.as_str(), module))
+            })
             .collect();
-
+        let chain = StarChain::build(named.iter().copied());
+        let star_reached = named
+            .iter()
+            .filter(|(name, _)| chain.parents.contains_key(name))
+            .flat_map(|&(name, module)| {
+                module
+                    .symbols
+                    .iter()
+                    .filter(|symbol| !symbol.in_type_checking)
+                    .map(move |symbol| (name, symbol.name.as_str()))
+            })
+            .filter(|&(name, symbol)| chain.reaches(name, symbol, false, is_public_module))
+            .map(|(name, symbol)| SymbolId::new(name, symbol))
+            .collect();
         Self {
-            star_reached: star_closure(&star_targets, seeds),
-            exports,
+            star_reached,
             production_references,
         }
     }
@@ -58,12 +60,7 @@ impl PublicApi {
         let module = entry.id.module.as_str();
         entry.in_all
             || (entry.path.ends_with("__init__.py") && is_public_module(module))
-            || (self.star_reached.contains(module)
-                && self
-                    .exports
-                    .get(module)
-                    .unwrap_or(&Exports::Absent)
-                    .may_hand_on(&entry.id.name))
+            || self.star_reached.contains(&entry.id)
             || (is_public_module(module)
                 && self
                     .production_references
@@ -83,18 +80,91 @@ pub(super) fn star_imports(module: &ParsedModule) -> impl Iterator<Item = &str> 
         .map(|import| import.module.as_str())
 }
 
-/// `seeds` and every module they reach through chained star imports.
-pub(super) fn star_closure<'a>(
-    star_targets: &HashMap<&str, Vec<&'a str>>,
-    mut seeds: Vec<&'a str>,
-) -> HashSet<String> {
-    let mut reached = HashSet::new();
-    while let Some(target) = seeds.pop() {
-        if reached.insert(target.to_owned()) {
-            seeds.extend(star_targets.get(target).into_iter().flatten().copied());
+/// `from m import *` edges between modules, and the `__all__` that decides
+/// what each hop hands on.
+#[derive(Debug, Default)]
+pub(super) struct StarChain<'a> {
+    /// Names each star-importing module defines itself, shadowing
+    /// star-imported ones.
+    pub(super) defines: FxHashMap<&'a str, FxHashSet<&'a str>>,
+    /// The modules that star-import each module.
+    pub(super) parents: FxHashMap<&'a str, Vec<&'a str>>,
+    /// `__all__` of every module, `Absent` included.
+    exports: FxHashMap<&'a str, &'a Exports>,
+}
+
+impl<'a> StarChain<'a> {
+    /// The chain between `modules`, each under the name it is star-imported by.
+    pub(super) fn build(modules: impl IntoIterator<Item = (&'a str, &'a ParsedModule)>) -> Self {
+        let mut chain = Self::default();
+        for (name, module) in modules {
+            let targets: Vec<_> = star_imports(module)
+                .filter(|&target| target != name)
+                .collect();
+            for &target in &targets {
+                chain.parents.entry(target).or_default().push(name);
+            }
+            if !targets.is_empty() {
+                chain.defines.entry(name).or_default().extend(
+                    module
+                        .symbols
+                        .iter()
+                        .filter(|symbol| !symbol.in_type_checking)
+                        .map(|symbol| symbol.name.as_str()),
+                );
+            }
+            chain.exports.insert(name, &module.exports);
         }
+        chain
     }
-    reached
+
+    /// Whether `name` in `start` reaches a module `is_goal` accepts through
+    /// chained star imports (#576, #960). Each hop hands on the names
+    /// `Exports::may_hand_on` allows. With `shadow`, a module defining `name`
+    /// itself keeps it from going further up, as reference resolution has it
+    /// (§12). That ignores statement order and `try` fallbacks, so the public
+    /// API and config names, where a dropped name becomes a finding, go
+    /// without it. Walks up from `start`: a name has few binders, while a
+    /// package can star-import hundreds of modules.
+    pub(super) fn reaches(
+        &self,
+        start: &str,
+        name: &str,
+        shadow: bool,
+        is_goal: impl Fn(&str) -> bool,
+    ) -> bool {
+        if !self.hands_on(start, name) {
+            return false;
+        }
+        let mut queue = vec![start];
+        let mut seen = FxHashSet::from_iter([start]);
+        while let Some(current) = queue.pop() {
+            for &parent in self.parents.get(current).into_iter().flatten() {
+                if shadow && self.defines[parent].contains(name) {
+                    continue;
+                }
+                if is_goal(parent) {
+                    return true;
+                }
+                if !self.hands_on(parent, name) {
+                    continue;
+                }
+                if seen.insert(parent) {
+                    queue.push(parent);
+                }
+            }
+        }
+        false
+    }
+
+    /// Whether `from module import *` may bind `name`.
+    pub(super) fn hands_on(&self, module: &str, name: &str) -> bool {
+        self.exports
+            .get(module)
+            .copied()
+            .unwrap_or(&Exports::Absent)
+            .may_hand_on(name)
+    }
 }
 
 /// Every re-export sits in an `__init__`, so a public package's one is API.

@@ -13,7 +13,7 @@ use crate::reachability::ReachabilityReport;
 
 use super::exports::ReExport;
 use super::graph::{RegistryEntry, SymbolId};
-use super::public::{star_closure, star_imports};
+use super::public::StarChain;
 
 /// protoc output: generated, never edited by hand (ruff excludes it too).
 const GENERATED_SUFFIXES: &[&str] = &["_pb2.py", "_pb2_grpc.py"];
@@ -249,22 +249,25 @@ fn config_entry_files(plugins: &PluginHints) -> HashSet<&str> {
         .collect()
 }
 
-/// Files whose own names land in Django's settings namespace: those its
-/// settings `include()` (#938) or star-import, which the plugin follows even
-/// where the import graph does not resolve the import (#1239).
-fn config_part_files(plugins: &PluginHints) -> HashSet<&str> {
-    plugin_entry_files(
-        plugins,
-        PluginId::Django,
-        &[DJANGO_INCLUDE_LABEL, DJANGO_STAR_IMPORT_LABEL],
-    )
-    .collect()
+/// Files Django's settings `include()` (#938): split-settings runs each in the
+/// settings namespace, so all of its names land there, whatever its `__all__`.
+fn config_include_files(plugins: &PluginHints) -> HashSet<&str> {
+    plugin_entry_files(plugins, PluginId::Django, &[DJANGO_INCLUDE_LABEL]).collect()
+}
+
+/// Files the django plugin follows from the settings through star imports,
+/// even where the import graph does not resolve the import (#1239).
+fn config_star_files(plugins: &PluginHints) -> HashSet<&str> {
+    plugin_entry_files(plugins, PluginId::Django, &[DJANGO_STAR_IMPORT_LABEL]).collect()
 }
 
 /// Names a config entry pulls into its namespace with `from m import *`,
 /// through chained star imports (#729): the host reads them as settings
-/// (`html_theme`, `INSTALLED_APPS`), so no importer ever names them. A module
-/// hands over the names `Exports::may_hand_on` allows.
+/// (`html_theme`, `INSTALLED_APPS`), so no importer ever names them. Each hop
+/// hands on what its `__all__` allows (#960). An `include()`d file's own names
+/// land in the namespace too, and so do those of a file the django plugin
+/// star-imports where no parsed star import does, as far as its `__all__`
+/// allows.
 pub(super) fn config_star_symbols(
     plugins: &PluginHints,
     registry: &[RegistryEntry],
@@ -272,36 +275,55 @@ pub(super) fn config_star_symbols(
     module_names: &HashMap<&str, String>,
 ) -> Vec<SymbolId> {
     let entries = config_entry_files(plugins);
-    let parts = config_part_files(plugins);
-    let mut seeds = Vec::new();
-    let mut star_targets: HashMap<&str, Vec<&str>> = HashMap::new();
-    let mut exports = HashMap::new();
-    for module in modules {
-        if entries.contains(module.path.as_str()) {
-            seeds.extend(star_imports(module));
-        }
-        if let Some(name) = module_names.get(module.path.as_str()) {
-            if parts.contains(module.path.as_str()) {
-                seeds.push(name.as_str());
-            }
-            star_targets
-                .entry(name.as_str())
-                .or_default()
-                .extend(star_imports(module));
-            exports.insert(name.as_str(), &module.exports);
-        }
-    }
-    let reached = star_closure(&star_targets, seeds);
+    let includes = config_include_files(plugins);
+    let stars = config_star_files(plugins);
+    // A `conf.py` outside the module layout has no module name; its path
+    // stands in, which no module name equals.
+    let in_namespace =
+        |path: &str| entries.contains(path) || includes.contains(path) || stars.contains(path);
+    let name_of = |path| namespace_name(path, module_names, in_namespace(path));
+    let chain = StarChain::build(
+        modules
+            .iter()
+            .filter_map(|&module| Some((name_of(module.path.as_str())?, module))),
+    );
+    // A star-imported file the chain explains is filtered at every hop; the
+    // rest are where the namespace starts, like `include()`d ones.
+    let unexplained_stars: HashSet<&str> = stars
+        .iter()
+        .filter_map(|&path| name_of(path))
+        .filter(|name| !chain.parents.contains_key(name))
+        .collect();
+    let include_names: HashSet<&str> = includes.iter().filter_map(|&path| name_of(path)).collect();
+    let namespaces: HashSet<&str> = entries
+        .iter()
+        .filter_map(|&path| name_of(path))
+        .chain(include_names.iter().copied())
+        .chain(unexplained_stars.iter().copied())
+        .collect();
     registry
         .iter()
         .filter(|entry| {
-            reached.contains(&entry.id.module)
-                && exports
-                    .get(entry.id.module.as_str())
-                    .is_none_or(|all| all.may_hand_on(&entry.id.name))
+            let (module, name) = (entry.id.module.as_str(), entry.id.name.as_str());
+            include_names.contains(module)
+                || (unexplained_stars.contains(module) && chain.hands_on(module, name))
+                || chain.reaches(module, name, false, |parent| namespaces.contains(parent))
         })
         .map(|entry| entry.id.clone())
         .collect()
+}
+
+/// The module name of `path`, or for a file in a config namespace that has
+/// none, the path itself.
+fn namespace_name<'a>(
+    path: &'a str,
+    module_names: &'a HashMap<&str, String>,
+    in_namespace: bool,
+) -> Option<&'a str> {
+    module_names
+        .get(path)
+        .map(String::as_str)
+        .or_else(|| in_namespace.then_some(path))
 }
 
 /// Upper-case top-level names of a settings module (#1238): Django's
