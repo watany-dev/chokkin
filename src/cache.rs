@@ -224,12 +224,10 @@ fn real_dir(root: &Path, dir: &Path, create: bool) -> io::Result<bool> {
             Ok(metadata) if metadata.is_dir() => {},
             Ok(_) => return Ok(false),
             Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
-                match std::fs::create_dir(&current) {
-                    Ok(()) => {},
-                    // A concurrent run created it; check what it is below.
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
-                    Err(error) => return Err(error),
-                }
+                // The parent is already checked, so this creates only
+                // `current`, and it tolerates a concurrent run creating it
+                // first; the check below then sees what is there.
+                std::fs::create_dir_all(&current)?;
                 if !std::fs::symlink_metadata(&current)?.is_dir() {
                     return Ok(false);
                 }

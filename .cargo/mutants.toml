@@ -20,11 +20,6 @@ exclude_re = [
     # Retrying every open error instead of only AlreadyExists still returns the
     # same error after 16 tries: only the retry count changes.
     "AlreadyExists with true in create_temp_in",
-    # Swallowing every `create_dir` error instead of only AlreadyExists still
-    # fails: the `symlink_metadata` right after it errors on the missing
-    # directory. Only the error kind changes, and the other failures
-    # (permissions, read-only filesystem) cannot be staged as root.
-    "AlreadyExists with true in real_dir",
     # Walking every hinted directory instead of the name index gives the same
     # answer for a single-segment root, only slower (#1080).
     "replace match guard !root.contains\\('/'\\) with false in PytestImportPaths::provides_fallback",
