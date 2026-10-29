@@ -1788,6 +1788,149 @@ fn partial_all_in_a_star_imported_module_does_not_narrow_the_public_api() {
     }
 }
 
+/// A star import filters at every hop, not only at the defining module: a
+/// middle module's `__all__` stops the names it leaves out (#960). A name
+/// the middle module also defines stays API: whether its own binding wins
+/// depends on statement order and `try` fallbacks.
+#[test]
+fn star_reached_public_api_is_filtered_at_every_hop() {
+    let report = analyze_generated(&[
+        ("pyproject.toml", LIBRARY_PYPROJECT),
+        ("src/acme/__init__.py", "from ._mid import *\n"),
+        (
+            "src/acme/_mid.py",
+            "try:\n    from ._impl import *\nexcept ImportError:\n    class C:\n        pass\n\n__all__ = [\"A\", \"C\"]\n",
+        ),
+        (
+            "src/acme/_impl.py",
+            "class A:\n    pass\n\nclass B:\n    pass\n\nclass C:\n    pass\n",
+        ),
+    ]);
+    for (module, name) in [("acme._impl", "A"), ("acme._impl", "C"), ("acme._mid", "C")] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    // `_mid.__all__` leaves `B` out of `acme`.
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "acme._impl", "B"),
+        "{report:?}"
+    );
+}
+
+/// A config entry's namespace gets a deeper module's names only through
+/// every hop's `__all__` (#960).
+#[test]
+fn config_star_names_are_filtered_at_every_hop() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.0.0\"\n\n[project.scripts]\napp = \"app.main:main\"\n\n[tool.chokkin]\nmode = \"app\"\nproject = [\"app/**/*.py\", \"docs/**/*.py\"]\n\n[tool.chokkin.plugins]\nsphinx = true\n",
+        ),
+        ("app/__init__.py", ""),
+        ("app/main.py", "def main():\n    pass\n"),
+        (
+            "app/conf_mid.py",
+            "from app.conf_deep import *\n\n__all__ = [\"project\"]\n",
+        ),
+        ("app/conf_deep.py", "project = \"app\"\nleftover = 1\n"),
+        ("docs/conf.py", "from app.conf_mid import *\n"),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk006, "app.conf_deep", "project"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "app.conf_deep", "leftover"),
+        "{report:?}"
+    );
+}
+
+/// The django plugin labels every file the settings star-import, however
+/// deep, yet a middle file's `__all__` still filters what goes on. A file
+/// the settings `include()` runs in their namespace, so its `__all__`
+/// filters nothing (#960).
+#[test]
+fn django_settings_parts_are_filtered_at_every_hop_but_includes_are_not() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"mysite\"\nversion = \"0.0.0\"\ndependencies = [\"django\", \"django-split-settings\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"mysite.settings\")\n",
+        ),
+        ("mysite/__init__.py", ""),
+        (
+            "mysite/settings.py",
+            "from split_settings.tools import include\n\nfrom .base import *\n\ninclude(\"db.py\")\n\nROOT_URLCONF = \"mysite.urls\"\n",
+        ),
+        (
+            "mysite/base.py",
+            "from .common import *\n\n__all__ = [\"DEBUG\"]\n",
+        ),
+        ("mysite/common.py", "DEBUG = False\nleftover = 1\n"),
+        (
+            "mysite/db.py",
+            "__all__ = [\"DATABASES\"]\n\nDATABASES = {}\ncaches = {}\n",
+        ),
+        ("mysite/urls.py", "urlpatterns = []\n"),
+    ]);
+    for (module, name) in [
+        ("mysite.common", "DEBUG"),
+        ("mysite.db", "DATABASES"),
+        ("mysite.db", "caches"),
+    ] {
+        assert!(
+            !has_symbol_rule(&report, RuleId::Chk006, module, name),
+            "{module}.{name}: {report:?}"
+        );
+    }
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "mysite.common", "leftover"),
+        "{report:?}"
+    );
+}
+
+/// A settings file the django plugin follows through a star import the
+/// import graph cannot resolve (wger's relative import outside a package,
+/// #1239) is where the settings namespace starts, so what it star-imports
+/// in turn reaches the settings, filtered at every hop (#960).
+#[test]
+fn django_star_part_the_chain_cannot_explain_is_a_namespace_root() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"wger\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"settings.main\")\n",
+        ),
+        ("settings/main.py", "from .settings_global import *\n"),
+        (
+            "settings/settings_global.py",
+            "from wger.defaults import *\n\nROOT_URLCONF = \"wger.urls\"\n",
+        ),
+        ("wger/__init__.py", ""),
+        (
+            "wger/defaults.py",
+            "__all__ = [\"site_name\"]\n\nsite_name = \"wger\"\nleftover = 1\n",
+        ),
+        ("wger/urls.py", "urlpatterns = []\n"),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk006, "wger.defaults", "site_name"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "wger.defaults", "leftover"),
+        "{report:?}"
+    );
+}
+
 /// pytest calls `pytest_*` hooks in the plugins it loads and Sphinx calls an
 /// extension's `setup`, both by name (#777).
 #[test]
