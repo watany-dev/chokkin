@@ -102,7 +102,7 @@ pub fn analyze_with_context(
                 collect_reexports(&surface_modules, &module_names, &sources.layout),
             )
         },
-        || ReferenceIndex::build(&reachable_modules, &module_names),
+        || ReferenceIndex::build(&reachable_modules, &module_names, &sources.layout),
     );
     let public_api = PublicApi::build(
         &surface_modules,
@@ -231,7 +231,7 @@ fn production_api_references(
                 .is_some_and(|name| is_public_module(name))
         });
     let evidence: Vec<_> = tests.iter().chain(reached_public).collect();
-    ReferenceIndex::build(&evidence, &names)
+    ReferenceIndex::build(&evidence, &names, &sources.layout)
 }
 
 /// The modules left unreachable that the tests reach through them. A module

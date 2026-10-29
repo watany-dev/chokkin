@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
+use crate::sources::{LayoutInfo, SymlinkModules};
 
 use super::public::star_imports;
 
@@ -89,7 +90,12 @@ impl ReferenceIndex {
     /// Modules without a module name (e.g. `tests/` without `__init__.py`)
     /// still count as importers: their path never equals a module name, so
     /// every reference they make is external.
-    pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
+    pub(super) fn build(
+        modules: &[&ParsedModule],
+        module_names: &HashMap<&str, String>,
+        layout: &LayoutInfo,
+    ) -> Self {
+        let symlinks = SymlinkModules::new(layout);
         let known_modules: FxHashSet<&str> = module_names.values().map(String::as_str).collect();
         let stars = StarImports::build(modules, module_names);
 
@@ -97,7 +103,14 @@ impl ReferenceIndex {
             modules,
             || (Self::default(), StarCache::new()),
             |(index, cache), _, module| {
-                index.add_module(module, module_names, &known_modules, &stars, cache);
+                index.add_module(
+                    module,
+                    module_names,
+                    &known_modules,
+                    &symlinks,
+                    &stars,
+                    cache,
+                );
             },
         );
         Self::merge(partials.into_iter().map(|(index, _)| index).collect())
@@ -127,6 +140,7 @@ impl ReferenceIndex {
         module: &'m ParsedModule,
         module_names: &'m HashMap<&str, String>,
         known_modules: &FxHashSet<&'m str>,
+        symlinks: &SymlinkModules,
         stars: &StarImports<'a>,
         cache: &mut StarCache<'a>,
     ) {
@@ -145,6 +159,8 @@ impl ReferenceIndex {
         let mut recorded: FxHashSet<(&str, &str)> = FxHashSet::default();
         let mut record = |target_module: &'m str, name: &'m str| {
             if recorded.insert((target_module, name)) {
+                // A module named through a symlink is the one at its target.
+                let target_module = symlinks.canonical(target_module);
                 self.record(importer, SymbolId::new(target_module, name), stars, cache);
             }
         };
@@ -172,7 +188,7 @@ impl ReferenceIndex {
                     submodule.push_str(package);
                     submodule.push('.');
                     submodule.push_str(name);
-                    if let Some(&submodule) = known_modules.get(submodule.as_str()) {
+                    if let Some(&submodule) = known_modules.get(&*symlinks.canonical(&submodule)) {
                         for &name in names_by_receiver.get(binding).into_iter().flatten() {
                             record(submodule, name);
                         }
@@ -490,7 +506,7 @@ mod tests {
             ),
             (run.path.as_str(), "in_container.run".to_owned()),
         ]);
-        let index = ReferenceIndex::build(&[&utils, &run], &names);
+        let index = ReferenceIndex::build(&[&utils, &run], &names, &LayoutInfo::default());
         assert!(index.is_externally_referenced(&SymbolId::new(
             "in_container.in_container_utils",
             "run_command"
@@ -517,7 +533,7 @@ mod tests {
             (helpers.path.as_str(), "tools.helpers".to_owned()),
             (run.path.as_str(), "tools.run".to_owned()),
         ]);
-        let index = ReferenceIndex::build(&[&helpers, &run], &names);
+        let index = ReferenceIndex::build(&[&helpers, &run], &names, &LayoutInfo::default());
         assert!(index.is_externally_referenced(&SymbolId::new("tools.helpers", "load")));
     }
 
@@ -548,7 +564,7 @@ mod tests {
             .map(|(index, module)| (module.path.as_str(), format!("lib.m{index}")))
             .collect();
         let refs: Vec<&ParsedModule> = modules.iter().collect();
-        let index = ReferenceIndex::build(&refs, &names);
+        let index = ReferenceIndex::build(&refs, &names, &LayoutInfo::default());
         for module in 0..COUNT {
             let name = format!("lib.m{module}");
             let solo = SymbolId::new(&name, "solo");

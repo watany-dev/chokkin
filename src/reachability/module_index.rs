@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap as HashMap;
 
 use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
+use crate::path_util::join_rel;
 use crate::plugins::{SysPathImport, SysPathImporter};
 use crate::resolver::PytestImportPaths;
 use crate::sources::{DiscoveredSources, path_to_module, shadows};
@@ -13,6 +14,9 @@ use crate::sources::{DiscoveredSources, path_to_module, shadows};
 pub(crate) struct ModuleIndex {
     module_to_file: HashMap<String, FileId>,
     path_to_file: HashMap<String, FileId>,
+    /// Modules named only through a symlink inside the root, each with the
+    /// link it goes through and the link's target (#1001).
+    through_symlink: HashMap<String, (String, String)>,
     pytest: PytestImportPaths,
 }
 
@@ -24,27 +28,35 @@ impl ModuleIndex {
         let mut path_to_file = HashMap::default();
         for (file_id, file) in graph.files() {
             if let Some(module) = path_to_module(&file.path, &sources.layout) {
-                // Between directories the first file in the graph stands in
-                // for `sys.path` order.
-                module_to_file
-                    .entry(module)
-                    .and_modify(|held: &mut FileId| {
-                        if graph
-                            .file(*held)
-                            .is_some_and(|held| shadows(&file.path, &held.path))
-                        {
-                            *held = file_id;
-                        }
-                    })
-                    .or_insert(file_id);
+                insert_module(graph, &mut module_to_file, module, &file.path, file_id);
             }
             path_to_file.insert(file.path.clone(), file_id);
+        }
+        let mut through_symlink = HashMap::default();
+        for (module, (file_id, link)) in symlinked_modules(graph, sources) {
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                module_to_file.entry(module.clone())
+            {
+                slot.insert(file_id);
+                through_symlink.insert(module, link);
+            }
         }
         Self {
             module_to_file,
             path_to_file,
+            through_symlink,
             pytest: PytestImportPaths::build(sources),
         }
+    }
+
+    /// The symlink inside the root that `module` is named through, and its
+    /// target, when the file it resolves to has no such name at its own path
+    /// (#1001).
+    #[must_use]
+    pub(crate) fn symlink_for(&self, module: &str) -> Option<(&str, &str)> {
+        self.through_symlink
+            .get(module)
+            .map(|(link, target)| (link.as_str(), target.as_str()))
     }
 
     /// Also resolve imports from directories the files' `sys.path` edits add.
@@ -111,6 +123,77 @@ impl ModuleIndex {
         modules.sort_unstable_by_key(|(module, _)| *module);
         modules
     }
+}
+
+/// Hold `file_id` for `module` unless a file already holds it. Between
+/// directories the first file in the graph stands in for `sys.path` order.
+fn insert_module(
+    graph: &ProjectGraph,
+    modules: &mut HashMap<String, FileId>,
+    module: String,
+    path: &str,
+    file_id: FileId,
+) {
+    modules
+        .entry(module)
+        .and_modify(|held: &mut FileId| {
+            if graph
+                .file(*held)
+                .is_some_and(|held| shadows(path, &held.path))
+            {
+                *held = file_id;
+            }
+        })
+        .or_insert(file_id);
+}
+
+/// The module names files have at the paths symlinks inside the root give
+/// them (`acme/compat -> _impl/compat` names `acme/_impl/compat/core.py`
+/// `acme.compat.core`), each with the file, the link and its target. A name
+/// a file has at its own path takes precedence, so the caller adds only the
+/// new ones.
+fn symlinked_modules(
+    graph: &ProjectGraph,
+    sources: &DiscoveredSources,
+) -> HashMap<String, (FileId, (String, String))> {
+    let layout = &sources.layout;
+    // Module → file, its path through the link, and the link with its target.
+    let mut modules: HashMap<String, (FileId, String, (&String, &String))> = HashMap::default();
+    for (link, target) in &layout.symlinks {
+        for (file_id, file) in graph.files() {
+            let path = if file.path == *target {
+                link.clone()
+            } else if target.is_empty() {
+                join_rel(link, &file.path)
+            } else {
+                let Some(rest) = file
+                    .path
+                    .strip_prefix(target.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                else {
+                    continue;
+                };
+                join_rel(link, rest)
+            };
+            let Some(module) = path_to_module(&path, layout) else {
+                continue;
+            };
+            modules
+                .entry(module)
+                .and_modify(|held| {
+                    if shadows(&path, &held.1) {
+                        *held = (file_id, path.clone(), (link, target));
+                    }
+                })
+                .or_insert((file_id, path, (link, target)));
+        }
+    }
+    modules
+        .into_iter()
+        .map(|(module, (file_id, _, (link, target)))| {
+            (module, (file_id, (link.clone(), target.clone())))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -195,6 +278,59 @@ mod tests {
                 "{paths:?}"
             );
         }
+    }
+
+    /// A file behind a symlink inside the root has the module name its path
+    /// through the link gives, too; a name a file has at its own path wins
+    /// (#1001).
+    #[test]
+    fn modules_resolve_through_symlinks_inside_the_root() {
+        let mut graph = ProjectGraph::new(ProjectRoot {
+            path: std::env::temp_dir(),
+            marker: RootMarker::PyProjectToml,
+        });
+        let mut intern = |path: &str| {
+            graph
+                .intern_file(FileNode {
+                    path: path.to_owned(),
+                    context: FileContext::Runtime,
+                    kind: FileKind::Python,
+                })
+                .expect("file")
+        };
+        let core = intern("acme/_impl/compat/core.py");
+        let package = intern("acme/_impl/compat/__init__.py");
+        let real = intern("acme/real.py");
+        let own = intern("acme/own.py");
+        let mut layout = LayoutInfo::new("", vec!["acme".to_owned()]);
+        layout.symlinks = [
+            ("acme/compat", "acme/_impl/compat"),
+            ("acme/alias.py", "acme/real.py"),
+            // A file already named `acme.own` keeps its name.
+            ("acme/own.py", "acme/real.py"),
+        ]
+        .into_iter()
+        .map(|(link, target)| (link.to_owned(), target.to_owned()))
+        .collect();
+        let sources = DiscoveredSources {
+            root: graph.root.clone(),
+            layout,
+            effective_globs: Vec::new(),
+            files: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let index = ModuleIndex::build(&graph, &sources);
+        assert_eq!(index.resolve("acme.compat.core"), Some(core));
+        assert_eq!(index.resolve("acme.compat"), Some(package));
+        assert_eq!(index.resolve("acme.alias"), Some(real));
+        assert_eq!(index.resolve("acme.own"), Some(own));
+        assert_eq!(index.resolve("acme._impl.compat.core"), Some(core));
+        assert_eq!(
+            index.symlink_for("acme.compat.core"),
+            Some(("acme/compat", "acme/_impl/compat"))
+        );
+        assert_eq!(index.symlink_for("acme._impl.compat.core"), None);
+        assert_eq!(index.symlink_for("acme.own"), None);
     }
 
     #[test]

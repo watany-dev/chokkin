@@ -818,6 +818,48 @@ pub(crate) fn path_to_module(path: &str, layout: &LayoutInfo) -> Option<String> 
     distributed.or_else(|| package_module_name(module_path, &layout.local_packages))
 }
 
+/// The module names symlinks inside the root give, each with the name the
+/// link's target has at its own path: `acme/compat -> _impl/compat` makes
+/// `acme.compat` another name of `acme._impl.compat` (#1001). A link whose
+/// either end the layout names no module for gives no pair.
+#[derive(Debug, Default)]
+pub(crate) struct SymlinkModules(Vec<(String, String)>);
+
+impl SymlinkModules {
+    #[must_use]
+    pub(crate) fn new(layout: &LayoutInfo) -> Self {
+        // A directory names the module of its `__init__.py`, there or not.
+        let module = |path: &str| {
+            strip_py_suffix(path).map_or_else(
+                || path_to_module(&format!("{path}/__init__.py"), layout),
+                |_| path_to_module(path, layout),
+            )
+        };
+        let mut pairs: Vec<(String, String)> = layout
+            .symlinks
+            .iter()
+            .filter_map(|(link, target)| Some((module(link)?, module(target)?)))
+            .filter(|(link, target)| link != target)
+            .collect();
+        // The longest link name is the innermost link, tried first.
+        pairs.sort_by(|left, right| right.0.len().cmp(&left.0.len()).then(left.cmp(right)));
+        Self(pairs)
+    }
+
+    /// `module` named at its own path: a name through a link takes the
+    /// link target's name in its place, and any other is kept.
+    #[must_use]
+    pub(crate) fn canonical<'a>(&self, module: &'a str) -> std::borrow::Cow<'a, str> {
+        self.0
+            .iter()
+            .find_map(|(link, target)| {
+                let rest = module.strip_prefix(link.as_str())?;
+                (rest.is_empty() || rest.starts_with('.')).then(|| format!("{target}{rest}"))
+            })
+            .map_or(std::borrow::Cow::Borrowed(module), std::borrow::Cow::Owned)
+    }
+}
+
 /// A member with no regular package ships PEP 420 namespace packages
 /// (`llama_index/` without `__init__.py`) straight from its root.
 fn namespace_module_name(path: &str, layout: &LayoutInfo) -> Option<String> {
@@ -894,6 +936,35 @@ mod tests {
     }
 
     /// The walk collects `.PY` too, so its module name must match (#1170).
+    /// A name through a link inside the root takes the target's name, the
+    /// innermost link first; a link whose end has no module name gives none
+    /// (#1001).
+    #[test]
+    fn symlink_modules_name_modules_at_their_own_path() {
+        let mut layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
+        layout.symlinks = [
+            ("src/acme/compat", "src/acme/_impl/compat"),
+            ("src/acme/compat/old", "src/acme/_impl/legacy"),
+            ("src/acme/alias.py", "src/acme/real.py"),
+            ("src/acme/vendored", "third_party/lib"),
+        ]
+        .into_iter()
+        .map(|(link, target)| (link.to_owned(), target.to_owned()))
+        .collect();
+        let symlinks = SymlinkModules::new(&layout);
+        for (module, expected) in [
+            ("acme.compat", "acme._impl.compat"),
+            ("acme.compat.core", "acme._impl.compat.core"),
+            ("acme.compat.old.x", "acme._impl.legacy.x"),
+            ("acme.alias", "acme.real"),
+            ("acme.compatible", "acme.compatible"),
+            ("acme.vendored.x", "acme.vendored.x"),
+            ("requests", "requests"),
+        ] {
+            assert_eq!(symlinks.canonical(module), expected, "{module}");
+        }
+    }
+
     #[test]
     fn path_to_module_ignores_the_extension_case() {
         let layout = LayoutInfo::new("", vec!["pkg".to_owned()]);
