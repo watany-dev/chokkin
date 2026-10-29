@@ -1782,6 +1782,10 @@ mod tests {
             Vec::<String>::new()
         );
         assert_eq!(targets("streamlit hello"), Vec::<String>::new());
+        assert_eq!(
+            targets("uv run streamlit config show x.py"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
