@@ -2822,4 +2822,39 @@ table = {'other': 'y', **opaque()}
         writeln!(source, "{indent}setup(install_requires=['a'])").expect("write to String");
         assert_eq!(install_requires(&source), None);
     }
+
+    /// `+` builds a string exactly at the cap and refuses one byte-node more.
+    #[test]
+    fn string_concatenation_is_refused_just_over_the_cap() {
+        let at_cap = (MAX_VALUE_NODES - 1) * STR_BYTES_PER_NODE;
+        let concat = |len: usize| {
+            add(
+                Value::Str("x".repeat(len - 1)),
+                Value::Str("x".to_owned()),
+                Identity(None),
+            )
+        };
+        assert!(matches!(concat(at_cap), Value::Str(_)));
+        assert_eq!(concat(at_cap + STR_BYTES_PER_NODE), Value::Unknown);
+    }
+
+    /// An `if` without `else` copies the environment three times: the saved
+    /// state, the fallthrough, and the branch.
+    #[test]
+    fn branches_charge_one_copy_each_plus_the_saved_state() {
+        let mut evaluator = Evaluator {
+            root: Path::new("."),
+            env: HashMap::from([("s".to_owned(), Value::Str("x".repeat(320)))]),
+            functions: HashMap::new(),
+            depth: 0,
+            steps: 0,
+            objects: 0,
+            probed_missing: Vec::new(),
+            table_requirements: BTreeSet::new(),
+            ordered: HashSet::new(),
+        };
+        let empty: &[Stmt] = &[];
+        assert!(evaluator.exec_branches(&[empty], true).is_none());
+        assert_eq!(evaluator.steps, 3 * 11);
+    }
 }
