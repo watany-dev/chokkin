@@ -8,11 +8,12 @@ function is a check that raises, and a call a branch test needs truthy
 (``if check_x():``, the code after ``if not check_x(): return``) gates when
 it is any check. A gated import is optional, whatever it imports.
 
-The doc comment of ``import_checks`` claims the shape decides: a top-level
-function whose body *unconditionally* tries to import packages and raises
-from the handler a failed import lands in returns only with them installed,
-and one whose handler returns ``None`` / ``False`` returns truthy only with
-them installed.
+The doc comment of ``import_checks`` claims the shape decides: the first
+top-level ``try`` that imports packages and raises from the handler a failed
+import lands in makes the call return only with them installed, and one
+whose handler returns ``None`` / ``False`` makes it return truthy only with
+them installed. A ``return`` before that ``try``, in its handler or in its
+``finally`` is a check only when falsy, and then only for a test.
 
 The universe: function bodies of one to three top-level statements, each a
 ``try: import p_i`` with one ``except ImportError:`` handler (nine handler
@@ -23,29 +24,16 @@ bodies, with or without ``finally: return``), ``if cond: return``,
 
 G1  Sound gate: when the port gates a call, some ``p_i`` makes it, when
     missing, raise on every path (a statement call) or never return a truthy
-    value (a test). A gate the reference refutes is a counterexample, and
-    each must fall under one of the divergences below; a new kind fails.
+    value (a test). A gate the reference refutes is a counterexample.
 
-Known divergences (#1272 follow-up; see ``ledger-v0.7.12.ja.md``). Each
-lowers findings: the imports after the call turn optional, so a certain
-CHK003 / CHK005 drops to an info note.
-
-D1  An early ``return`` before the ``try`` (``if name != "x": return``,
-    or an earlier ``try`` whose handler returns ``True``) makes the call
-    return without checking anything.
-D2  A handler that may ``return`` before its final ``raise``
-    (``if not strict: return True``) is read as raising.
-D3  A statement call of a function whose first ``try`` returns ``False``
-    and a later one raises: with the first package missing it returns.
-D4  ``finally: return`` on any ``try`` swallows the ``raise`` (and a later
-    check never runs).
-
-G1 also requires every divergence to have a witness, so fixing one fails
-the model until this docstring and ``KNOWN`` drop it.
+G1 held with four known divergences until they were fixed (D1-D4 in the
+``ledger-v0.7.12.ja.md``): an early ``return``, a handler that may return
+before its ``raise``, a statement call past a first ``try`` that returns
+``False``, and ``finally: return``.
 
 ``--broken`` runs variants that must break G1: any top-level ``try`` counted
-whatever its handler does, and a falsy-returning check gating statement
-calls.
+whatever its handler does, a falsy-returning check gating statement calls,
+and the statements before the first counted ``try`` left unread.
 
 Run:  python3 docs/dev/formal/install_check_model.py [--broken]
 Exit status 1 when a property is violated (counterexamples are printed).
@@ -56,7 +44,6 @@ from __future__ import annotations
 import itertools
 import sys
 
-KNOWN = {"D1", "D2", "D3", "D4"}
 BROKEN: set[str] = set()
 
 HANDLERS = (
@@ -83,24 +70,56 @@ RAISES, FALSY = "raises", "falsy"
 
 
 def import_failure(stmt) -> str | None:
-    """``import_failure``: how the handler's last statement leaves."""
+    """``import_failure``: how the handler leaves, ``None`` when it may
+    return a truthy value or ``finally`` returns."""
     if "count-every-try" in BROKEN:
         return RAISES
-    last = stmt[1][-1]
+    _, handler, fin = stmt
+    if fin:
+        return None
+    *rest, last = handler
+    early = {"if_return_true": "truthy", "if_return": "falsy"}
+    early = {early[s] for s in rest if s in early}
+    early |= {"truthy" for s in rest if s == "return True"}
+    if "truthy" in early:
+        return None
     if last == "raise":
-        return RAISES
+        return FALSY if early else RAISES
     if last in ("return False", "return None", "return"):
         return FALSY
     return None
 
 
+def early_returns(stmt) -> set:
+    """The kinds of ``return`` in a statement: "falsy" and "truthy"."""
+    kinds = {"ret_if": "falsy", "ret_true_if": "truthy", "ret_true": "truthy"}
+    if stmt[0] in kinds:
+        return {kinds[stmt[0]]}
+    if stmt[0] != "try":
+        return set()
+    _, handler, fin = stmt
+    found = {"falsy"} if fin else set()
+    for s in handler:
+        if s in ("return True", "if_return_true"):
+            found.add("truthy")
+        elif s.startswith(("return", "if_return")):
+            found.add("falsy")
+    return found
+
+
 def port_check(body):
     """``import_checks``: None, or whether the check returns falsy."""
-    tries = [import_failure(s) for s in body if s[0] == "try"]
-    tries = [t for t in tries if t is not None]
-    if not tries:
-        return None
-    return all(t == FALSY for t in tries)
+    returns_early = False
+    for stmt in body:
+        if stmt[0] == "try" and (failure := import_failure(stmt)) is not None:
+            return returns_early or failure == FALSY
+        early = early_returns(stmt)
+        if "early-return" in BROKEN:
+            continue
+        if "truthy" in early:
+            return None
+        returns_early |= bool(early)
+    return None
 
 
 def port_gates(body, call: str) -> bool:
@@ -192,32 +211,7 @@ def reference_gates(body, call: str) -> bool:
     return False
 
 
-# ─── Classification ──────────────────────────────────────────────────────────
-
-
-def divergence(body, call: str) -> str | None:
-    counted = [
-        i for i, s in enumerate(body) if s[0] == "try" and import_failure(s) is not None
-    ]
-    if any(s[0] == "try" and s[2] for s in body):
-        return "D4"
-    early_exit = ("ret_if", "ret_true_if")
-    if any(
-        s[0] in early_exit or (s[0] == "try" and s[1] == ("return True",))
-        for s in body[: counted[-1]]
-    ):
-        return "D1"
-    if any({"if_return", "if_return_true"} & set(body[i][1]) for i in counted):
-        return "D2"
-    failures = [import_failure(body[i]) for i in counted]
-    if (
-        call == "statement"
-        and FALSY in failures
-        and RAISES in failures
-        and failures.index(FALSY) < failures.index(RAISES)
-    ):
-        return "D3"
-    return None
+# ─── Check ───────────────────────────────────────────────────────────────────
 
 
 def bodies():
@@ -229,55 +223,42 @@ def bodies():
                 yield tuple(stmts) + ending
 
 
-def check() -> tuple[list[str], dict, int]:
+def check() -> tuple[list[str], int]:
     bad: list[str] = []
-    witnesses: dict = {}
     incomplete = 0
     for body in bodies():
         for call in ("statement", "test"):
             port, ref = port_gates(body, call), reference_gates(body, call)
             if port and not ref:
-                kind = divergence(body, call)
-                if kind in KNOWN:
-                    witnesses.setdefault(kind, (body, call))
-                else:
-                    bad.append(
-                        f"G1 {call} call of {body}: gated, but a missing package can return"
-                    )
+                bad.append(
+                    f"G1 {call} call of {body}: gated, but a missing package can return"
+                )
             elif ref and not port:
                 incomplete += 1
-    if not BROKEN:
-        bad.extend(
-            f"G1 {kind} has no witness any more: drop it from KNOWN and the docstring"
-            for kind in sorted(KNOWN - witnesses.keys())
-        )
-    return bad, witnesses, incomplete
+    return bad, incomplete
 
 
 def main() -> int:
     if "--broken" in sys.argv:
         status = 0
-        for variant in ("count-every-try", "falsy-gates-statements"):
+        for variant in ("count-every-try", "falsy-gates-statements", "early-return"):
             BROKEN.clear()
             BROKEN.add(variant)
-            bad, _, _ = check()
+            bad, _ = check()
             print(
                 f"broken variant {variant}: {'caught (' + str(len(bad)) + ')' if bad else 'NOT caught'}"
             )
             status |= not bad
         BROKEN.clear()
         return status
-    bad, witnesses, incomplete = check()
+    bad, incomplete = check()
     for line in bad[:50]:
         print(line)
     if bad:
         print(f"install_check_model: {len(bad)} counterexamples")
         return 1
-    for kind in sorted(witnesses):
-        body, call = witnesses[kind]
-        print(f"  {kind} witness ({call} call): {body}")
     print(
-        f"install_check_model: G1 holds outside D1-D4 ({incomplete} sound gates the port does not take)"
+        f"install_check_model: G1 holds ({incomplete} sound gates the port does not take)"
     )
     return 0
 
