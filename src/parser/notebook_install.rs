@@ -602,6 +602,8 @@ mod tests {
             ("python -m pipx install black", &[]),
             ("python -m venv .venv", &[]),
             ("python -Ic 'import x' -m pip install x", &[]),
+            // `-c` takes the rest of its cluster as the code: `m` here.
+            ("python -cm pip install x", &[]),
             ("python -W", &[]),
             ("pip --log pip.log install requests", &["requests"]),
             ("pip --log=pip.log install requests", &["requests"]),

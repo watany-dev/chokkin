@@ -3772,7 +3772,11 @@ fn binary_notebook_installs_declare_their_imports() {
         ("acme/__init__.py", ""),
         (
             "notebooks/installs.ipynb",
-            r#"{"cells": [{"cell_type": "code", "source": ["%pip install -q rich llama-index-llms-openai\n", "!{sys.executable} -m pip install 'httpx>=0.27'\n", "import rich\n", "import httpx\n", "from llama_index.llms.openai import OpenAI\n", "import requests\n", "import llama_index.agent\n"]}]}"#,
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install -q rich llama-index-llms-openai\n", "!{sys.executable} -m pip install 'httpx>=0.27'\n", "import rich\n", "import httpx\n", "from llama_index.llms.openai import OpenAI\n", "import requests\n"]}]}"#,
+        ),
+        (
+            "notebooks/namespace.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install llama-index-llms-openai\n", "from llama_index.llms.openai import OpenAI\n", "import llama_index.agent\n"]}]}"#,
         ),
         (
             "notebooks/other.ipynb",
@@ -3812,7 +3816,7 @@ fn binary_notebook_installs_declare_their_imports() {
             ),
             ("CHK003", "notebooks/other.ipynb", "rich", "info", "maybe"),
             // Another module of the same namespace is not installed.
-            ("CHK010", "notebooks/installs.ipynb", "", "info", "likely"),
+            ("CHK010", "notebooks/namespace.ipynb", "", "info", "likely"),
         ],
         "{parsed}"
     );
