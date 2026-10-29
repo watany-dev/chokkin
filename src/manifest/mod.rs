@@ -39,7 +39,7 @@ pub(crate) use pep508::{canonical_version_specifiers, is_valid_marker};
 pub(crate) use pep508_util::pep508_distribution_name;
 pub(crate) use pep508_util::{
     archive_distribution_name, invalid_requirement_name, is_project_name,
-    normalize_distribution_name,
+    normalize_distribution_name, requirement_name,
 };
 pub(crate) use python_range::{
     PythonRange, marker_always_holds, requires_python_range, supported_python,

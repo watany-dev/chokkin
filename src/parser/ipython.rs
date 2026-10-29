@@ -8,18 +8,21 @@
 //! and magics that neither run Python nor import a module. A magic that runs
 //! Python (`%time`, `%%capture`) keeps its code; one that imports a module
 //! (`%load_ext`) becomes that import. Any other magic is not recognized and
-//! fails the cell, which the caller reports as unread (ADR 0005).
+//! fails the cell, which the caller reports as unread (ADR 0005). An
+//! install command (`%pip install`, `!pip install`) is dropped too, and what
+//! it installs is returned beside the Python (#991).
 
 use ruff_python_ast::token::TokenKind;
 use ruff_python_parser::Mode;
 use ruff_python_parser::lexer::lex;
 
 use super::dynamic::is_dotted_identifier;
+use super::notebook_install::{self, Install};
 
 /// Line magics that neither run the cell's Python nor import a module, so
-/// dropping them hides nothing a rule reads. `%pip` installs a distribution
-/// but does not import it; reading its arguments as declared dependencies
-/// is #991.
+/// dropping them hides nothing a rule reads. `%pip` and `%conda` install a
+/// distribution without importing it; what they install is read on the side
+/// (#991).
 const INERT_LINE_MAGICS: &[&str] = &[
     "alias",
     "alias_magic",
@@ -128,17 +131,30 @@ const PRUN_VALUED: &[&str] = &["D", "T", "s", "l"];
 /// `IPython.extensions` rather than as a top-level module.
 const BUILTIN_EXTENSIONS: &[&str] = &["autoreload", "storemagic"];
 
+/// A cell rewritten into Python.
+#[derive(Debug, Default)]
+pub(super) struct RewrittenCell {
+    pub(super) python: String,
+    /// What the cell's install commands install, each at its 0-based line
+    /// in the cell.
+    pub(super) installs: Vec<(usize, Install)>,
+}
+
 /// Rewrite `cell` into Python with the same number of lines, or name the
 /// `IPython` form that was not recognized and its 0-based line in the cell.
-pub(super) fn cell_to_python(cell: &str) -> Result<String, (usize, String)> {
+pub(super) fn rewrite_cell(cell: &str) -> Result<RewrittenCell, (usize, String)> {
     let lines: Vec<&str> = cell.split_inclusive('\n').collect();
-    let mut out = String::with_capacity(cell.len());
+    let mut out = RewrittenCell {
+        python: String::with_capacity(cell.len()),
+        installs: Vec::new(),
+    };
     // IPython drops leading blank lines before it looks for a cell magic.
     let Some(first) = lines.iter().position(|line| !line.trim().is_empty()) else {
-        return Ok(cell.to_owned());
+        cell.clone_into(&mut out.python);
+        return Ok(out);
     };
     for line in &lines[..first] {
-        out.push_str(line);
+        out.python.push_str(line);
     }
     let Some(magic) = lines[first].trim_start().strip_prefix("%%") else {
         rewrite_lines(&lines[first..], first, &mut out)?;
@@ -146,13 +162,13 @@ pub(super) fn cell_to_python(cell: &str) -> Result<String, (usize, String)> {
     };
     match cell_magic(magic).map_err(|message| (first, message))? {
         CellBody::Python(python) => {
-            out.push_str(&python);
-            blank_line(lines[first], &mut out);
+            out.python.push_str(&python);
+            blank_line(lines[first], &mut out.python);
             rewrite_lines(&lines[first + 1..], first + 1, &mut out)?;
         },
         CellBody::Foreign => {
             for line in &lines[first..] {
-                blank_line(line, &mut out);
+                blank_line(line, &mut out.python);
             }
         },
     }
@@ -206,7 +222,11 @@ fn script_body(args: &str) -> Result<CellBody, String> {
 /// cell's line `start`. A line ending in `\` continues onto the next:
 /// `IPython` joins them with a space before it reads the magic or shell
 /// command they make up.
-fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (usize, String)> {
+fn rewrite_lines(
+    lines: &[&str],
+    start: usize,
+    out: &mut RewrittenCell,
+) -> Result<(), (usize, String)> {
     let starts = statement_starts(lines);
     let mut next = 0;
     for (index, line) in lines.iter().enumerate() {
@@ -214,7 +234,7 @@ fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (
             continue;
         }
         if !starts[index] {
-            out.push_str(line);
+            out.python.push_str(line);
             continue;
         }
         let text = line.trim_end_matches(['\n', '\r']);
@@ -226,16 +246,21 @@ fn rewrite_lines(lines: &[&str], start: usize, out: &mut String) -> Result<(), (
             joined = format!("{head} {}", next.trim_end_matches(['\n', '\r']));
             end += 1;
         }
-        match rewrite_line(&joined).map_err(|message| (start + index, message))? {
+        let mut installs = Vec::new();
+        match rewrite_line(&joined, &mut installs).map_err(|message| (start + index, message))? {
             Some(python) => {
-                out.push_str(&python);
-                out.push_str(&line[text.len()..]);
+                out.python.push_str(&python);
+                out.python.push_str(&line[text.len()..]);
                 for line in &lines[index + 1..end] {
-                    blank_line(line, out);
+                    blank_line(line, &mut out.python);
                 }
             },
-            None => lines[index..end].iter().for_each(|line| out.push_str(line)),
+            None => lines[index..end]
+                .iter()
+                .for_each(|line| out.python.push_str(line)),
         }
+        out.installs
+            .extend(installs.into_iter().map(|install| (start + index, install)));
         next = end;
     }
     Ok(())
@@ -284,10 +309,16 @@ fn statement_starts(lines: &[&str]) -> Vec<bool> {
 }
 
 /// The Python for one `IPython` line, or `None` when it is plain Python.
-fn rewrite_line(text: &str) -> Result<Option<String>, String> {
+/// What an install command on it installs goes to `installs`.
+fn rewrite_line(text: &str, installs: &mut Vec<Install>) -> Result<Option<String>, String> {
     let body = text.trim_start();
     let indent = &text[..text.len() - body.len()];
-    if body.starts_with('!') || is_help(body) {
+    if let Some(command) = body.strip_prefix('!') {
+        // `!!cmd` runs `cmd` too, capturing its output.
+        installs.extend(notebook_install::shell(command.trim_start_matches('!')));
+        return Ok(Some(format!("{indent}pass")));
+    }
+    if is_help(body) {
         return Ok(Some(format!("{indent}pass")));
     }
     if let Some(magic) = body.strip_prefix('%') {
@@ -298,14 +329,17 @@ fn rewrite_line(text: &str) -> Result<Option<String>, String> {
             ));
         }
         // `% pip install x` names `%pip`: whitespace may follow the `%`.
-        return line_magic(magic.trim_start()).map(|python| Some(format!("{indent}{python}")));
+        return line_magic(magic.trim_start(), installs)
+            .map(|python| Some(format!("{indent}{python}")));
     }
     let Some((target, value)) = assigned_escape(body) else {
         return Ok(None);
     };
-    let python = match value.strip_prefix('%') {
-        Some(magic) => line_magic(magic.trim_start())?,
-        None => "pass".to_owned(),
+    let python = if let Some(magic) = value.strip_prefix('%') {
+        line_magic(magic.trim_start(), installs)?
+    } else {
+        installs.extend(notebook_install::shell(value.trim_start_matches('!')));
+        "pass".to_owned()
     };
     Ok(Some(format!("{indent}{target} = ...; {python}")))
 }
@@ -337,8 +371,14 @@ fn is_help(body: &str) -> bool {
 }
 
 /// The Python a line magic (without its `%`) stands for.
-fn line_magic(magic: &str) -> Result<String, String> {
+fn line_magic(magic: &str, installs: &mut Vec<Install>) -> Result<String, String> {
     let (name, args) = split_magic(magic);
+    match name {
+        "pip" => installs.extend(notebook_install::pip_magic(args)),
+        "conda" | "mamba" | "micromamba" => installs.extend(notebook_install::conda_magic(args)),
+        "sx" | "system" => installs.extend(notebook_install::shell(args)),
+        _ => {},
+    }
     match name {
         "load_ext" | "reload_ext" => Ok(extension_import(args)),
         "aimport" => Ok(aimport(args)),
@@ -407,7 +447,11 @@ fn blank_line(line: &str, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::cell_to_python;
+    use super::rewrite_cell;
+
+    fn cell_to_python(cell: &str) -> Result<String, (usize, String)> {
+        rewrite_cell(cell).map(|cell| cell.python)
+    }
 
     fn unrecognized(line: usize, message: &str) -> Result<String, (usize, String)> {
         Err((line, message.to_owned()))

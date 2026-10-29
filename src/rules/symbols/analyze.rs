@@ -11,12 +11,12 @@ use crate::plugins::PluginHints;
 use crate::reachability::{ModuleIndex, ReachabilityReport, module_and_parents};
 use crate::resolver::ResolveWarning;
 use crate::resolver::is_first_party_import;
-use crate::rules::RuleContext;
 use crate::rules::deps::file_context;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
     sort_candidates,
 };
+use crate::rules::{NotebookInstalls, RuleContext};
 use crate::sources::{
     DiscoveredSources, FileContext, PublicSurface, in_examples_dir, member_ships, path_to_module,
 };
@@ -483,6 +483,7 @@ fn detect_unresolved_imports(
     // One issue per (file, module): lazy imports inside functions repeat the
     // same unresolved module many times in one file and bury the rest.
     let mut sites: HashMap<(&str, &str), Vec<UnresolvedSite<'_>>> = HashMap::new();
+    let installs = NotebookInstalls::new(context.parse);
     for warning in &resolution.warnings {
         let ResolveWarning::UnresolvedImport {
             import,
@@ -495,7 +496,8 @@ fn detect_unresolved_imports(
         else {
             continue;
         };
-        if !reachable.contains(file.as_str()) {
+        // A notebook that installs what it imports needs no declaration (#991).
+        if !reachable.contains(file.as_str()) || installs.provides_unresolved(file, import, *line) {
             continue;
         }
         let guarded = *context == ImportContext::Type || *optional;
