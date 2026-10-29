@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-10-29
+
+### Added
+- A list or tuple of three or more strings in a runtime file that all name
+  project modules is read as a plugin list a loader imports one by one
+  (redash's `default_query_runners` handed to `__import__`): each listed
+  module and its parent packages are reached from the file that holds the
+  list. A list that names anything else, or of one or two strings, reaches
+  nothing (#1257).
+- ansible plugin `DOCUMENTATION` / `EXAMPLES` / `RETURN` strings are read
+  under every plugin type `ansible-doc` documents
+  (`lib/ansible/plugins/<type>/` and a collection's `plugins/<type>/`), not
+  only modules. `strawberry-graphql` and `django-pgware` import names are
+  mapped (#1262).
+- `pytest_plugins` strings, `[tool.uvicorn] app`, pre-commit hook ids, the
+  section a pytest config is read from and `[project.scripts]` entry points
+  carry the line that names them: an unmapped entry target names
+  `file:line`, and `--trace` shows the setting line behind a plugin entry
+  (`DJANGO_SETTINGS_MODULE`, `ROOT_URLCONF`) (#882).
+
 ### Changed
 - CHK001 reports at info a file users select or copy from their own
   settings: one under a `templates/` or `*_templates/` directory, and one a
@@ -18,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   modules a list of module names loads: an opt-in plugin the same loader
   takes when users add it to their own list (redash's `big_query_gce.py`)
   (#1258).
+- CHK008 found only from a tool config section (a leftover
+  `[tool.coverage]` or `[tool.pylint]` table) is likely, not certain; only a
+  command usage keeps it certain, and `--explain` names that origin (#1260).
+- CHK006 reports at info the public symbols of a file under `examples/`, as
+  CHK001 does: a sample is copied, not imported. A `literalinclude` target
+  outside `examples/` keeps its severity (#1255).
 
 ### Fixed
 - `setup.cfg` opens a section whose header has text after the `]`
@@ -28,6 +54,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line continues the previous option only when it is indented deeper than
   that option's line. `  install_requires = requests` right after
   `[options]` was skipped, so its dependencies were reported as CHK004.
+- App-mode CHK002 no longer reports as certain a declaration a tool or
+  library loads without an import: the dbt adapter a `profiles.yml` target's
+  `type:` names, `dagster-webserver` for `dg dev` / `dagster dev`,
+  `python-dotenv` for Flask's CLI, `tzdata` for `zoneinfo`, `pillow` for
+  `pyautogui.screenshot()`, `setuptools` for `razorpay`, and `*-types` stub
+  packages such as `celery-types` (#1256).
+- CHK005 no longer warns about `IPython` imported only by a notebook helper
+  the package itself never loads, or about an import inside a module-level
+  private function called only under a handler a failed import lands in
+  (`try: _load() except Exception:`) (#1259).
+- Reading a server command's app (`gunicorn`, `uvicorn`) skips options and
+  the colon of a `${VAR:-default}`, which were taken for a `module:app`
+  reference.
+- A function counts as an install check only when every path past its
+  first `try` checks: an early return, a handler that may return truthy, or
+  a returning `finally` no longer makes the imports after the call optional.
+- A `testpaths` glob ending in `**` (`checks/*/**`) keeps files out of the
+  match, as pytest does: `checks/util.py` is no longer test code.
 
 ## [0.7.12] - 2026-10-28
 
