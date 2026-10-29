@@ -63,14 +63,16 @@ impl CacheOptions {
     /// # Errors
     ///
     /// Returns an IO error when the probe cannot be written or its metadata
-    /// cannot be read.
+    /// cannot be read, or when a directory on the way to it is a link or not a
+    /// directory (see [`real_dir`]).
     pub fn filesystem_now(&self, project_root: &Path) -> io::Result<SystemTime> {
         let path = self.clock_probe_path(project_root);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        if !real_dir(project_root, &self.directory_path(project_root), true)? {
+            return Err(io::Error::other("cache directory is not a real directory"));
         }
-        // Non-empty so the write always reaches the file and bumps its mtime.
-        std::fs::write(&path, b"chokkin clock probe\n")?;
+        // The rename replaces a planted `clock` link instead of writing
+        // through it. Non-empty so the file always gets a fresh mtime.
+        atomic_write(&path, b"chokkin clock probe\n", false)?;
         std::fs::metadata(&path)?.modified()
     }
 
@@ -94,7 +96,7 @@ impl CacheOptions {
             return Ok(ParseCacheBundle::default());
         }
         let path = self.parse_bundle_path(project_root, context);
-        Ok(read_cache_bytes(&path)?
+        Ok(read_cache_entry(project_root, &path)?
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default())
     }
@@ -114,8 +116,8 @@ impl CacheOptions {
             return Ok(());
         }
         let path = self.parse_bundle_path(project_root, context);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        if !ensure_entry_dir(project_root, &path)? {
+            return Ok(());
         }
         let bytes = serde_json::to_vec(bundle).map_err(io::Error::other)?;
         write_cache_bytes(&path, &bytes)?;
@@ -150,7 +152,8 @@ impl CacheOptions {
         if !self.enabled {
             return Ok(None);
         }
-        let Some(bytes) = read_cache_bytes(&self.scan_entry_path(project_root, key))? else {
+        let Some(bytes) = read_cache_entry(project_root, &self.scan_entry_path(project_root, key))?
+        else {
             return Ok(None);
         };
         Ok(serde_json::from_slice::<ScanCacheRecord<T>>(&bytes)
@@ -179,8 +182,8 @@ impl CacheOptions {
             return Ok(());
         }
         let path = self.scan_entry_path(project_root, &key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        if !ensure_entry_dir(project_root, &path)? {
+            return Ok(());
         }
         let record = ScanCacheRecord {
             key,
@@ -201,7 +204,71 @@ impl CacheOptions {
     }
 }
 
+/// Whether every component from `root` down to `dir` is a real directory,
+/// creating the missing ones when `create` is set.
+///
+/// The cache lives inside the analyzed checkout, which may come from an
+/// untrusted source. A symbolic link (or Windows junction) anywhere on the way
+/// to `.chokkin/cache/...` would make writes and the stale-entry sweep act on
+/// files outside the project, so a link or non-directory component makes the
+/// cache unavailable for that entry: reads miss and writes are skipped. A
+/// missing component without `create` is also `false` (nothing cached yet).
+fn real_dir(root: &Path, dir: &Path, create: bool) -> io::Result<bool> {
+    let relative = dir
+        .strip_prefix(root)
+        .map_err(|_| io::Error::other("cache directory is outside the project root"))?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_dir() => {},
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
+                match std::fs::create_dir(&current) {
+                    Ok(()) => {},
+                    // A concurrent run created it; check what it is below.
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
+                    Err(error) => return Err(error),
+                }
+                if !std::fs::symlink_metadata(&current)?.is_dir() {
+                    return Ok(false);
+                }
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(true)
+}
+
+/// Create the directories holding the cache entry `path`; `false` when one of
+/// them is a link (see [`real_dir`]).
+fn ensure_entry_dir(root: &Path, path: &Path) -> io::Result<bool> {
+    match path.parent() {
+        Some(parent) => real_dir(root, parent, true),
+        None => Ok(false),
+    }
+}
+
+/// Read the cache entry `path` below `root`, as a miss when it or one of its
+/// directories is a symbolic link (see [`real_dir`]).
+fn read_cache_entry(root: &Path, path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match path.parent() {
+        Some(parent) if real_dir(root, parent, false)? => read_cache_bytes(path),
+        _ => Ok(None),
+    }
+}
+
 fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::symlink_metadata(path) {
+        // A link, FIFO or device is never something the cache wrote, and
+        // reading one could leave the root or block. A directory still errors
+        // below: it is not "nothing cached yet".
+        Ok(metadata) if !metadata.is_file() && !metadata.is_dir() => return Ok(None),
+        Ok(_) => {},
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    }
     match std::fs::read(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -227,7 +294,10 @@ fn sweep_stale_json(dir: &Path, keep: &OsStr) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        // `remove_file` on a link would only drop the link, but the cache never
+        // writes anything except regular files, so leave the rest alone.
         if entry.file_name().as_os_str() != keep
+            && entry.file_type().is_ok_and(|kind| kind.is_file())
             && path
                 .extension()
                 .is_some_and(|extension| extension == "json")
@@ -1126,6 +1196,128 @@ mod tests {
         let probe = std::fs::metadata(options.clock_probe_path(&root)).expect("probe metadata");
         assert_eq!(probe.modified().expect("probe mtime"), now);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A project root and, beside it, a directory standing in for the user's
+    /// files outside the project.
+    #[cfg(unix)]
+    fn root_with_outside(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let base = temp_cache_test_dir(name);
+        let root = base.join("project");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).expect("create project");
+        std::fs::create_dir_all(&outside).expect("create outside");
+        (base, root, outside)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clock_probe_does_not_write_through_a_planted_link() {
+        let (base, root, outside) = root_with_outside("link-clock");
+        let victim = outside.join("dotfile");
+        std::fs::write(&victim, "keep").expect("write victim");
+        let options = CacheOptions::default();
+        std::fs::create_dir_all(options.directory_path(&root)).expect("create cache dir");
+        std::os::unix::fs::symlink(&victim, options.clock_probe_path(&root)).expect("symlink");
+
+        options.filesystem_now(&root).expect("filesystem now");
+
+        assert_eq!(
+            std::fs::read_to_string(&victim).expect("read victim"),
+            "keep"
+        );
+        assert!(
+            !std::fs::symlink_metadata(options.clock_probe_path(&root))
+                .expect("probe")
+                .file_type()
+                .is_symlink()
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_cache_directories_are_never_written_or_swept() {
+        let context = test_context("parse-v1");
+        let key = ScanCacheKey {
+            context: test_context("scan-v1"),
+            inputs: ScanInputFingerprints::default(),
+        };
+        // Each case links one directory on the way to an entry out of the root.
+        for linked in [
+            ".chokkin",
+            ".chokkin/cache",
+            ".chokkin/cache/parse",
+            ".chokkin/cache/scan",
+        ] {
+            let (base, root, outside) = root_with_outside("link-dir");
+            std::fs::write(outside.join("settings.json"), "{}").expect("write victim");
+            let link = root.join(linked);
+            std::fs::create_dir_all(link.parent().expect("parent")).expect("create parents");
+            std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+            let options = CacheOptions::default();
+
+            options
+                .write_parse_bundle_ref(&root, &context, &ParseCacheBundleRef::default())
+                .expect("write parse bundle");
+            options
+                .write_scan_payload(&root, key.clone(), &())
+                .expect("write scan payload");
+            let probe = options.filesystem_now(&root);
+            assert_eq!(
+                probe.is_err(),
+                matches!(linked, ".chokkin" | ".chokkin/cache"),
+                "{linked}"
+            );
+
+            let mut left: Vec<_> = std::fs::read_dir(&outside)
+                .expect("read outside")
+                .map(|entry| entry.expect("entry").file_name())
+                .collect();
+            left.sort();
+            assert_eq!(
+                left,
+                vec![std::ffi::OsString::from("settings.json")],
+                "{linked}"
+            );
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_cache_entries_read_as_misses() {
+        let (base, root, outside) = root_with_outside("link-read");
+        let options = CacheOptions::default();
+        let context = test_context("parse-v1");
+        let mut bundle = ParseCacheBundle::default();
+        bundle.insert(&test_parse_key("src/app.py"), module("src/app.py"));
+        let planted = outside.join("bundle.json");
+        std::fs::write(&planted, serde_json::to_vec(&bundle).expect("serialize")).expect("write");
+        let path = options.parse_bundle_path(&root, &context);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create parse dir");
+        std::os::unix::fs::symlink(&planted, &path).expect("symlink entry");
+
+        let read = options.read_parse_bundle(&root, &context).expect("read");
+        assert!(read.entries.is_empty(), "a linked entry is a miss");
+
+        std::fs::remove_file(&path).expect("remove link");
+        std::fs::remove_dir_all(options.directory_path(&root).join("parse")).expect("rm parse");
+        std::fs::create_dir_all(outside.join("parse")).expect("outside parse");
+        std::fs::copy(
+            &planted,
+            outside.join("parse").join(path.file_name().expect("name")),
+        )
+        .expect("copy");
+        std::os::unix::fs::symlink(outside.join("parse"), path.parent().expect("parent"))
+            .expect("symlink dir");
+
+        let read = options.read_parse_bundle(&root, &context).expect("read");
+        assert!(
+            read.entries.is_empty(),
+            "an entry under a linked directory is a miss"
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 
     fn test_context(unit_version: &str) -> CacheKeyContext {
