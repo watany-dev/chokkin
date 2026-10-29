@@ -823,7 +823,8 @@ fn unread_public_module_gaps(reachability: &ReachabilityReport) -> Vec<Gap> {
 /// One gap per file and module, in a reachable file or a public orphan whose
 /// imports CHK002 counts (#942), at the import sites CHK010 warns about: a
 /// `TYPE_CHECKING` or optional import never fails, a docs or dev file runs
-/// outside the installed package, and a first-party miss is a typo rather
+/// outside the installed package, a test file the tests load only by name
+/// may be broken on purpose (#1223), and a first-party miss is a typo rather
 /// than a distribution (§12). A script's block installs what the script runs
 /// with, so its imports count in any context.
 fn unresolved_import_gaps(
@@ -832,6 +833,7 @@ fn unresolved_import_gaps(
     scripts: &[InlineScript],
 ) -> Vec<Gap> {
     let is_script = |file: &str| scripts.iter().any(|script| script.path == file);
+    let name_loaded = std::cell::OnceCell::new();
     let mut sites: BTreeMap<(&str, &str), Option<u32>> = BTreeMap::new();
     for warning in &context.resolution.warnings {
         let ResolveWarning::UnresolvedImport {
@@ -854,7 +856,12 @@ fn unresolved_import_gaps(
                     file_context(file, context.sources),
                     FileContext::Docs | FileContext::Dev
                 ))
-            && !is_first_party_import(import, &context.sources.layout, &manifest.metadata);
+            && !is_first_party_import(import, &context.sources.layout, &manifest.metadata)
+            && (is_script(file)
+                || file_context(file, context.sources) != FileContext::Test
+                || !name_loaded
+                    .get_or_init(|| context.name_loaded_test_files())
+                    .contains(file.as_str()));
         if !counts {
             continue;
         }

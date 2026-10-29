@@ -9,8 +9,8 @@ use crate::manifest::LoadedManifest;
 use crate::parser::{ImportContext, ParseSummary, ParsedModule};
 use crate::plugins::PluginHints;
 use crate::reachability::{ModuleIndex, ReachabilityReport, module_and_parents};
+use crate::resolver::ResolveWarning;
 use crate::resolver::is_first_party_import;
-use crate::resolver::{ResolutionIndex, ResolveWarning};
 use crate::rules::RuleContext;
 use crate::rules::deps::file_context;
 use crate::rules::types::{
@@ -75,12 +75,12 @@ pub fn analyze_with_context(
     production_tests: Option<&[ParsedModule]>,
 ) -> Vec<IssueCandidate> {
     let RuleContext {
-        resolution,
         reachability,
         graph,
         sources,
         parse,
         surface,
+        ..
     } = *context;
     let reachable = reachable_file_paths(graph, reachability);
     let reachable_modules: Vec<_> = parse
@@ -153,9 +153,7 @@ pub fn analyze_with_context(
         &external_symbols,
         &wheels,
     ));
-    candidates.extend(detect_unresolved_imports(
-        resolution, &reachable, manifest, sources,
-    ));
+    candidates.extend(detect_unresolved_imports(context, &reachable, manifest));
 
     sort_candidates(&mut candidates);
     candidates
@@ -473,11 +471,15 @@ fn unused_reexport_severity(mode: ProjectMode) -> (Severity, Confidence) {
 }
 
 fn detect_unresolved_imports(
-    resolution: &ResolutionIndex,
+    context: &RuleContext<'_>,
     reachable: &HashSet<&str>,
     manifest: &LoadedManifest,
-    sources: &DiscoveredSources,
 ) -> Vec<IssueCandidate> {
+    let RuleContext {
+        resolution,
+        sources,
+        ..
+    } = *context;
     // One issue per (file, module): lazy imports inside functions repeat the
     // same unresolved module many times in one file and bury the rest.
     let mut sites: HashMap<(&str, &str), Vec<UnresolvedSite<'_>>> = HashMap::new();
@@ -507,12 +509,44 @@ fn detect_unresolved_imports(
             });
     }
 
+    let scope = UnresolvedScope {
+        manifest,
+        sources,
+        name_loaded: if sites
+            .keys()
+            .any(|(file, _)| file_context(file, sources) == FileContext::Test)
+        {
+            context.name_loaded_test_files()
+        } else {
+            HashSet::new()
+        },
+    };
     sites
         .into_iter()
         .filter_map(|((file, import), sites)| {
-            unresolved_import_candidate(file, import, &sites, manifest, sources)
+            unresolved_import_candidate(file, import, &sites, &scope)
         })
         .collect()
+}
+
+/// What every CHK010 of one run reads.
+struct UnresolvedScope<'a> {
+    manifest: &'a LoadedManifest,
+    sources: &'a DiscoveredSources,
+    /// [`RuleContext::name_loaded_test_files`].
+    name_loaded: HashSet<&'a str>,
+}
+
+impl UnresolvedScope<'_> {
+    /// Whether `file` runs outside the installed package (docs, examples,
+    /// scripts) or a test loads it only by name, maybe to see it fail.
+    fn runs_outside_package(&self, file: &str) -> bool {
+        self.name_loaded.contains(file)
+            || matches!(
+                file_context(file, self.sources),
+                FileContext::Docs | FileContext::Dev
+            )
+    }
 }
 
 struct UnresolvedSite<'a> {
@@ -534,9 +568,11 @@ fn unresolved_import_candidate(
     file: &str,
     import: &str,
     sites: &[UnresolvedSite<'_>],
-    manifest: &LoadedManifest,
-    sources: &DiscoveredSources,
+    scope: &UnresolvedScope<'_>,
 ) -> Option<IssueCandidate> {
+    let UnresolvedScope {
+        manifest, sources, ..
+    } = *scope;
     let anchor = anchor_site(sites)?;
     let line = anchor.line;
     let guarded_only = sites.iter().all(|site| site.guarded);
@@ -573,6 +609,9 @@ fn unresolved_import_candidate(
     if !numbered.is_empty() {
         details.push(format!("also imported at lines {}", numbered.join(", ")));
     }
+    if scope.name_loaded.contains(file) {
+        details.push("the tests load this file only by name, often to see it fail".to_owned());
+    }
 
     Some(IssueCandidate {
         rule: RuleId::Chk010,
@@ -584,12 +623,9 @@ fn unresolved_import_candidate(
         },
         // A `TYPE_CHECKING` import never runs and an optional one falls back
         // when missing; docs / examples / scripts run outside the installed
-        // package. All stay reported for typos (#584, #654, #694).
-        severity: if guarded_only
-            || matches!(
-                file_context(file, sources),
-                FileContext::Docs | FileContext::Dev
-            ) {
+        // package; a test file the tests load only by name may be broken on
+        // purpose. All stay reported for typos (#584, #654, #694, #1223).
+        severity: if guarded_only || scope.runs_outside_package(file) {
             Severity::Info
         } else {
             Severity::Warning
@@ -727,7 +763,7 @@ mod tests {
         crate::rules::ignore::IgnoreMatcher::build(
             &crate::config::default_config(),
             &parse,
-            &ResolutionIndex::default(),
+            &crate::resolver::ResolutionIndex::default(),
         )
     }
 
@@ -760,9 +796,13 @@ mod tests {
                         reference: None,
                     })
                     .collect::<Vec<_>>();
-                let candidate =
-                    unresolved_import_candidate(FILE, "missing", &sites, &manifest, &sources)
-                        .expect("candidate");
+                let scope = UnresolvedScope {
+                    manifest: &manifest,
+                    sources: &sources,
+                    name_loaded: HashSet::new(),
+                };
+                let candidate = unresolved_import_candidate(FILE, "missing", &sites, &scope)
+                    .expect("candidate");
 
                 let alone = |guarded: bool| {
                     if guarded || matches!(context, FileContext::Docs | FileContext::Dev) {
