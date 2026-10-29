@@ -279,9 +279,7 @@ pub(super) fn config_star_symbols(
     let stars = config_star_files(plugins);
     // A `conf.py` outside the module layout has no module name; its path
     // stands in, which no module name equals.
-    let in_namespace =
-        |path: &str| entries.contains(path) || includes.contains(path) || stars.contains(path);
-    let name_of = |path| namespace_name(path, module_names, in_namespace(path));
+    let name_of = |path| namespace_name(path, module_names, entries.contains(path));
     let chain = StarChain::build(
         modules
             .iter()
@@ -313,17 +311,17 @@ pub(super) fn config_star_symbols(
         .collect()
 }
 
-/// The module name of `path`, or for a file in a config namespace that has
-/// none, the path itself.
+/// The module name of `path`, or for a config entry that has none, the path
+/// itself.
 fn namespace_name<'a>(
     path: &'a str,
     module_names: &'a HashMap<&str, String>,
-    in_namespace: bool,
+    is_entry: bool,
 ) -> Option<&'a str> {
     module_names
         .get(path)
         .map(String::as_str)
-        .or_else(|| in_namespace.then_some(path))
+        .or_else(|| is_entry.then_some(path))
 }
 
 /// Upper-case top-level names of a settings module (#1238): Django's

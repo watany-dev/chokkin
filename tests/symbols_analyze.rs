@@ -1894,6 +1894,43 @@ fn django_settings_parts_are_filtered_at_every_hop_but_includes_are_not() {
     );
 }
 
+/// A settings file the django plugin follows through a star import the
+/// import graph cannot resolve (wger's relative import outside a package,
+/// #1239) is where the settings namespace starts, so what it star-imports
+/// in turn reaches the settings, filtered at every hop (#960).
+#[test]
+fn django_star_part_the_chain_cannot_explain_is_a_namespace_root() {
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"wger\"\nversion = \"0.1.0\"\ndependencies = [\"django\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        (
+            "manage.py",
+            "import os\n\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"settings.main\")\n",
+        ),
+        ("settings/main.py", "from .settings_global import *\n"),
+        (
+            "settings/settings_global.py",
+            "from wger.defaults import *\n\nROOT_URLCONF = \"wger.urls\"\n",
+        ),
+        ("wger/__init__.py", ""),
+        (
+            "wger/defaults.py",
+            "__all__ = [\"site_name\"]\n\nsite_name = \"wger\"\nleftover = 1\n",
+        ),
+        ("wger/urls.py", "urlpatterns = []\n"),
+    ]);
+    assert!(
+        !has_symbol_rule(&report, RuleId::Chk006, "wger.defaults", "site_name"),
+        "{report:?}"
+    );
+    assert!(
+        has_symbol_rule(&report, RuleId::Chk006, "wger.defaults", "leftover"),
+        "{report:?}"
+    );
+}
+
 /// pytest calls `pytest_*` hooks in the plugins it loads and Sphinx calls an
 /// extension's `setup`, both by name (#777).
 #[test]
