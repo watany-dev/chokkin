@@ -139,7 +139,10 @@ mod tests {
 
     #[test]
     fn module_stem_is_the_last_segment_a_file_answers_to() {
-        assert_eq!(module_stem("tests/importer/bad_module.py"), Some("bad_module"));
+        assert_eq!(
+            module_stem("tests/importer/bad_module.py"),
+            Some("bad_module")
+        );
         assert_eq!(module_stem("tests/importer/__init__.py"), Some("importer"));
         assert_eq!(module_stem("broken.py"), Some("broken"));
         assert_eq!(module_stem("__init__.py"), None);

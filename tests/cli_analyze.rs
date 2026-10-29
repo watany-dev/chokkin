@@ -2463,7 +2463,10 @@ fn binary_test_files_loaded_only_by_name_report_unresolved_imports_as_info() {
             "import a_package_name_that_does_not_exist\n",
         ),
         ("tests/importer/helper.py", "import zz_missing_helper_dep\n"),
-        ("tests/importer/test_other.py", "import zz_missing_other_dep\n"),
+        (
+            "tests/importer/test_other.py",
+            "import zz_missing_other_dep\n",
+        ),
         (
             "tests/importer/test_importer.py",
             "import importlib\n\nimport zz_missing_test_dep\nfrom acme.loader import import_from_string\nfrom tests.importer import helper\n\n\ndef test_errors() -> None:\n    import_from_string(\"tests.importer.raise_import_error:myattr\")\n    importlib.import_module(\"tests.importer.bad_module\")\n    importlib.import_module(\"tests.importer.helper\")\n    importlib.import_module(\"tests.importer.test_other\")\n    assert helper\n",
