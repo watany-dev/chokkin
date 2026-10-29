@@ -11,18 +11,21 @@
 //! back the command they run, which the caller reads like a task file's
 //! (#992). Any other magic is not recognized and fails the cell, which the
 //! caller reports as unread (ADR 0005), unless the notebook loads an
-//! extension, which may register magics of any name.
+//! extension, which may register magics of any name. An install command
+//! (`%pip install`, `!pip install`) is dropped too, and what it installs is
+//! returned beside the Python (#991).
 
 use ruff_python_ast::token::TokenKind;
 use ruff_python_parser::Mode;
 use ruff_python_parser::lexer::lex;
 
 use super::dynamic::is_dotted_identifier;
+use super::notebook_install::{self, Install};
 
 /// Line magics that neither run the cell's Python nor import a module, so
-/// dropping them hides nothing a rule reads. `%pip` installs a distribution
-/// but does not import it; reading its arguments as declared dependencies
-/// is #991.
+/// dropping them hides nothing a rule reads. `%pip` and `%conda` install a
+/// distribution without importing it; what they install is read on the side
+/// (#991).
 const INERT_LINE_MAGICS: &[&str] = &[
     "alias",
     "alias_magic",
@@ -140,13 +143,17 @@ const UNREAD_PYTHON_MAGICS: &[&str] = &[
 /// `IPython.extensions` rather than as a top-level module.
 const BUILTIN_EXTENSIONS: &[&str] = &["autoreload", "storemagic"];
 
-/// A cell rewritten into Python, with the shell commands it runs.
+/// A cell rewritten into Python, with the shell commands it runs and what it
+/// installs.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct PythonCell {
     pub(super) python: String,
     /// What each shell escape runs, and the `python` command each `%run`
     /// stands for, at its 0-based line in the cell (#992).
     pub(super) commands: Vec<(usize, String)>,
+    /// What the cell's install commands install, each at its 0-based line
+    /// in the cell (#991).
+    pub(super) installs: Vec<(usize, Install)>,
 }
 
 /// Rewrite `cell` into Python with the same number of lines, or name the
@@ -158,11 +165,13 @@ pub(super) fn cell_to_python(cell: &str, extensions: bool) -> Result<PythonCell,
     let mut reader = Reader {
         extensions,
         commands: Vec::new(),
+        installs: Vec::new(),
     };
     let python = reader.cell(cell)?;
     Ok(PythonCell {
         python,
         commands: reader.commands,
+        installs: reader.installs,
     })
 }
 
@@ -188,6 +197,7 @@ enum CellBody {
 struct Reader {
     extensions: bool,
     commands: Vec<(usize, String)>,
+    installs: Vec<(usize, Install)>,
 }
 
 impl Reader {
@@ -327,6 +337,13 @@ impl Reader {
     /// stands for.
     fn line_magic(&mut self, magic: &str, line: usize) -> Result<String, String> {
         let (name, args) = split_magic(magic);
+        let installs = match name {
+            "pip" => notebook_install::pip_magic(args),
+            "conda" | "mamba" | "micromamba" => notebook_install::conda_magic(args),
+            "sx" | "system" => notebook_install::shell(args),
+            _ => Vec::new(),
+        };
+        self.add_installs(line, installs);
         match name {
             "run" => {
                 if let Some(command) = run_command(args)? {
@@ -346,12 +363,20 @@ impl Reader {
         }
     }
 
-    /// Record what a shell escape runs: `!!cmd` runs `cmd` as `!cmd` does.
+    /// Record what a shell escape runs and installs: `!!cmd` runs `cmd` as
+    /// `!cmd` does.
     fn shell_command(&mut self, command: &str, line: usize) {
-        let command = command.trim_start_matches('!').trim();
+        let command = command.trim_start_matches('!');
+        self.add_installs(line, notebook_install::shell(command));
+        let command = command.trim();
         if !command.is_empty() {
             self.commands.push((line, command.to_owned()));
         }
+    }
+
+    fn add_installs(&mut self, line: usize, installs: Vec<Install>) {
+        self.installs
+            .extend(installs.into_iter().map(|install| (line, install)));
     }
 }
 
@@ -827,6 +852,25 @@ mod tests {
         assert!(!loads_extension(["%load_ext $name\n", "x = 1\n"]));
     }
 
+    /// Each install magic and shell escape reports what it installs at its
+    /// line; other magics install nothing (#991).
+    #[test]
+    fn install_commands_report_their_installs() {
+        let cell = "%pip install a\n%conda install b\n%mamba install c\n%sx pip install d\n%system pip install e\n!pip install f\nx = !pip install g\n%env pip install h\n";
+        let installs: Vec<(usize, String)> = super::cell_to_python(cell, false)
+            .expect("read")
+            .installs
+            .into_iter()
+            .filter_map(|(line, install)| install.distribution.map(|name| (line, name)))
+            .collect();
+        let expected: Vec<(usize, String)> = ["a", "b", "c", "d", "e", "f", "g"]
+            .into_iter()
+            .enumerate()
+            .map(|(line, name)| (line, name.to_owned()))
+            .collect();
+        assert_eq!(installs, expected);
+    }
+
     #[test]
     fn plain_python_hands_back_no_command() {
         assert_eq!(
@@ -834,6 +878,7 @@ mod tests {
             Ok(PythonCell {
                 python: "x = 1\n".to_owned(),
                 commands: Vec::new(),
+                installs: Vec::new(),
             })
         );
     }

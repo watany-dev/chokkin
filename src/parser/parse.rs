@@ -21,7 +21,9 @@ use super::error::ParseError;
 use super::ignores::extract_ignores_with;
 use super::ipython::PythonCell;
 use super::lines::LineIndex;
-use super::types::{NotebookCommand, ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule};
+use super::types::{
+    NotebookCommand, NotebookInstall, ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule,
+};
 use super::visit::ModuleVisitor;
 
 /// Parse one `.py` file under `root` (static only; never executes Python).
@@ -151,6 +153,10 @@ fn parse_notebook_file(
             parsed = reread;
             parsed.has_unread_cells |= !cells.unread.is_empty();
             parsed.diagnostics.extend(cells.unread);
+            parsed
+                .diagnostics
+                .extend(cells.installs.iter().filter_map(unread_install_diagnostic));
+            parsed.notebook_installs = cells.installs;
             parsed.notebook_commands = cells.commands;
         }
     }
@@ -196,12 +202,15 @@ struct IpythonCells {
     unread: Vec<ParseDiagnostic>,
     /// What the read cells run in a shell or with `%run` (#992).
     commands: Vec<NotebookCommand>,
+    /// What the read cells install (#991).
+    installs: Vec<NotebookInstall>,
 }
 
 /// Read each code cell on its own, rewriting its `IPython` syntax into Python
 /// when it does not parse as it is. A cell that still does not parse is
 /// blanked, keeping the lines of the cells after it, and warned about with
-/// one warning per cell. `None` when no cell could be read, which leaves the
+/// one warning per cell; what it runs or installs is not kept, as nothing
+/// else of it is. `None` when no cell could be read, which leaves the
 /// notebook skipped.
 fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
     let extensions =
@@ -209,6 +218,7 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
     let mut source = String::new();
     let mut unread = Vec::new();
     let mut commands = Vec::new();
+    let mut installs = Vec::new();
     let mut read_any = false;
     let mut first_line = 1;
     for cell in &notebook.cells {
@@ -225,6 +235,15 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
             Ok(cell) => {
                 read_any = true;
                 source.push_str(&cell.python);
+                installs.extend(
+                    cell.installs
+                        .into_iter()
+                        .map(|(line, install)| NotebookInstall {
+                            line: line_of(line),
+                            argument: install.argument,
+                            distribution: install.distribution,
+                        }),
+                );
                 commands.extend(
                     cell.commands
                         .into_iter()
@@ -250,6 +269,20 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
         source,
         unread,
         commands,
+        installs,
+    })
+}
+
+/// An install argument not read: the notebook's missing-dependency findings
+/// are lowered for it (#991).
+fn unread_install_diagnostic(install: &NotebookInstall) -> Option<ParseDiagnostic> {
+    install.distribution.is_none().then(|| ParseDiagnostic {
+        line: install.line,
+        message: format!(
+            "install argument `{}` is not read, so the notebook's missing-dependency findings are info notes",
+            install.argument
+        ),
+        severity: ParseSeverity::Warning,
     })
 }
 
@@ -259,6 +292,7 @@ fn python_cell(text: &str, extensions: bool) -> Result<PythonCell, (usize, Strin
         return Ok(PythonCell {
             python: text.to_owned(),
             commands: Vec::new(),
+            installs: Vec::new(),
         });
     }
     let cell = super::ipython::cell_to_python(text, extensions)?;
@@ -602,7 +636,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v57".to_owned(),
+        unit_version: "parse-v58".to_owned(),
     }
 }
 
@@ -689,6 +723,11 @@ mod tests {
         LayoutInfo::default()
     }
 
+    /// The read cells' source and the warnings of those not read.
+    fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnostic>)> {
+        super::ipython_cells(notebook).map(|cells| (cells.source, cells.unread))
+    }
+
     #[test]
     fn a_stub_parses_to_an_empty_module_at_its_path() {
         let temp = TempDir::new().expect("tempdir");
@@ -724,7 +763,7 @@ mod tests {
                 Some("%run a.py\n".to_owned()),
             ],
         };
-        let cells = ipython_cells(&notebook).expect("a cell is read");
+        let cells = super::ipython_cells(&notebook).expect("a cell is read");
         assert_eq!(cells.source, "pass\nimport os\n\n\n\n\n\n\npass\n\n");
         assert_eq!(
             cells.unread,
@@ -757,6 +796,40 @@ mod tests {
             cells: vec![Some("%run $helper\n".to_owned()), None],
         };
         assert!(ipython_cells(&notebook).is_none());
+    }
+
+    /// Install commands keep their notebook line, and a cell not read keeps
+    /// nothing it installs (#991).
+    #[test]
+    fn ipython_cells_collect_what_read_cells_install() {
+        let notebook = NotebookSource {
+            cells: vec![
+                Some("%pip install -q python-dotenv -r req.txt\nimport dotenv\n".to_owned()),
+                Some("import os\n!{sys.executable} -m pip install rich\n".to_owned()),
+                Some("!pip install pandas\n%run $helper\n".to_owned()),
+            ],
+        };
+        let cells = super::ipython_cells(&notebook).expect("a cell is read");
+        let install = |line, argument: &str, distribution: Option<&str>| NotebookInstall {
+            line,
+            argument: argument.to_owned(),
+            distribution: distribution.map(str::to_owned),
+        };
+        assert_eq!(
+            cells.installs,
+            [
+                install(1, "python-dotenv", Some("python-dotenv")),
+                install(1, "-r req.txt", None),
+                install(5, "rich", Some("rich")),
+            ]
+        );
+        assert_eq!(
+            unread_install_diagnostic(&cells.installs[1]).map(|diagnostic| diagnostic.message),
+            Some(
+                "install argument `-r req.txt` is not read, so the notebook's missing-dependency findings are info notes"
+                    .to_owned()
+            )
+        );
     }
 
     #[test]

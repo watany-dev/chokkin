@@ -9,6 +9,7 @@ mod filter;
 mod gaps;
 mod ignore;
 pub(crate) mod metadata;
+mod notebook_installs;
 mod severity;
 pub(crate) mod symbols;
 mod types;
@@ -20,6 +21,7 @@ pub use gaps::{Gap, MemberManifest, collect_gaps};
 #[cfg(test)]
 pub(crate) use metadata::default_rule_severity;
 pub(crate) use metadata::{rule_help_text, rule_help_uri, rule_title};
+use notebook_installs::NotebookInstalls;
 #[cfg(test)]
 pub(crate) use types::ExplainData;
 pub use types::{

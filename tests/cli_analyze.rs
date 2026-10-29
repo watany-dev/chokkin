@@ -3759,6 +3759,76 @@ fn binary_notebook_with_ipython_syntax_is_read() {
     assert!(!stdout.contains("CHK002"), "{stdout}");
 }
 
+/// What a notebook installs with `%pip install` or `!pip install` declares
+/// it for that notebook's imports alone; an argument not read lowers that
+/// notebook's missing-dependency findings to info notes (#991).
+#[test]
+fn binary_notebook_installs_declare_their_imports() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "notebooks/installs.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install -q rich llama-index-llms-openai\n", "!{sys.executable} -m pip install 'httpx>=0.27'\n", "import rich\n", "import httpx\n", "from llama_index.llms.openai import OpenAI\n", "import requests\n"]}]}"#,
+        ),
+        (
+            "notebooks/namespace.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install llama-index-llms-openai\n", "from llama_index.llms.openai import OpenAI\n", "import llama_index.agent\n"]}]}"#,
+        ),
+        (
+            "notebooks/other.ipynb",
+            r#"{"cells": [{"cell_type": "code", "source": ["%pip install -r requirements.txt\n", "import rich\n"]}]}"#,
+        ),
+    ]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--strict", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid json");
+    let issues: Vec<_> = parsed["issues"]
+        .as_array()
+        .expect("issues")
+        .iter()
+        .map(|issue| {
+            (
+                issue["code"].as_str().unwrap_or_default(),
+                issue["file"].as_str().unwrap_or_default(),
+                issue["distribution"].as_str().unwrap_or_default(),
+                issue["severity"].as_str().unwrap_or_default(),
+                issue["confidence"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        issues,
+        [
+            (
+                "CHK003",
+                "notebooks/installs.ipynb",
+                "requests",
+                "error",
+                "certain"
+            ),
+            ("CHK003", "notebooks/other.ipynb", "rich", "info", "maybe"),
+            // Another module of the same namespace is not installed.
+            ("CHK010", "notebooks/namespace.ipynb", "", "info", "likely"),
+        ],
+        "{parsed}"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(
+        stderr.contains(
+            "parse: `notebooks/other.ipynb:1`: install argument `-r requirements.txt` is not read"
+        ),
+        "{stderr}"
+    );
+}
+
 /// A dropped cell may import anything, so a dependency only it imports is not
 /// certainly unused, nor is an orphan it may load (#902, ADR 0005).
 #[test]

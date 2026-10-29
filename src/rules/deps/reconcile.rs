@@ -13,7 +13,7 @@ use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
     DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
 };
-use crate::rules::{DependencyRuleContext, RuleContext};
+use crate::rules::{DependencyRuleContext, NotebookInstalls, RuleContext};
 use crate::sources::PublicSurface;
 
 use super::binary::{BinaryProviders, detect_unlisted_binaries};
@@ -177,6 +177,11 @@ fn detect_undeclared_imports(
     // declaration for what the build environment installs (#735).
     let resolution = dependency.rules.resolution;
     let without_build = without_build_environment_imports(resolution, dependency.build_scripts);
+    let without_installed = without_notebook_installs(
+        without_build.as_ref().unwrap_or(resolution),
+        &NotebookInstalls::new(dependency.rules.parse),
+    );
+    let without_build = without_installed.or(without_build);
     let rules = RuleContext {
         resolution: without_build.as_ref().unwrap_or(resolution),
         ..*dependency.rules
@@ -225,6 +230,25 @@ fn without_build_environment_imports(
         .then(|| {
             let mut resolution = resolution.clone();
             resolution.imports.retain(|import| !provided(import));
+            resolution
+        })
+}
+
+/// A notebook needs no project declaration for what it installs into its
+/// own kernel (#991).
+fn without_notebook_installs(
+    resolution: &ResolutionIndex,
+    installs: &NotebookInstalls<'_>,
+) -> Option<ResolutionIndex> {
+    resolution
+        .imports
+        .iter()
+        .any(|import| installs.provides(import))
+        .then(|| {
+            let mut resolution = resolution.clone();
+            resolution
+                .imports
+                .retain(|import| !installs.provides(import));
             resolution
         })
 }
