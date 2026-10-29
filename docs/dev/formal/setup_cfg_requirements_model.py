@@ -41,10 +41,6 @@ Q1  A key line indented before any option of its section
     (``[options]`` then ``  install_requires = a``): configparser reads the
     option, chokkin skips the line, so every requirement it holds is
     undeclared.
-Q2  A section header followed by other text (``[options] ; c``):
-    configparser's ``SECTCRE`` matches the prefix and opens ``options``;
-    chokkin needs the line to end in ``]``, so the options below stay in the
-    previous section and ``install_requires`` is not read.
 
 Run:  python3 docs/dev/formal/setup_cfg_requirements_model.py
       python3 docs/dev/formal/setup_cfg_requirements_model.py --broken
@@ -78,7 +74,8 @@ LINES = (
     "[more]",
 )
 
-# The header that opens the section; the second one is Q2's.
+# The header that opens the section; the second has text after `]`, which
+# configparser's SECTCRE ignores (#1308).
 HEADERS = ("[options]", "[options] ; c")
 
 
@@ -144,8 +141,9 @@ def ini_lines(contents: str):
         trimmed = raw.strip()
         if not trimmed or trimmed.startswith(("#", ";")):
             yield None
-        elif trimmed.startswith("[") and trimmed.endswith("]"):
-            current = trimmed[1:-1].strip()
+        elif trimmed.startswith("[") and trimmed.rfind("]") > 1:
+            # section_header: SECTCRE's greedy name runs to the last `]`.
+            current = trimmed[1 : trimmed.rfind("]")].strip()
             last_key = None
             yield ("section", current)
         elif raw.startswith((" ", "\t")):
@@ -224,10 +222,8 @@ def chokkin_requirements(text: str, broken: bool = False) -> list[str] | None:
 
 
 def accepted(text: str, ours, theirs) -> str | None:
-    header, *lines = text.splitlines()
+    _, *lines = text.splitlines()
     missed = ours is None and theirs is not None
-    if header != "[options]":
-        return "Q2" if missed else None
     for line in lines:
         if line.startswith("["):
             break
@@ -286,7 +282,7 @@ def main() -> int:
     failures, seen, checked = run(broken=False)
     for failure in failures[:20]:
         print(failure)
-    expected = {"D1", "Q1", "Q2"}
+    expected = {"D1", "Q1"}
     if seen != expected:
         print(f"stale accepted divergences: {sorted(expected - seen)}")
         return 1
