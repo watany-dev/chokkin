@@ -359,6 +359,16 @@ pub struct ServerApp {
     pub app_dir: bool,
 }
 
+/// A command a notebook cell runs (#992): what a shell escape (`!cmd`)
+/// runs, or the `python` command a `%run` stands for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotebookCommand {
+    /// The command as a shell reads it.
+    pub command: String,
+    /// 1-based line in the notebook's cells.
+    pub line: u32,
+}
+
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
@@ -485,6 +495,10 @@ pub struct ParsedModule {
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,
+    /// Commands a notebook's cells run in a shell or with `%run`, which
+    /// run project scripts as a task file's do (#992).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notebook_commands: Vec<NotebookCommand>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,

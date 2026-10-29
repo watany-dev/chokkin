@@ -122,7 +122,7 @@ pub fn extract_plugin_hints_with_parse(
     let mut scan = cached_config_scan(&ctx, config, manifest, cache)?;
     let requirements = scan_uncached(&ctx, command_files, &mut scan);
     let mut command_targets = scan.command_targets;
-    command_targets.extend(commands::parsed_server_apps(parse));
+    command_targets.extend(commands::parsed_command_targets(parse, &ctx.sources.files));
     command_targets.extend(
         contributions
             .iter()

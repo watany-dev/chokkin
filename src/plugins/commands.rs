@@ -6,6 +6,7 @@
 //! treated as commands, so `echo pytest` or `$(COVERAGE) run` stay silent.
 
 use crate::parser::ParseSummary;
+use crate::sources::{DiscoveredFile, FileContext};
 
 use super::ci_installs::installs;
 use super::config_scan::is_distribution_name;
@@ -343,7 +344,7 @@ pub(super) fn command_target_refs(
 /// The apps literal `uvicorn.run`/`uvicorn.Config` calls load, read as a
 /// `uvicorn` command's app (#1004); one that is no name path is dropped, as
 /// uvicorn fails to load it, and one `app_dir=` relocates is opaque.
-pub(super) fn parsed_server_apps(parse: &ParseSummary) -> impl Iterator<Item = CommandTargetRef> {
+fn parsed_server_apps(parse: &ParseSummary) -> impl Iterator<Item = CommandTargetRef> {
     parse.modules.iter().flat_map(|parsed| {
         parsed.server_apps.iter().filter_map(|server| {
             let target = match runner_target("uvicorn", &[&server.app]) {
@@ -364,6 +365,58 @@ pub(super) fn parsed_server_apps(parse: &ParseSummary) -> impl Iterator<Item = C
             })
         })
     })
+}
+
+/// What the parsed sources run: server apps and notebook commands.
+pub(super) fn parsed_command_targets<'p>(
+    parse: &'p ParseSummary,
+    files: &'p [DiscoveredFile],
+) -> impl Iterator<Item = CommandTargetRef> + 'p {
+    parsed_server_apps(parse).chain(parsed_notebook_commands(parse, files))
+}
+
+/// The scripts and modules notebook cells run with `%run` or a shell escape
+/// (#992), read as a task file's commands. A cell runs in the notebook's
+/// directory, so a script's path is joined to it; `-m` finds the module on
+/// the project's import roots, as the kernel's installed project does. A
+/// runtime notebook's targets keep their own context, as a deploy
+/// command's do; any other notebook's are dev.
+fn parsed_notebook_commands<'p>(
+    parse: &'p ParseSummary,
+    files: &'p [DiscoveredFile],
+) -> impl Iterator<Item = CommandTargetRef> + 'p {
+    parse.modules.iter().flat_map(move |parsed| {
+        let deploy = files
+            .iter()
+            .any(|file| file.path == parsed.path && file.context == FileContext::Runtime);
+        let dir = parsed.path.rsplit_once('/').map(|(dir, _)| dir);
+        parsed.notebook_commands.iter().flat_map(move |run| {
+            let origin = ReferenceOrigin {
+                file: parsed.path.clone(),
+                line: Some(run.line),
+                label: "notebook".to_owned(),
+            };
+            let plain = command_target_refs(&run.command, &origin);
+            let targets: Vec<CommandTargetRef> = match dir {
+                // Only a script's path is joined: `cd` would also move the
+                // import root a `-m` module is found on.
+                Some(dir) => command_target_refs(&format!("cd {dir}\n{}", run.command), &origin)
+                    .into_iter()
+                    .filter(is_script)
+                    .chain(plain.into_iter().filter(|target| !is_script(target)))
+                    .collect(),
+                None => plain,
+            };
+            targets.into_iter().map(move |mut target| {
+                target.deploy = deploy;
+                target
+            })
+        })
+    })
+}
+
+fn is_script(target: &CommandTargetRef) -> bool {
+    matches!(target.target, CommandTarget::Script { .. })
 }
 
 fn script_target(run: &ScriptRun) -> Option<CommandTarget> {
@@ -601,6 +654,9 @@ fn segment_target(words: &[&str]) -> Option<Run> {
         if command_name(word) == "pipx" && rest.first() == Some(&"run") {
             return pipx_run_target(rest.get(1..)?);
         }
+        if command_name(word) == "streamlit" && rest.first() == Some(&"run") {
+            return streamlit_target(rest.get(1..)?);
+        }
         if is_python_word(word) || is_python_variable(word) {
             return python_target(rest);
         }
@@ -614,6 +670,16 @@ fn segment_target(words: &[&str]) -> Option<Run> {
         index += width;
     }
     None
+}
+
+/// `streamlit run [options] app.py [args]` runs the script as `python` does
+/// (#992). Its options may take a value as the next word, so the script is
+/// the first `.py` or computed word; a URL or a directory is not read.
+fn streamlit_target(args: &[&str]) -> Option<Run> {
+    let script = args
+        .iter()
+        .find(|arg| is_python_path(arg) || is_computed(arg))?;
+    Some(Run::Target(path_target(script)))
 }
 
 /// `$(PYTHON)`, `${PYTHON3}`, `{{python}}`: an interpreter a task file names
@@ -881,6 +947,8 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
                 python_target(rest)?
             } else if let Some(runner) = module_runner(arg) {
                 Run::Target(runner_target(runner, rest))
+            } else if command_name(arg) == "streamlit" && rest.first() == Some(&"run") {
+                streamlit_target(rest.get(1..)?)?
             } else if is_python_path(arg) {
                 Run::Target(path_target(arg))
             } else {
@@ -1698,6 +1766,21 @@ mod tests {
     }
 
     #[test]
+    fn streamlit_run_runs_its_script() {
+        assert_eq!(targets("streamlit run app.py"), ["script app.py"]);
+        assert_eq!(
+            targets("uv run streamlit run --server.port 80 ui/app.py -- --debug"),
+            ["script ui/app.py"]
+        );
+        assert_eq!(targets("streamlit run $APP"), ["opaque $APP"]);
+        assert_eq!(
+            targets("streamlit run https://x.io/app"),
+            Vec::<String>::new()
+        );
+        assert_eq!(targets("streamlit hello"), Vec::<String>::new());
+    }
+
+    #[test]
     fn command_target_refs_place_script_paths() {
         let origin = ReferenceOrigin {
             file: "Dockerfile".to_owned(),
@@ -1727,6 +1810,70 @@ mod tests {
             [CommandTarget::Opaque {
                 text: "gen.py".to_owned()
             }]
+        );
+    }
+
+    #[test]
+    fn notebook_commands_run_in_the_notebooks_directory() {
+        use crate::parser::{NotebookCommand, ParsedModule};
+        use crate::sources::FileKind;
+
+        let notebook = |path: &str, commands: &[&str]| ParsedModule {
+            path: path.to_owned(),
+            notebook_commands: commands
+                .iter()
+                .map(|command| NotebookCommand {
+                    command: (*command).to_owned(),
+                    line: 2,
+                })
+                .collect(),
+            ..ParsedModule::default()
+        };
+        let parse = ParseSummary {
+            modules: vec![
+                notebook(
+                    "notebooks/demo.ipynb",
+                    &[
+                        "python helper.py",
+                        "python ../scripts/train.py",
+                        "python -m pkg.cli",
+                    ],
+                ),
+                notebook("app.ipynb", &["python $script"]),
+            ],
+        };
+        let files = [DiscoveredFile {
+            path: "app.ipynb".to_owned(),
+            kind: FileKind::Notebook,
+            context: FileContext::Runtime,
+        }];
+        let refs: Vec<(String, CommandTarget, bool)> = parsed_notebook_commands(&parse, &files)
+            .map(|reference| (reference.origin.file, reference.target, reference.deploy))
+            .collect();
+        let script = |path: &str| CommandTarget::Script {
+            paths: vec![path.to_owned()],
+        };
+        let demo = "notebooks/demo.ipynb".to_owned();
+        assert_eq!(
+            refs,
+            [
+                (demo.clone(), script("notebooks/helper.py"), false),
+                (demo.clone(), script("scripts/train.py"), false),
+                (
+                    demo,
+                    CommandTarget::Run {
+                        module: "pkg.cli".to_owned()
+                    },
+                    false
+                ),
+                (
+                    "app.ipynb".to_owned(),
+                    CommandTarget::Opaque {
+                        text: "$script".to_owned()
+                    },
+                    true
+                ),
+            ]
         );
     }
 
