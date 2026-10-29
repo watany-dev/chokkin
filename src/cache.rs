@@ -1045,6 +1045,15 @@ mod tests {
             read_cache_bytes(&root.join("src")).is_err(),
             "a directory is not a miss"
         );
+        // Windows reports a file in the way as "path not found".
+        #[cfg(unix)]
+        {
+            std::fs::write(root.join("src/file.py"), "").expect("write file");
+            assert!(
+                read_cache_bytes(&root.join("src/file.py/entry.json")).is_err(),
+                "a file in the way is not a miss"
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1208,6 +1217,35 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create project");
         std::fs::create_dir_all(&outside).expect("create outside");
         (base, root, outside)
+    }
+
+    #[test]
+    fn reading_a_cold_cache_creates_no_directory() {
+        let root = temp_cache_test_dir("read-cold");
+        let options = CacheOptions::default();
+
+        let bundle = options
+            .read_parse_bundle(&root, &test_context("parse-v1"))
+            .expect("read");
+
+        assert!(bundle.entries.is_empty());
+        assert!(!root.join(".chokkin").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_dir_surfaces_errors_other_than_not_found() {
+        let root = temp_cache_test_dir("real-dir-error");
+        let too_long = root.join("x".repeat(4096));
+
+        for create in [false, true] {
+            assert!(
+                real_dir(&root, &too_long, create).is_err(),
+                "create={create}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[cfg(unix)]
