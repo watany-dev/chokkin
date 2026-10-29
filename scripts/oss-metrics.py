@@ -192,8 +192,10 @@ FP_GATE_PCT = 5
 # no single project's conventions (airflow's DAG files, #1062) decide the
 # gate. It rose from 25 to 45 once URLconf include() strings became module
 # references (#1094, 30.2% -> 48.1%), to 50 with every hit labelled (53.5%),
-# and to 85 once the flat Django layout, Sphinx pages and examples were read
-# (#1239, 88.5%). CHK006's 90 was measured on library projects, where a public
+# to 85 once the flat Django layout, Sphinx pages and examples were read
+# (#1239, 88.5%), and to 95 once the files users select from their own
+# settings were info (#1258, 100%, 23 hits): 100 would fail on one more false
+# positive, 95 allows one (23/24 = 95.8%). CHK006's 90 was measured on library projects, where a public
 # name is info rather than a hit; labelling 8 hits of each app-mode project
 # measured 74.8%, so the floor fell to 70 and the gate covers app mode
 # (#1238). Settings names, dotted strings and registration decorators took it
@@ -204,7 +206,7 @@ FP_GATE_PCT = 5
 # guarded tp hits to info (89.8%), so its floor is 89 rather than the
 # multiple of 5 below, which would give up 5 points.
 PRECISION_FLOORS = {
-    "CHK001": 85, "CHK003": 90, "CHK004": 95, "CHK005": 85,
+    "CHK001": 95, "CHK003": 90, "CHK004": 95, "CHK005": 85,
     "CHK006": 90, "CHK008": 80, "CHK010": 89,
 }
 # Floors over `certain` findings only (#1094), which --fix acts on. A file

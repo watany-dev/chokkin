@@ -1541,7 +1541,7 @@ severity が `info` の finding (例: optional try-import の CHK003) はヒッ�
 ヒットを消す (#1065)。1 project が全体の precision を決めないようにするため。
 `report.md` は rule ごとの precision (tp / (tp + fp)) と、今回の findings に
 現れなくなった **stale** ラベル数を記録する (#656)。precision は info を除くヒットのうち `tp` / `fp` のラベルが付いたものだけで
-計算し、**CHK001 は 85%、CHK003 は 90%、CHK004 は 95%、CHK005 は 85%、CHK006 は 90%、CHK008 は 80%、
+計算し、**CHK001 は 95%、CHK003 は 90%、CHK004 は 95%、CHK005 は 85%、CHK006 は 90%、CHK008 は 80%、
 CHK010 は 89% を下限**として gate にかける (#701、#1065、#862)。件数の gate では、件数を変えずに誤検知が増える精度低下を検出
 できないため。下限は計測時の precision を 5 の倍数に切り下げた値。ただし CHK010 は 90.0% で余裕なく置いた後、guard の読み取りで正しく info になった tp 2 件 (#1242) で 89.8% になったので、5 点緩めずに 89% とする。CHK002 は上の
 FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の下限なので、
@@ -1552,7 +1552,7 @@ FP 率 gate (未分類 0 件で FP 率 < 5%) がそのまま precision > 95% の
 Django の URLconf の `include("pkg.urls")` が import edge にならず、app の module の
 多くが到達不能に見えたためで、`include()` を辿るようにして 30.2% から 48.1% になったので
 45% に上げた (#1094)。すべてのヒットにラベルを付けると 53.5% なので 50% にした。
-flat な Django layout、Sphinx の page、examples を読むようにして 88.5% になったので 85% に上げた (#1239)。CHK006 の
+flat な Django layout、Sphinx の page、examples を読むようにして 88.5% になったので 85% に上げた (#1239)。利用者が自分の設定で選ぶ file を info にして 100% (23 件) になったので 95% に上げた (#1258)。100% だと誤検出 1 件の追加で落ちる。CHK006 の
 90% は library project で測った値で、library mode の公開名は info でヒットに数えない。
 app mode の project ごとに 8 件ラベルを付けると 74.8% (app mode だけでは約 3 割。settings の
 名前、dotted string、登録 decorator) なので 70% にし、gate が app mode も測るようにした。
