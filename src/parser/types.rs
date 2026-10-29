@@ -600,6 +600,16 @@ mod tests {
     }
 
     #[test]
+    fn only_a_relative_import_stores_its_level() {
+        let mut import = import(ImportKind::Import, "os", None, None);
+        let absolute = serde_json::to_value(&import).expect("serialize");
+        assert!(absolute.get("relative_level").is_none(), "{absolute}");
+        import.relative_level = 2;
+        let relative = serde_json::to_value(&import).expect("serialize");
+        assert_eq!(relative["relative_level"], 2);
+    }
+
+    #[test]
     fn import_target_splits_folded_relative_imports() {
         use ImportKind::{Import, ImportFrom};
         let cases = [
