@@ -115,6 +115,7 @@ pub(crate) fn discover_sources_cached(
         .chain(&collected.held_tests)
         .filter_map(|file| file.path.strip_suffix("/__init__.py").map(str::to_owned))
         .collect();
+    layout.symlinks = collected.symlinks;
 
     let mut warnings = validate_entries(&root.path, &config.effective.entry);
     warnings.extend(layout_warning);

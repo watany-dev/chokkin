@@ -542,6 +542,60 @@ fn binary_skipped_symlinks_are_reported_with_their_reason() {
     assert_eq!(skipped.len(), 5, "{stderr}");
 }
 
+/// An import through a directory link inside the root reaches the file
+/// behind it, and `--trace` names the link it went through (#1001).
+#[cfg(unix)]
+#[test]
+fn binary_imports_through_a_symlink_inside_the_root_reach_its_target() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    fs::create_dir_all(root.join("acme/_impl/compat")).expect("mkdir");
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\
+         [tool.chokkin]\nentry = [\"acme/main.py\"]\n",
+    )
+    .expect("write pyproject");
+    for package in ["acme", "acme/_impl", "acme/_impl/compat"] {
+        fs::write(root.join(package).join("__init__.py"), "").expect("write package");
+    }
+    fs::write(
+        root.join("acme/main.py"),
+        "from acme.compat.core import helper\n\nhelper()\n",
+    )
+    .expect("write main");
+    fs::write(
+        root.join("acme/_impl/compat/core.py"),
+        "def helper(): ...\n",
+    )
+    .expect("write core");
+    symlink("_impl/compat", root.join("acme/compat")).expect("symlink");
+
+    let run = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+            .args(["--no-cache", "--strict"])
+            .args(args)
+            .arg(root)
+            .output()
+            .expect("run chokkin");
+        // The report goes to stdout and the trace to stderr.
+        [output.stdout, output.stderr]
+            .map(|bytes| String::from_utf8(bytes).expect("utf8"))
+            .concat()
+    };
+    let report = run(&["--reporter", "json"]);
+    assert!(!report.contains("core.py"), "{report}");
+    let trace = run(&["--trace", "acme/_impl/compat/core.py"]);
+    assert!(
+        trace.contains(
+            "import acme.compat.core (line 1, through symlink `acme/compat` -> `acme/_impl/compat`)"
+        ),
+        "{trace}"
+    );
+}
+
 /// A source file whose path is not UTF-8 is skipped with a warning, not
 /// read back under its lossy name, which fails the whole run (#1146). Linux
 /// only: macOS and Windows file systems refuse such names.
@@ -2433,6 +2487,94 @@ fn binary_pytest_prepend_mode_resolves_test_local_imports() {
             && !(code == "CHK001" && target.starts_with("tests/"))),
         "{keys:?}"
     );
+}
+
+/// uvicorn's `tests/importer/raise_import_error.py` and django's
+/// `bad_module.py` import a missing module on purpose: the tests load them
+/// only by name, to see the import fail, so their CHK010 is info. A file a
+/// test also imports by statement, or a test module itself, still warns
+/// (#1223).
+#[test]
+fn binary_test_files_loaded_only_by_name_report_unresolved_imports_as_info() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = []\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        (
+            "acme/loader.py",
+            "def import_from_string(name):\n    return name\n",
+        ),
+        ("tests/__init__.py", ""),
+        ("tests/importer/__init__.py", ""),
+        (
+            "tests/importer/raise_import_error.py",
+            "myattr = 123\n\nimport does_not_exist  # noqa\n",
+        ),
+        (
+            "tests/importer/bad_module.py",
+            "import a_package_name_that_does_not_exist\n",
+        ),
+        ("tests/importer/helper.py", "import zz_missing_helper_dep\n"),
+        (
+            "tests/importer/test_other.py",
+            "import zz_missing_other_dep\n",
+        ),
+        (
+            "tests/importer/test_importer.py",
+            "import importlib\n\nimport zz_missing_test_dep\nfrom acme.loader import import_from_string\nfrom tests.importer import helper\n\n\ndef test_errors() -> None:\n    import_from_string(\"tests.importer.raise_import_error:myattr\")\n    importlib.import_module(\"tests.importer.bad_module\")\n    importlib.import_module(\"tests.importer.helper\")\n    importlib.import_module(\"tests.importer.test_other\")\n    assert helper\n",
+        ),
+    ]);
+    let mut chk010: Vec<_> = json_issues(project.path(), &[])
+        .iter()
+        .filter(|issue| issue["code"] == "CHK010")
+        .map(|issue| {
+            format!(
+                "{} {}",
+                issue["target"].as_str().unwrap_or_default(),
+                issue["severity"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    chk010.sort();
+    assert_eq!(
+        chk010,
+        [
+            "tests/importer/bad_module.py:a_package_name_that_does_not_exist info",
+            "tests/importer/helper.py:zz_missing_helper_dep warning",
+            "tests/importer/raise_import_error.py:does_not_exist info",
+            "tests/importer/test_importer.py:zz_missing_test_dep warning",
+            "tests/importer/test_other.py:zz_missing_other_dep warning",
+        ]
+    );
+}
+
+/// The same fixture's missing import is no gap: a declared distribution
+/// nothing imports stays a `certain` CHK002 (#1223).
+#[test]
+fn binary_name_loaded_test_file_imports_do_not_lower_unused_dependencies() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\ndependencies = [\"requests\"]\n\n[tool.chokkin]\nmode = \"app\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("acme/main.py", "def main() -> int:\n    return 1\n"),
+        ("tests/__init__.py", ""),
+        ("tests/broken.py", "import does_not_exist\n"),
+        (
+            "tests/test_main.py",
+            "import importlib\n\nfrom acme.main import main\n\n\ndef test_main() -> None:\n    importlib.import_module(\"tests.broken\")\n    assert main() == 1\n",
+        ),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    let chk002: Vec<_> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK002")
+        .map(|issue| issue["confidence"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(chk002, ["certain"], "{issues:?}");
 }
 
 #[test]

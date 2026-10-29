@@ -1,6 +1,6 @@
 //! Directory walking with glob, exclude, and gitignore filters.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::FileType;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -61,6 +61,9 @@ pub(super) struct Collected {
     pub command_files: Vec<String>,
     /// What the walk could not read.
     pub warnings: Vec<SourcesWarning>,
+    /// Root-relative links to a directory or source file inside the root,
+    /// each with its target's root-relative path (#1001).
+    pub symlinks: BTreeMap<String, String>,
 }
 
 /// The warning for a root `.gitignore` the walk could not read. The walk
@@ -266,9 +269,13 @@ fn push_walk_error(fallback: &Path, error: &ignore::Error, warnings: &mut Vec<So
     }
 }
 
-/// Symlinks the walk did not follow, with why (#986).
+/// Symlinks the walk did not follow: the ones it names with why (#986), and
+/// the ones inside the root with their targets (#1001).
 #[derive(Default)]
-struct SkippedSymlinks(Vec<SourcesWarning>);
+struct SkippedSymlinks {
+    warnings: Vec<SourcesWarning>,
+    inside: BTreeMap<String, String>,
+}
 
 impl SkippedSymlinks {
     /// Record `entry` if it is a link [`skipped_symlink`] names.
@@ -283,16 +290,22 @@ impl SkippedSymlinks {
             .file_type()
             .is_some_and(|file_type| file_type.is_symlink())
         {
-            self.0
-                .extend(skipped_symlink(root, entry, exclude_matcher, ignore));
+            match skipped_symlink(root, entry, exclude_matcher, ignore) {
+                Some(SkippedLink::Named(warning)) => self.warnings.push(warning),
+                Some(SkippedLink::Inside { link, target }) => {
+                    self.inside.insert(link, target);
+                },
+                None => {},
+            }
         }
     }
 
     /// Append the links in path order: the walk meets them in directory
-    /// order, which the file system picks.
-    fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
-        self.0.sort_by_cached_key(ToString::to_string);
-        warnings.append(&mut self.0);
+    /// order, which the file system picks. Returns the links inside the root.
+    fn finish(mut self, warnings: &mut Vec<SourcesWarning>) -> BTreeMap<String, String> {
+        self.warnings.sort_by_cached_key(ToString::to_string);
+        warnings.append(&mut self.warnings);
+        self.inside
     }
 }
 
@@ -320,10 +333,19 @@ impl NonUtf8Paths {
     }
 }
 
+/// A symlink the walk did not follow.
+enum SkippedLink {
+    /// One that leaves the root, loops, or leads nowhere, named with why.
+    Named(SourcesWarning),
+    /// One inside the root, with its target, both root-relative.
+    Inside { link: String, target: String },
+}
+
 /// Why the walk did not follow the symlink at `entry`, or `None` when the
 /// skip needs no word (#986). The walk follows no link: one inside the root
-/// is read at its target's own path, so it stays silent. One that leaves the
-/// root, loops, or leads nowhere may be code the user meant to analyze, so
+/// is read at its target's own path, so it stays silent, and is returned with
+/// its target, which imports through the link reach (#1001). One that leaves
+/// the root, loops, or leads nowhere may be code the user meant to analyze, so
 /// it is named when it could have held some: a source file name, a
 /// directory, or a [`bare_name`] that cannot be resolved, so a dangling
 /// `.gitignore` stays the [`SourcesWarning::GitignoreUnreadable`] it is.
@@ -333,7 +355,7 @@ fn skipped_symlink(
     entry: &DirEntry,
     exclude_matcher: &GlobSet,
     ignore: Option<&WalkIgnore>,
-) -> Option<SourcesWarning> {
+) -> Option<SkippedLink> {
     let path = entry.path();
     if entry.depth() == 0 {
         return None;
@@ -352,8 +374,14 @@ fn skipped_symlink(
         Ok(meta) => {
             let target = std::fs::canonicalize(path).ok()?;
             let root = std::fs::canonicalize(root).ok()?;
-            if !(named_source || meta.is_dir()) || target.starts_with(&root) {
+            if !(named_source || meta.is_dir()) {
                 return None;
+            }
+            if let Ok(inside) = target.strip_prefix(&root) {
+                return Some(SkippedLink::Inside {
+                    link: rel_str,
+                    target: normalize_rel_path(inside),
+                });
             }
             "it points outside the project root".to_owned()
         },
@@ -365,10 +393,10 @@ fn skipped_symlink(
         Err(_) if forms_loop(path) => "it forms a loop".to_owned(),
         Err(error) => error.to_string(),
     };
-    Some(SourcesWarning::SymlinkSkipped {
+    Some(SkippedLink::Named(SourcesWarning::SymlinkSkipped {
         path: rel_str,
         reason,
-    })
+    }))
 }
 
 /// A name with neither an extension nor a leading dot, as a directory's
@@ -584,12 +612,13 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
     command_files.sort();
     non_utf8.finish(&mut warnings);
-    symlinks.finish(&mut warnings);
+    let symlinks = symlinks.finish(&mut warnings);
     Ok(Collected {
         files,
         held_tests,
         command_files,
         warnings,
+        symlinks,
     })
 }
 
@@ -806,6 +835,51 @@ mod tests {
                 "svc/supervisord.conf",
             ]
         );
+    }
+
+    /// Links inside the root are kept with their targets, for imports
+    /// through them (#1001); the ones the walk names are not.
+    #[cfg(unix)]
+    #[test]
+    fn collect_files_keeps_the_links_inside_the_root() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        write_file(&root.join("acme/_impl/compat/core.py"), "");
+        write_file(&root.join("acme/real.py"), "");
+        write_file(&root.join("README.txt"), "");
+        write_file(&temp.path().join("other/lib.py"), "");
+        symlink("_impl/compat", root.join("acme/compat")).expect("symlink");
+        symlink("real.py", root.join("acme/alias.py")).expect("symlink");
+        symlink("../README.txt", root.join("acme/README")).expect("symlink");
+        symlink("../../other", root.join("acme/vendor")).expect("symlink");
+        symlink("missing.py", root.join("acme/gone.py")).expect("symlink");
+
+        let project = build_glob_set(&["**/*.py".to_owned()]).expect("project globs");
+        let exclude_patterns = effective_exclude(&[]);
+        let exclude = Arc::new(build_glob_set(&exclude_patterns).expect("exclude globs"));
+        let cache = SourcesCache::default();
+        let collected = collect_files(&CollectOptions {
+            root: &root,
+            project_matcher: &project,
+            exclude_matcher: &exclude,
+            test_matcher: &GlobSet::empty(),
+            exclude_patterns: &exclude_patterns,
+            respect_gitignore: false,
+            production: false,
+            cache: &cache,
+            dirs: None,
+        })
+        .expect("collect");
+        assert_eq!(
+            collected.symlinks,
+            BTreeMap::from([
+                ("acme/alias.py".to_owned(), "acme/real.py".to_owned()),
+                ("acme/compat".to_owned(), "acme/_impl/compat".to_owned()),
+            ])
+        );
+        assert_eq!(collected.warnings.len(), 2, "{:?}", collected.warnings);
     }
 
     #[test]
