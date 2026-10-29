@@ -51,6 +51,12 @@ on:
       # install_check_model.py
       - "src/parser/visit.rs"
       - "src/parser/import_check.rs"
+      # never_runs_model.py (also the version_guard_model.py files and visit.rs)
+      - "src/resolver/stdlib.rs"
+      # setup_cfg_requirements_model.py
+      - "src/manifest/setup_cfg.rs"
+      - "src/manifest/setuptools_reqs.rs"
+      # testpaths_glob_model.py (src/sources/layout.rs is listed above)
       # Reachability.tla
       - "src/reachability/bfs.rs"
       - "src/reachability/build.rs"
@@ -112,6 +118,9 @@ jobs:
           django_settings_model src/plugins/django/mod.rs src/plugins/django/settings_env.rs
           version_guard_model src/parser/version_guard.rs src/parser/condition.rs
           install_check_model src/parser/visit.rs src/parser/import_check.rs
+          never_runs_model src/parser/version_guard.rs src/parser/condition.rs src/parser/visit.rs src/resolver/stdlib.rs
+          setup_cfg_requirements_model src/manifest/setup_cfg.rs src/manifest/setuptools_reqs.rs
+          testpaths_glob_model src/sources/layout.rs
           Reachability src/reachability/bfs.rs src/reachability/build.rs src/reachability/trace.rs src/reachability/module_index.rs src/sources/layout.rs src/graph/edges.rs
           EOF
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

@@ -44,7 +44,7 @@ env:
   BASELINE_REV: 573ff37
   # The run-time baseline (#1088): the last release, moved once its tag is
   # pushed, or the commit whose slowdown the CHANGELOG accepted.
-  RELEASE_REV: v0.7.11
+  RELEASE_REV: v0.7.12
 
 jobs:
   oss-metrics:

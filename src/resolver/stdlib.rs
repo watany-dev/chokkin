@@ -492,6 +492,28 @@ mod tests {
             .is_some_and(|shipped| (shipped.first..=shipped.last).contains(&bundled(minor)))
     }
 
+    /// A branch only the minors of a run take never runs only when
+    /// `requires-python` allows none of them (#997).
+    fn assert_excludes_only_disallowed(
+        range: StdlibRange,
+        allowed: &[u32],
+        joined: &str,
+        target: u32,
+        far: u32,
+    ) {
+        for low in 0..=far {
+            for run in [[low, low], [low, u32::MAX]] {
+                assert!(
+                    !range.excludes_minors(&[run])
+                        || !allowed
+                            .iter()
+                            .any(|&minor| run[0] <= minor && minor <= run[1]),
+                    "excludes_minors({run:?}) for py3{target:02} with {joined:?}"
+                );
+            }
+        }
+    }
+
     /// §7 step 1 by enumeration (#1109): a root is stdlib when any minor from
     /// `target_version` up to the highest minor `requires-python` allows
     /// ships it. An unbounded specifier reaches every bundled minor, and an
@@ -555,6 +577,7 @@ mod tests {
                 let range = StdlibRange::new(&target_version, requires);
                 let top = upper.map_or(NEWEST_BUNDLED_MINOR, |upper| upper.max(target));
                 let window: Vec<u32> = (target..=top.max(target)).collect();
+                assert_excludes_only_disallowed(range, &allowed, &joined, target, FAR);
                 for root in &versioned {
                     let stdlib = window.iter().any(|&minor| ships(root, minor));
                     let case = format!("{root} for py3{target:02} with {joined:?}");
