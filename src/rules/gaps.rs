@@ -213,6 +213,12 @@ pub enum GapKind {
     /// `target` is the file; it lowers that import's CHK010 alone to an info
     /// note at likely.
     ComputedSysPathImport,
+    /// A notebook's install command (`%pip install`, `!pip install`) has an
+    /// argument that names no distribution (#991): a requirements file, a
+    /// path, a variable, an option not known. It may install anything the
+    /// notebook imports, so it lowers that notebook's missing-dependency
+    /// findings to info notes at maybe. `site` is the argument and its line.
+    UnreadNotebookInstall,
 }
 
 /// How a gap changes a finding in its scope.
@@ -323,7 +329,9 @@ impl GapKind {
                 IssueSubject::Import { .. },
             )
             | (
-                Self::AssumedTargetVersion | Self::AssumedScriptTargetVersion,
+                Self::AssumedTargetVersion
+                | Self::AssumedScriptTargetVersion
+                | Self::UnreadNotebookInstall,
                 RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
                 IssueSubject::Import { .. },
             )
@@ -442,6 +450,9 @@ impl GapKind {
             Self::ComputedSysPathImport => {
                 "a computed `sys.path` entry may make the project file of that name importable"
             },
+            Self::UnreadNotebookInstall => {
+                "the notebook installs from an argument that could not be read, which may provide it"
+            },
         }
     }
 }
@@ -545,6 +556,9 @@ impl Gap {
             },
             (GapKind::ComputedSysPathImport, IssueSubject::Import { module, file, .. }) => {
                 *file == self.file && self.names_root(module)
+            },
+            (GapKind::UnreadNotebookInstall, IssueSubject::Import { file, .. }) => {
+                *file == self.file
             },
             _ => true,
         };
@@ -744,6 +758,19 @@ fn module_gaps(
         }
         if module.has_opaque_dynamic_import {
             push(GapKind::OpaqueDynamicImport);
+        }
+        if let Some(install) = module
+            .notebook_installs
+            .iter()
+            .find(|install| install.distribution.is_none())
+        {
+            gaps.push(Gap {
+                file: module.path.clone(),
+                kind: GapKind::UnreadNotebookInstall,
+                member: None,
+                target: None,
+                site: Some((install.argument.clone(), Some(install.line))),
+            });
         }
         gaps.extend(unresolved_relative_gaps(module));
     }
@@ -3252,7 +3279,7 @@ mod tests {
         const NAMES: [&str; 6] = ["requests", "rich", "yaml", "acme", "psycopg", "hiredis"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 34] = [
+        const KINDS: [GapKind; 35] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
@@ -3287,6 +3314,7 @@ mod tests {
             GapKind::SubclassRegistry,
             GapKind::ModuleSelfReference,
             GapKind::ComputedSysPathImport,
+            GapKind::UnreadNotebookInstall,
         ];
 
         /// The rules each kind's documentation says it may lower, written
@@ -3322,7 +3350,8 @@ mod tests {
                 GapKind::InvalidScriptRequirement => &[RuleId::Chk003],
                 GapKind::ArchiveRequirement
                 | GapKind::AssumedTargetVersion
-                | GapKind::AssumedScriptTargetVersion => {
+                | GapKind::AssumedScriptTargetVersion
+                | GapKind::UnreadNotebookInstall => {
                     &[RuleId::Chk003, RuleId::Chk004, RuleId::Chk010]
                 },
                 GapKind::ArchiveRuntimeRequirement | GapKind::UnreadImageTree => &[

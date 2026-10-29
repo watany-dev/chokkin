@@ -261,6 +261,21 @@ pub enum ParseSeverity {
     Warning,
 }
 
+/// One argument of a notebook cell's install command (`%pip install`,
+/// `!pip install`, `%conda install`), which declares the distribution for
+/// that notebook's imports (#991).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotebookInstall {
+    /// 1-based notebook line.
+    pub line: u32,
+    /// The argument as written.
+    pub argument: String,
+    /// The normalized distribution it installs; `None` when the argument is
+    /// not read (a requirements file, a path, a variable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<String>,
+}
+
 /// Non-fatal parse diagnostic; analysis continues.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseDiagnostic {
@@ -416,6 +431,9 @@ pub struct ParsedModule {
     /// programs it may run. Computed program names supply no usage evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_commands: Vec<String>,
+    /// What the notebook's cells install into its kernel (#991).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notebook_installs: Vec<NotebookInstall>,
     /// In a module that edits `sys.path`, string literals that may name the
     /// added directory, as `/`-separated relative paths (`""` is the
     /// module's own directory) (#719).

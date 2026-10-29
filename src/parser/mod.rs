@@ -15,6 +15,7 @@ mod import_check;
 mod ipython;
 mod lines;
 mod module_guard;
+mod notebook_install;
 mod parse;
 mod platform_guard;
 mod registry;
