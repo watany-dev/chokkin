@@ -214,6 +214,35 @@ action を使わない場合は `uvx` でバージョンを固定します。
       - run: uvx chokkin@0.7.12 --baseline chokkin-baseline.json --reporter github
 ```
 
+### pre-commit
+
+chokkin は [pre-commit](https://pre-commit.com/) の hook も提供しています。project 全体を解析するので、変更したファイルに関係なく毎回の commit で実行し、pre-commit が渡すファイル一覧は使いません。
+
+```yaml
+repos:
+  - repo: https://github.com/watany-dev/chokkin
+    rev: v0.7.13 # hook を含む最初のリリース
+    hooks:
+      - id: chokkin
+        args: [--baseline, chokkin-baseline.json]
+```
+
+pre-commit は remote hook をソースからインストールするため、初回は chokkin を Rust でビルドし数分かかります(Rust が無ければ maturin が toolchain を取得します)。2 回目以降は環境を再利用します。PyPI のビルド済み wheel を使いたい場合は local hook として宣言します。
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: chokkin
+        name: chokkin
+        entry: chokkin
+        language: python
+        additional_dependencies: [chokkin==0.7.12]
+        args: [--baseline, chokkin-baseline.json]
+        pass_filenames: false
+        always_run: true
+```
+
 baseline と `--reporter json` の出力には `schema_version: "1"` が含まれ、[`docs/schema/`](./docs/schema/) の公開 JSON Schema に従います。
 
 ## issue の抑制
