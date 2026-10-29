@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::parser::{ImportKind, ParsedModule, SymbolDef};
+use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
 use crate::sources::{LayoutInfo, SymlinkModules};
 
 use super::public::StarChain;
@@ -77,9 +77,34 @@ pub(super) fn build_registry(
 /// each time is quadratic in project size; this index is built in one pass
 /// over the parsed modules and resolves each lookup in O(1). The value marks
 /// whether the symbol was referenced from a module other than its own.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct ReferenceIndex {
     entries: FxHashMap<SymbolId, bool>,
+    opaque: OpaqueStars,
+}
+
+/// Star-imported modules missing from the indexed ones, and the star
+/// imports above them. Such a module may bind any name, so recording each
+/// referenced name for each of them would grow as their product (#1049):
+/// whether a name reaches a referenced module from one is asked instead.
+#[derive(Debug, Clone, Default)]
+struct OpaqueStars {
+    modules: FxHashSet<Box<str>>,
+    chain: StarChain<Box<str>, Exports>,
+}
+
+impl OpaqueStars {
+    /// Whether `target` names an opaque module whose `name` the star imports
+    /// carry to a module where `entries` has it referenced. Each such use is
+    /// external: an opaque module imports nothing the index read.
+    fn reaches_referenced(&self, target: &SymbolId, entries: &FxHashMap<SymbolId, bool>) -> bool {
+        self.modules.contains(target.module.as_str())
+            && self
+                .chain
+                .reaches(&target.module, &target.name, true, |module| {
+                    entries.contains_key(&SymbolId::new(module, target.name.as_str()))
+                })
+    }
 }
 
 impl ReferenceIndex {
@@ -113,7 +138,12 @@ impl ReferenceIndex {
                 );
             },
         );
-        Self::merge(partials.into_iter().map(|(index, _)| index).collect())
+        let mut index = Self::merge(partials.into_iter().map(|(index, _)| index).collect());
+        index.opaque = OpaqueStars {
+            modules: stars.opaque.iter().map(|&module| module.into()).collect(),
+            chain: stars.chain.above(&stars.opaque),
+        };
+        index
     }
 
     /// Union of indexes built apart by workers. A mark only ORs into its
@@ -251,25 +281,38 @@ impl ReferenceIndex {
 
     /// Returns `true` when `target` is referenced from any module.
     pub(super) fn is_referenced(&self, target: &SymbolId) -> bool {
-        self.entries.contains_key(target)
+        self.lookup(target).is_some()
     }
 
     /// Returns `true` when `target` is referenced from a different module.
     pub(super) fn is_externally_referenced(&self, target: &SymbolId) -> bool {
-        matches!(self.entries.get(target), Some(true))
+        self.lookup(target) == Some(true)
+    }
+
+    /// Whether `target` is referenced, and whether from a different module.
+    fn lookup(&self, target: &SymbolId) -> Option<bool> {
+        let direct = self.entries.get(target).copied();
+        if direct != Some(true) && self.opaque.reaches_referenced(target, &self.entries) {
+            return Some(true);
+        }
+        direct
     }
 }
 
 /// `from m import *` edges between named modules.
 #[derive(Default)]
 struct StarImports<'a> {
-    chain: StarChain<'a>,
+    chain: StarChain<&'a str, &'a Exports>,
+    /// The modules each module star-imports: [`StarChain::parents`] turned
+    /// around.
+    children: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules that define or import each name. A forwarded
     /// reference can only meet a symbol or a re-export there, so the
     /// packages a name merely passes through are never recorded (#803).
     binders: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules missing from the parsed ones, such as reachable
-    /// modules left out of the `--production` evidence: they may bind any name.
+    /// modules left out of the `--production` evidence: they may bind any
+    /// name, so [`ReferenceIndex`] asks about them when queried (#1049).
     opaque: Vec<&'a str>,
 }
 
@@ -306,31 +349,81 @@ impl<'a> StarImports<'a> {
             .copied()
             .filter(|module| !parsed.contains(module))
             .collect();
+        for (&child, parents) in &stars.chain.parents {
+            for &parent in parents {
+                stars.children.entry(parent).or_default().push(child);
+            }
+        }
         stars
     }
 
-    /// Cached per symbol: a module that imports a package in many function
-    /// bodies records each `pkg.name` access once per import.
+    /// The parsed modules whose binding of `target.name` the star imports
+    /// carry into `target.module`. Cached per symbol: a module that imports
+    /// a package in many function bodies records each `pkg.name` access once
+    /// per import.
+    ///
+    /// The same as [`StarChain::reaches`] from each binder, in two walks
+    /// shared by all of them (#810): up from every binder to the modules the
+    /// name climbs to, then down from `target.module` through those. Binders
+    /// of a common name share their ancestors, which one walk per binder
+    /// would climb again each time.
     fn sources<'c>(&self, target: &SymbolId, cache: &'c mut StarCache<'a>) -> &'c [&'a str] {
         if !self.chain.defines.contains_key(target.module.as_str()) {
             return &[];
         }
         if !cache.contains_key(target) {
-            let sources = self
-                .binders
-                .get(target.name.as_str())
-                .into_iter()
-                .flatten()
-                .chain(&self.opaque)
-                .copied()
-                .filter(|&binder| {
-                    self.chain
-                        .reaches(binder, &target.name, true, |parent| parent == target.module)
-                })
-                .collect();
+            let sources = self.climb_down(&target.module, &target.name);
             cache.insert(target.clone(), sources);
         }
         &cache[target]
+    }
+
+    fn climb_down(&self, goal: &str, name: &str) -> Vec<&'a str> {
+        let binders = self.binders.get(name).map_or(&[][..], Vec::as_slice);
+        let mut climbed: FxHashSet<&str> = binders
+            .iter()
+            .copied()
+            .filter(|&binder| self.chain.hands_on(binder, name))
+            .collect();
+        let mut queue: Vec<&str> = climbed.iter().copied().collect();
+        let mut arrives = false;
+        while let Some(current) = queue.pop() {
+            for &parent in self.chain.parents.get(current).into_iter().flatten() {
+                if self.chain.shadows(parent, name) {
+                    continue;
+                }
+                if parent == goal {
+                    arrives = true;
+                } else if self.chain.hands_on(parent, name) && climbed.insert(parent) {
+                    queue.push(parent);
+                }
+            }
+        }
+        if !arrives {
+            return Vec::new();
+        }
+        // Every module the walk down meets hands `name` on to `goal`.
+        let mut carried = FxHashSet::default();
+        let mut queue = vec![goal];
+        let mut expanded = FxHashSet::from_iter([goal]);
+        while let Some(current) = queue.pop() {
+            if self.chain.shadows(current, name) {
+                continue;
+            }
+            for &child in self.children.get(current).into_iter().flatten() {
+                if climbed.contains(child) {
+                    carried.insert(child);
+                    if expanded.insert(child) {
+                        queue.push(child);
+                    }
+                }
+            }
+        }
+        binders
+            .iter()
+            .copied()
+            .filter(|binder| carried.contains(binder))
+            .collect()
     }
 }
 
@@ -378,7 +471,7 @@ fn bound_names(module: &ParsedModule) -> HashSet<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{Exports, ImportContext, ImportRef};
+    use crate::parser::{ImportContext, ImportRef};
 
     fn import(
         kind: ImportKind,
@@ -484,6 +577,64 @@ mod tests {
     }
 
     #[test]
+    fn opaque_star_targets_are_asked_about_not_recorded_per_name() {
+        // `pkg` star-imports modules the index did not read, which may bind
+        // any name: one entry per (name, target) pair grows as their
+        // product (#1049).
+        const TARGETS: usize = 40;
+        const NAMES: usize = 40;
+        let package = ParsedModule {
+            path: "pkg/__init__.py".to_owned(),
+            symbols: vec![SymbolDef {
+                name: "n0".to_owned(),
+                kind: crate::parser::SymbolKind::Function,
+                line: 1,
+                is_public: true,
+                decorators: Vec::new(),
+                in_type_checking: false,
+                used_in_module: false,
+            }],
+            imports: (0..TARGETS)
+                .map(|index| {
+                    import(
+                        ImportKind::ImportFrom,
+                        &format!("vendor.m{index}"),
+                        Some("*"),
+                        None,
+                    )
+                })
+                .collect(),
+            ..ParsedModule::default()
+        };
+        let app = ParsedModule {
+            path: "app.py".to_owned(),
+            imports: (0..NAMES)
+                .map(|index| {
+                    import(
+                        ImportKind::ImportFrom,
+                        "pkg",
+                        Some(&format!("n{index}")),
+                        None,
+                    )
+                })
+                .collect(),
+            ..ParsedModule::default()
+        };
+        let names = HashMap::from([
+            (package.path.as_str(), "pkg".to_owned()),
+            (app.path.as_str(), "app".to_owned()),
+        ]);
+        let index = ReferenceIndex::build(&[&package, &app], &names, &LayoutInfo::default());
+        // One entry per name `app` imports, and one per star import.
+        assert_eq!(index.entries.len(), NAMES + TARGETS);
+        assert!(index.is_externally_referenced(&SymbolId::new("vendor.m7", "n3")));
+        assert!(index.is_referenced(&SymbolId::new("vendor.m39", "n39")));
+        // `pkg` defines `n0` itself, which shadows a star-imported one.
+        assert!(!index.is_referenced(&SymbolId::new("vendor.m7", "n0")));
+        assert!(!index.is_referenced(&SymbolId::new("vendor.m7", "unused")));
+    }
+
+    #[test]
     fn index_merges_marks_from_every_worker() {
         // Enough modules to spread over workers. Each `paired` is read by its
         // own module and by the one half the project away, likely on another
@@ -529,19 +680,21 @@ mod tests {
                 .iter()
                 .map(|&(name, external)| (SymbolId::new("lib", name), external))
                 .collect(),
+            opaque: OpaqueStars::default(),
         };
         let merged = ReferenceIndex::merge(vec![
             index(&[("shared", true), ("only_small", true)]),
             index(&[("shared", false), ("internal", false), ("external", true)]),
         ]);
         assert_eq!(
-            merged,
+            merged.entries,
             index(&[
                 ("shared", true),
                 ("only_small", true),
                 ("internal", false),
                 ("external", true),
             ])
+            .entries
         );
     }
 
@@ -696,15 +849,27 @@ mod tests {
                 .zip(module_names)
                 .collect();
             let stars = StarImports::build(&refs, &names);
+            let opaque = OpaqueStars {
+                modules: stars.opaque.iter().map(|&module| module.into()).collect(),
+                chain: stars.chain.above(&stars.opaque),
+            };
             let mut cache = StarCache::new();
             let mut sources = Sources::new();
             for index in 0..MODULES {
                 for name in NAMES {
-                    let found = stars
-                        .sources(&SymbolId::new(module_name(index), name), &mut cache)
+                    let target = SymbolId::new(module_name(index), name);
+                    let mut found: BTreeSet<String> = stars
+                        .sources(&target, &mut cache)
                         .iter()
                         .map(|&source| source.to_owned())
                         .collect();
+                    // The index asks about an opaque binder when queried:
+                    // with only `target` referenced, `OPAQUE.name` is
+                    // referenced exactly when it reaches `target`.
+                    let referenced = FxHashMap::from_iter([(target, true)]);
+                    if opaque.reaches_referenced(&SymbolId::new(OPAQUE, name), &referenced) {
+                        found.insert(OPAQUE.to_owned());
+                    }
                     sources.insert((module_name(index), name), found);
                 }
             }
