@@ -891,7 +891,8 @@ mod tests {
         ];
 
         /// The inputs mode resolution reads: the distribution name, package
-        /// directories (with or without `__init__.py`), entry points and the
+        /// directories (with or without `__init__.py`), entry points as
+        /// (GUI, target, whether a discovered file backs the target) and the
         /// files auto-entry detection sees.
         #[derive(Debug, Clone)]
         struct Inputs {
@@ -899,7 +900,7 @@ mod tests {
             dynamic_name: bool,
             src_layout: bool,
             packages: Vec<(String, bool)>,
-            entry_points: Vec<(bool, String)>,
+            entry_points: Vec<(bool, String, bool)>,
             files: Vec<String>,
         }
 
@@ -925,7 +926,7 @@ mod tests {
                 manifest.entry_points = self
                     .entry_points
                     .iter()
-                    .map(|(gui, target)| {
+                    .map(|(gui, target, _)| {
                         let mut entry = console_script(target);
                         if *gui {
                             entry.group = "gui".to_owned();
@@ -933,6 +934,16 @@ mod tests {
                         entry
                     })
                     .collect();
+                manifest
+            }
+
+            /// The manifest's entry points whose target a discovered file backs.
+            fn mapped_manifest(&self) -> LoadedManifest {
+                let mut manifest = self.manifest();
+                let mut mapped = self.entry_points.iter().map(|(_, _, mapped)| *mapped);
+                manifest
+                    .entry_points
+                    .retain(|_| mapped.next().unwrap_or(false));
                 manifest
             }
 
@@ -954,7 +965,7 @@ mod tests {
                         kind: FileKind::Python,
                     })
                     .collect();
-                add_target_files(&mut sources, &self.manifest());
+                add_target_files(&mut sources, &self.mapped_manifest());
                 sources
             }
 
@@ -984,7 +995,14 @@ mod tests {
                 prop::bool::weighted(0.2),
                 any::<bool>(),
                 prop::collection::btree_map(pick(PACKAGES), any::<bool>(), 0..3),
-                prop::collection::vec((prop::bool::weighted(0.2), pick(TARGETS)), 0..3),
+                prop::collection::vec(
+                    (
+                        prop::bool::weighted(0.2),
+                        pick(TARGETS),
+                        prop::bool::weighted(0.8),
+                    ),
+                    0..3,
+                ),
                 prop::collection::vec(pick(FILES), 0..3),
             )
                 .prop_map(
@@ -1018,11 +1036,11 @@ mod tests {
 
         fn add_app_signal(inputs: &mut Inputs, signal: &AppSignal) {
             match signal {
-                AppSignal::Gui(target) => inputs.entry_points.push((true, target.clone())),
+                AppSignal::Gui(target) => inputs.entry_points.push((true, target.clone(), true)),
                 AppSignal::OutsideCli => {
                     inputs
                         .entry_points
-                        .push((false, "zz_server.cli:main".to_owned()));
+                        .push((false, "zz_server.cli:main".to_owned(), true));
                 },
                 AppSignal::RootFile(path) => inputs.files.push(path.clone()),
             }
@@ -1095,12 +1113,42 @@ mod tests {
                 inputs in inputs(),
                 signal in library_signal(),
             ) {
+                let mut inputs = inputs;
+                // A new package's `__init__.py` backs a script named after
+                // it, which would add that script's signal too: back it in
+                // the baseline as well (#1275).
+                if let LibrarySignal::Package(name) = &signal {
+                    for (_, target, mapped) in &mut inputs.entry_points {
+                        *mapped |= target == name;
+                    }
+                }
                 let mut with = inputs.clone();
                 add_library_signal(&mut with, &signal);
                 prop_assert!(
                     rank(with.resolve(ProjectMode::Auto)) >= rank(inputs.resolve(ProjectMode::Auto))
                 );
                 prop_assert!(with.library_member() || !inputs.library_member());
+            }
+
+            /// A script whose target no discovered file backs is no signal
+            /// either way (#1275): the project, and the member, resolve as if
+            /// it were not declared.
+            #[test]
+            fn unmapped_script_is_no_signal(
+                inputs in inputs(),
+                gui in any::<bool>(),
+                // Not `acme`, which a package's `__init__.py` backs.
+                target in pick(&["acme.cli:main", "acme_web.main:run", "acme_cli:main", "tools.run:main"]),
+            ) {
+                let mut absent = inputs;
+                absent.entry_points.retain(|(_, other, _)| *other != target);
+                let mut unmapped = absent.clone();
+                unmapped.entry_points.push((gui, target, false));
+                prop_assert_eq!(
+                    unmapped.resolve(ProjectMode::Auto),
+                    absent.resolve(ProjectMode::Auto)
+                );
+                prop_assert_eq!(unmapped.library_member(), absent.library_member());
             }
 
             /// The order of entry points, packages and files does not matter.

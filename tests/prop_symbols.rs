@@ -8,6 +8,12 @@
 //! re-export is CHK007 unless some module imports it from the package. A
 //! module tools read by convention (`*_pb2.py`, `modular_x.py` beside
 //! `modeling_x.py`) is never reported, yet still refers to others.
+//!
+//! The uses #1238 / #1223 added are in the model too: another module's string
+//! spelling the name's dotted path (`"pkg.m.name"` or `"pkg.m:name"`), a
+//! registry decorator on the definition (`@atexit.register`, or a module
+//! function that stores its argument and returns it), and an upper-case name
+//! of the module Flask's `config.from_object` loads.
 
 #![expect(
     clippy::expect_used,
@@ -26,7 +32,7 @@ use tempfile::TempDir;
 const MODULES: usize = 3;
 /// The importer index of `main.py`, the entry that reaches every module.
 const MAIN: usize = MODULES;
-const NAMES: [&str; 4] = ["alpha", "beta", "gamma", "_delta"];
+const NAMES: [&str; 5] = ["alpha", "beta", "gamma", "_delta", "OMEGA"];
 
 /// What a module's file name tells the tools that read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +54,28 @@ struct Module {
     all_form: AllForm,
     /// Defined names the module reads itself.
     read: BTreeSet<usize>,
+    /// Defined names written under `decorator`.
+    decorated: BTreeSet<usize>,
+    decorator: Decorator,
+}
+
+/// What decorates [`Module::decorated`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Decorator {
+    /// `@atexit.register`, a registry by its name.
+    Atexit,
+    /// `@_keep`, a module function that appends its argument to a list and
+    /// returns it: a first-party registry (#1223).
+    Keep,
+    /// `@_wrap`, a module function that only returns its argument: no
+    /// registry, so the name stays reported.
+    Wrap,
+}
+
+impl Decorator {
+    const fn registers(self) -> bool {
+        matches!(self, Self::Atexit | Self::Keep)
+    }
 }
 
 impl Module {
@@ -81,6 +109,10 @@ enum Form {
     Package,
     /// `import pkg`, then `pkg.name` in a function.
     PackageAttribute,
+    /// `"pkg.m.name"` in a function, a dotted path a loader may import.
+    Dotted,
+    /// `"pkg.m:name"` in a function.
+    Colon,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +130,9 @@ struct Spec {
     uses: Vec<Use>,
     /// `from .m import name` in `pkg/__init__.py`, one per name.
     reexports: Vec<(usize, usize)>,
+    /// The module `main.py` hands Flask's `config.from_object`, with `flask`
+    /// declared.
+    settings: Option<usize>,
 }
 
 fn names() -> impl Strategy<Value = BTreeSet<usize>> {
@@ -121,17 +156,28 @@ fn module_strategy() -> impl Strategy<Value = Module> {
             Just(AllForm::Branched),
         ],
         names(),
+        names(),
+        prop_oneof![
+            Just(Decorator::Atexit),
+            Just(Decorator::Keep),
+            Just(Decorator::Wrap),
+        ],
     )
-        .prop_map(|(kind, defined, all, all_form, read)| {
-            let read = read.intersection(&defined).copied().collect();
-            Module {
-                kind,
-                defined,
-                all,
-                all_form,
-                read,
-            }
-        })
+        .prop_map(
+            |(kind, defined, all, all_form, read, decorated, decorator)| {
+                let read = read.intersection(&defined).copied().collect();
+                let decorated = decorated.intersection(&defined).copied().collect();
+                Module {
+                    kind,
+                    defined,
+                    all,
+                    all_form,
+                    read,
+                    decorated,
+                    decorator,
+                }
+            },
+        )
 }
 
 fn use_strategy() -> impl Strategy<Value = Use> {
@@ -144,6 +190,8 @@ fn use_strategy() -> impl Strategy<Value = Use> {
             Just(Form::Attribute),
             Just(Form::Package),
             Just(Form::PackageAttribute),
+            Just(Form::Dotted),
+            Just(Form::Colon),
         ],
     )
         .prop_map(|(importer, target, name, form)| Use {
@@ -153,9 +201,14 @@ fn use_strategy() -> impl Strategy<Value = Use> {
             form,
         })
         // A module importing its own name is no outside caller, and would
-        // rebind the name it defines.
+        // rebind the name it defines. Its own string is kept: it counts for
+        // nothing.
         .prop_filter("imports from another module", |item| {
-            item.importer != item.target || matches!(item.form, Form::Package | Form::PackageAttribute)
+            item.importer != item.target
+                || matches!(
+                    item.form,
+                    Form::Package | Form::PackageAttribute | Form::Dotted | Form::Colon
+                )
         })
 }
 
@@ -164,8 +217,9 @@ fn spec_strategy() -> impl Strategy<Value = Spec> {
         prop::collection::vec(module_strategy(), MODULES),
         prop::collection::vec(use_strategy(), 0..8),
         prop::collection::vec((0..MODULES, 0..NAMES.len()), 0..4),
+        prop::option::of(0..MODULES),
     )
-        .prop_map(|(modules, uses, reexports)| {
+        .prop_map(|(modules, uses, reexports, settings)| {
             let mut seen = BTreeSet::new();
             let reexports = reexports
                 .into_iter()
@@ -175,6 +229,7 @@ fn spec_strategy() -> impl Strategy<Value = Spec> {
                 modules,
                 uses,
                 reexports,
+                settings,
             }
         })
 }
@@ -230,6 +285,12 @@ fn render_importer(spec: &Spec, importer: usize, body: &[String], reversed: bool
                 imports.push("import pkg".to_owned());
                 functions.push(format!("def _use{index}():\n    return pkg.{name}"));
             },
+            Form::Dotted => functions.push(format!(
+                "def _use{index}():\n    return \"pkg.{module}.{name}\""
+            )),
+            Form::Colon => functions.push(format!(
+                "def _use{index}():\n    return \"pkg.{module}:{name}\""
+            )),
         }
     }
     let mut parts: Vec<String> = imports;
@@ -275,15 +336,35 @@ fn render_module(spec: &Spec, index: usize, reversed: bool) -> String {
         // One statement block, so `reversed` keeps its order.
         body.push(render_all(all, module.all_form));
     }
+    if !module.decorated.is_empty() {
+        body.push(
+            match module.decorator {
+                Decorator::Atexit => "import atexit",
+                Decorator::Keep => {
+                    "_REGISTRY = []\n\n\ndef _keep(target):\n    _REGISTRY.append(target)\n    return target"
+                },
+                Decorator::Wrap => "def _wrap(target):\n    return target",
+            }
+            .to_owned(),
+        );
+    }
+    let decorator = match module.decorator {
+        Decorator::Atexit => "@atexit.register\n",
+        Decorator::Keep => "@_keep\n",
+        Decorator::Wrap => "@_wrap\n",
+    };
     let mut defined: Vec<usize> = module.defined.iter().copied().collect();
     if reversed {
         defined.reverse();
     }
-    body.extend(
-        defined
-            .iter()
-            .map(|&name| format!("def {}():\n    pass", NAMES[name])),
-    );
+    body.extend(defined.iter().map(|&name| {
+        let decorator = if module.decorated.contains(&name) {
+            decorator
+        } else {
+            ""
+        };
+        format!("{decorator}def {}():\n    pass", NAMES[name])
+    }));
     if !module.read.is_empty() {
         let mut read = String::new();
         for &name in &module.read {
@@ -297,11 +378,18 @@ fn render_module(spec: &Spec, index: usize, reversed: bool) -> String {
 fn project(spec: &Spec, reversed: bool) -> TempDir {
     let dir = TempDir::new().expect("tempdir");
     let root = dir.path();
+    let dependencies = if spec.settings.is_some() {
+        "[\"flask\"]"
+    } else {
+        "[]"
+    };
     write(
         root,
         "pyproject.toml",
-        "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
-         [project.scripts]\npkg = \"pkg.main:run\"\n\n[tool.chokkin]\nmode = \"app\"\n",
+        &format!(
+            "[project]\nname = \"pkg\"\nversion = \"0.1.0\"\ndependencies = {dependencies}\n\n\
+             [project.scripts]\npkg = \"pkg.main:run\"\n\n[tool.chokkin]\nmode = \"app\"\n"
+        ),
     );
     let names = module_names(spec);
     let mut init: Vec<String> = spec
@@ -323,7 +411,17 @@ fn project(spec: &Spec, reversed: bool) -> TempDir {
             write(root, &format!("src/pkg/modeling_m{index}.py"), "");
         }
     }
-    let main = render_importer(spec, MAIN, &["def run():\n    pass".to_owned()], reversed);
+    let run = spec.settings.map_or_else(
+        || "def run():\n    pass".to_owned(),
+        |index| {
+            format!(
+                "def run():\n    import flask\n\n    \
+                 flask.Flask(__name__).config.from_object(\"pkg.{}\")",
+                names[index]
+            )
+        },
+    );
+    let main = render_importer(spec, MAIN, &[run], reversed);
     write(root, "src/pkg/main.py", &main);
     dir
 }
@@ -386,9 +484,15 @@ fn reference(spec: &Spec) -> BTreeSet<Key> {
             let imported = spec.uses.iter().any(|item| {
                 item.target == index
                     && item.name == name
-                    && matches!(item.form, Form::From | Form::Attribute)
+                    && match item.form {
+                        Form::From | Form::Attribute => true,
+                        Form::Dotted | Form::Colon => item.importer != index,
+                        Form::Package | Form::PackageAttribute => false,
+                    }
             }) || spec.reexports.contains(&(index, name));
-            if imported || (module.read.contains(&name) && !listed) {
+            let registered = module.decorated.contains(&name) && module.decorator.registers();
+            let setting = spec.settings == Some(index) && NAMES[name] == "OMEGA";
+            if imported || registered || setting || (module.read.contains(&name) && !listed) {
                 continue;
             }
             let confidence = if listed { "certain" } else { "likely" };
@@ -446,6 +550,7 @@ fn rotated(spec: &Spec, shift: usize) -> Spec {
         modules,
         uses,
         reexports,
+        settings: spec.settings.map(at),
     }
 }
 

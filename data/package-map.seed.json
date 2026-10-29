@@ -1057,9 +1057,21 @@
       ]
     },
     {
+      "distribution": "strawberry-graphql",
+      "imports": [
+        "strawberry"
+      ]
+    },
+    {
       "distribution": "strawberry-graphql-django",
       "imports": [
         "strawberry_django"
+      ]
+    },
+    {
+      "distribution": "django-pgware",
+      "imports": [
+        "django_pg_utils"
       ]
     },
     {
@@ -2089,6 +2101,36 @@
         "dagster"
       ],
       "source": "`dg dev` / `dagster dev` serve the UI from dagster-webserver (#1256)"
+    },
+    {
+      "peer": "python-dotenv",
+      "providers": [
+        "flask"
+      ],
+      "source": "the flask CLI (FlaskGroup) and Flask.run() load .env through python-dotenv when it is installed (#1256)"
+    },
+    {
+      "peer": "tzdata",
+      "modules": [
+        "zoneinfo",
+        "backports.zoneinfo"
+      ],
+      "source": "zoneinfo falls back to the tzdata package where the system has no time zone database (#1256)"
+    },
+    {
+      "peer": "pillow",
+      "providers": [
+        "pyautogui",
+        "pyscreeze"
+      ],
+      "source": "pyautogui.screenshot() (pyscreeze) imports PIL (#1256)"
+    },
+    {
+      "peer": "setuptools",
+      "providers": [
+        "razorpay"
+      ],
+      "source": "razorpay imports pkg_resources at runtime (#1256)"
     }
   ]
 }

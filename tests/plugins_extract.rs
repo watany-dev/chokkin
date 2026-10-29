@@ -1063,6 +1063,185 @@ fn django_settings_module_from_the_environment_files() {
     assert_eq!(hints.warnings, []);
 }
 
+/// `docs/dev/formal/django_settings_model.py` `decide`, transcribed: the
+/// `DJANGO_SETTINGS_MODULE` references as (module, file) and the file a
+/// project's missing-settings gap points to.
+fn formal_settings_decision(
+    manage: &str,
+    pytest: &str,
+    env: &str,
+    django_dep: bool,
+) -> (Vec<(String, String)>, Option<String>) {
+    let dotted = |value: &str| {
+        !value.is_empty()
+            && value.split('.').all(|part| {
+                part.chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            })
+    };
+    let mut setters: Vec<(&str, Option<&str>)> = Vec::new();
+    match manage {
+        "literal" => setters.push(("manage.py", Some("site.settings"))),
+        "placeholder" => setters.push(("manage.py", Some("{{ project_name }}.settings"))),
+        "computed" => setters.push(("manage.py", None)),
+        _ => {},
+    }
+    match pytest {
+        "literal" => setters.push(("pytest.ini", Some("site.test_settings"))),
+        "placeholder" => setters.push(("pytest.ini", Some("{{ project_name }}.settings"))),
+        _ => {},
+    }
+    let env_value = match env {
+        "literal" => Some("site.env_settings"),
+        "variable" => Some("${SETTINGS}"),
+        _ => None,
+    };
+    let mut literals = Vec::new();
+    let mut unread = None;
+    let mut env_unread = None;
+    for (file, value) in setters {
+        match value {
+            Some(value) if dotted(value) => literals.push((value.to_owned(), file.to_owned())),
+            _ => {
+                unread.get_or_insert(file);
+            },
+        }
+    }
+    let has_manage = manage != "absent";
+    let in_setters = !literals.is_empty() || unread.is_some();
+    if (has_manage || in_setters || django_dep)
+        && let Some(value) = env_value
+    {
+        if dotted(value) {
+            literals.push((value.to_owned(), ".env".to_owned()));
+        } else {
+            env_unread = Some(".env");
+        }
+    }
+    if !(has_manage || in_setters) {
+        return (literals, None);
+    }
+    let gap = literals
+        .first()
+        .map(|(_, file)| file.clone())
+        .or_else(|| unread.or(env_unread).map(str::to_owned))
+        .unwrap_or_else(|| "manage.py".to_owned());
+    (literals, Some(gap))
+}
+
+/// The sources of `DJANGO_SETTINGS_MODULE` and the missing-settings gap
+/// `docs/dev/formal/django_settings_model.py` checks are the ones the
+/// Django plugin implements: `manage.py` (absent, without the key, a
+/// literal, a placeholder, a computed value) × the pytest option × `.env`
+/// (a literal, a variable) × a Django dependency, with no settings module
+/// to find.
+/// The files of one `django_settings_sources_follow_the_formal_model` case.
+fn django_settings_files(
+    manage: &str,
+    pytest: &str,
+    env: &str,
+    django_dep: bool,
+) -> Vec<(&'static str, String)> {
+    let dependencies = if django_dep { "\"django\"" } else { "" };
+    let mut files = vec![
+        (
+            "pyproject.toml",
+            format!(
+                "[project]\nname = \"site\"\nversion = \"0\"\ndependencies = [{dependencies}]\n"
+            ),
+        ),
+        ("site/__init__.py", String::new()),
+    ];
+    let set = |value: &str| {
+        format!("import os\nos.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", {value})\n")
+    };
+    let manage = match manage {
+        "no_key" => Some("import django\n".to_owned()),
+        "literal" => Some(set("\"site.settings\"")),
+        "placeholder" => Some(set("\"{{ project_name }}.settings\"")),
+        "computed" => Some(set("NAME")),
+        _ => None,
+    };
+    let pytest = match pytest {
+        "literal" => Some("site.test_settings"),
+        "placeholder" => Some("{{ project_name }}.settings"),
+        _ => None,
+    };
+    let env = match env {
+        "literal" => Some("site.env_settings"),
+        "variable" => Some("${SETTINGS}"),
+        _ => None,
+    };
+    files.extend(manage.map(|text| ("manage.py", text)));
+    files.extend(pytest.map(|value| {
+        (
+            "pytest.ini",
+            format!("[pytest]\nDJANGO_SETTINGS_MODULE = {value}\n"),
+        )
+    }));
+    files.extend(env.map(|value| (".env", format!("DJANGO_SETTINGS_MODULE={value}\n"))));
+    files
+}
+
+/// The `DJANGO_SETTINGS_MODULE` references and the first unread-settings
+/// gap of a project made of `files`.
+fn django_settings_observed(files: &[(&str, String)]) -> (Vec<(String, String)>, Option<String>) {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    for (path, text) in files {
+        let path = root.join(path);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, text).expect("write file");
+    }
+    let hints = extract_at(root);
+    let Some(contrib) = hints
+        .contributions
+        .iter()
+        .find(|contrib| contrib.plugin == PluginId::Django)
+    else {
+        return (Vec::new(), None);
+    };
+    let refs = contrib
+        .module_refs
+        .iter()
+        .filter(|reference| reference.origin.label == "DJANGO_SETTINGS_MODULE")
+        .map(|reference| (reference.module.clone(), reference.origin.file.clone()))
+        .collect();
+    (
+        refs,
+        contrib.unread_settings.first().map(|gap| gap.file.clone()),
+    )
+}
+
+/// The sources of `DJANGO_SETTINGS_MODULE` and the missing-settings gap
+/// `docs/dev/formal/django_settings_model.py` checks are the ones the
+/// Django plugin implements: `manage.py` (absent, without the key, a
+/// literal, a placeholder, a computed value) × the pytest option × `.env`
+/// (a literal, a variable) × a Django dependency, with no settings module
+/// to find.
+#[test]
+fn django_settings_sources_follow_the_formal_model() {
+    let manages = ["absent", "no_key", "literal", "placeholder", "computed"];
+    let pytests = ["absent", "literal", "placeholder"];
+    let envs = ["absent", "literal", "variable"];
+    for index in 0..5 * 3 * 3 * 2 {
+        let (manage, pytest, env) = (
+            manages[index % 5],
+            pytests[index / 5 % 3],
+            envs[index / 15 % 3],
+        );
+        let django_dep = index / 45 != 0;
+        let files = django_settings_files(manage, pytest, env, django_dep);
+        assert_eq!(
+            django_settings_observed(&files),
+            formal_settings_decision(manage, pytest, env, django_dep),
+            "manage={manage} pytest={pytest} env={env} dep={django_dep}"
+        );
+    }
+}
+
 /// A `//` comment in a dev container's JSON sets nothing, though it names
 /// the key in the form read (#1239).
 #[test]
@@ -2195,6 +2374,18 @@ fn alembic_ini_origin_line_and_absolute_package_dir() {
             "[alembic]\nscript_location = acme:/migrations\n",
         ),
         ("src/acme/migrations/env.py", ""),
+    ]);
+    assert!(paths.is_empty(), "{paths:?}");
+
+    // A package name must be a dotted identifier, even when a directory of
+    // that name has an `__init__.py`.
+    let paths = alembic_entries(&[
+        ("src/my-db/__init__.py", ""),
+        (
+            "alembic.ini",
+            "[alembic]\nscript_location = my-db:migrations\n",
+        ),
+        ("src/my-db/migrations/env.py", ""),
     ]);
     assert!(paths.is_empty(), "{paths:?}");
 }

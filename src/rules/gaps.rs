@@ -1800,6 +1800,63 @@ mod tests {
     use super::*;
     use crate::parser::SubclassFacts;
 
+    fn at_or_below(used: &str, module: &str) -> bool {
+        used == module
+            || used
+                .strip_prefix(module)
+                .is_some_and(|rest| rest.starts_with('.'))
+    }
+
+    /// C5 of `docs/dev/formal/companions_model.py` on the bundled table: an
+    /// unread backend setting lowers exactly the peers a value of it could
+    /// make used, the closure of every module the entries listing the
+    /// setting name. A deeper provider chain, or a module shared with an
+    /// entry that does not list the setting, breaks it.
+    #[test]
+    fn backend_settings_lower_the_closure_of_their_modules() {
+        let settings: BTreeSet<&str> = RUNTIME_PEERS
+            .iter()
+            .flat_map(|entry| entry.settings.iter().copied())
+            .collect();
+        assert!(!settings.is_empty());
+        for setting in settings {
+            let selected: Vec<&str> = RUNTIME_PEERS
+                .iter()
+                .filter(|entry| entry.settings.contains(&setting))
+                .flat_map(|entry| entry.modules.iter().copied())
+                .collect();
+            let mut reach: BTreeSet<&str> = BTreeSet::new();
+            loop {
+                let before = reach.len();
+                for entry in RUNTIME_PEERS {
+                    let loads = entry
+                        .modules
+                        .iter()
+                        .any(|module| selected.iter().any(|used| at_or_below(used, module)));
+                    if loads
+                        || entry
+                            .providers
+                            .iter()
+                            .any(|provider| reach.contains(provider))
+                    {
+                        reach.insert(entry.peer);
+                    }
+                }
+                if reach.len() == before {
+                    break;
+                }
+            }
+            for entry in RUNTIME_PEERS {
+                assert_eq!(
+                    setting_may_load(setting, entry.peer),
+                    reach.contains(entry.peer),
+                    "{setting} and {}",
+                    entry.peer
+                );
+            }
+        }
+    }
+
     #[test]
     fn named_package_is_any_directory_or_module_of_that_name() {
         assert!(in_named_package("test/lib/acme_test/cli.py", "acme_test"));
@@ -1928,6 +1985,7 @@ mod tests {
             version_minors: None,
             called_before: Vec::new(),
             tested_before: Vec::new(),
+            caller_guarded: false,
         };
         let unplaced = |line: u32| ParseDiagnostic {
             line,
@@ -2985,6 +3043,7 @@ mod tests {
             mode,
             confidence_reason: None,
             test_fixture: false,
+            selected_by: None,
         };
         let mut reachability = ReachabilityReport::default();
         reachability.unread = vec![
@@ -3169,8 +3228,22 @@ mod tests {
             "img",
             "other",
         ];
+        /// Gap targets: the files, and the backend settings a Django gap
+        /// names.
+        const TARGETS: [&str; 8] = [
+            "acme/main.py",
+            "acme/sub/mod.py",
+            "tool.py",
+            "img/Dockerfile",
+            "img/app.py",
+            "other/x.py",
+            "DATABASES",
+            "CACHES",
+        ];
         const MODULES: [&str; 4] = ["requests", "rich.console", "yaml", "acme.sub"];
-        const NAMES: [&str; 4] = ["requests", "rich", "yaml", "acme"];
+        /// Distributions, with a driver `DATABASES` loads and one only a
+        /// driver `CACHES` loads provides (`hiredis` through `redis`).
+        const NAMES: [&str; 6] = ["requests", "rich", "yaml", "acme", "psycopg", "hiredis"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
         const KINDS: [GapKind; 34] = [
@@ -3341,7 +3414,7 @@ mod tests {
                 owned(&GAP_FILES),
                 member(),
                 prop::option::of((owned(&NAMES), line())),
-                prop::option::of(owned(&FILES)),
+                prop::option::of(owned(&TARGETS)),
             )
                 .prop_map(|(kind, file, member, site, target)| Gap {
                     file,
@@ -3378,7 +3451,7 @@ mod tests {
         fn every_gap(kinds: &[GapKind], member: Option<&String>) -> Vec<Gap> {
             let sites = NAMES.iter().map(|&name| Some((name.to_owned(), Some(1))));
             let sites: Vec<_> = sites.chain([None]).collect();
-            let targets = FILES.iter().map(|&path| Some(path.to_owned()));
+            let targets = TARGETS.iter().map(|&path| Some(path.to_owned()));
             let targets: Vec<_> = targets.chain([None]).collect();
             let mut placed = Vec::new();
             for file in GAP_FILES {
@@ -3496,6 +3569,107 @@ mod tests {
                 let candidates = [candidate];
                 prop_assert_eq!(applied(&candidates, &with_outside), applied(&candidates, &gaps));
                 prop_assert_eq!(applied(&candidates, &outside), candidates.to_vec());
+            }
+        }
+
+        /// Backend settings: the two that select a driver, one that selects
+        /// only distributions the project names, and one that is no backend.
+        const SETTINGS: [&str; 4] = ["DATABASES", "CACHES", "STORAGES", "INSTALLED_APPS"];
+        const DRIVERS: [&str; 14] = [
+            "psycopg",
+            "psycopg-binary",
+            "psycopg2",
+            "psycopg2-binary",
+            "mysqlclient",
+            "oracledb",
+            "cx-oracle",
+            "redis",
+            "pymemcache",
+            "pylibmc",
+            "hiredis",
+            "boto3",
+            "argon2-cffi",
+            "requests",
+        ];
+
+        /// The drivers an unread backend setting may select (#1240), written
+        /// from the seed's reasons rather than from `RUNTIME_PEERS`: `hiredis`
+        /// is there because the `redis` that `CACHES` selects loads it.
+        fn setting_drivers(setting: &str) -> &'static [&'static str] {
+            match setting {
+                "DATABASES" => &[
+                    "psycopg",
+                    "psycopg-binary",
+                    "psycopg2",
+                    "psycopg2-binary",
+                    "mysqlclient",
+                    "oracledb",
+                    "cx-oracle",
+                ],
+                "CACHES" => &["redis", "pymemcache", "pylibmc", "hiredis"],
+                _ => &[],
+            }
+        }
+
+        proptest! {
+            /// An unread backend setting caps CHK002 at likely for exactly
+            /// the drivers the setting may select, in every member, and
+            /// touches no other finding (#1240). Each case tries every
+            /// driver against every setting.
+            #[test]
+            fn backend_setting_gaps_reach_the_drivers_the_setting_loads(
+                rule in prop::sample::select(RuleId::ALL.as_slice()),
+                binary in any::<bool>(),
+                severity in prop::sample::select(
+                    [Severity::Error, Severity::Warning, Severity::Info].as_slice(),
+                ),
+                confidence in prop::sample::select(
+                    [Confidence::Maybe, Confidence::Likely, Confidence::Certain].as_slice(),
+                ),
+                workspace_member in member(),
+                file in owned(&GAP_FILES),
+                site in prop::option::of((owned(&NAMES), line())),
+            ) {
+                for driver in DRIVERS {
+                    for setting in SETTINGS {
+                        let name = driver.to_owned();
+                        let subject = if binary {
+                            IssueSubject::Binary { name }
+                        } else {
+                            IssueSubject::Distribution { name }
+                        };
+                        let candidates = [IssueCandidate {
+                            rule,
+                            subject,
+                            severity,
+                            confidence,
+                            message: "finding".to_owned(),
+                            workspace_member: workspace_member.clone(),
+                            origins: Vec::new(),
+                            explain: ExplainData::default(),
+                        }];
+                        let gap = Gap {
+                            file: file.clone(),
+                            kind: GapKind::UnreadBackendSetting,
+                            member: None,
+                            site: site.clone(),
+                            target: Some(setting.to_owned()),
+                        };
+                        let reaches = rule == RuleId::Chk002
+                            && !binary
+                            && setting_drivers(setting).contains(&driver);
+                        let after = &applied(&candidates, &[gap])[0];
+                        let before = &candidates[0];
+                        prop_assert_eq!(identity(after), identity(before));
+                        prop_assert_eq!(after.severity, before.severity);
+                        let expected = if reaches {
+                            before.confidence.min(Confidence::Likely)
+                        } else {
+                            before.confidence
+                        };
+                        prop_assert_eq!(after.confidence, expected, "{} {}", driver, setting);
+                    }
+                }
             }
         }
 

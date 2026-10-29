@@ -8,16 +8,22 @@ use crate::manifest::normalize_distribution_name;
 use crate::parser::ParsedModule;
 use crate::resolver::{RUNTIME_PEERS, ResolvedImport};
 
-/// Modules a scope uses, whose runtime peers they load: each third-party
-/// import's module and, for a `from` import of one, the name below it, which
-/// may be a submodule (`from lxml import cssselect`) or a backend class.
+/// Modules a scope uses, whose runtime peers they load: each third-party or
+/// stdlib import's module (`zoneinfo` loads `tzdata`) and, for a `from`
+/// import of one, the name below it, which may be a submodule
+/// (`from lxml import cssselect`) or a backend class.
 pub(super) fn used_modules<'a>(
     imports: impl IntoIterator<Item = &'a ResolvedImport>,
     parsed: impl IntoIterator<Item = &'a ParsedModule>,
 ) -> BTreeSet<String> {
     let mut modules: BTreeSet<String> = imports
         .into_iter()
-        .filter(|import| import.origin == ModuleOrigin::ThirdParty)
+        .filter(|import| {
+            matches!(
+                import.origin,
+                ModuleOrigin::ThirdParty | ModuleOrigin::Stdlib
+            )
+        })
         .map(|import| import.full_module.clone())
         .collect();
     let names: Vec<String> = parsed
@@ -64,9 +70,7 @@ pub(super) fn used_companions<'a>(
 /// it: Django's Postgres backend named in `DATABASES` uses `psycopg`, an
 /// import of `lxml.cssselect` uses `cssselect`.
 fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet<String>) -> bool {
-    name.strip_prefix("types-")
-        .or_else(|| name.strip_suffix("-stubs"))
-        .is_some_and(|runtime| used(&normalize_distribution_name(runtime)))
+    stub_base(name).is_some_and(|runtime| used(&normalize_distribution_name(runtime)))
         || RUNTIME_PEERS.iter().any(|entry| {
             entry.peer == name
                 && (entry.providers.iter().any(|provider| used(provider))
@@ -75,6 +79,14 @@ fn companion_is_used(name: &str, used: impl Fn(&str) -> bool, modules: &BTreeSet
                         .iter()
                         .any(|module| uses_module(modules, module)))
         })
+}
+
+/// The runtime distribution a stub-only distribution types: `types-x`,
+/// `x-stubs` and `x-types` (`celery-types`, `django-types`, #1256).
+fn stub_base(name: &str) -> Option<&str> {
+    name.strip_prefix("types-")
+        .or_else(|| name.strip_suffix("-stubs"))
+        .or_else(|| name.strip_suffix("-types"))
 }
 
 /// Whether `modules` has `module` or a name below it.
@@ -181,5 +193,205 @@ mod tests {
             |name| name == "dagster-dbt",
             &BTreeSet::new()
         ));
+    }
+
+    #[test]
+    fn libraries_use_the_peers_they_load_without_an_import() {
+        // #1256: Flask's CLI loads `.env` through python-dotenv,
+        // `pyautogui.screenshot()` imports PIL, razorpay imports
+        // pkg_resources.
+        for (peer, provider) in [
+            ("python-dotenv", "flask"),
+            ("pillow", "pyautogui"),
+            ("setuptools", "razorpay"),
+        ] {
+            assert!(
+                companion_is_used(peer, |name| name == provider, &BTreeSet::new()),
+                "{peer}"
+            );
+            assert!(
+                !companion_is_used(peer, |_| false, &BTreeSet::new()),
+                "{peer}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stdlib_import_uses_its_data_peer() {
+        // `zoneinfo` reads the tzdata package where the system has no time
+        // zone database (#1256).
+        for module in ["zoneinfo", "zoneinfo.ZoneInfo", "backports.zoneinfo"] {
+            let modules = BTreeSet::from([module.to_owned()]);
+            assert!(companion_is_used("tzdata", |_| false, &modules), "{module}");
+        }
+        let modules = BTreeSet::from(["zoneinfox".to_owned()]);
+        assert!(!companion_is_used("tzdata", |_| false, &modules));
+    }
+
+    #[test]
+    fn a_types_suffix_is_a_stub_of_its_runtime() {
+        // weblate's `celery-types` (#1256).
+        assert!(companion_is_used(
+            "celery-types",
+            |name| name == "celery",
+            &BTreeSet::new()
+        ));
+        assert!(!companion_is_used(
+            "celery-types",
+            |_| false,
+            &BTreeSet::new()
+        ));
+    }
+
+    mod props {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// The bundled table's providers, its peers and their stub names, and
+        /// a name nothing loads: `docs/dev/formal/companions_model.py`'s
+        /// declarations.
+        fn universe() -> (Vec<&'static str>, Vec<String>) {
+            let providers: BTreeSet<&'static str> = RUNTIME_PEERS
+                .iter()
+                .flat_map(|entry| entry.providers.iter().copied())
+                .collect();
+            let declared: BTreeSet<String> = RUNTIME_PEERS
+                .iter()
+                .map(|entry| entry.peer.to_owned())
+                .chain(providers.iter().map(|name| format!("types-{name}")))
+                .chain(providers.iter().map(|name| format!("{name}-stubs")))
+                .chain(providers.iter().map(|name| format!("{name}-types")))
+                .chain(["rich".to_owned(), "types-rich".to_owned()])
+                .collect();
+            (
+                providers.into_iter().collect(),
+                declared.into_iter().collect(),
+            )
+        }
+
+        /// Each table module, a name below it, its parent and a sibling that
+        /// only shares its prefix.
+        fn module_pool() -> Vec<String> {
+            let modules: BTreeSet<String> = RUNTIME_PEERS
+                .iter()
+                .flat_map(|entry| entry.modules.iter())
+                .flat_map(|module| {
+                    let parent = module
+                        .rsplit_once('.')
+                        .map_or(*module, |(parent, _)| parent);
+                    [
+                        (*module).to_owned(),
+                        format!("{module}.Attr"),
+                        parent.to_owned(),
+                        format!("{module}x"),
+                    ]
+                })
+                .collect();
+            modules.into_iter().collect()
+        }
+
+        /// Whether `modules` has `module` or a name below it at a dot (C4),
+        /// written from the rule rather than from `uses_module`.
+        fn loads(modules: &BTreeSet<String>, module: &str) -> bool {
+            modules.iter().any(|used| {
+                used == module
+                    || used
+                        .strip_prefix(module)
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        }
+
+        /// The least set of `declared` closed under the peer rule, by Kleene
+        /// iteration from the empty set (C1).
+        fn closure(
+            declared: &[String],
+            used: &BTreeSet<&str>,
+            modules: &BTreeSet<String>,
+        ) -> BTreeSet<String> {
+            let mut found = BTreeSet::new();
+            loop {
+                let live = |name: &str| used.contains(name) || found.contains(name);
+                let step: BTreeSet<String> = declared
+                    .iter()
+                    .filter(|name| {
+                        let stub = name
+                            .strip_prefix("types-")
+                            .or_else(|| name.strip_suffix("-stubs"))
+                            .or_else(|| name.strip_suffix("-types"))
+                            .is_some_and(|base| live(&normalize_distribution_name(base)));
+                        stub || RUNTIME_PEERS.iter().any(|entry| {
+                            entry.peer == name.as_str()
+                                && (entry.providers.iter().any(|provider| live(provider))
+                                    || entry.modules.iter().any(|module| loads(modules, module)))
+                        })
+                    })
+                    .cloned()
+                    .collect();
+                if step == found {
+                    return found;
+                }
+                found = step;
+            }
+        }
+
+        proptest! {
+            /// `used_companions` over the bundled table is the least closed
+            /// set (C1), whatever the declaration order (C2), and grows with
+            /// the used providers and modules (C3);
+            /// `docs/dev/formal/companions_model.py` checks the same on the
+            /// seed.
+            #[test]
+            fn companions_are_the_least_closed_set(
+                used_bits in prop::collection::vec(prop::bool::weighted(0.15), 24),
+                module_bits in prop::collection::vec(prop::bool::weighted(0.05), 160),
+                order in any::<u64>(),
+                extra in 0_usize..16,
+            ) {
+                let (providers, declared) = universe();
+                let pool = module_pool();
+                prop_assert!(providers.len() <= used_bits.len());
+                prop_assert!(pool.len() <= module_bits.len());
+                let used: BTreeSet<&str> = providers
+                    .iter()
+                    .zip(&used_bits)
+                    .filter_map(|(name, on)| on.then_some(*name))
+                    .collect();
+                let modules: BTreeSet<String> = pool
+                    .iter()
+                    .zip(&module_bits)
+                    .filter(|(_, on)| **on)
+                    .map(|(module, _)| module.clone())
+                    .collect();
+                let names: Vec<&str> = declared.iter().map(String::as_str).collect();
+                let found = used_companions(&names, |name| used.contains(name), &modules);
+                let expected = closure(&declared, &used, &modules);
+                let as_set: BTreeSet<String> = found.iter().map(|name| (*name).to_owned()).collect();
+                prop_assert_eq!(as_set.len(), found.len());
+                prop_assert_eq!(&as_set, &expected);
+
+                let mut shuffled = names.clone();
+                let mut seed = order;
+                for i in (1..shuffled.len()).rev() {
+                    seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                    let j = usize::try_from(seed >> 33).unwrap_or(0) % (i + 1);
+                    shuffled.swap(i, j);
+                }
+                let reordered: BTreeSet<String> =
+                    used_companions(&shuffled, |name| used.contains(name), &modules)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect();
+                prop_assert_eq!(&reordered, &expected);
+
+                let mut more = used.clone();
+                more.insert(providers[extra % providers.len()]);
+                let grown: BTreeSet<String> =
+                    used_companions(&names, |name| more.contains(name), &modules)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect();
+                prop_assert!(expected.is_subset(&grown));
+            }
+        }
     }
 }

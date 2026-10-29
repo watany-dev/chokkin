@@ -1,6 +1,6 @@
 //! Reachability analysis types (pipeline step 9).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexSet;
 
@@ -44,6 +44,11 @@ pub struct UnreachableFile {
     /// loads by path or directory convention rather than a helper the tests
     /// beside it forgot to import (#1268).
     pub test_fixture: bool,
+    /// Where a config file of the file's own package names one of its public
+    /// classes or its dotted module path (`config.yml:1051` names
+    /// `TaskHandlerWithCustomFormatter`): users select it in their own
+    /// settings, which the tree does not hold (#1258).
+    pub selected_by: Option<String>,
 }
 
 impl UnreachableFile {
@@ -140,4 +145,7 @@ pub struct ReachabilityReport {
     /// The file each plugin module reference, keyed by its origin file and
     /// module, resolves to: the one the host loads under that name (#779).
     pub(crate) plugin_ref_files: HashMap<(String, String), String>,
+    /// Files a reached file names in a list of module names, which a loader
+    /// imports by name and may then call by a conventional name (#1257).
+    pub(crate) listed_files: HashSet<String>,
 }

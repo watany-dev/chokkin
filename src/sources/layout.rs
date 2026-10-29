@@ -730,8 +730,12 @@ fn matching_children(root: &Path, base: &str, component: &str) -> Vec<String> {
 }
 
 /// `base` and every directory below it, not through symlinks or names
-/// starting with `.`.
+/// starting with `.`. A `base` that is not a directory yields nothing, as in
+/// pytest's `glob._glob2`: `checks/*/**` keeps no file `checks/*` matched.
 fn dirs_from(root: &Path, base: &str, out: &mut Vec<String>) {
+    if !root.join(base).is_dir() {
+        return;
+    }
     out.push(base.to_owned());
     let Ok(entries) = fs::read_dir(root.join(base)) else {
         return;
@@ -1253,6 +1257,15 @@ mod tests {
         let all = expand_testpath(temp.path(), "suites/**/**");
         assert_eq!(all.len(), 13);
         assert!(all.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    /// `**` after a component that matched a file yields nothing for it, as
+    /// pytest's glob only descends from directories.
+    #[test]
+    fn testpath_double_star_skips_a_file_base() {
+        let temp = tree(&["checks/unit"]);
+        fs::write(temp.path().join("checks/util.py"), "").expect("write");
+        assert_eq!(expand_testpath(temp.path(), "checks/*/**"), ["checks/unit"]);
     }
 
     /// A glob match widens to the top of its `__init__.py` chain like a

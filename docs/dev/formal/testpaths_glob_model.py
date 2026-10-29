@@ -47,15 +47,7 @@ D6  A last ``**`` component yields only directories; Python's yields the
 
 D3, D4 and D6 need forms ``testpaths`` hardly ever holds, and reading them
 as Python does would take a layer translating globset syntax; they were
-accepted as they are (README "v0.7.10 の台帳").
-
-Open divergence (README "v0.7.10 の台帳"):
-
-Q5  ``**`` after a component that matched a file (``tests/*/**`` with
-    ``tests/test_x.py``) keeps the file: ``dirs_from`` pushes its base without
-    asking whether it is a directory, while Python's ``_glob2`` yields the
-    base only for a directory. The file becomes test code through an entry
-    pytest collects nothing from.
+accepted as they are (``ledger-v0.7.10.ja.md``).
 
 Run:  python3 docs/dev/formal/testpaths_glob_model.py
       python3 docs/dev/formal/testpaths_glob_model.py --broken
@@ -206,7 +198,9 @@ def matching_children(root: str, base: str, component: str) -> list[str]:
 
 
 def dirs_from(root: str, base: str, out: list[str], last: bool = False) -> None:
-    if "isdir" in FIXES and base and not os.path.isdir(os.path.join(root, base)):
+    # A base that is no directory (a file `*` matched) yields nothing, as in
+    # Python's `_glob2` (#1309).
+    if not os.path.isdir(os.path.join(root, base)):
         return
     out.append(base)
     try:
@@ -287,7 +281,7 @@ def outcome(root: str, files: list[str], entry: str) -> tuple[frozenset[str], bo
     return covered(files, paths), warned
 
 
-REASONS = {"links": "D1", "nolit": "D2", "isdir": "Q5", "files": "D6"}
+REASONS = {"links": "D1", "nolit": "D2", "files": "D6"}
 
 
 def accepted(root: str, files: list[str], entry: str, theirs: frozenset, yields: bool) -> str | None:
@@ -360,7 +354,7 @@ def main() -> int:
     failures, seen, checked = run()
     for failure in failures[:20]:
         print(failure)
-    expected = {"D1", "D2", "D3", "D4", "Q5", "D6"}
+    expected = {"D1", "D2", "D3", "D4", "D6"}
     if seen != expected:
         print(f"stale accepted divergences: {sorted(expected - seen)}")
         return 1

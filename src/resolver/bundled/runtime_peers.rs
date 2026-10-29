@@ -164,6 +164,12 @@ pub(crate) static RUNTIME_PEERS: &[RuntimePeer] = &[
         settings: &[],
     },
     RuntimePeer {
+        peer: "pillow",
+        providers: &["pyautogui", "pyscreeze"],
+        modules: &[],
+        settings: &[],
+    },
+    RuntimePeer {
         peer: "protobuf",
         providers: &["transformers"],
         modules: &[],
@@ -258,6 +264,12 @@ pub(crate) static RUNTIME_PEERS: &[RuntimePeer] = &[
         settings: &["CACHES"],
     },
     RuntimePeer {
+        peer: "python-dotenv",
+        providers: &["flask"],
+        modules: &[],
+        settings: &[],
+    },
+    RuntimePeer {
         peer: "python-lsp-black",
         providers: &["python-lsp-server"],
         modules: &[],
@@ -327,6 +339,12 @@ pub(crate) static RUNTIME_PEERS: &[RuntimePeer] = &[
         settings: &[],
     },
     RuntimePeer {
+        peer: "setuptools",
+        providers: &["razorpay"],
+        modules: &[],
+        settings: &[],
+    },
+    RuntimePeer {
         peer: "timm",
         providers: &["transformers"],
         modules: &[],
@@ -348,6 +366,12 @@ pub(crate) static RUNTIME_PEERS: &[RuntimePeer] = &[
         peer: "torchvision",
         providers: &["transformers"],
         modules: &[],
+        settings: &[],
+    },
+    RuntimePeer {
+        peer: "tzdata",
+        providers: &[],
+        modules: &["backports.zoneinfo", "zoneinfo"],
         settings: &[],
     },
 ];

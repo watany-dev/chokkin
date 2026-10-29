@@ -1374,6 +1374,22 @@ mod tests {
     }
 
     #[test]
+    fn mkdocs_plugins_name_their_distributions() {
+        let result = scan_files(&[(
+            "mkdocs.yml",
+            "site_name: demo\nplugins:\n  - include-markdown\n  - redirects:\n      redirect_maps: {}\n  - minify\n  - search\n",
+        )]);
+        assert_eq!(
+            result.used_distributions,
+            [
+                "mkdocs-include-markdown-plugin",
+                "mkdocs-minify-plugin",
+                "mkdocs-redirects",
+            ]
+        );
+    }
+
+    #[test]
     fn tox_extras_mark_optional_dependencies_used() {
         let dir = std::env::temp_dir().join("chokkin-config-scan-tox");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1703,6 +1719,170 @@ mod tests {
                 ("mypy", Some(16), false),
             ]
         );
+    }
+
+    /// The hook isolation `docs/dev/formal/binary_providers_model.py`
+    /// (`hook_usages`) ports: remote / local × every `language` the
+    /// project-env list names, an own-env one and none × no / empty /
+    /// non-empty `additional_dependencies`. An isolated hook provides its
+    /// binary and makes its usages config sections; a local hook's `entry`
+    /// is a usage too.
+    #[test]
+    fn hook_isolation_follows_the_formal_model() {
+        let languages = [
+            None,
+            Some("system"),
+            Some("script"),
+            Some("unsupported"),
+            Some("unsupported_script"),
+            Some("python"),
+            Some("node"),
+        ];
+        for local in [false, true] {
+            for language in languages {
+                for additional in [None, Some("[]"), Some("[mypy-extensions]")] {
+                    let repo = if local {
+                        "local"
+                    } else {
+                        "https://github.com/pre-commit/mirrors-mypy"
+                    };
+                    let language_line = language
+                        .map(|language| format!("        language: {language}\n"))
+                        .unwrap_or_default();
+                    let additional_line = additional
+                        .map(|deps| format!("        additional_dependencies: {deps}\n"))
+                        .unwrap_or_default();
+                    let hook = format!(
+                        "repos:\n  - repo: {repo}\n    hooks:\n      - id: mypy\n        \
+                         entry: mypy\n{language_line}{additional_line}"
+                    );
+                    let result = scan_files(&[(".pre-commit-config.yaml", &hook)]);
+                    let isolated = !local
+                        || (additional.is_some_and(|deps| deps != "[]")
+                            && language.is_some_and(|language| {
+                                !PRE_COMMIT_PROJECT_ENV_LANGUAGES.contains(&language)
+                            }));
+                    let label = format!("local={local} language={language:?} deps={additional:?}");
+                    let provided: &[&str] = if isolated { &["mypy"] } else { &[] };
+                    assert_eq!(result.provided_binaries, provided, "{label}");
+                    let mypy: Vec<_> = result
+                        .binary_usages
+                        .iter()
+                        .filter(|usage| usage.binary == "mypy")
+                        .map(|usage| (usage.origin.line.is_some(), usage.config_section))
+                        .collect();
+                    let mut expected = vec![(false, isolated)];
+                    if local {
+                        expected.push((true, isolated));
+                    }
+                    assert_eq!(mypy, expected, "{label}");
+                }
+            }
+        }
+    }
+
+    /// Every `[tool.*]` table chokkin knows names its tool's binary.
+    #[test]
+    fn known_tool_tables_name_their_binaries() {
+        let keys = [
+            "mypy",
+            "ruff",
+            "black",
+            "isort",
+            "pylint",
+            "bandit",
+            "coverage",
+            "pytest",
+            "tox",
+            "nox",
+            "twine",
+            "towncrier",
+            "cogapp",
+            "build",
+            "mkdocs",
+            "pre-commit",
+            "pre_commit",
+            "unknown-tool",
+        ];
+        let pyproject: String = keys
+            .iter()
+            .map(|key| format!("[tool.{key}]\nx = 1\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let result = scan_files(&[("pyproject.toml", &pyproject)]);
+        let binaries: BTreeSet<&str> = result
+            .binary_usages
+            .iter()
+            .map(|usage| usage.binary.as_str())
+            .collect();
+        // `pre_commit` names the same binary as `pre-commit`.
+        let expected: BTreeSet<&str> = keys
+            .into_iter()
+            .filter(|key| !matches!(*key, "pre_commit" | "unknown-tool"))
+            .collect();
+        assert_eq!(binaries, expected);
+    }
+
+    /// A remote hook's id names the binary it provides.
+    #[test]
+    fn known_remote_hook_ids_provide_their_binaries() {
+        let ids = [
+            "black",
+            "ruff",
+            "ruff-format",
+            "mypy",
+            "isort",
+            "pytest",
+            "bandit",
+            "flake8",
+            "pyupgrade",
+            "autopep8",
+            "unknown-hook",
+        ];
+        let hooks = ids
+            .iter()
+            .map(|id| format!("      - id: {id}\n"))
+            .collect::<Vec<_>>()
+            .concat();
+        let result = scan_files(&[(
+            ".pre-commit-config.yaml",
+            &format!("repos:\n  - repo: https://example.com/hooks\n    hooks:\n{hooks}"),
+        )]);
+        let provided: BTreeSet<&str> = result
+            .provided_binaries
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let expected: BTreeSet<&str> = [
+            "black",
+            "ruff",
+            "mypy",
+            "isort",
+            "pytest",
+            "bandit",
+            "flake8",
+            "pyupgrade",
+            "autopep8",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(provided, expected);
+    }
+
+    /// A command finds a tool chokkin knows only from its `[tool.*]` table
+    /// or only as a hook id, not just the ones the binary map lists.
+    #[test]
+    fn commands_find_tools_known_from_tables_or_hook_ids() {
+        let result = scan_files(&[(
+            "scripts/check.sh",
+            "#!/bin/sh\ntowncrier build\npyupgrade src/a.py\n",
+        )]);
+        let binaries: Vec<&str> = result
+            .binary_usages
+            .iter()
+            .map(|usage| usage.binary.as_str())
+            .collect();
+        assert_eq!(binaries, ["towncrier", "pyupgrade"]);
     }
 
     #[test]

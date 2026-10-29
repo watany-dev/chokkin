@@ -46,11 +46,11 @@ pub(super) fn detect_misplaced_dependencies(
     } = *context;
     let strengths = import_strengths(context.parse);
     let predicates = predicate_modules(context.parse, sources, reachable);
-    let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules);
     let integrations = integration_packages(declared, dependency, workspace_declared, reachable);
     let eager = file_paths(graph, &reachability.eager);
     let exposed = file_paths(graph, &reachability.exposed);
     let certain = file_paths(graph, &reachability.certain);
+    let host_loaded = host_loaded_files(context.parse, &sources.layout, pytest11_modules, &certain);
     let matcher = IgnoreMatcher::build(config, context.parse, &ResolutionIndex::default());
     // The bool: every site so far is ignored inline, file-level or vendored.
     let mut candidates: Vec<(IssueCandidate, Weight, bool)> = Vec::new();
@@ -119,7 +119,8 @@ pub(super) fn detect_misplaced_dependencies(
             command: is_management_command(&import.file),
             test_support: is_test_support(&import.file, &sources.layout),
             predicate: predicates.contains(&(member, import.import_root.as_str())),
-            host_loaded: host_loaded.contains(&(import.file.as_str(), distribution.as_str())),
+            host_loaded: host_loaded.contains(&(import.file.as_str(), distribution.as_str()))
+                || renders_in_notebook(import, &strengths),
         }
         .weigh();
         let report_key = (
@@ -219,7 +220,8 @@ enum ImportStrength {
     /// `django/contrib/admin/tests.py`): only a test suite loads it (#808).
     TestSupport,
     /// `try`/`except ImportError`, `suppress(ImportError)` or
-    /// platform-guarded, or in a file loaded only past such an import.
+    /// platform-guarded, in a private function the module calls only that
+    /// way (#1259), or in a file loaded only past such an import.
     Optional,
     /// [`Self::Deferred`], and runtime code elsewhere imports it under a
     /// guard or names it in an `is_x…` predicate (#808). Assigned only after
@@ -254,7 +256,7 @@ impl ImportStrength {
         Some(match self {
             Self::TopLevel => return None,
             Self::HostLoaded => {
-                "imported only by modules it loads itself: a pytest plugin or an IPython extension"
+                "imported only by modules it loads itself: a pytest plugin, an IPython extension or a notebook helper"
             },
             Self::OptIn => {
                 "imported only by example DAGs or by a subpackage named after it or after a library it integrates, which load only when opted into"
@@ -269,7 +271,7 @@ impl ImportStrength {
                 "imported only inside functions, and runtime code elsewhere guards it as optional or checks its types by name"
             },
             Self::Optional => {
-                "imported only under try/except ImportError, a platform guard or a check that it is already imported, or by modules loaded only that way"
+                "imported only under try/except ImportError, a platform guard or a check that it is already imported, in private functions called only that way, or by modules loaded only that way"
             },
             Self::Deferred => {
                 "imported only inside functions or by modules runtime code loads only from inside functions or TYPE_CHECKING blocks"
@@ -398,16 +400,16 @@ fn import_strengths(parse: &ParseSummary) -> HashMap<(String, u32), ImportStreng
         let sites = module
             .imports
             .iter()
-            .map(|import| (import.line, import.deferred))
+            .map(|import| (import.line, import.deferred, import.caller_guarded))
             .chain(
                 module
                     .dynamic_imports
                     .iter()
-                    .map(|dynamic| (dynamic.line, dynamic.deferred)),
+                    .map(|dynamic| (dynamic.line, dynamic.deferred, false)),
             );
-        for (line, deferred) in sites {
+        for (line, deferred, caller_guarded) in sites {
             let key = (module.path.clone(), line);
-            let strength = if optional.contains(&key) {
+            let strength = if caller_guarded || optional.contains(&key) {
                 ImportStrength::Optional
             } else if deferred {
                 ImportStrength::Deferred
@@ -618,11 +620,13 @@ pub(super) fn pytest11_modules<'a>(
 /// `(file, distribution)` pairs where the distribution's program loads the
 /// file, so the file's import of it only runs with it installed (#731):
 /// pytest loads a `pytest11` entry-point target or a module defining a
-/// top-level `pytest_*` hook, `IPython` one defining `load_ipython_extension`.
+/// top-level `pytest_*` hook, `IPython` one defining `load_ipython_extension`
+/// or a notebook helper the package itself never loads (#1259).
 fn host_loaded_files<'a>(
     parse: &'a ParseSummary,
     layout: &LayoutInfo,
     pytest11_modules: &HashSet<&str>,
+    certain: &HashSet<&str>,
 ) -> HashSet<(&'a str, &'static str)> {
     let mut loaded = HashSet::new();
     for module in &parse.modules {
@@ -632,16 +636,53 @@ fn host_loaded_files<'a>(
                 .iter()
                 .any(|symbol| symbol.kind == SymbolKind::Function && is_hook(&symbol.name))
         };
-        let registered = path_to_module(&module.path, layout)
+        let name = path_to_module(&module.path, layout);
+        let registered = name
+            .as_ref()
             .is_some_and(|name| pytest11_modules.contains(name.as_str()));
         if registered || defines(|name| name.starts_with("pytest_")) {
             loaded.insert((module.path.as_str(), "pytest"));
         }
-        if defines(|name| name == "load_ipython_extension") {
+        let notebook_helper = !certain.contains(module.path.as_str())
+            && name.as_deref().is_some_and(is_notebook_module);
+        if notebook_helper || defines(|name| name == "load_ipython_extension") {
             loaded.insert((module.path.as_str(), "ipython"));
         }
     }
     loaded
+}
+
+/// A function-local import of `IPython`'s display machinery
+/// (`from IPython.display import Markdown, display` in llama-index's
+/// `display_prompt_dict`): the function renders for a notebook, so it runs
+/// where `IPython` is (#1259). A top-level one is needed to import the module.
+fn renders_in_notebook(
+    import: &ResolvedImport,
+    strengths: &HashMap<(String, u32), ImportStrength>,
+) -> bool {
+    let display = ["IPython.display", "IPython.core.display"]
+        .iter()
+        .any(|module| under_package(&import.full_module, module));
+    display
+        && import.distribution.as_deref() == Some("ipython")
+        && import
+            .statement_line()
+            .and_then(|line| strengths.get(&(import.file.clone(), line)))
+            == Some(&ImportStrength::Deferred)
+}
+
+/// Whether a module below the top-level package is named for notebooks
+/// (`llama_index.core.response.notebook_utils`, `rich.jupyter`): its
+/// `IPython` imports serve Jupyter, which is where callers import it from
+/// (#1259). A module named otherwise keeps its `IPython` import's own
+/// strength, even if only notebooks use it: the name is the only sign.
+fn is_notebook_module(module: &str) -> bool {
+    module.split('.').skip(1).any(|name| {
+        let name = name.to_ascii_lowercase();
+        ["notebook", "jupyter", "ipython"]
+            .iter()
+            .any(|word| name.contains(word))
+    })
 }
 
 fn import_origin(import: &ResolvedImport) -> Origin {
@@ -1006,6 +1047,46 @@ mod tests {
         assert!(!support("testing/runner.py"));
     }
 
+    /// #1259: only a function-local import of `IPython`'s display machinery
+    /// renders for a notebook.
+    #[test]
+    fn function_local_ipython_display_imports_render_in_notebooks() {
+        let import = |module: &str, line: u32| ResolvedImport {
+            import_root: "IPython".to_owned(),
+            full_module: module.to_owned(),
+            file: "acme/display_utils.py".to_owned(),
+            workspace_member: None,
+            line: Some(line),
+            reference: None,
+            context: crate::parser::ImportContext::Runtime,
+            optional: false,
+            platform_guarded: false,
+            never_runs: false,
+            origin: ModuleOrigin::ThirdParty,
+            distribution: Some("ipython".to_owned()),
+            confidence: crate::resolver::ResolveConfidence::Certain,
+        };
+        let strengths = HashMap::from([
+            (
+                ("acme/display_utils.py".to_owned(), 1),
+                ImportStrength::TopLevel,
+            ),
+            (
+                ("acme/display_utils.py".to_owned(), 2),
+                ImportStrength::Deferred,
+            ),
+        ]);
+        let renders = |import: &ResolvedImport| renders_in_notebook(import, &strengths);
+        assert!(renders(&import("IPython.display", 2)));
+        assert!(renders(&import("IPython.core.display", 2)));
+        assert!(!renders(&import("IPython.display", 1)));
+        assert!(!renders(&import("IPython.core.magic", 2)));
+        assert!(!renders(&import("IPython.displayhook", 2)));
+        let mut other = import("IPython.display", 2);
+        other.distribution = Some("ipython-fork".to_owned());
+        assert!(!renders(&other));
+    }
+
     /// #731: a file is host-loaded only for the host that loads it.
     #[test]
     fn host_loaded_files_pair_each_file_with_its_own_host() {
@@ -1023,6 +1104,10 @@ mod tests {
                     "src/acme/ext.py",
                     &[("load_ipython_extension", SymbolKind::Function)],
                 ),
+                module("src/acme/response/notebook_utils.py", &[]),
+                module("src/acme/jupyter/display.py", &[]),
+                module("src/acme/notebooks.py", &[]),
+                module("src/notebook/run.py", &[]),
                 module(
                     "src/acme/lookalikes.py",
                     &[
@@ -1034,8 +1119,11 @@ mod tests {
                 ),
             ],
         };
-        let layout = LayoutInfo::new("src", vec!["acme".to_owned()]);
-        let mut loaded: Vec<_> = host_loaded_files(&parse, &layout, &pytest11)
+        let layout = LayoutInfo::new("src", vec!["acme".to_owned(), "notebook".to_owned()]);
+        // The package loads `notebooks.py` itself, so IPython is its own
+        // requirement there (#1259).
+        let certain = HashSet::from(["src/acme/notebooks.py"]);
+        let mut loaded: Vec<_> = host_loaded_files(&parse, &layout, &pytest11, &certain)
             .into_iter()
             .collect();
         loaded.sort_unstable();
@@ -1044,8 +1132,10 @@ mod tests {
             [
                 ("src/acme/ext.py", "ipython"),
                 ("src/acme/hooks.py", "pytest"),
+                ("src/acme/jupyter/display.py", "ipython"),
                 ("src/acme/objects/__init__.py", "pytest"),
                 ("src/acme/plugin.py", "pytest"),
+                ("src/acme/response/notebook_utils.py", "ipython"),
             ]
         );
     }

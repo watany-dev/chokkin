@@ -138,9 +138,9 @@ test-scripts:
 TLA2TOOLS ?= tla2tools.jar
 
 formal:
-	@status=0; for m in relative_import_model import_precedence_model deps_rules_z3 exit_status_z3 ignore_model fix_plan_model version_guard_model setup_cfg_requirements_model testpaths_glob_model; do \
+	@status=0; for m in relative_import_model import_precedence_model deps_rules_z3 exit_status_z3 ignore_model fix_plan_model binary_providers_model companions_model django_settings_model version_guard_model install_check_model never_runs_model setup_cfg_requirements_model testpaths_glob_model; do \
 		python3 docs/dev/formal/$$m.py || status=1; \
-	done; for m in version_guard_model setup_cfg_requirements_model testpaths_glob_model; do \
+	done; for m in never_runs_model setup_cfg_requirements_model testpaths_glob_model; do \
 		python3 docs/dev/formal/$$m.py --broken || status=1; \
 	done; exit $$status
 

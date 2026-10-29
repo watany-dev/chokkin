@@ -34,7 +34,7 @@ D1  A value whose last line ends in ``\\`` with nothing to join: setuptools
     requirement line (``setuptools_reqs.rs``, #928, ADR 0005).
 
 Open divergences (counterexamples the reconcile step has not settled; see
-README "v0.7.10 の台帳"). They are listed so the run stays green while the
+``ledger-v0.7.10.ja.md``). They are listed so the run stays green while the
 question is open; an entry that stops occurring is reported as stale.
 
 Q1  A key line indented before any option of its section

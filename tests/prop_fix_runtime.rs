@@ -154,8 +154,20 @@ for module in list(sys.modules.values()):
         .collect())
 }
 
-/// Runs `--fix --allow-remove-files` and returns the files it removed.
-fn remove_files(root: &Path) -> Vec<String> {
+/// The files in `pkg/`, root-relative; `main.py` is the entry.
+fn package_files(root: &Path) -> BTreeSet<String> {
+    fs::read_dir(root.join("pkg"))
+        .expect("read pkg")
+        .map(|entry| {
+            let name = entry.expect("read_dir").file_name();
+            format!("pkg/{}", name.to_string_lossy())
+        })
+        .collect()
+}
+
+/// Runs `--fix --allow-remove-files` and returns the files it reports
+/// removing, read from the `applied CHK001` lines on stderr.
+fn remove_files(root: &Path) -> BTreeSet<String> {
     let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
         .args(["--fix", "--allow-remove-files", "--no-cache"])
         .current_dir(root)
@@ -166,7 +178,7 @@ fn remove_files(root: &Path) -> Vec<String> {
         output.status.code().is_some_and(|code| code <= 1),
         "chokkin failed: {stderr}"
     );
-    String::from_utf8_lossy(&output.stdout)
+    stderr
         .lines()
         .filter_map(|line| line.trim_start().strip_prefix("applied CHK001 "))
         .filter_map(|rest| rest.split_whitespace().next().map(str::to_owned))
@@ -182,7 +194,10 @@ proptest! {
         let dir = project(&spec);
         let root = dir.path();
         let before = loaded_files(root).expect("the generated program runs");
+        let files = package_files(root);
         let removed = remove_files(root);
+        let gone: BTreeSet<String> = files.difference(&package_files(root)).cloned().collect();
+        prop_assert_eq!(&removed, &gone, "the reported removals are the files gone");
         let after = loaded_files(root);
         prop_assert_eq!(
             after.as_ref(),
@@ -192,4 +207,18 @@ proptest! {
             spec
         );
     }
+}
+
+/// The property holds trivially when nothing is removed: `pkg/m1.py`, which
+/// nothing imports, must go.
+#[test]
+fn file_removal_removes_an_unreached_module() {
+    let spec = Spec {
+        package_init: true,
+        main: vec![(0, Form::FromPackage)],
+        modules: vec![Vec::new(); MODULES],
+    };
+    let dir = project(&spec);
+    let removed = remove_files(dir.path());
+    assert!(removed.contains("pkg/m1.py"), "removed {removed:?}");
 }

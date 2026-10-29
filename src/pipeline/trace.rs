@@ -467,6 +467,7 @@ mod tests {
                     version_minors: None,
                     called_before: Vec::new(),
                     tested_before: Vec::new(),
+                    caller_guarded: false,
                 }],
                 ..ParsedModule::default()
             },
@@ -483,6 +484,7 @@ mod tests {
                 mode: ProjectMode::App,
                 confidence_reason: None,
                 test_fixture: false,
+                selected_by: None,
             },
             UnreachableFile {
                 file: old_api_id,
@@ -491,6 +493,7 @@ mod tests {
                 mode: ProjectMode::App,
                 confidence_reason: None,
                 test_fixture: false,
+                selected_by: None,
             },
         ];
 

@@ -77,3 +77,38 @@ impl AnalyzeError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bad glob is the user's to fix; a start path that will not resolve,
+    /// a broken graph invariant or an unwritable baseline is not.
+    #[test]
+    fn only_input_errors_are_usage_errors() {
+        let glob = || SourcesError::InvalidGlob {
+            pattern: "[".to_owned(),
+            reason: "unclosed".to_owned(),
+        };
+        let start = || ProbeError::StartPath(io::Error::other("gone"));
+        assert!(ProbeError::Sources(glob()).is_usage_error());
+        assert!(!start().is_usage_error());
+
+        assert!(AnalyzeError::Probe(ProbeError::Sources(glob())).is_usage_error());
+        for error in [
+            AnalyzeError::Probe(start()),
+            AnalyzeError::Graph(GraphError::DuplicateFile {
+                path: "a.py".to_owned(),
+            }),
+            AnalyzeError::Reachability(ReachabilityError::InvalidFrameworkGlob {
+                pattern: "[".to_owned(),
+                reason: "unclosed".to_owned(),
+            }),
+            AnalyzeError::Baseline(BaselineError::OutsideRoot {
+                path: "../b.json".to_owned(),
+            }),
+        ] {
+            assert!(!error.is_usage_error(), "{error}");
+        }
+    }
+}

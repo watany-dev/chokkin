@@ -148,6 +148,18 @@ pub(crate) fn in_examples_dir(path: &str) -> bool {
         .is_some_and(|(dirs, _)| dirs.split('/').any(|dir| dir == "examples"))
 }
 
+/// Whether a directory of `path` is named `templates` or `*_templates`
+/// (airflow's `config_templates/`): files users copy into their own setup
+/// and edit, which nothing imports by design (#1258). The singular
+/// `template/` is left out: it is Django's template engine package.
+#[must_use]
+pub(crate) fn in_templates_dir(path: &str) -> bool {
+    path.rsplit_once('/').is_some_and(|(dirs, _)| {
+        dirs.split('/')
+            .any(|dir| dir == "templates" || dir.ends_with("_templates"))
+    })
+}
+
 /// Whether `path` is input data under a test tree (`tests/data/case.py`,
 /// `test/fixtures/demo/setup.py`): tests read these as files rather than
 /// import them, so being unreachable is expected (#593).

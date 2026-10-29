@@ -1088,6 +1088,7 @@ mod tests {
             mode,
             confidence_reason: None,
             test_fixture: false,
+            selected_by: None,
         };
         let mut report = ReachabilityReport::default();
         report.unreachable = vec![
