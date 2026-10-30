@@ -54,7 +54,7 @@ jobs:
           persist-credentials: false
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       # `--list` only parses the source, so the runner's preinstalled cargo is enough.
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-mutants@27.1.0
       - name: Count mutants and pick the shards
@@ -126,7 +126,7 @@ jobs:
       # start without a target directory, so the cache never serves a mutant
       # build, and the action exports CARGO_INCREMENTAL=0, which turns every
       # mutant's rebuild into a full one. The Makefile sets CARGO_INCREMENTAL=1.
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest@0.9.133
       - name: Mutate
@@ -213,7 +213,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changes.outputs.run == 'true'
       - name: Benchmark base
         # Base and head run back to back on the same runner, so runner-to-runner
