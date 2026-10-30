@@ -44,4 +44,10 @@ mod tests {
     fn detects_type_checking_aliases() {
         assert!(is_type_checking("t.TYPE_CHECKING", &["typing", "t"]));
     }
+
+    #[test]
+    fn needs_both_the_typing_module_and_the_name() {
+        assert!(!is_type_checking("other.TYPE_CHECKING", &["typing"]));
+        assert!(!is_type_checking("typing.OTHER", &["typing"]));
+    }
 }

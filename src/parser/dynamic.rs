@@ -783,6 +783,10 @@ mod tests {
             Some("pkg.plugins".to_owned())
         );
         assert_eq!(prefix(r#"import_module("pkg" + name)"#), None);
+        // Only `+` concatenates, and only one f-string part is read.
+        assert_eq!(prefix(r#"import_module("pkg.commands." % name)"#), None);
+        assert_eq!(prefix(r#"import_module("pkg." % a + b)"#), None);
+        assert_eq!(prefix(r#"import_module(f"pkg.plugins.{name}" ".x")"#), None);
         assert_eq!(prefix(r#"import_module(f"{base}.plugins")"#), None);
         assert_eq!(prefix("import_module(name)"), None);
     }
@@ -797,6 +801,7 @@ mod tests {
         assert_eq!(word(r#""pre-commit run""#), Some("pre-commit".to_owned()));
         assert_eq!(word(r#""ruff""#), None);
         assert_eq!(word(r#""./tool.sh run""#), None);
+        assert_eq!(word(r#""tools/gen run""#), None);
         assert_eq!(word(r#""`ruff` failed""#), None);
         assert_eq!(word("name"), None);
     }
@@ -812,6 +817,10 @@ mod tests {
             Some(PythonRun::File)
         );
         assert_eq!(run(r#"[sys.executable, "tool.py"]"#), Some(PythonRun::File));
+        assert_eq!(
+            run(r#"[sys.executable, "tool.py", "pkg.mod"]"#),
+            Some(PythonRun::File)
+        );
     }
 
     #[test]
@@ -820,6 +829,8 @@ mod tests {
         assert_eq!(run(r#"[sys.executable, "-m", name]"#), None);
         assert_eq!(run("[sys.executable]"), None);
         assert_eq!(run(r#"["python", "-m", "pip"]"#), None);
+        assert_eq!(run(r#"[os.executable, "tool.py"]"#), None);
+        assert_eq!(run(r#"[sys.path, "tool.py"]"#), None);
     }
 
     mod props {

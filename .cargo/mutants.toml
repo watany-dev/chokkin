@@ -45,4 +45,9 @@ exclude_re = [
     # cargo-mutants runs, so its mutants are guaranteed misses; the Windows
     # junction tests fail without it (#1136).
     "src/path_util.rs:.*: replace junction with \\(\\)",
+    # One worker parsing on the scoped-thread path, or several in turn on the
+    # sequential one, parse the same files; the caller reorders the results.
+    "replace <= with > in run_parse_job",
+    # Slot indexes are unique, so two failures never tie.
+    "replace < with <= in earlier_failure",
 ]

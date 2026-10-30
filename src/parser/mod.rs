@@ -41,6 +41,8 @@ pub(crate) use relative::{NOT_IN_PACKAGE, resolve_relative_import};
 pub(crate) use types::DynamicImport;
 pub(crate) use types::ImportRef;
 #[cfg(test)]
+pub(crate) use types::NotebookCommand;
+#[cfg(test)]
 pub(crate) use types::ParseDiagnostic;
 #[cfg(test)]
 pub(crate) use types::SubclassFacts;
