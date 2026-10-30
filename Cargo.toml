@@ -159,11 +159,27 @@ debug = false
 inherits = "release"
 lto = "fat"
 codegen-units = 1
-# Size-optimize the wheel binary except the parsing hot path below: measured
-# ~15% smaller (6.25 MB -> 5.28 MB) for ~6% slower cold analysis, well within
-# the §17 "medium project cold run <= 2 s" budget. `release` stays opt-level 3
-# so benchmarks keep tracking full-speed codegen.
+# Size-optimize the wheel binary except the parsing hot path below. Linux
+# x86_64, 1.7k-file corpus, median cold run vs `release` (9.05 MB):
+#   opt-level "s" everywhere       6.90 MB  +12..18%
+#   "s" + ruff crates at 3 (this)  7.00 MB   +5..8%
+#   opt-level 2 everywhere         8.26 MB    +1%
+# Raising `chokkin` itself above "s" undoes the size win (~9 MB), since the
+# generic code it instantiates is compiled in its crate. Both fit the §17
+# "medium project cold run <= 2 s" budget. `release` stays opt-level 3 so
+# benchmarks keep tracking full-speed codegen.
 opt-level = "s"
+
+# The parsing hot path: without these the parser runs size-optimized and dist
+# loses about twice the speed for 0.1 MB.
+[profile.dist.package.ruff_python_parser]
+opt-level = 3
+
+[profile.dist.package.ruff_python_ast]
+opt-level = 3
+
+[profile.dist.package.ruff_text_size]
+opt-level = 3
 
 [profile.dev]
 opt-level = 0
