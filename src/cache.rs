@@ -258,17 +258,21 @@ fn read_cache_entry(root: &Path, path: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match std::fs::symlink_metadata(path) {
+    match missing_as_none(std::fs::symlink_metadata(path))? {
         // A link, FIFO or device is never something the cache wrote, and
         // reading one could leave the root or block. A directory still errors
         // below: it is not "nothing cached yet".
-        Ok(metadata) if !metadata.is_file() && !metadata.is_dir() => return Ok(None),
-        Ok(_) => {},
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+        Some(metadata) if metadata.is_file() || metadata.is_dir() => {},
+        _ => return Ok(None),
     }
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
+    // Missing here too when a concurrent run's sweep removed it since.
+    missing_as_none(std::fs::read(path))
+}
+
+/// `result`, with a missing file as `None`: nothing cached yet.
+fn missing_as_none<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }

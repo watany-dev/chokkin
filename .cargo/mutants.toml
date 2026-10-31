@@ -50,4 +50,7 @@ exclude_re = [
     "replace <= with > in run_parse_job",
     # Slot indexes are unique, so two failures never tie.
     "replace < with <= in earlier_failure",
+    # The bundle size only picks how many threads decode it; any count
+    # decodes the same lines in order (#1328).
+    "replace / with (\\*|%) in ParseCacheBundle::decode",
 ]
