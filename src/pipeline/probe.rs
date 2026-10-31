@@ -80,6 +80,10 @@ pub struct ProbeReport {
     /// `[build-system].requires` names of the manifest naming each: the build
     /// environment installs those for the script.
     pub build_scripts: BTreeMap<String, BTreeSet<String>>,
+    /// Source files below a subtree requirements file, root-relative, with
+    /// the normalized names those files list: the separate environment they
+    /// run in installs those (#1340).
+    pub environment_requirements: BTreeMap<String, BTreeSet<String>>,
     /// Why each plugin is on or off; already applied to `effective_config.plugins`.
     pub plugin_activations: Vec<PluginActivation>,
     /// Non-fatal warnings from manifest and source discovery.
@@ -264,6 +268,8 @@ pub(super) fn probe_project_with_cache(
     include_plugin_sources(&loaded, &manifest, &discovered, &nested, &mut sources)?;
     let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
     apply_member_context(&mut sources, loaded.effective.production);
+    let environment_requirements =
+        super::environments::environment_requirements(&manifest, &sources);
     let (scripts, script_warnings) = discover_inline_scripts(
         &root.path,
         sources.python_files().map(|file| file.path.as_str()),
@@ -300,6 +306,7 @@ pub(super) fn probe_project_with_cache(
         unread_path_sources,
         scripts,
         build_scripts,
+        environment_requirements,
         plugin_activations,
         warnings,
     })

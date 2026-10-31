@@ -45,8 +45,9 @@ pub(crate) use python_range::{
     PythonRange, marker_always_holds, requires_python_range, supported_python,
 };
 pub(crate) use requirements::{
-    extra_requirements_candidates, join_continued_lines, requirements_line_distribution,
-    requirements_line_hashed, split_lines_inclusive, strip_line_break,
+    extra_requirements_candidates, join_continued_lines, requirements_files_in,
+    requirements_line_distribution, requirements_line_hashed, requirements_path_context,
+    split_lines_inclusive, strip_line_break,
 };
 pub use script::discover_inline_scripts;
 pub(crate) use script::{InlineScript, inline_script_target};
