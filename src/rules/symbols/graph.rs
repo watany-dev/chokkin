@@ -1,7 +1,5 @@
 //! Symbol identity and registry for usage analysis.
 
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
-
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
@@ -41,7 +39,7 @@ pub(super) struct RegistryEntry {
 /// Build the list of public symbols in reachable modules, first definition wins.
 pub(super) fn build_registry(
     modules: &[&ParsedModule],
-    module_names: &HashMap<&str, String>,
+    module_names: &FxHashMap<&str, String>,
 ) -> Vec<RegistryEntry> {
     let mut entries = Vec::new();
     let mut seen = FxHashSet::default();
@@ -117,7 +115,7 @@ impl ReferenceIndex {
     /// every reference they make is external.
     pub(super) fn build(
         modules: &[&ParsedModule],
-        module_names: &HashMap<&str, String>,
+        module_names: &FxHashMap<&str, String>,
         layout: &LayoutInfo,
     ) -> Self {
         let symlinks = SymlinkModules::new(layout);
@@ -168,7 +166,7 @@ impl ReferenceIndex {
     fn add_module<'m, 'a>(
         &mut self,
         module: &'m ParsedModule,
-        module_names: &'m HashMap<&str, String>,
+        module_names: &'m FxHashMap<&str, String>,
         known_modules: &FxHashSet<&'m str>,
         symlinks: &SymlinkModules,
         stars: &StarImports<'a>,
@@ -317,10 +315,10 @@ struct StarImports<'a> {
 }
 
 /// [`StarImports::sources`] per symbol, kept by each indexing worker.
-type StarCache<'a> = HashMap<SymbolId, Vec<&'a str>>;
+type StarCache<'a> = FxHashMap<SymbolId, Vec<&'a str>>;
 
 impl<'a> StarImports<'a> {
-    fn build(modules: &[&'a ParsedModule], module_names: &'a HashMap<&str, String>) -> Self {
+    fn build(modules: &[&'a ParsedModule], module_names: &'a FxHashMap<&str, String>) -> Self {
         let mut stars = Self {
             chain: StarChain::build(modules.iter().filter_map(|&module| {
                 module_names
@@ -434,7 +432,7 @@ fn sibling_module<'n>(
     importer_path: &str,
     name: &str,
     known_modules: &FxHashSet<&str>,
-    module_names: &'n HashMap<&str, String>,
+    module_names: &'n FxHashMap<&str, String>,
 ) -> Option<&'n str> {
     if known_modules.contains(name) {
         return None;
@@ -458,7 +456,7 @@ fn sibling_module<'n>(
 
 /// Names `module` binds by definition or `from … import`: every symbol and
 /// re-export a reference to `module` can be asked about.
-fn bound_names(module: &ParsedModule) -> HashSet<&str> {
+fn bound_names(module: &ParsedModule) -> FxHashSet<&str> {
     let defined = module.symbols.iter().map(|symbol| symbol.name.as_str());
     let imported = module
         .imports
@@ -517,7 +515,7 @@ mod tests {
             ..ParsedModule::default()
         };
         let names = bound_names(&module);
-        assert_eq!(names, HashSet::from_iter(["helper", "renamed", "sub"]));
+        assert_eq!(names, FxHashSet::from_iter(["helper", "renamed", "sub"]));
     }
 
     #[test]
@@ -538,7 +536,7 @@ mod tests {
             )],
             ..ParsedModule::default()
         };
-        let names = HashMap::from_iter([
+        let names = FxHashMap::from_iter([
             (
                 utils.path.as_str(),
                 "in_container.in_container_utils".to_owned(),
@@ -568,7 +566,7 @@ mod tests {
             )],
             ..ParsedModule::default()
         };
-        let names = HashMap::from_iter([
+        let names = FxHashMap::from_iter([
             (helpers.path.as_str(), "tools.helpers".to_owned()),
             (run.path.as_str(), "tools.run".to_owned()),
         ]);
@@ -620,7 +618,7 @@ mod tests {
                 .collect(),
             ..ParsedModule::default()
         };
-        let names = HashMap::from_iter([
+        let names = FxHashMap::from_iter([
             (package.path.as_str(), "pkg".to_owned()),
             (app.path.as_str(), "app".to_owned()),
         ]);
@@ -655,7 +653,7 @@ mod tests {
                 }
             })
             .collect();
-        let names: HashMap<&str, String> = modules
+        let names: FxHashMap<&str, String> = modules
             .iter()
             .enumerate()
             .map(|(index, module)| (module.path.as_str(), format!("lib.m{index}")))
@@ -843,7 +841,7 @@ mod tests {
         fn star_sources(modules: &[Module], order: &[usize]) -> Sources {
             let (parsed, module_names) = project(modules, order);
             let refs: Vec<&ParsedModule> = parsed.iter().collect();
-            let names: HashMap<&str, String> = parsed
+            let names: FxHashMap<&str, String> = parsed
                 .iter()
                 .map(|module| module.path.as_str())
                 .zip(module_names)
@@ -959,7 +957,7 @@ mod tests {
             let order: Vec<_> = (0..modules.len()).collect();
             let (parsed, module_names) = project(modules, &order);
             let refs: Vec<&ParsedModule> = parsed.iter().collect();
-            let names: HashMap<&str, String> = parsed
+            let names: FxHashMap<&str, String> = parsed
                 .iter()
                 .map(|module| module.path.as_str())
                 .zip(module_names)

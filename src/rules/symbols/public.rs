@@ -1,6 +1,5 @@
 //! Library public API: symbols an outside caller can reach by declaration (#489).
 
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::borrow::Borrow;
 use std::hash::Hash;
 
@@ -16,7 +15,7 @@ use super::graph::{ReferenceIndex, RegistryEntry, SymbolId};
 pub(super) struct PublicApi {
     /// Names `from m import *` puts into a public module, by their defining
     /// module.
-    star_reached: HashSet<SymbolId>,
+    star_reached: FxHashSet<SymbolId>,
     /// References that `--production` left out of reachability (#588).
     production_references: ReferenceIndex,
 }
@@ -24,7 +23,7 @@ pub(super) struct PublicApi {
 impl PublicApi {
     pub(super) fn build(
         modules: &[&ParsedModule],
-        module_names: &HashMap<&str, String>,
+        module_names: &FxHashMap<&str, String>,
         production_references: ReferenceIndex,
     ) -> Self {
         let named: Vec<_> = modules

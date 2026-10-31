@@ -806,6 +806,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn read_pyproject_table_shares_a_parse_until_the_file_changes() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let path = temp.path().join("pyproject.toml");
+        std::fs::write(&path, "[project]\nname = \"a\"\n").expect("write");
+        let first = read_pyproject_table(&path).expect("parse");
+        let again = read_pyproject_table(&path).expect("parse");
+        assert!(Arc::ptr_eq(&first, &again));
+        std::fs::write(&path, "[project]\nname = \"b\"\n").expect("write");
+        let changed = read_pyproject_table(&path).expect("parse");
+        assert_eq!(changed["project"]["name"].as_str(), Some("b"));
+        std::fs::write(&path, "[project\n").expect("write");
+        read_pyproject_table(&path).expect_err("invalid TOML");
+    }
+
+    #[test]
     fn join_lexical_folds_dots_and_stays_under_root() {
         assert_eq!(
             join_lexical("pkg/db", "./migrations").as_deref(),

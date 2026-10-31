@@ -1,6 +1,5 @@
 //! CHK002/CHK003 inside PEP 723 scripts, checked against the script block.
 
-use rustc_hash::FxHashSet as HashSet;
 use std::collections::BTreeSet;
 
 use super::companions::{used_companions, used_modules};
@@ -21,7 +20,10 @@ use crate::sources::DiscoveredFile;
 
 /// Third-party imports made directly by a script file; project reconciliation
 /// must not see them.
-pub(super) fn is_script_third_party(import: &ResolvedImport, script_paths: &HashSet<&str>) -> bool {
+pub(super) fn is_script_third_party(
+    import: &ResolvedImport,
+    script_paths: &FxHashSet<&str>,
+) -> bool {
     import.origin == ModuleOrigin::ThirdParty && script_paths.contains(import.file.as_str())
 }
 
@@ -33,7 +35,7 @@ pub(super) fn is_script_third_party(import: &ResolvedImport, script_paths: &Hash
 pub(super) fn detect_script_dependency_issues(
     scripts: &[InlineScript],
     resolution: &ResolutionIndex,
-    reachable: &HashSet<&str>,
+    reachable: &FxHashSet<&str>,
     files: &[DiscoveredFile],
     parse: &ParseSummary,
     import_map: &ImportMap,
@@ -380,7 +382,7 @@ mod tests {
                 .collect(),
             ..ResolutionIndex::default()
         };
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = FxHashSet::from_iter(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -425,7 +427,7 @@ mod tests {
         detect_script_dependency_issues(
             &[script],
             &resolution,
-            &HashSet::from_iter(["scripts/tool.py"]),
+            &FxHashSet::from_iter(["scripts/tool.py"]),
             &[],
             &ParseSummary::default(),
             &import_map(),
@@ -544,7 +546,7 @@ mod tests {
                 ..crate::parser::ParsedModule::default()
             }],
         };
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = FxHashSet::from_iter(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -576,7 +578,7 @@ mod tests {
                 ..crate::parser::ParsedModule::default()
             }],
         };
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = FxHashSet::from_iter(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &ResolutionIndex::default(),
@@ -610,7 +612,7 @@ mod tests {
         let found = detect_script_dependency_issues(
             &[script],
             &ResolutionIndex::default(),
-            &HashSet::default(),
+            &FxHashSet::default(),
             &[],
             &ParseSummary::default(),
             &import_map(),
@@ -652,7 +654,7 @@ mod tests {
             context: FileContext::Dev,
         })
         .collect();
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = FxHashSet::from_iter(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -731,7 +733,7 @@ mod tests {
                 context: FileContext::Dev,
             })
             .collect();
-        let reachable = HashSet::from_iter(["scripts/tool.py"]);
+        let reachable = FxHashSet::from_iter(["scripts/tool.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script],
             &resolution,
@@ -802,7 +804,7 @@ mod tests {
             context: FileContext::Dev,
         })
         .collect();
-        let reachable = HashSet::from_iter(["tool.py", "scripts/run.py"]);
+        let reachable = FxHashSet::from_iter(["tool.py", "scripts/run.py"]);
         let found: Vec<_> = detect_script_dependency_issues(
             &[script("tool.py"), script("scripts/run.py")],
             &resolution,
