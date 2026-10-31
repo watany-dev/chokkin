@@ -651,6 +651,7 @@ mod tests {
                     reachability: &crate::reachability::ReachabilityReport::default(),
                     parse: &parse,
                     surface: None,
+                    cache: &crate::rules::RuleCache::default(),
                 },
                 config: &config,
                 strict,
@@ -1347,6 +1348,7 @@ mod tests {
             reachability: &crate::reachability::ReachabilityReport::default(),
             parse: &parse,
             surface: None,
+            cache: &crate::rules::RuleCache::default(),
         };
         let dependency = DependencyRuleContext {
             rules: &rules,

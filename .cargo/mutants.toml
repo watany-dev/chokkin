@@ -50,4 +50,7 @@ exclude_re = [
     "replace <= with > in run_parse_job",
     # Slot indexes are unique, so two failures never tie.
     "replace < with <= in earlier_failure",
+    # A cache without the paths resolution built builds the same ones from
+    # the same sources on first use: only the time changes (#1326).
+    "replace RuleCache::with_pytest -> Self with Default::default\\(\\)",
 ]
