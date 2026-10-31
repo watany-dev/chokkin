@@ -29,8 +29,8 @@ use crate::resolver::{VenvIndex, build_binary_map};
 use crate::sources::{is_dbt_profiles, is_dockerfile, is_requirements_dir_file};
 
 use super::commands::{KnownBinary, SourceHits};
-use super::config_scan::{ConfigScanResult, is_shell_script, strip_shell_comment};
-use super::config_text::{logical_lines, origin_at};
+use super::config_scan::{ConfigScanResult, is_shell_script, shell_script_commands};
+use super::config_text::origin_at;
 use super::dbt_profiles;
 use super::task_files::scan_dockerfile;
 use super::types::{CommandTarget, RequirementsRef};
@@ -100,12 +100,8 @@ fn scan_file(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut Sourc
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("script");
-        for (index, line) in logical_lines(contents) {
-            hits.push_command(
-                strip_shell_comment(&line),
-                known,
-                &origin_at(rel, index, label),
-            );
+        for (index, command) in shell_script_commands(contents) {
+            hits.push_command(&command, known, &origin_at(rel, index, label));
         }
     }
 }
@@ -307,6 +303,37 @@ mod tests {
                 module: "wger.wsgi".to_owned(),
                 symbol: Some("application".to_owned()),
             }]
+        );
+    }
+
+    /// `KiroCrew`'s `cli.sh` prints usage text through `cat <<'EOF'` and runs
+    /// Python through `python - <<'PY'`; neither body is shell commands, but a
+    /// body fed to `bash` is, and the line after the delimiter is again.
+    #[test]
+    fn heredoc_bodies_run_only_when_fed_to_a_shell() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write(
+            root,
+            "cli.sh",
+            "usage() {\n  cat <<'EOF'\npytest is in the wheel\n  EOF\nEOF\n}\n\
+             python3 - \"$A\" <<-PY\n\tcelery = 1\n\tPY\n\
+             echo $(( 1 << BITS )) \"a <<EOF\"\ngunicorn app:app\n\
+             bash <<EOF\npytest -q\nEOF\n",
+        );
+        let hits = scan(root, &["cli.sh".to_owned()], &known_map());
+        let mut binaries: Vec<(String, Option<u32>)> = hits
+            .binaries
+            .iter()
+            .map(|usage| (usage.binary.clone(), usage.origin.line))
+            .collect();
+        binaries.sort();
+        assert_eq!(
+            binaries,
+            [
+                ("gunicorn".to_owned(), Some(11)),
+                ("pytest".to_owned(), Some(13))
+            ]
         );
     }
 

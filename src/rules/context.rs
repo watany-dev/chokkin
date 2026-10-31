@@ -163,8 +163,9 @@ pub struct DependencyRuleContext<'a> {
     pub config: &'a crate::config::ChokkinConfig,
     /// Strict mode (`--strict`).
     pub strict: bool,
-    /// Root-relative build script → normalized `[build-system].requires` of
-    /// its manifest (#735).
+    /// Root-relative file → normalized names the separate environment it
+    /// runs in installs: a build script's `[build-system].requires` (#735),
+    /// a subtree requirements file's names (#1340).
     pub build_scripts: &'a BTreeMap<String, BTreeSet<String>>,
     /// The root's workspace members and local `[tool.uv.sources]` trees.
     pub local: &'a crate::sources::LocalTrees,

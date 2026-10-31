@@ -1012,15 +1012,93 @@ fn scan_shell_scripts(
             .and_then(|name| name.to_str())
             .unwrap_or("script")
             .to_owned();
-        for (index, line) in logical_lines(&contents) {
+        for (index, command) in shell_script_commands(&contents) {
             push_command(
                 result,
                 seen,
-                strip_shell_comment(&line),
+                &command,
                 known,
                 &origin_at(&rel, index, &label),
             );
         }
+    }
+}
+
+/// The commands of a shell script, by line index: logical lines without
+/// comments, leaving out here-document bodies a shell does not run.
+pub(super) fn shell_script_commands(contents: &str) -> Vec<(usize, String)> {
+    let mut commands = Vec::new();
+    let mut heredoc: Option<Heredoc> = None;
+    for (index, line) in logical_lines(contents) {
+        if let Some(open) = &heredoc {
+            if open.ends_at(&line) {
+                heredoc = None;
+                continue;
+            }
+            if !open.runs_shell {
+                continue;
+            }
+        }
+        let command = strip_shell_comment(&line);
+        heredoc = heredoc.or_else(|| Heredoc::opened_by(command));
+        commands.push((index, command.to_owned()));
+    }
+    commands
+}
+
+/// A here-document a script line opens (#1341): its body is the input of
+/// the command, so it runs as commands only when that command is a shell
+/// (`bash <<EOF`); `cat <<EOF` usage text and `python - <<'PY'` code are
+/// not shell commands. A `<<` inside quotes or `((...))` and one whose
+/// delimiter is not a plain name open nothing, and `<<<` is a here-string.
+struct Heredoc {
+    delimiter: String,
+    strip_tabs: bool,
+    runs_shell: bool,
+}
+
+impl Heredoc {
+    fn opened_by(line: &str) -> Option<Self> {
+        let (at, _) = line.match_indices("<<").find(|&(at, _)| {
+            let before = &line[..at];
+            !line[at + 2..].starts_with('<')
+                && !before.ends_with('<')
+                && before.matches('"').count().is_multiple_of(2)
+                && before.matches('\'').count().is_multiple_of(2)
+                && before.matches("((").count() <= before.matches("))").count()
+        })?;
+        let rest = &line[at + 2..];
+        let strip_tabs = rest.starts_with('-');
+        let rest = rest.trim_start_matches('-').trim_start();
+        let word = rest.split_whitespace().next()?;
+        let delimiter = word.trim_matches(['\'', '"']).trim_start_matches('\\');
+        let mut chars = delimiter.chars();
+        let is_name = chars
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        if !is_name {
+            return None;
+        }
+        let runs_shell = line[..at].split_whitespace().any(|word| {
+            let name = word.rsplit('/').next().unwrap_or(word);
+            matches!(name, "sh" | "bash" | "zsh" | "ksh" | "dash")
+        });
+        Some(Self {
+            delimiter: delimiter.to_owned(),
+            strip_tabs,
+            runs_shell,
+        })
+    }
+
+    fn ends_at(&self, line: &str) -> bool {
+        let line = line.trim_end_matches('\r');
+        let line = if self.strip_tabs {
+            line.trim_start_matches('\t')
+        } else {
+            line
+        };
+        line == self.delimiter
     }
 }
 
