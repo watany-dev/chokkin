@@ -8,7 +8,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use chokkin::internals::RuleContext;
 use chokkin::internals::analyze_with_context;
 use chokkin::internals::{
     Confidence, LocalTrees, PluginExtractRequest, ProjectRoot, RootMarker, RuleId,
@@ -17,6 +16,7 @@ use chokkin::internals::{
     discover_sources, extract_manifest, extract_plugin_hints_with_parse, load_config,
     parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
+use chokkin::internals::{RuleCache, RuleContext};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -122,6 +122,7 @@ fn analyze_fixture(name: &str) -> Vec<chokkin::internals::IssueCandidate> {
             sources: &inputs.sources,
             parse: &inputs.parse,
             surface: inputs.surface.as_ref(),
+            cache: &RuleCache::default(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -320,6 +321,7 @@ fn reexport_imported_from_package_is_not_chk007() {
             sources: &inputs.sources,
             parse: &inputs.parse,
             surface: inputs.surface.as_ref(),
+            cache: &RuleCache::default(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -566,6 +568,7 @@ fn star_import_in_init_is_not_a_reexport() {
             sources: &inputs.sources,
             parse: &inputs.parse,
             surface: inputs.surface.as_ref(),
+            cache: &RuleCache::default(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -607,6 +610,7 @@ fn relative_package_import_counts_as_external_reference() {
             sources: &inputs.sources,
             parse: &inputs.parse,
             surface: inputs.surface.as_ref(),
+            cache: &RuleCache::default(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -644,6 +648,7 @@ fn analyze_generated(files: &[(&str, &str)]) -> Vec<chokkin::internals::IssueCan
             sources: &inputs.sources,
             parse: &inputs.parse,
             surface: inputs.surface.as_ref(),
+            cache: &RuleCache::default(),
         },
         &inputs.entry,
         &inputs.plugins,
@@ -2264,6 +2269,7 @@ fn literal_getattr_on_a_module_counts_as_a_reference() {
             sources: &inputs.sources,
             parse: &inputs.parse,
             surface: inputs.surface.as_ref(),
+            cache: &RuleCache::default(),
         },
         &inputs.entry,
         &inputs.plugins,

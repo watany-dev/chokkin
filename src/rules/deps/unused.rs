@@ -162,11 +162,11 @@ fn build_reachability_evidence(
 
     let reachable_imports = distribution_imports
         .iter()
-        .filter(|import| context.usage.contains(import.file.as_str()))
+        .filter(|import| context.usage.contains(&*import.file))
         .collect::<Vec<_>>();
     let unreachable_imports = distribution_imports
         .iter()
-        .filter(|import| !context.usage.contains(import.file.as_str()))
+        .filter(|import| !context.usage.contains(&*import.file))
         .collect::<Vec<_>>();
 
     if reachable_imports.is_empty() {
@@ -227,7 +227,7 @@ fn top_level_modules_for_distribution(
             .as_deref()
             .is_some_and(|name| name == distribution)
         {
-            modules.insert(import.import_root.clone());
+            modules.insert(import.import_root.to_string());
         }
     }
 
@@ -467,10 +467,10 @@ mod tests {
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(legacy_boto3_import()));
         resolution.imports.push(Arc::new(ResolvedImport {
-            import_root: "requests".to_owned(),
+            import_root: "requests".into(),
             full_module: "requests".to_owned(),
-            file: "src/acme/main.py".to_owned(),
-            distribution: Some("requests".to_owned()),
+            file: "src/acme/main.py".into(),
+            distribution: Some("requests".into()),
             ..legacy_boto3_import()
         }));
 
@@ -485,6 +485,7 @@ mod tests {
             sources: &sources,
             parse: &parse,
             surface: None,
+            cache: &crate::rules::RuleCache::default(),
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,
@@ -532,9 +533,9 @@ mod tests {
 
     fn legacy_boto3_import() -> ResolvedImport {
         ResolvedImport {
-            import_root: "boto3".to_owned(),
+            import_root: "boto3".into(),
             full_module: "boto3".to_owned(),
-            file: "src/legacy/aws.py".to_owned(),
+            file: "src/legacy/aws.py".into(),
             workspace_member: None,
             line: Some(5),
             reference: None,
@@ -543,7 +544,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some("boto3".to_owned()),
+            distribution: Some("boto3".into()),
             confidence: ResolveConfidence::Certain,
         }
     }
@@ -608,6 +609,7 @@ mod tests {
             sources: &sources,
             parse: &parse,
             surface: None,
+            cache: &crate::rules::RuleCache::default(),
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,

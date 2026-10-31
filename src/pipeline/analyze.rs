@@ -22,20 +22,20 @@ use crate::parser::{
 };
 use crate::plugins::{PluginExtractRequest, extract_plugin_hints_with_parse};
 use crate::reachability::{
-    ReachabilityReport, analyze_reachability, apply_distributed_surfaces, apply_member_surfaces,
-    apply_public_surface, apply_user_selected,
+    ReachabilityReport, analyze_reachability_with_pytest, apply_distributed_surfaces,
+    apply_member_surfaces, apply_public_surface, apply_user_selected,
 };
 use crate::reporters::{Diagnostic, FileCounts};
 use crate::resolver::{
     ResolveWarning, ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
-    resolve_imports_for_analysis,
+    resolve_imports_with_pytest,
 };
 use crate::rules::deps::local_source_member;
 use crate::rules::emit::compute_exit_status;
 use crate::rules::{
     DependencyRuleContext, Gap, GapKind, Issue, IssueCandidate, IssueReport, IssueSubject,
-    MemberManifest, RuleContext, RuleId, WorkspaceDependencyBoundary, collect_gaps, emit_issues,
-    lowering_gaps,
+    MemberManifest, RuleCache, RuleContext, RuleId, WorkspaceDependencyBoundary, collect_gaps,
+    emit_issues, lowering_gaps,
 };
 use crate::sources::{
     DiscoveredFile, DiscoveredSources, FileContext, PublicSurface, SourcesWarning,
@@ -327,7 +327,7 @@ fn run_analysis_core(
             Some((script.path.clone(), range))
         })
         .collect();
-    let resolution = resolve_imports_for_analysis(
+    let (resolution, pytest) = resolve_imports_with_pytest(
         &probe.effective_config,
         manifest,
         sources,
@@ -348,8 +348,15 @@ fn run_analysis_core(
             .map(ProbeWarning::Resolve),
     );
 
-    let mut reachability =
-        analyze_reachability(&mut graph, sources, &entry, &plugins, &parse, production)?;
+    let mut reachability = analyze_reachability_with_pytest(
+        &graph,
+        sources,
+        &entry,
+        &plugins,
+        &parse,
+        production,
+        pytest.clone(),
+    )?;
     let surface = PublicSurface::resolve(manifest.metadata.wheel_targets.as_ref(), &sources.files);
     if let Some(surface) = &surface {
         apply_public_surface(&mut reachability, surface, &entry);
@@ -416,6 +423,7 @@ fn run_analysis_core(
         })
         .collect::<Vec<_>>();
 
+    let cache = RuleCache::with_pytest(pytest);
     let context = RuleContext {
         resolution: &resolution,
         reachability: &reachability,
@@ -423,6 +431,7 @@ fn run_analysis_core(
         sources,
         parse: &parse,
         surface: surface.as_ref(),
+        cache: &cache,
     };
     let production_tests = if reads_production_tests(production, &entry) {
         Some(parse_production_tests(probe, &target)?)
@@ -498,6 +507,18 @@ fn run_analysis_core(
         overrides,
         &resolution,
     );
+    // Only the core outlives this call; freeing the rest took ~8% of a large
+    // project's wall time on the serial path (#1327).
+    crate::parallel::drop_in_background((
+        parse,
+        member_parse,
+        plugins,
+        resolution,
+        deps,
+        symbols,
+        gaps,
+        production_tests,
+    ));
 
     Ok(AnalysisCore {
         graph,

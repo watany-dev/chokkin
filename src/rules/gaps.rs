@@ -1086,7 +1086,7 @@ fn string_distribution_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         let Some(distribution) = reference.distribution.as_deref() else {
             continue;
         };
-        let file = reference.file.as_str();
+        let file = &*reference.file;
         if !is_reached(file, context.graph, context.reachability) && !public_orphans.contains(file)
         {
             continue;
@@ -1360,7 +1360,7 @@ fn path_source_gaps(imports: &[Arc<ResolvedImport>], dirs: &[String]) -> Vec<Gap
         if !dirs.iter().any(|dir| is_under(&import.file, dir)) {
             continue;
         }
-        let site = (import.file.as_str(), import.line);
+        let site = (&*import.file, import.line);
         // A plugin reference without a line sorts last in its file.
         let order = |a: &(&str, Option<u32>), b: &(&str, Option<u32>)| {
             (a.0, a.1.is_none(), a.1).cmp(&(b.0, b.1.is_none(), b.1))
@@ -2462,9 +2462,9 @@ mod tests {
     #[test]
     fn path_source_import_gap_names_the_first_site_under_the_directory() {
         let import = |distribution: Option<&str>, file: &str, line| ResolvedImport {
-            import_root: "click".to_owned(),
+            import_root: "click".into(),
             full_module: "click".to_owned(),
-            file: file.to_owned(),
+            file: file.into(),
             workspace_member: None,
             line,
             reference: None,
@@ -2473,7 +2473,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
-            distribution: distribution.map(str::to_owned),
+            distribution: distribution.map(Into::into),
             confidence: crate::resolver::ResolveConfidence::Certain,
         };
         let imports = [

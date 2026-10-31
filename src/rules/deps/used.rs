@@ -121,10 +121,10 @@ pub(super) fn collect_used_distributions(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !counts_as_use(import.file.as_str(), reachable, graph) {
+        if !counts_as_use(&import.file, reachable, graph) {
             continue;
         }
-        used.insert(distribution.clone());
+        used.insert(distribution.to_string());
     }
 
     for usage in plugins.all_binary_usages() {
@@ -193,7 +193,7 @@ pub(super) fn mark_workspace_source_distributions(
         .iter()
         .filter(|import| {
             import.origin == ModuleOrigin::FirstParty
-                && counts_as_use(import.file.as_str(), reachable, context.graph)
+                && counts_as_use(&import.file, reachable, context.graph)
         })
         .map(|import| import.full_module.as_str())
         .collect();
@@ -310,7 +310,7 @@ impl<'a> MemberImports<'a> {
             .imports
             .iter()
             .filter(|import| import.origin != ModuleOrigin::Stdlib)
-            .map(|import| (import.file.as_str(), import.full_module.as_str()))
+            .map(|import| (&*import.file, import.full_module.as_str()))
             .collect();
         imports.sort_by_key(|(file, _)| *file);
         Self(imports)
@@ -539,9 +539,9 @@ mod tests {
         };
         let resolution = ResolutionIndex {
             imports: vec![Arc::new(ResolvedImport {
-                import_root: "yaml".to_owned(),
+                import_root: "yaml".into(),
                 full_module: "yaml".to_owned(),
-                file: "src/app.py".to_owned(),
+                file: "src/app.py".into(),
                 workspace_member: None,
                 line: Some(1),
                 reference: None,
@@ -550,7 +550,7 @@ mod tests {
                 platform_guarded: false,
                 never_runs: false,
                 origin: ModuleOrigin::ThirdParty,
-                distribution: Some("pyyaml".to_owned()),
+                distribution: Some("pyyaml".into()),
                 confidence: ResolveConfidence::Certain,
             })],
             string_refs: Vec::new(),
@@ -574,6 +574,7 @@ mod tests {
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
+                cache: &crate::rules::RuleCache::default(),
             },
             &PluginHints {
                 contributions: Vec::new(),
@@ -703,7 +704,7 @@ mod tests {
             }
             graph
                 .intern_file(FileNode {
-                    path: import.file.clone(),
+                    path: import.file.to_string(),
                     context: crate::sources::FileContext::Runtime,
                     kind: crate::sources::FileKind::Python,
                 })
@@ -714,9 +715,9 @@ mod tests {
 
     fn resolved(file: &str, module: &str, origin: ModuleOrigin) -> ResolvedImport {
         ResolvedImport {
-            import_root: import_root(module).to_owned(),
+            import_root: import_root(module).into(),
             full_module: module.to_owned(),
-            file: file.to_owned(),
+            file: file.into(),
             workspace_member: None,
             line: Some(1),
             reference: None,
@@ -904,6 +905,7 @@ mod tests {
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
+                cache: &crate::rules::RuleCache::default(),
             },
             &HashSet::from(["src/app.py"]),
             &boundaries,
@@ -963,6 +965,7 @@ mod tests {
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
+                cache: &crate::rules::RuleCache::default(),
             },
             &HashSet::from(["src/app.py"]),
             &boundaries,
@@ -989,9 +992,9 @@ mod tests {
         });
         let resolution = ResolutionIndex {
             imports: vec![Arc::new(ResolvedImport {
-                import_root: "streamlit".to_owned(),
+                import_root: "streamlit".into(),
                 full_module: "streamlit.web".to_owned(),
-                file: "e2e/app.py".to_owned(),
+                file: "e2e/app.py".into(),
                 workspace_member: None,
                 line: Some(1),
                 reference: None,
@@ -1022,6 +1025,7 @@ mod tests {
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
+                cache: &crate::rules::RuleCache::default(),
             },
             &HashSet::from(["e2e/app.py"]),
             &[],
@@ -1072,6 +1076,7 @@ mod tests {
                 sources: &sources,
                 parse: &crate::parser::ParseSummary::default(),
                 surface: None,
+                cache: &crate::rules::RuleCache::default(),
             },
             &HashSet::new(),
             &[],

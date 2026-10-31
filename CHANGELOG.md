@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- A run no longer waits on freeing its analysis before it exits: the report
+  is left to the OS and the intermediate parse and resolution data is freed
+  on a background thread. `--no-cache` runs are 4-10% faster on airflow,
+  transformers and django (#1327).
+- Import resolution allocates 38% less on airflow: an unresolved import root
+  no longer copies every declared and locked name to try its `py` affixes,
+  and resolved imports share their file path, member, root and distribution
+  names. A warm run uses 6% less CPU and 11 MB less memory (#1329).
 - The parse cache stores one module per line and reads and writes the lines
   on every core: a warm run on apache/airflow (8.5k modules, 31 MB cache)
   takes 7% less wall time, and decoding the cache 60% less (#1328). The
@@ -17,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The wheel binary compiles the ruff parser crates at full optimization
   again, as the `dist` profile intended: wheels ran 12-18% slower than a
   `release` build, now 5-8%, for 0.1 MB more.
+
+### Changed
+- Reachability and the rules reuse the pytest search paths import
+  resolution builds instead of building them three more times, re-reading
+  every workspace member's `pyproject.toml` each time, and work out the
+  test files loaded only by name once: airflow runs about 4% faster cold
+  (#1326).
 
 ## [0.7.13] - 2026-10-29
 

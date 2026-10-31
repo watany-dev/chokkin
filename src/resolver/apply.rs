@@ -68,9 +68,9 @@ mod tests {
 
         let index = ResolutionIndex {
             imports: vec![Arc::new(ResolvedImport {
-                import_root: "yaml".to_owned(),
+                import_root: "yaml".into(),
                 full_module: "yaml".to_owned(),
-                file: "app.py".to_owned(),
+                file: "app.py".into(),
                 workspace_member: None,
                 line: Some(1),
                 reference: None,
@@ -79,7 +79,7 @@ mod tests {
                 platform_guarded: false,
                 never_runs: false,
                 origin: ModuleOrigin::ThirdParty,
-                distribution: Some("pyyaml".to_owned()),
+                distribution: Some("pyyaml".into()),
                 confidence: ResolveConfidence::Certain,
             })],
             string_refs: Vec::new(),
@@ -117,9 +117,9 @@ mod tests {
         let index = ResolutionIndex {
             imports: vec![
                 Arc::new(ResolvedImport {
-                    import_root: "yaml".to_owned(),
+                    import_root: "yaml".into(),
                     full_module: "yaml".to_owned(),
-                    file: "app.py".to_owned(),
+                    file: "app.py".into(),
                     workspace_member: None,
                     line: Some(1),
                     reference: None,
@@ -132,9 +132,9 @@ mod tests {
                     confidence: ResolveConfidence::Maybe,
                 }),
                 Arc::new(ResolvedImport {
-                    import_root: "yaml".to_owned(),
+                    import_root: "yaml".into(),
                     full_module: "yaml".to_owned(),
-                    file: "app.py".to_owned(),
+                    file: "app.py".into(),
                     workspace_member: None,
                     line: Some(2),
                     reference: None,
@@ -143,7 +143,7 @@ mod tests {
                     platform_guarded: false,
                     never_runs: false,
                     origin: ModuleOrigin::ThirdParty,
-                    distribution: Some("pyyaml".to_owned()),
+                    distribution: Some("pyyaml".into()),
                     confidence: ResolveConfidence::Certain,
                 }),
             ],
