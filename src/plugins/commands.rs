@@ -544,11 +544,12 @@ impl<'o> ShellSplitter<'o> {
                 if self.subshells == 0
                     && let Some(end) = case_pattern_end(chars, at)
                 {
+                    debug_assert!(end > at);
                     at = end;
                     continue;
                 }
             }
-            at = match ch {
+            let next = match ch {
                 ' ' | '\t' | '\r' => {
                     self.end_word();
                     at + 1
@@ -571,6 +572,9 @@ impl<'o> ShellSplitter<'o> {
                     at + 1
                 },
             };
+            // A step that does not advance would rescan, and grow the word, forever.
+            debug_assert!(next > at);
+            at = next;
         }
         self.end_segment();
     }
@@ -624,7 +628,7 @@ impl<'o> ShellSplitter<'o> {
     fn double_quoted(&mut self, chars: &[char], mut at: usize) -> usize {
         self.word.get_or_insert_with(String::new);
         while let Some(&ch) = chars.get(at) {
-            at = match ch {
+            let next = match ch {
                 '"' => return at + 1,
                 '\\' => self.escape(chars, at, |next| matches!(next, '"' | '$' | '`' | '\\')),
                 '$' | '`' => self.substitution(chars, at, true),
@@ -633,6 +637,9 @@ impl<'o> ShellSplitter<'o> {
                     at + 1
                 },
             };
+            // A step that does not advance would rescan, and grow the word, forever.
+            debug_assert!(next > at);
+            at = next;
         }
         at
     }
