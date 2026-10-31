@@ -41,7 +41,7 @@ impl<'a> NotebookInstalls<'a> {
     /// resolved to, or one its module names (`llama-index-llms-openai` for
     /// `llama_index.llms.openai`).
     pub(crate) fn provides(&self, import: &ResolvedImport) -> bool {
-        let Some((_, installed)) = self.by_file.get(import.file.as_str()) else {
+        let Some((_, installed)) = self.by_file.get(&*import.file) else {
             return false;
         };
         import

@@ -507,6 +507,18 @@ fn run_analysis_core(
         overrides,
         &resolution,
     );
+    // Only the core outlives this call; freeing the rest took ~8% of a large
+    // project's wall time on the serial path (#1327).
+    crate::parallel::drop_in_background((
+        parse,
+        member_parse,
+        plugins,
+        resolution,
+        deps,
+        symbols,
+        gaps,
+        production_tests,
+    ));
 
     Ok(AnalysisCore {
         graph,
