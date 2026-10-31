@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- A run no longer waits on freeing its analysis before it exits: the report
+  is left to the OS and the intermediate parse and resolution data is freed
+  on a background thread. `--no-cache` runs are 4-10% faster on airflow,
+  transformers and django (#1327).
 - A cold run on airflow is about 4% faster: plugins share one parse of
   `pyproject.toml`, the CPU count is read once, and the rule and source
   stages hash with `rustc-hash` (#1331).
