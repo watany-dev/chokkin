@@ -814,8 +814,8 @@ impl ParseCacheBundle {
 }
 
 /// Bundle bytes per unit of [`crate::parallel::worker_count`] when decoding,
-/// so a worker starts for every 256 KiB or so.
-const DECODE_BYTES_PER_UNIT: usize = 8 * 1024;
+/// so a worker starts for every 256 KiB or so (8 KiB).
+const DECODE_BYTES_PER_UNIT: usize = 8_192;
 
 /// [`ParseCacheBundle`] borrowing its modules, for writing.
 ///
