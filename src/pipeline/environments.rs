@@ -16,7 +16,9 @@
 //! the project's own (`src/pkg/requirements.txt`, read by `setup.py`), and
 //! the root and its `requirements/` / `docs/` files are the manifest's
 //! (spec §4). A file whose name names a dev, test or docs context
-//! (`requirements-dev.txt`) installs no runtime and covers nothing. Who
+//! (`requirements-dev.txt`) installs no runtime and covers nothing, and a
+//! `.txt` beside a same-name `.in` is pip-compile output: only the `.in`
+//! declares (spec §4, #786). Who
 //! installs the file (a Dockerfile, a launcher) is not read: the file's
 //! place is the only evidence. A file that cannot be read covers nothing, so
 //! its subtree's imports stay checked against the root declarations.
@@ -68,11 +70,15 @@ pub(super) fn environment_requirements(
     let root = manifest.root.path.as_path();
     let mut provided: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
     for dir in dirs {
-        for path in requirements_files_in(&root.join(dir)) {
+        let files = requirements_files_in(&root.join(dir));
+        for path in &files {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
-            if !installs_runtime(name) {
+            // pip-compile output pins the whole environment; its `.in` declares.
+            let compiled = path.extension().is_some_and(|ext| ext == "txt")
+                && files.contains(&path.with_extension("in"));
+            if compiled || !installs_runtime(name) {
                 continue;
             }
             if let Some(names) = referenced_requirement_names(manifest, &format!("{dir}/{name}")) {
@@ -95,13 +101,11 @@ pub(super) fn environment_requirements(
     by_file
 }
 
-/// `path` is below the directory `dir` (root-relative, `/`-separated).
 fn is_strictly_below(path: &str, dir: &str) -> bool {
     path.strip_prefix(dir)
         .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// The file name names no dev, test or docs context.
 fn installs_runtime(name: &str) -> bool {
     matches!(
         requirements_path_context(name),

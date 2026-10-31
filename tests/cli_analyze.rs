@@ -11773,7 +11773,8 @@ fn binary_computed_sys_path_entry_lowers_imports_of_project_modules() {
 /// environments, installed from requirements files beside their sources
 /// (#1340). Those files cover the sources below their directory only: the
 /// package importing the same distribution is still CHK003, and a dev file
-/// or one in the package directory covers nothing.
+/// or one in the package directory covers nothing, and neither does
+/// pip-compile output beside its `.in`.
 #[test]
 fn binary_subtree_requirements_declare_their_own_sources() {
     let project = write_project(&[
@@ -11781,7 +11782,7 @@ fn binary_subtree_requirements_declare_their_own_sources() {
             "pyproject.toml",
             "[project]\nname = \"crew\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
              [project.scripts]\ncrew = \"crew.cli:main\"\n\n\
-             [tool.chokkin]\nentry = [\"src/crew/cli.py\", \"src/crew/core.py\", \n             \"src/crew/runtime/container/front/app.py\", \"src/crew/servers/laya_cpu.py\"]\n",
+             [tool.chokkin]\nentry = [\"src/crew/cli.py\", \"src/crew/core.py\", \n             \"src/crew/runtime/container/front/app.py\", \"src/crew/servers/laya_cpu.py\", \"src/crew/svc/app.py\"]\n",
         ),
         ("src/crew/__init__.py", ""),
         ("src/crew/cli.py", "import httpx\n\ndef main():\n    pass\n"),
@@ -11804,6 +11805,13 @@ fn binary_subtree_requirements_declare_their_own_sources() {
             "src/crew/servers/laya_cpu.py",
             "import torch\nimport uvicorn\n",
         ),
+        // pip-compile output beside its `.in`: only the `.in` declares.
+        ("src/crew/svc/requirements.in", "fastapi\n"),
+        (
+            "src/crew/svc/requirements.txt",
+            "fastapi==1\nstarlette==1\n",
+        ),
+        ("src/crew/svc/app.py", "import fastapi\nimport starlette\n"),
     ]);
     let issues = json_issues(project.path(), &[]);
     let mut missing: Vec<&str> = issues
@@ -11818,6 +11826,7 @@ fn binary_subtree_requirements_declare_their_own_sources() {
             "src/crew/cli.py:httpx",
             "src/crew/core.py:attrs",
             "src/crew/runtime/container/front/app.py:pytest",
+            "src/crew/svc/app.py:starlette",
         ],
         "{issues:#?}"
     );

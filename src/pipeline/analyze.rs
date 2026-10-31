@@ -966,12 +966,17 @@ fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
             .collect::<BTreeSet<_>>()
     };
     ScopedDeclarations {
-        scripts: probe
-            .scripts
-            .iter()
-            .map(|script| (script.path.clone(), names(&script.dependencies)))
-            .chain(environment_installs(probe))
-            .collect(),
+        scripts: {
+            // A PEP 723 script below a subtree requirements file keeps both.
+            let mut scripts = environment_installs(probe);
+            for script in &probe.scripts {
+                scripts
+                    .entry(script.path.clone())
+                    .or_default()
+                    .extend(names(&script.dependencies));
+            }
+            scripts
+        },
         members: probe
             .workspace_inputs
             .iter()
