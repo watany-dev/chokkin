@@ -797,7 +797,10 @@ impl ParseCacheBundle {
             .split(|&byte| byte == b'\n')
             .filter(|line| !line.is_empty())
             .collect();
-        let decoded = crate::parallel::map_in_order(&lines, |line| {
+        // Threads are started for the bytes, not the line count: a bundle of
+        // a hundred small modules decodes faster than the threads start.
+        let units = bytes.len() / DECODE_BYTES_PER_UNIT;
+        let decoded = crate::parallel::map_heavy_in_order(units, &lines, |line| {
             serde_json::from_slice::<(String, ParsedModule)>(line).ok()
         });
         Some(Self {
@@ -805,6 +808,10 @@ impl ParseCacheBundle {
         })
     }
 }
+
+/// Bundle bytes per unit of [`crate::parallel::worker_count`] when decoding,
+/// so a worker starts for every 256 KiB or so.
+const DECODE_BYTES_PER_UNIT: usize = 8 * 1024;
 
 /// [`ParseCacheBundle`] borrowing its modules, for writing.
 ///
