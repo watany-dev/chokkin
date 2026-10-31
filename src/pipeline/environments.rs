@@ -23,7 +23,7 @@
 //! place is the only evidence. A file that cannot be read covers nothing, so
 //! its subtree's imports stay checked against the root declarations.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::manifest::{
     DependencyContext, LoadedManifest, referenced_requirement_names, requirements_files_in,
@@ -38,7 +38,7 @@ pub(super) fn environment_requirements(
     manifest: &LoadedManifest,
     sources: &DiscoveredSources,
 ) -> BTreeMap<String, BTreeSet<String>> {
-    let packages: Vec<String> = sources
+    let packages: HashSet<String> = sources
         .layout
         .packages
         .iter()
@@ -51,19 +51,16 @@ pub(super) fn environment_requirements(
                 .map(|package| join_rel(&member.path, &member.layout.package_dir(package)))
         }))
         .collect();
+    // Directories strictly below a package directory that hold a source.
     let mut dirs: BTreeSet<&str> = BTreeSet::new();
     for file in &sources.files {
-        let mut dir = file.path.as_str();
-        while let Some((parent, _)) = dir.rsplit_once('/') {
-            dir = parent;
-            if !packages
-                .iter()
-                .any(|package| is_strictly_below(dir, package))
-            {
-                break;
-            }
-            if !dirs.insert(dir) {
-                break;
+        let mut below_package = false;
+        for (at, _) in file.path.match_indices('/') {
+            let dir = &file.path[..at];
+            if below_package {
+                dirs.insert(dir);
+            } else {
+                below_package = packages.contains(dir);
             }
         }
     }
@@ -88,9 +85,12 @@ pub(super) fn environment_requirements(
     }
     provided.retain(|_, names| !names.is_empty());
     let mut by_file: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    if provided.is_empty() {
+        return by_file;
+    }
     for file in &sources.files {
-        for (dir, names) in &provided {
-            if is_strictly_below(&file.path, dir) {
+        for (at, _) in file.path.match_indices('/') {
+            if let Some(names) = provided.get(&file.path[..at]) {
                 by_file
                     .entry(file.path.clone())
                     .or_default()
@@ -99,11 +99,6 @@ pub(super) fn environment_requirements(
         }
     }
     by_file
-}
-
-fn is_strictly_below(path: &str, dir: &str) -> bool {
-    path.strip_prefix(dir)
-        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 fn installs_runtime(name: &str) -> bool {
@@ -136,12 +131,5 @@ mod tests {
         ] {
             assert!(!installs_runtime(name), "{name}");
         }
-    }
-
-    #[test]
-    fn strictly_below_needs_a_separator() {
-        assert!(is_strictly_below("src/pkg/sub/a.py", "src/pkg/sub"));
-        assert!(!is_strictly_below("src/pkg/subway/a.py", "src/pkg/sub"));
-        assert!(!is_strictly_below("src/pkg/sub", "src/pkg/sub"));
     }
 }
