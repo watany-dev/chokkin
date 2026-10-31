@@ -1263,6 +1263,24 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::*;
+
+    /// A heredoc opens only on a plain-name delimiter, never on `<<<`.
+    #[test]
+    fn heredoc_delimiters_are_plain_names() {
+        let runs = |script: &str| {
+            shell_script_commands(script)
+                .into_iter()
+                .any(|(_, command)| command == "pytest -q")
+        };
+        for script in [
+            "a<<<EOF\npytest -q\n",
+            "cat <<1\npytest -q\n",
+            "cat <<E-F\npytest -q\n",
+        ] {
+            assert!(runs(script), "{script}");
+        }
+        assert!(!runs("cat <<E_F\npytest -q\nE_F\n"));
+    }
     use crate::discovery::{ProjectRoot, RootMarker};
     use crate::manifest::{
         DependencyOrigin, LoadedManifest, LockfileGraph, ManifestSources, ProjectMetadata,

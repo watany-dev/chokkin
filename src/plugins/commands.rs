@@ -650,8 +650,8 @@ impl<'o> ShellSplitter<'o> {
     fn substitution(&mut self, chars: &[char], at: usize, quoted: bool) -> usize {
         let end = match (chars.get(at), chars.get(at + 1)) {
             (Some('`'), _) => closing(chars, at + 1, '`') + 1,
-            (Some('$'), Some('(')) => balanced(chars, at + 1, ('(', ')'), false),
-            (Some('$'), Some('{')) => balanced(chars, at + 1, ('{', '}'), quoted),
+            (Some('$'), Some('(')) => balanced(chars, at, ('(', ')'), false),
+            (Some('$'), Some('{')) => balanced(chars, at, ('{', '}'), quoted),
             _ => at + 1,
         };
         let end = end.min(chars.len());
@@ -749,7 +749,8 @@ fn closing(chars: &[char], from: usize, close: char) -> usize {
         .map_or(chars.len(), |offset| from + offset)
 }
 
-/// Index after the `close` matching the `open` at `at`, skipping quotes
+/// Index after the `close` matching the first `open` at or after `at`,
+/// skipping quotes
 /// (apostrophes are literals when `literal_apostrophe`), or the end.
 fn balanced(
     chars: &[char],
@@ -791,11 +792,12 @@ fn balanced(
     chars.len()
 }
 
-/// Index after the `)` of a `case` arm's pattern list starting at `at`
-/// (`a|b)`, `a | "b c")`), or `None` when the text there is not one: a
-/// pattern is one word, the `)` follows the last one directly, and a list
-/// never holds a separator, a redirection, a subshell or a substitution. The
-/// optional `(` before the list is not read, so `(pytest)` stays a subshell.
+/// Index of the `)` closing a `case` arm's pattern list starting at `at`
+/// (`a|b)`, `a | "b c")`), which the caller reads as a separator, or `None`
+/// when the text there is not one: a pattern is one word, the `)` follows
+/// the last one directly, and a list never holds a separator, a redirection,
+/// a subshell or a substitution. The optional `(` before the list is not
+/// read, so `(pytest)` stays a subshell.
 fn case_pattern_end(chars: &[char], at: usize) -> Option<usize> {
     let mut index = at;
     loop {
@@ -809,7 +811,7 @@ fn case_pattern_end(chars: &[char], at: usize) -> Option<usize> {
                 '\'' => closing(chars, index + 1, '\'') + 1,
                 '"' => closing(chars, index + 1, '"') + 1,
                 '\\' => index + 2,
-                '$' if matches!(chars.get(index + 1), Some('(')) => return None,
+                // `(` also refuses a `$(...)` substitution.
                 '(' | ';' | '&' | '\n' | '<' | '>' | '`' => return None,
                 _ => index + 1,
             };
@@ -818,7 +820,7 @@ fn case_pattern_end(chars: &[char], at: usize) -> Option<usize> {
             return None;
         }
         if chars.get(index) == Some(&')') {
-            return Some(index + 1);
+            return Some(index);
         }
         while matches!(chars.get(index), Some(' ' | '\t')) {
             index += 1;
@@ -1572,6 +1574,26 @@ mod tests {
         assert_eq!(binaries("python manage.py -m pytest"), Vec::<String>::new());
     }
 
+    fn segments(command: &str) -> Vec<Vec<String>> {
+        let mut segments = Vec::new();
+        for_each_segment(command, |words| {
+            segments.push(words.iter().map(|word| (*word).to_owned()).collect());
+        });
+        segments
+    }
+
+    /// Quotes and escapes are removed; substitutions keep their raw text.
+    #[test]
+    fn words_keep_substitutions_raw() {
+        assert_eq!(segments("echo \"a\\\"b\" c"), [["echo", "a\"b", "c"]]);
+        assert_eq!(
+            segments("echo \"x$(a \"b c\")y\" z"),
+            [["echo", "x$(a \"b c\")y", "z"]]
+        );
+        assert_eq!(segments("X=`a b` c"), [["X=`a b`", "c"]]);
+        assert_eq!(segments("X=$(a b) c ${d e}"), [["X=$(a b)", "c", "${d e}"]]);
+    }
+
     /// Scripts nested past [`MAX_SHELL_NESTING`] stay one opaque word.
     #[test]
     fn shell_scripts_nest_to_a_bound() {
@@ -1622,12 +1644,24 @@ mod tests {
         );
         assert_eq!(binaries("case \"$1\" in a) pytest ;; esac"), ["pytest"]);
         assert_eq!(binaries("  a|b) pytest -x ;;"), ["pytest"]);
+        // A quoted or escaped `)` does not close the pattern list.
+        for command in [
+            "'a)b'|celery) pytest ;;",
+            "\"a)b\"|celery) pytest ;;",
+            "a\\)b|celery) pytest ;;",
+            "$x|celery) pytest ;;",
+        ] {
+            assert_eq!(binaries(command), ["pytest"], "{command}");
+        }
+        assert_eq!(binaries("$(x)|celery) pytest"), ["celery", "pytest"]);
         assert_eq!(binaries("main() { pytest; }"), ["pytest"]);
         assert_eq!(binaries("pytest  # | celery"), ["pytest"]);
         assert_eq!(binaries("\"pytest -q\""), ["pytest"]);
         assert_eq!(binaries("bash -lc 'cd app && celery worker'"), ["celery"]);
         assert_eq!(binaries("bash -e -c \"pytest -q\""), ["pytest"]);
         assert_eq!(binaries("(pytest)"), ["pytest"]);
+        assert_eq!(binaries("bash pytest"), Vec::<String>::new());
+        assert_eq!(binaries("bash --norc pytest"), Vec::<String>::new());
         assert_eq!(binaries("(cd x\n  pytest )"), ["pytest"]);
         assert_eq!(
             binaries("echo \"${MSG:-it's done}\"; pytest -q"),
