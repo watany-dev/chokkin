@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn worker_count_uses_every_cpu_for_large_inputs() {
-        let available = available_parallelism();
+        let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
         assert_eq!(worker_count(32 * available), available);
     }
 
@@ -295,7 +295,7 @@ mod tests {
             /// per such batch, up to the CPUs, never fewer for more items.
             #[test]
             fn worker_count_grows_with_the_batches(len in 0usize..10_000) {
-                let available = available_parallelism();
+                let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
                 let workers = worker_count(len);
                 prop_assert_eq!(workers, available.min(len.div_ceil(32)).max(1));
                 prop_assert!(worker_count(len + 1) >= workers);
