@@ -1,6 +1,6 @@
 //! Symbol identity and registry for usage analysis.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -126,7 +126,7 @@ impl ReferenceIndex {
 
         let partials = crate::parallel::fold_per_worker(
             modules,
-            || (Self::default(), StarCache::new()),
+            || (Self::default(), StarCache::default()),
             |(index, cache), _, module| {
                 index.add_module(
                     module,
@@ -517,7 +517,7 @@ mod tests {
             ..ParsedModule::default()
         };
         let names = bound_names(&module);
-        assert_eq!(names, HashSet::from(["helper", "renamed", "sub"]));
+        assert_eq!(names, HashSet::from_iter(["helper", "renamed", "sub"]));
     }
 
     #[test]
@@ -538,7 +538,7 @@ mod tests {
             )],
             ..ParsedModule::default()
         };
-        let names = HashMap::from([
+        let names = HashMap::from_iter([
             (
                 utils.path.as_str(),
                 "in_container.in_container_utils".to_owned(),
@@ -568,7 +568,7 @@ mod tests {
             )],
             ..ParsedModule::default()
         };
-        let names = HashMap::from([
+        let names = HashMap::from_iter([
             (helpers.path.as_str(), "tools.helpers".to_owned()),
             (run.path.as_str(), "tools.run".to_owned()),
         ]);
@@ -620,7 +620,7 @@ mod tests {
                 .collect(),
             ..ParsedModule::default()
         };
-        let names = HashMap::from([
+        let names = HashMap::from_iter([
             (package.path.as_str(), "pkg".to_owned()),
             (app.path.as_str(), "app".to_owned()),
         ]);
@@ -853,7 +853,7 @@ mod tests {
                 modules: stars.opaque.iter().map(|&module| module.into()).collect(),
                 chain: stars.chain.above(&stars.opaque),
             };
-            let mut cache = StarCache::new();
+            let mut cache = StarCache::default();
             let mut sources = Sources::new();
             for index in 0..MODULES {
                 for name in NAMES {

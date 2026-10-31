@@ -1,7 +1,7 @@
 //! Library public API: symbols an outside caller can reach by declaration (#489).
 
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 
 use rustc_hash::{FxHashMap, FxHashSet};

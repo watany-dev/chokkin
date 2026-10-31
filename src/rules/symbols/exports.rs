@@ -1,6 +1,6 @@
 //! `__init__.py` re-export detection.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 use indexmap::IndexSet;
 

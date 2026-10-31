@@ -1,6 +1,7 @@
 //! Dependency reconciliation orchestration (pipeline step 10).
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use rustc_hash::FxHashSet as HashSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use indexmap::IndexSet;
 

@@ -1,5 +1,6 @@
 //! Borrowed inputs shared by dependency and symbol analysis.
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use rustc_hash::FxHashSet as HashSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     graph::{FileId, ProjectGraph},
@@ -69,7 +70,7 @@ impl<'a> RuleContext<'a> {
             })
             .collect();
         if by_name.is_empty() {
-            return HashSet::new();
+            return HashSet::default();
         }
         // An import statement can only reach a file through a name ending in
         // its module name; resolving just those keeps this cheap.

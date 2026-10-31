@@ -623,8 +623,7 @@ fn collect_workspace_inputs(
 ) -> Result<Vec<WorkspaceMemberInputs>, ProbeError> {
     // Members are independent, and an undeclared monorepo's hundreds of member
     // lockfiles dominate the probe when read one after another (#488).
-    let workers = std::thread::available_parallelism()
-        .map_or(1, usize::from)
+    let workers = crate::parallel::available_parallelism()
         .min(members.len())
         .max(1);
     let cursor = AtomicUsize::new(0);

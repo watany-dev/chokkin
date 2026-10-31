@@ -33,7 +33,7 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let mut python_files = Vec::new();
     let mut has_explicit_config = false;
     let mut config_origin: Option<ReferenceOrigin> = None;
-    let mut pyproject_table: Option<toml::Table> = None;
+    let mut pyproject_table: Option<std::sync::Arc<toml::Table>> = None;
 
     if pyproject_path.is_file() {
         match read_pyproject_table(&pyproject_path) {

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- A cold run on airflow is about 4% faster: plugins share one parse of
+  `pyproject.toml`, the CPU count is read once, and the rule and source
+  stages hash with `rustc-hash` (#1331).
+
 ### Fixed
 - The wheel binary compiles the ruff parser crates at full optimization
   again, as the `dist` profile intended: wheels ran 12-18% slower than a

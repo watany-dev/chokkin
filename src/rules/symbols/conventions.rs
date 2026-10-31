@@ -1,6 +1,6 @@
 //! Files and names that a tool reads by convention rather than by import (#655).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::path::Path;
 
 use crate::config::PluginId;

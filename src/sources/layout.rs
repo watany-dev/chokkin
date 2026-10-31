@@ -1,7 +1,8 @@
 //! Project layout inference and default globs.
 
+use rustc_hash::FxHashMap as HashMap;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 

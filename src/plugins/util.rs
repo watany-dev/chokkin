@@ -1,12 +1,13 @@
 //! Shared helpers for plugin extractors.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::CharIndices;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use regex::Regex;
 use ruff_text_size::TextSize;
+use rustc_hash::FxHashMap;
 use toml::Value;
 
 use crate::manifest::ManifestError;
@@ -282,12 +283,31 @@ fn manifest_io_error(error: ManifestError) -> PluginsError {
 }
 
 /// Read `pyproject.toml` as a TOML table.
-pub(super) fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsError> {
+///
+/// Several plugins and every pytest config lookup read the same file, so a
+/// table is parsed once per path and contents; a changed file parses again
+/// (#1331).
+pub(super) fn read_pyproject_table(path: &Path) -> Result<Arc<toml::Table>, PluginsError> {
+    type Parsed = FxHashMap<PathBuf, (String, Arc<toml::Table>)>;
+    static PARSED: LazyLock<Mutex<Parsed>> = LazyLock::new(Mutex::default);
+
     let contents = read_to_string(path).map_err(manifest_io_error)?;
-    toml::from_str(&contents).map_err(|source| PluginsError::InvalidConfig {
+    // Held while parsing: the plugins asking for the table run side by side,
+    // and the first of them should parse it for the rest.
+    let mut parsed = PARSED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((seen, table)) = parsed.get(path)
+        && *seen == contents
+    {
+        return Ok(Arc::clone(table));
+    }
+    let table = toml::from_str(&contents).map_err(|source| PluginsError::InvalidConfig {
         path: rel_to_root(path.parent().unwrap_or(path), path),
         detail: source.to_string(),
-    })
+    })?;
+    let table = Arc::new(table);
+    parsed.insert(path.to_path_buf(), (contents, Arc::clone(&table)));
+    drop(parsed);
+    Ok(table)
 }
 
 /// Parse one INI section from file contents.

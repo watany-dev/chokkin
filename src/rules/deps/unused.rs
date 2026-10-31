@@ -1,6 +1,7 @@
 //! CHK002 unused dependency detection.
 
-use std::collections::{BTreeSet, HashSet};
+use rustc_hash::FxHashSet as HashSet;
+use std::collections::BTreeSet;
 
 use crate::config::{ChokkinConfig, Confidence};
 use crate::graph::GraphEdge;
@@ -40,7 +41,7 @@ pub(super) fn detect_unused_dependencies(
     evidence: Option<&UnusedEvidenceContext<'_>>,
 ) -> Vec<IssueCandidate> {
     let mut candidates = Vec::new();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = rustc_hash::FxHashSet::default();
 
     for dep in report_order(declared, config, supported_python) {
         if dep.opaque {
@@ -475,7 +476,7 @@ mod tests {
         }));
 
         let reachability = ReachabilityReport::default();
-        let reachable = HashSet::from(["src/acme/main.py"]);
+        let reachable = HashSet::from_iter(["src/acme/main.py"]);
         let sources = empty_sources();
         let parse = crate::parser::ParseSummary::default();
         let rules = RuleContext {
@@ -598,7 +599,7 @@ mod tests {
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(legacy_boto3_import()));
 
-        let reachable = HashSet::from(["src/acme/main.py"]);
+        let reachable = HashSet::from_iter(["src/acme/main.py"]);
         let sources = empty_sources();
         let parse = crate::parser::ParseSummary::default();
         let rules = RuleContext {

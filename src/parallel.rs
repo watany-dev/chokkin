@@ -4,7 +4,15 @@
 //! shared cursor over `std::thread::scope` covers that without a pool crate.
 
 use std::num::NonZeroUsize;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// CPUs this process may use, read once: each
+/// `std::thread::available_parallelism` call reads cgroup files on Linux.
+pub(crate) fn available_parallelism() -> usize {
+    static AVAILABLE: OnceLock<usize> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| std::thread::available_parallelism().map_or(1, NonZeroUsize::get))
+}
 
 /// Threads worth starting for `items` units of per-file work.
 pub(crate) fn worker_count(items: usize) -> usize {
@@ -13,8 +21,7 @@ pub(crate) fn worker_count(items: usize) -> usize {
     if items <= MIN_ITEMS_PER_WORKER {
         return 1;
     }
-    let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    available.min(items.div_ceil(MIN_ITEMS_PER_WORKER))
+    available_parallelism().min(items.div_ceil(MIN_ITEMS_PER_WORKER))
 }
 
 /// `items.iter().map(work)`, spread over threads, results in `items` order.
@@ -166,7 +173,7 @@ mod tests {
 
     #[test]
     fn worker_count_uses_every_cpu_for_large_inputs() {
-        let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        let available = available_parallelism();
         assert_eq!(worker_count(32 * available), available);
     }
 
@@ -288,7 +295,7 @@ mod tests {
             /// per such batch, up to the CPUs, never fewer for more items.
             #[test]
             fn worker_count_grows_with_the_batches(len in 0usize..10_000) {
-                let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+                let available = available_parallelism();
                 let workers = worker_count(len);
                 prop_assert_eq!(workers, available.min(len.div_ceil(32)).max(1));
                 prop_assert!(worker_count(len + 1) >= workers);
