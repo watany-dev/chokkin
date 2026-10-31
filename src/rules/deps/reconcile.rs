@@ -219,8 +219,8 @@ fn without_build_environment_imports(
 ) -> Option<ResolutionIndex> {
     let provided = |import: &ResolvedImport| {
         build_scripts
-            .get(&import.file)
-            .zip(import.distribution.as_ref())
+            .get(&*import.file)
+            .zip(import.distribution.as_deref())
             .is_some_and(|(requires, distribution)| requires.contains(distribution))
     };
     resolution
@@ -433,9 +433,9 @@ mod tests {
         reachability.reachable.insert(file_id);
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(ResolvedImport {
-            import_root: "requests".to_owned(),
+            import_root: "requests".into(),
             full_module: "requests".to_owned(),
-            file: "src/app.py".to_owned(),
+            file: "src/app.py".into(),
             workspace_member: None,
             line: Some(1),
             reference: None,
@@ -444,7 +444,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
-            distribution: Some("requests".to_owned()),
+            distribution: Some("requests".into()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }));
         let plugins = PluginHints::default();
@@ -620,9 +620,9 @@ mod tests {
         reachability.reachable.insert(file_id);
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(ResolvedImport {
-            import_root: "yaml".to_owned(),
+            import_root: "yaml".into(),
             full_module: "yaml".to_owned(),
-            file: "src/app.py".to_owned(),
+            file: "src/app.py".into(),
             workspace_member: None,
             line: Some(1),
             reference: None,
@@ -631,7 +631,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
-            distribution: Some("pyyaml".to_owned()),
+            distribution: Some("pyyaml".into()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }));
         let plugins = PluginHints::default();

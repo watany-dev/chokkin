@@ -61,7 +61,7 @@ pub(super) fn detect_missing_dependencies(
         let Some(distribution) = import.distribution.as_ref() else {
             continue;
         };
-        if !reachable.contains(import.file.as_str()) {
+        if !reachable.contains(&*import.file) {
             continue;
         }
 
@@ -238,7 +238,7 @@ fn workspace_missing_candidate(
         rule: RuleId::Chk003,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             distribution: Some(distribution.to_owned()),
         },
@@ -250,7 +250,7 @@ fn workspace_missing_candidate(
         ),
         workspace_member: Some(member_id.to_owned()),
         origins: vec![Origin::Import {
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             module: import.full_module.clone(),
         }],
@@ -283,16 +283,16 @@ fn optional_missing_candidate(
         rule: RuleId::Chk003,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             distribution: Some(distribution.to_owned()),
         },
         severity,
         confidence: Confidence::Likely,
         message: format!("{kind} of {distribution} is not declared in any dependency context"),
-        workspace_member: import.workspace_member.clone(),
+        workspace_member: import.workspace_member.as_deref().map(str::to_owned),
         origins: vec![Origin::Import {
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             module: import.full_module.clone(),
         }],
@@ -355,16 +355,16 @@ fn transitive_candidate(
         rule: RuleId::Chk004,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             distribution: Some(distribution.to_owned()),
         },
         severity: Severity::Error,
         confidence,
         message,
-        workspace_member: import.workspace_member.clone(),
+        workspace_member: import.workspace_member.as_deref().map(str::to_owned),
         origins: vec![Origin::Import {
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             module: import.full_module.clone(),
         }],
@@ -389,7 +389,7 @@ fn missing_candidate(
         rule: RuleId::Chk003,
         subject: IssueSubject::Import {
             module: import.full_module.clone(),
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             distribution: Some(distribution.to_owned()),
         },
@@ -399,9 +399,9 @@ fn missing_candidate(
             "{}{lockfile_note} but not declared in matching dependency context",
             imported_in(distribution, import)
         ),
-        workspace_member: import.workspace_member.clone(),
+        workspace_member: import.workspace_member.as_deref().map(str::to_owned),
         origins: vec![Origin::Import {
-            file: import.file.clone(),
+            file: import.file.to_string(),
             line: import.line,
             module: import.full_module.clone(),
         }],
@@ -487,7 +487,7 @@ fn lock_closure<'g>(
 fn report_key(distribution: &str, import: &ResolvedImport) -> (String, String, Option<u32>) {
     (
         distribution.to_owned(),
-        import.file.clone(),
+        import.file.to_string(),
         import.statement_line(),
     )
 }
@@ -497,7 +497,7 @@ fn report_key(distribution: &str, import: &ResolvedImport) -> (String, String, O
 fn is_optional(optional_imports: &HashSet<(String, u32)>, import: &ResolvedImport) -> bool {
     import
         .statement_line()
-        .is_some_and(|line| optional_imports.contains(&(import.file.clone(), line)))
+        .is_some_and(|line| optional_imports.contains(&(import.file.to_string(), line)))
 }
 
 /// Build a set of conditional import locations from parse output.
@@ -560,9 +560,9 @@ mod tests {
 
     fn runtime_import(distribution: &str) -> ResolvedImport {
         ResolvedImport {
-            import_root: distribution.to_owned(),
+            import_root: distribution.into(),
             full_module: distribution.to_owned(),
-            file: FILE.to_owned(),
+            file: FILE.into(),
             workspace_member: None,
             line: Some(1),
             reference: None,
@@ -571,7 +571,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some(distribution.to_owned()),
+            distribution: Some(distribution.into()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }
     }
@@ -885,7 +885,7 @@ mod tests {
         let requests = declared_dep("requests");
         let with_requests = || BTreeMap::from([("requests".to_owned(), vec![&requests])]);
         let member_import = || ResolvedImport {
-            workspace_member: Some("api".to_owned()),
+            workspace_member: Some("api".into()),
             ..runtime_import("requests")
         };
         let member_only = [WorkspaceDeclaredIndex {
@@ -962,7 +962,7 @@ mod tests {
             ..LockfileGraph::default()
         };
         let member_import = |member: &str| ResolvedImport {
-            workspace_member: Some(member.to_owned()),
+            workspace_member: Some(member.into()),
             ..runtime_import("pydantic-core")
         };
         let members = [
@@ -1038,7 +1038,7 @@ mod tests {
             lockfile: None,
         }];
         let import = |distribution, member: Option<&str>, optional| ResolvedImport {
-            workspace_member: member.map(str::to_owned),
+            workspace_member: member.map(Into::into),
             optional,
             ..runtime_import(distribution)
         };
@@ -1326,7 +1326,7 @@ mod tests {
         let import = ResolvedImport {
             context: case.usage,
             optional: case.optional,
-            workspace_member: case.member.map(|_| "api".to_owned()),
+            workspace_member: case.member.map(|_| "api".into()),
             ..runtime_import(FORMAL_D)
         };
         let resolution = ResolutionIndex {
