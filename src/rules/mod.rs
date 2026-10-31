@@ -2,7 +2,7 @@
 
 mod chk001;
 mod context;
-pub use context::{DependencyRuleContext, RuleContext};
+pub use context::{DependencyRuleContext, RuleCache, RuleContext};
 pub(crate) mod deps;
 pub(crate) mod emit;
 mod filter;

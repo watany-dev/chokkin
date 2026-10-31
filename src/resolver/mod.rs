@@ -16,6 +16,7 @@ pub(crate) use bundled::runtime_peers::RUNTIME_PEERS;
 pub(crate) use first_party::is_first_party_import;
 pub use maps::{ImportMap, build_binary_map};
 pub(crate) use pytest_path::PytestImportPaths;
+pub(crate) use resolve::resolve_imports_with_pytest;
 pub use resolve::{ScopedDeclarations, resolve_imports_for_analysis};
 pub use stdlib::StdlibRange;
 pub(crate) use types::ResolvedImport;

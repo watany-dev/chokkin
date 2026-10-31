@@ -1,11 +1,12 @@
 //! Borrowed inputs shared by dependency and symbol analysis.
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::OnceLock;
 
 use crate::{
     graph::{FileId, ProjectGraph},
     parser::ParseSummary,
     reachability::{ModuleIndex, ReachabilityReport, module_and_parents},
-    resolver::ResolutionIndex,
+    resolver::{PytestImportPaths, ResolutionIndex},
     rules::deps::file_context,
     sources::{DiscoveredSources, FileContext, PublicSurface, is_test_harness_name},
 };
@@ -25,6 +26,31 @@ pub struct RuleContext<'a> {
     /// Files the root wheel ships; `None` without wheel targets or when they
     /// match no file (R-05). Resolved once per run.
     pub surface: Option<&'a PublicSurface>,
+    /// What the rules derive from the inputs above once per run.
+    pub cache: &'a RuleCache,
+}
+
+/// Values several rules derive from the same [`RuleContext`] inputs.
+///
+/// Each is built on first use and then shared (#1326). A context made from
+/// another for a narrower resolution shares its cache: nothing here reads the
+/// resolution.
+#[derive(Debug, Default)]
+pub struct RuleCache {
+    pytest: Option<PytestImportPaths>,
+    name_loaded: OnceLock<HashSet<FileId>>,
+}
+
+impl RuleCache {
+    /// A cache starting from the pytest search paths import resolution built
+    /// from the same sources, before any `sys.path` hint.
+    #[must_use]
+    pub(crate) fn with_pytest(pytest: PytestImportPaths) -> Self {
+        Self {
+            pytest: Some(pytest),
+            name_loaded: OnceLock::new(),
+        }
+    }
 }
 
 impl<'a> RuleContext<'a> {
@@ -35,7 +61,22 @@ impl<'a> RuleContext<'a> {
     /// `tests/importer/raise_import_error.py` is one: a fixture a test loads
     /// to see what happens, often that its import fails (#1223).
     pub(crate) fn name_loaded_test_files(&self) -> HashSet<&'a str> {
-        let index = ModuleIndex::build(self.graph, self.sources);
+        self.cache
+            .name_loaded
+            .get_or_init(|| self.find_name_loaded_test_files())
+            .iter()
+            .filter_map(|id| self.graph.file(*id))
+            .map(|node| node.path.as_str())
+            .collect()
+    }
+
+    fn find_name_loaded_test_files(&self) -> HashSet<FileId> {
+        let pytest = self
+            .cache
+            .pytest
+            .clone()
+            .unwrap_or_else(|| PytestImportPaths::build(self.sources));
+        let index = ModuleIndex::with_pytest(self.graph, self.sources, pytest);
         let reached: Vec<_> = self
             .parse
             .modules
@@ -96,10 +137,6 @@ impl<'a> RuleContext<'a> {
             }
         }
         by_name
-            .into_iter()
-            .filter_map(|id| self.graph.file(id))
-            .map(|node| node.path.as_str())
-            .collect()
     }
 }
 

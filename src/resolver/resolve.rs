@@ -48,7 +48,6 @@ pub struct ScopedDeclarations {
 #[must_use]
 #[expect(
     clippy::too_many_arguments,
-    clippy::too_many_lines,
     reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
 )]
 pub fn resolve_imports_for_analysis(
@@ -62,6 +61,40 @@ pub fn resolve_imports_for_analysis(
     script_targets: &BTreeMap<String, StdlibRange>,
     scoped: &ScopedDeclarations,
 ) -> ResolutionIndex {
+    resolve_imports_with_pytest(
+        config,
+        manifest,
+        sources,
+        parse,
+        plugin_refs,
+        sys_path_imports,
+        local,
+        script_targets,
+        scoped,
+    )
+    .0
+}
+
+/// [`resolve_imports_for_analysis`], also returning the pytest search paths
+/// before any `sys.path` hint, for the later phases to start from instead of
+/// reading every member's `pyproject.toml` again (#1326).
+#[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
+pub(crate) fn resolve_imports_with_pytest(
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+    parse: &ParseSummary,
+    plugin_refs: &[ModuleReference],
+    sys_path_imports: &[SysPathImport],
+    local: &LocalTrees,
+    script_targets: &BTreeMap<String, StdlibRange>,
+    scoped: &ScopedDeclarations,
+) -> (ResolutionIndex, PytestImportPaths) {
     let stdlib = StdlibRange::for_project(
         config.target_version.as_ref(),
         manifest.metadata.requires_python.as_deref(),
@@ -71,23 +104,26 @@ pub fn resolve_imports_for_analysis(
     let mut warnings = Vec::new();
     // The pytest search paths read only the sources and the parse; build
     // them beside the venv index and the local module sets.
-    let (pytest_paths, (venv_index, local_modules, indexed_roots)) = crate::parallel::join(
-        sources.files.len(),
-        || {
-            PytestImportPaths::build(sources).with_sys_path_hints(
-                &sources.root.path,
-                parse,
-                sys_path_imports,
-            )
-        },
-        || {
-            (
-                load_venv_index(&manifest.root, &mut warnings),
-                local.modules(&sources.files),
-                indexed_roots(sources),
-            )
-        },
-    );
+    let ((unhinted_pytest, pytest_paths), (venv_index, local_modules, indexed_roots)) =
+        crate::parallel::join(
+            sources.files.len(),
+            || {
+                let unhinted = PytestImportPaths::build(sources);
+                let hinted = unhinted.clone().with_sys_path_hints(
+                    &sources.root.path,
+                    parse,
+                    sys_path_imports,
+                );
+                (unhinted, hinted)
+            },
+            || {
+                (
+                    load_venv_index(&manifest.root, &mut warnings),
+                    local.modules(&sources.files),
+                    indexed_roots(sources),
+                )
+            },
+        );
     let binary_resolutions = build_binary_map(config, &venv_index);
     let resolver = Resolver {
         sources,
@@ -163,14 +199,15 @@ pub fn resolve_imports_for_analysis(
 
     let string_refs = resolver.string_refs(parse, stdlib);
 
-    ResolutionIndex {
+    let index = ResolutionIndex {
         imports,
         string_refs,
         warnings,
         transitive: manifest.lockfile.clone(),
         binary_resolutions,
         pytest_plugin_distributions: venv_index.pytest_plugins,
-    }
+    };
+    (index, unhinted_pytest)
 }
 
 /// Read-only inputs every import site resolves against, shared by the

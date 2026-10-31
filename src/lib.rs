@@ -87,9 +87,9 @@ pub mod internals {
     pub use crate::rules::symbols::analyze_with_context;
     pub use crate::rules::{
         DependencyReport, DependencyRuleContext, Gap, Issue, IssueCandidate, IssueLocation,
-        IssueReport, IssueSubject, IssueSummary, MemberManifest, Origin, RuleContext, RuleId,
-        Severity, SuppressReason, SuppressedIssue, WorkspaceDependencyBoundary, collect_gaps,
-        emit_issues, issue_fingerprint,
+        IssueReport, IssueSubject, IssueSummary, MemberManifest, Origin, RuleCache, RuleContext,
+        RuleId, Severity, SuppressReason, SuppressedIssue, WorkspaceDependencyBoundary,
+        collect_gaps, emit_issues, issue_fingerprint,
     };
     pub use crate::sources::{
         DiscoveredFile, DiscoveredSources, FileContext, FileKind, LayoutInfo, LocalTrees,

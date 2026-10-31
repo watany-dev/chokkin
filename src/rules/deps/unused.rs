@@ -485,6 +485,7 @@ mod tests {
             sources: &sources,
             parse: &parse,
             surface: None,
+            cache: &crate::rules::RuleCache::default(),
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,
@@ -608,6 +609,7 @@ mod tests {
             sources: &sources,
             parse: &parse,
             surface: None,
+            cache: &crate::rules::RuleCache::default(),
         };
         let evidence = UnusedEvidenceContext {
             rules: &rules,

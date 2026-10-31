@@ -24,6 +24,17 @@ impl ModuleIndex {
     /// Build a module index from discovered sources and the project graph.
     #[must_use]
     pub(crate) fn build(graph: &ProjectGraph, sources: &DiscoveredSources) -> Self {
+        Self::with_pytest(graph, sources, PytestImportPaths::build(sources))
+    }
+
+    /// [`Self::build`] with the pytest search paths already built from
+    /// `sources`: building them reads every member's `pyproject.toml` (#1326).
+    #[must_use]
+    pub(crate) fn with_pytest(
+        graph: &ProjectGraph,
+        sources: &DiscoveredSources,
+        pytest: PytestImportPaths,
+    ) -> Self {
         let mut module_to_file = HashMap::default();
         let mut path_to_file = HashMap::default();
         for (file_id, file) in graph.files() {
@@ -45,7 +56,7 @@ impl ModuleIndex {
             module_to_file,
             path_to_file,
             through_symlink,
-            pytest: PytestImportPaths::build(sources),
+            pytest,
         }
     }
 

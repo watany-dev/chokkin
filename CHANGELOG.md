@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   again, as the `dist` profile intended: wheels ran 12-18% slower than a
   `release` build, now 5-8%, for 0.1 MB more.
 
+### Changed
+- Reachability and the rules reuse the pytest search paths import
+  resolution builds instead of building them three more times, re-reading
+  every workspace member's `pyproject.toml` each time, and work out the
+  test files loaded only by name once: airflow runs about 4% faster cold
+  (#1326).
+
 ## [0.7.13] - 2026-10-29
 
 ### Added
