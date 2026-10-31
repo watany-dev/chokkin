@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Import resolution allocates 38% less on airflow: an unresolved import root
+  no longer copies every declared and locked name to try its `py` affixes,
+  and resolved imports share their file path, member, root and distribution
+  names. A warm run uses 6% less CPU and 11 MB less memory (#1329).
+
 ### Fixed
 - The wheel binary compiles the ruff parser crates at full optimization
   again, as the `dist` profile intended: wheels ran 12-18% slower than a
