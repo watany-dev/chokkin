@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The parse cache stores one module per line and reads and writes the lines
+  on every core: a warm run on apache/airflow (8.5k modules, 31 MB cache)
+  takes 7% less wall time, and decoding the cache 60% less (#1328). The
+  first run after upgrading reparses every file.
+
 ### Fixed
 - The wheel binary compiles the ruff parser crates at full optimization
   again, as the `dist` profile intended: wheels ran 12-18% slower than a
