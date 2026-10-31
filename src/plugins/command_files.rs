@@ -29,8 +29,8 @@ use crate::resolver::{VenvIndex, build_binary_map};
 use crate::sources::{is_dbt_profiles, is_dockerfile, is_requirements_dir_file};
 
 use super::commands::{KnownBinary, SourceHits};
-use super::config_scan::{ConfigScanResult, is_shell_script, strip_shell_comment};
-use super::config_text::{logical_lines, origin_at};
+use super::config_scan::{ConfigScanResult, is_shell_script, shell_script_commands};
+use super::config_text::origin_at;
 use super::dbt_profiles;
 use super::task_files::scan_dockerfile;
 use super::types::{CommandTarget, RequirementsRef};
@@ -100,72 +100,9 @@ fn scan_file(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut Sourc
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("script");
-        let mut heredoc: Option<Heredoc> = None;
-        for (index, line) in logical_lines(contents) {
-            if let Some(open) = &heredoc {
-                if open.ends_at(&line) {
-                    heredoc = None;
-                    continue;
-                }
-                if !open.runs_shell {
-                    continue;
-                }
-            }
-            let command = strip_shell_comment(&line);
-            hits.push_command(command, known, &origin_at(rel, index, label));
-            heredoc = heredoc.or_else(|| Heredoc::opened_by(command));
+        for (index, command) in shell_script_commands(contents) {
+            hits.push_command(&command, known, &origin_at(rel, index, label));
         }
-    }
-}
-
-/// A here-document a script line opens (#1341): its body is the input of
-/// the command, so it runs as commands only when that command is a shell
-/// (`bash <<EOF`); `cat <<EOF` usage text and `python - <<'PY'` code are
-/// not shell commands. A delimiter that is not a plain name
-/// (`$((1<<2))`) opens nothing, and `<<<` is a here-string.
-struct Heredoc {
-    delimiter: String,
-    strip_tabs: bool,
-    runs_shell: bool,
-}
-
-impl Heredoc {
-    fn opened_by(line: &str) -> Option<Self> {
-        let (at, _) = line
-            .match_indices("<<")
-            .find(|&(at, _)| !line[at + 2..].starts_with('<') && !line[..at].ends_with('<'))?;
-        let rest = &line[at + 2..];
-        let strip_tabs = rest.starts_with('-');
-        let rest = rest.trim_start_matches('-').trim_start();
-        let word = rest.split_whitespace().next()?;
-        let delimiter = word.trim_matches(['\'', '"']).trim_start_matches('\\');
-        let mut chars = delimiter.chars();
-        let is_name = chars
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-            && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-        if !is_name {
-            return None;
-        }
-        let runs_shell = line[..at].split_whitespace().any(|word| {
-            let name = word.rsplit('/').next().unwrap_or(word);
-            matches!(name, "sh" | "bash" | "zsh" | "ksh" | "dash")
-        });
-        Some(Self {
-            delimiter: delimiter.to_owned(),
-            strip_tabs,
-            runs_shell,
-        })
-    }
-
-    fn ends_at(&self, line: &str) -> bool {
-        let line = line.trim_end_matches('\r');
-        let line = if self.strip_tabs {
-            line.trim_start_matches('\t')
-        } else {
-            line
-        };
-        line == self.delimiter
     }
 }
 
@@ -381,7 +318,7 @@ mod tests {
             "cli.sh",
             "usage() {\n  cat <<'EOF'\npytest is in the wheel\n  EOF\nEOF\n}\n\
              python3 - \"$A\" <<-PY\n\tcelery = 1\n\tPY\n\
-             echo $((1<<2))\ngunicorn app:app\n\
+             echo $(( 1 << BITS )) \"a <<EOF\"\ngunicorn app:app\n\
              bash <<EOF\npytest -q\nEOF\n",
         );
         let hits = scan(root, &["cli.sh".to_owned()], &known_map());
