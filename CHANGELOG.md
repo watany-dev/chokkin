@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer copies every declared and locked name to try its `py` affixes,
   and resolved imports share their file path, member, root and distribution
   names. A warm run uses 6% less CPU and 11 MB less memory (#1329).
+- The parse cache stores one module per line and reads and writes the lines
+  on every core: a warm run on apache/airflow (8.5k modules, 31 MB cache)
+  takes 7% less wall time, and decoding the cache 60% less (#1328). The
+  first run after upgrading reparses every file.
 
 ### Fixed
 - The wheel binary compiles the ruff parser crates at full optimization

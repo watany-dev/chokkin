@@ -97,7 +97,7 @@ impl CacheOptions {
         }
         let path = self.parse_bundle_path(project_root, context);
         Ok(read_cache_entry(project_root, &path)?
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .and_then(|bytes| ParseCacheBundle::decode(&bytes))
             .unwrap_or_default())
     }
 
@@ -119,7 +119,7 @@ impl CacheOptions {
         if !ensure_entry_dir(project_root, &path)? {
             return Ok(());
         }
-        let bytes = serde_json::to_vec(bundle).map_err(io::Error::other)?;
+        let bytes = bundle.encode().map_err(io::Error::other)?;
         write_cache_bytes(&path, &bytes)?;
         // Bundles of an earlier context (another chokkin version, config or
         // target) are never read again, so they would otherwise pile up.
@@ -258,17 +258,21 @@ fn read_cache_entry(root: &Path, path: &Path) -> io::Result<Option<Vec<u8>>> {
 }
 
 fn read_cache_bytes(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match std::fs::symlink_metadata(path) {
+    match missing_as_none(std::fs::symlink_metadata(path))? {
         // A link, FIFO or device is never something the cache wrote, and
         // reading one could leave the root or block. A directory still errors
         // below: it is not "nothing cached yet".
-        Ok(metadata) if !metadata.is_file() && !metadata.is_dir() => return Ok(None),
-        Ok(_) => {},
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+        Some(metadata) if metadata.is_file() || metadata.is_dir() => {},
+        _ => return Ok(None),
     }
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
+    // Missing here too when a concurrent run's sweep removed it since.
+    missing_as_none(std::fs::read(path))
+}
+
+/// `result`, with a missing file as `None`: nothing cached yet.
+fn missing_as_none<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
     }
@@ -759,7 +763,13 @@ impl ParseCacheKey {
 /// create, write and rename a file per parsed source: on a 1k-file project that
 /// cost more than parsing from scratch. One bundle per context keeps the write
 /// path to a single atomic rename per run and the cache to a single inode.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// On disk a bundle is one `["<entry id>",<module>]` JSON array per line, in
+/// entry id order. Compact JSON never holds a raw newline (`serde_json` escapes
+/// it inside strings), so the lines split without parsing and decode on
+/// separate threads: one JSON document for a large project took a quarter of
+/// a second to decode on one core (#1328).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParseCacheBundle {
     /// Parse results keyed by [`ParseCacheKey::entry_id`].
     pub entries: BTreeMap<String, ParsedModule>,
@@ -782,12 +792,35 @@ impl ParseCacheBundle {
             _ => None,
         }
     }
+
+    /// Decode the on-disk form written by [`ParseCacheBundleRef::encode`];
+    /// `None` when any line is corrupt, so a torn or foreign file is a miss as
+    /// a whole rather than a partial hit.
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let lines: Vec<&[u8]> = bytes
+            .split(|&byte| byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .collect();
+        // Threads are started for the bytes, not the line count: a bundle of
+        // a hundred small modules decodes faster than the threads start.
+        let units = bytes.len() / DECODE_BYTES_PER_UNIT;
+        let decoded = crate::parallel::map_heavy_in_order(units, &lines, |line| {
+            serde_json::from_slice::<(String, ParsedModule)>(line).ok()
+        });
+        Some(Self {
+            entries: decoded.into_iter().collect::<Option<_>>()?,
+        })
+    }
 }
 
-/// [`ParseCacheBundle`] borrowing its modules; serializes to the same JSON.
+/// Bundle bytes per unit of [`crate::parallel::worker_count`] when decoding,
+/// so a worker starts for every 256 KiB or so (8 KiB).
+const DECODE_BYTES_PER_UNIT: usize = 8_192;
+
+/// [`ParseCacheBundle`] borrowing its modules, for writing.
 ///
 /// Lets a run write back the modules it already holds without copying them.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default)]
 pub(crate) struct ParseCacheBundleRef<'a> {
     entries: BTreeMap<String, &'a ParsedModule>,
 }
@@ -801,6 +834,27 @@ impl<'a> ParseCacheBundleRef<'a> {
     /// Entry ids in the same order as [`ParseCacheBundle::entries`].
     pub(crate) fn entry_ids(&self) -> impl Iterator<Item = &String> {
         self.entries.keys()
+    }
+
+    /// Encode the bundle in the line form [`ParseCacheBundle::decode`] reads,
+    /// one entry per line, encoded on separate threads.
+    fn encode(&self) -> serde_json::Result<Vec<u8>> {
+        let entries: Vec<_> = self.entries.iter().collect();
+        let lines = crate::parallel::map_in_order(&entries, |entry| {
+            let mut line = serde_json::to_vec(entry)?;
+            line.push(b'\n');
+            Ok(line)
+        });
+        let mut bytes = Vec::with_capacity(
+            lines
+                .iter()
+                .map(|line| line.as_ref().map_or(0, Vec::len))
+                .sum(),
+        );
+        for line in lines {
+            bytes.extend_from_slice(&line?);
+        }
+        Ok(bytes)
     }
 }
 
@@ -1326,10 +1380,11 @@ mod tests {
         let (base, root, outside) = root_with_outside("link-read");
         let options = CacheOptions::default();
         let context = test_context("parse-v1");
-        let mut bundle = ParseCacheBundle::default();
-        bundle.insert(&test_parse_key("src/app.py"), module("src/app.py"));
+        let parsed = module("src/app.py");
+        let mut bundle = ParseCacheBundleRef::default();
+        bundle.insert(&test_parse_key("src/app.py"), &parsed);
         let planted = outside.join("bundle.json");
-        std::fs::write(&planted, serde_json::to_vec(&bundle).expect("serialize")).expect("write");
+        std::fs::write(&planted, bundle.encode().expect("encode")).expect("write");
         let path = options.parse_bundle_path(&root, &context);
         std::fs::create_dir_all(path.parent().expect("parent")).expect("create parse dir");
         std::os::unix::fs::symlink(&planted, &path).expect("symlink entry");
@@ -1418,22 +1473,38 @@ mod tests {
     }
 
     #[test]
-    fn borrowed_bundle_serializes_like_the_owned_one() {
-        let first = test_parse_key("src/a.py");
-        let second = test_parse_key("src/b.py");
-        let modules = [module("src/a.py"), module("src/b.py")];
-        let mut owned = ParseCacheBundle::default();
-        owned.insert(&second, modules[1].clone());
-        owned.insert(&first, modules[0].clone());
+    fn bundle_lines_round_trip_and_any_corrupt_line_is_a_miss() {
+        let keys: Vec<_> = (0..100)
+            .map(|index| test_parse_key(&format!("src/m{index}.py")))
+            .collect();
+        let modules: Vec<_> = keys.iter().map(|key| module(&key.source.path)).collect();
         let mut borrowed = ParseCacheBundleRef::default();
-        borrowed.insert(&first, &modules[0]);
-        borrowed.insert(&second, &modules[1]);
+        let mut owned = ParseCacheBundle::default();
+        for (key, parsed) in keys.iter().zip(&modules) {
+            borrowed.insert(key, parsed);
+            owned.insert(key, parsed.clone());
+        }
+        // A newline inside a string must not split the entry.
+        let odd = module("src/odd\nname.py");
+        let odd_key = test_parse_key("src/odd\nname.py");
+        borrowed.insert(&odd_key, &odd);
+        owned.insert(&odd_key, odd.clone());
 
-        assert_eq!(
-            serde_json::to_string(&borrowed).expect("serialize borrowed"),
-            serde_json::to_string(&owned).expect("serialize owned")
-        );
+        let bytes = borrowed.encode().expect("encode");
+        // 101 lines and the empty tail after the last newline.
+        assert_eq!(bytes.split(|&byte| byte == b'\n').count(), 102);
+        assert_eq!(ParseCacheBundle::decode(&bytes), Some(owned.clone()));
         assert!(borrowed.entry_ids().eq(owned.entries.keys()));
+        assert_eq!(
+            ParseCacheBundle::decode(b""),
+            Some(ParseCacheBundle::default())
+        );
+
+        let mut torn = bytes.clone();
+        torn.truncate(bytes.len() - 2);
+        assert_eq!(ParseCacheBundle::decode(&torn), None);
+        // The single-document form older versions wrote.
+        assert_eq!(ParseCacheBundle::decode(br#"{"entries":{}}"#), None);
     }
 
     #[test]
