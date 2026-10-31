@@ -582,26 +582,25 @@ impl<'o> ShellSplitter<'o> {
     /// Ends the segment at the separator at `at`; returns the index after it.
     fn separator(&mut self, chars: &[char], at: usize) -> usize {
         self.end_segment();
-        match (chars.get(at), chars.get(at + 1)) {
-            (Some('\n'), _) => {
+        match chars.get(at..).unwrap_or_default() {
+            ['\n', ..] => {
                 self.pattern_next = true;
                 at + 1
             },
-            (Some(';'), Some(';' | '&')) => {
+            [';', ';', '&', ..] => {
                 self.pattern_next = true;
-                at + if chars.get(at + 2) == Some(&'&') {
-                    3
-                } else {
-                    2
-                }
+                at + 3
             },
-            // `name()`: a function definition, not a subshell.
-            (Some('('), Some(')')) => at + 2,
-            (Some('('), _) => {
+            [';', ';' | '&', ..] => {
+                self.pattern_next = true;
+                at + 2
+            },
+            // `name()` opens and closes at once: no subshell is left open.
+            ['(', ..] => {
                 self.subshells += 1;
                 at + 1
             },
-            (Some(')'), _) => {
+            [')', ..] => {
                 self.subshells = self.subshells.saturating_sub(1);
                 at + 1
             },
@@ -761,16 +760,19 @@ fn balanced(
     let mut depth = 0usize;
     let mut index = at;
     while let Some(&ch) = chars.get(index) {
-        index = match ch {
+        let next = match ch {
             '\'' if !literal_apostrophe => closing(chars, index + 1, '\'') + 1,
             '"' => {
                 let mut end = index + 1;
                 while let Some(&ch) = chars.get(end) {
-                    match ch {
-                        '\\' => end += 2,
+                    let step = match ch {
+                        '\\' => 2,
                         '"' => break,
-                        _ => end += 1,
-                    }
+                        _ => 1,
+                    };
+                    let before = end;
+                    end += step;
+                    debug_assert!(end > before);
                 }
                 end + 1
             },
@@ -788,6 +790,8 @@ fn balanced(
             },
             _ => index + 1,
         };
+        debug_assert!(next > index);
+        index = next;
     }
     chars.len()
 }
@@ -806,7 +810,7 @@ fn case_pattern_end(chars: &[char], at: usize) -> Option<usize> {
         }
         let start = index;
         while let Some(&ch) = chars.get(index) {
-            index = match ch {
+            let next = match ch {
                 ' ' | '\t' | '|' | ')' => break,
                 '\'' => closing(chars, index + 1, '\'') + 1,
                 '"' => closing(chars, index + 1, '"') + 1,
@@ -815,6 +819,8 @@ fn case_pattern_end(chars: &[char], at: usize) -> Option<usize> {
                 '(' | ';' | '&' | '\n' | '<' | '>' | '`' => return None,
                 _ => index + 1,
             };
+            debug_assert!(next > index);
+            index = next;
         }
         if index == start {
             return None;
@@ -1580,6 +1586,83 @@ mod tests {
             segments.push(words.iter().map(|word| (*word).to_owned()).collect());
         });
         segments
+    }
+
+    /// Subshell depth and the separators after an arm decide where a pattern
+    /// may start.
+    #[test]
+    fn separators_track_subshells_and_case_arms() {
+        // A closed subshell leaves the next line at top level.
+        assert_eq!(segments("(a)\nwheel|x) pytest"), [["a"], ["pytest"]]);
+        // Inside an open subshell a line start is a command, not a pattern.
+        assert_eq!(
+            segments("(\n  foo | bar)\npytest"),
+            [["foo"], ["bar"], ["pytest"]]
+        );
+        // The arm after `;;`, `;&` and `;;&` starts with a pattern, wherever
+        // the separator sits.
+        for separator in [";;", ";&", ";;&"] {
+            assert_eq!(
+                segments(&format!(
+                    "case \"$1\" in start) serve {separator} wheel|stop) pytest {separator} esac"
+                )),
+                [
+                    vec!["case", "$1", "in"],
+                    vec!["serve"],
+                    vec!["pytest"],
+                    vec!["esac"]
+                ],
+                "{separator}"
+            );
+        }
+        // `name()` defines a function: its body still runs commands.
+        assert_eq!(
+            segments("longname() { pytest; }"),
+            [vec!["longname"], vec!["{", "pytest"], vec!["}"]]
+        );
+    }
+
+    /// A substitution ends at the bracket that balances its opening one;
+    /// quoted and escaped brackets do not count.
+    #[test]
+    fn substitutions_end_at_the_balancing_bracket() {
+        fn end(text: &str, brackets: (char, char), literal_apostrophe: bool) -> String {
+            let chars: Vec<char> = text.chars().collect();
+            chars[..balanced(&chars, 0, brackets, literal_apostrophe)]
+                .iter()
+                .collect()
+        }
+        let parens = ('(', ')');
+        for text in [
+            "$(a (b) c)",
+            "$(echo ')' x)",
+            "$(echo \")\" x)",
+            "$(echo \"\\\")\" x)",
+            "$(echo \\) x)",
+        ] {
+            assert_eq!(end(&format!("{text} tail)"), parens, false), text);
+        }
+        // Inside `"..."` an apostrophe is a literal (`"${x:-'}'}"`).
+        assert_eq!(end("${x:-'}'} tail}", ('{', '}'), true), "${x:-'}");
+        assert_eq!(end("${x:-'}'} tail}", ('{', '}'), false), "${x:-'}'}");
+        // An unterminated substitution runs to the end.
+        assert_eq!(end("$(echo \"x", parens, false), "$(echo \"x");
+    }
+
+    /// A quoted pattern may hold `)` and `|`; the list ends at the first
+    /// unquoted `)`.
+    #[test]
+    fn quoted_case_patterns_hold_brackets() {
+        for pattern in ["'a)b'|wheel", "\"a)b\"|wheel", "x|'a)b'", "x|\"a)b\""] {
+            let line = format!("{pattern}) pytest");
+            let chars: Vec<char> = line.chars().collect();
+            assert_eq!(
+                case_pattern_end(&chars, 0),
+                Some(pattern.len()),
+                "{pattern}"
+            );
+            assert_eq!(segments(&line), [["pytest"]], "{pattern}");
+        }
     }
 
     /// Quotes and escapes are removed; substitutions keep their raw text.
