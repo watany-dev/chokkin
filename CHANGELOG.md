@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- A run no longer waits on freeing its analysis before it exits: the report
+  is left to the OS and the intermediate parse and resolution data is freed
+  on a background thread. `--no-cache` runs are 4-10% faster on airflow,
+  transformers and django (#1327).
 - Import resolution allocates 38% less on airflow: an unresolved import root
   no longer copies every declared and locked name to try its `py` affixes,
   and resolved imports share their file path, member, root and distribution
