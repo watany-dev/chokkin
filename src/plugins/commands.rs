@@ -1565,6 +1565,18 @@ mod tests {
         assert_eq!(binaries("python manage.py -m pytest"), Vec::<String>::new());
     }
 
+    /// Scripts nested past [`MAX_SHELL_NESTING`] stay one opaque word.
+    #[test]
+    fn shell_scripts_nest_to_a_bound() {
+        let chars: Vec<char> = "sh -c 'pytest -q'".chars().collect();
+        let mut out = Vec::new();
+        ShellSplitter::new(MAX_SHELL_NESTING, &mut out).split(&chars);
+        assert_eq!(out, [["sh", "-c", "pytest -q"]]);
+        let mut out = Vec::new();
+        ShellSplitter::new(MAX_SHELL_NESTING - 1, &mut out).split(&chars);
+        assert_eq!(out, [vec!["sh", "-c"], vec!["pytest", "-q"]]);
+    }
+
     /// A `|` inside quotes, a parameter expansion or a `case` pattern list
     /// separates no command; a real pipeline still does (#1341).
     #[test]
