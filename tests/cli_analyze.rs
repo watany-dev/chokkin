@@ -11768,3 +11768,66 @@ fn binary_computed_sys_path_entry_lowers_imports_of_project_modules() {
     );
     assert!(stderr.contains("computed `sys.path` entry"), "{stderr}");
 }
+
+/// `KiroCrew`'s container and local model servers run in their own
+/// environments, installed from requirements files beside their sources
+/// (#1340). Those files cover the sources below their directory only: the
+/// package importing the same distribution is still CHK003, and a dev file
+/// or one in the package directory covers nothing, and neither does
+/// pip-compile output beside its `.in`.
+#[test]
+fn binary_subtree_requirements_declare_their_own_sources() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"crew\"\nversion = \"0.1.0\"\ndependencies = []\n\n\
+             [project.scripts]\ncrew = \"crew.cli:main\"\n\n\
+             [tool.chokkin]\nentry = [\"src/crew/cli.py\", \"src/crew/core.py\", \n             \"src/crew/runtime/container/front/app.py\", \"src/crew/servers/laya_cpu.py\", \"src/crew/svc/app.py\"]\n",
+        ),
+        ("src/crew/__init__.py", ""),
+        ("src/crew/cli.py", "import httpx\n\ndef main():\n    pass\n"),
+        ("src/crew/requirements.txt", "attrs\n"),
+        ("src/crew/core.py", "import attrs\n"),
+        (
+            "src/crew/runtime/container/requirements.txt",
+            "# Container runtime only\nfastapi==0.115.6\nhttpx==0.28.1\n",
+        ),
+        (
+            "src/crew/runtime/container/requirements-dev.txt",
+            "-r requirements.txt\npytest==9.0.3\n",
+        ),
+        (
+            "src/crew/runtime/container/front/app.py",
+            "import fastapi\nimport httpx\nimport pytest\n",
+        ),
+        ("src/crew/servers/laya.requirements.txt", "torch\nuvicorn\n"),
+        (
+            "src/crew/servers/laya_cpu.py",
+            "import torch\nimport uvicorn\n",
+        ),
+        // pip-compile output beside its `.in`: only the `.in` declares.
+        ("src/crew/svc/requirements.in", "fastapi\n"),
+        (
+            "src/crew/svc/requirements.txt",
+            "fastapi==1\nstarlette==1\n",
+        ),
+        ("src/crew/svc/app.py", "import fastapi\nimport starlette\n"),
+    ]);
+    let issues = json_issues(project.path(), &[]);
+    let mut missing: Vec<&str> = issues
+        .iter()
+        .filter(|issue| issue["code"] == "CHK003")
+        .filter_map(|issue| issue["target"].as_str())
+        .collect();
+    missing.sort_unstable();
+    assert_eq!(
+        missing,
+        [
+            "src/crew/cli.py:httpx",
+            "src/crew/core.py:attrs",
+            "src/crew/runtime/container/front/app.py:pytest",
+            "src/crew/svc/app.py:starlette",
+        ],
+        "{issues:#?}"
+    );
+}

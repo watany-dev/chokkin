@@ -71,13 +71,9 @@ pub(super) fn extract_requirements_file(
 /// too. Every file adds its names; the rest declare dependencies only when
 /// their path names a context (#679, #786).
 pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
-    let requirements_name = |stem: &str, ext: &str| {
-        (ext == "txt" && stem.contains("requirements"))
-            || (ext == "in" && stem.starts_with("requirements"))
-    };
-    let mut paths = files_matching(root, requirements_name);
+    let mut paths = files_matching(root, is_requirements_name);
     for dir in ["docs", "doc"] {
-        paths.extend(files_matching(&root.join(dir), requirements_name));
+        paths.extend(files_matching(&root.join(dir), is_requirements_name));
     }
     for dir in [
         root.join("requirements"),
@@ -86,6 +82,17 @@ pub(crate) fn extra_requirements_candidates(root: &Path) -> Vec<PathBuf> {
         paths.extend(files_matching(&dir, |_, ext| ext == "txt" || ext == "in"));
     }
     paths
+}
+
+/// `*requirements*.txt` and `requirements*.in` directly in `dir`, sorted:
+/// the names [`extra_requirements_candidates`] reads at the root.
+pub(crate) fn requirements_files_in(dir: &Path) -> Vec<PathBuf> {
+    files_matching(dir, is_requirements_name)
+}
+
+fn is_requirements_name(stem: &str, ext: &str) -> bool {
+    (ext == "txt" && stem.contains("requirements"))
+        || (ext == "in" && stem.starts_with("requirements"))
 }
 
 /// Files in `dir` whose `(stem, extension)` satisfy `matches`, sorted.
@@ -912,7 +919,7 @@ fn origin_rel(root: &Path, path: &Path) -> String {
 /// directory names and `-`/`_`/`.`-separated stem words, so `protests.txt` or
 /// `documentsdb.txt` name none (#505). `optional` requirements are runtime
 /// features installed on demand, like an extra (#786).
-pub(super) fn requirements_path_context(path: &str) -> Option<DependencyContext> {
+pub(crate) fn requirements_path_context(path: &str) -> Option<DependencyContext> {
     let path = Path::new(path);
     let lower = |s: &std::ffi::OsStr| s.to_string_lossy().to_ascii_lowercase();
     let basename = path.file_name().map(lower).unwrap_or_default();

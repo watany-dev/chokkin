@@ -1,6 +1,7 @@
 //! Pipeline orchestration (probe and analyze).
 
 mod analyze;
+mod environments;
 mod error;
 mod probe;
 mod trace;
