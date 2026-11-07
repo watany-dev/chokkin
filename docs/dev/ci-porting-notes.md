@@ -39,7 +39,7 @@ them when a maintainer, workflow, or job name changes.
 - Require status checks to pass, with the branch up to date. The jobs that
   cover `make check` (fmt, clippy, test, deny, machete):
   - `Lint (fmt, clippy, doc, machete)`
-  - `Test (ubuntu-24.04)`, `Test (macos-14)`, `Test (windows-latest)`
+  - `Test (ubuntu-24.04)`, `Test (macos-15)`, `Test (windows-latest)`
   - `Security (cargo-deny)`
 
   Require `Semgrep` as well: its scan uses `--error` to fail on findings and
