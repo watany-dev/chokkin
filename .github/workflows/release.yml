@@ -95,10 +95,10 @@ jobs:
             target: aarch64-unknown-linux-musl
             manylinux: musllinux_1_2
             container: ghcr.io/rust-cross/rust-musl-cross:aarch64-musl@sha256:ecae5dd62d1c938c14f8071d36c16fa699860aace03bfb5284fb1216474d2643
-          - runner: macos-14
+          - runner: macos-15
             target: x86_64-apple-darwin
             manylinux: ""
-          - runner: macos-14
+          - runner: macos-15
             target: aarch64-apple-darwin
             manylinux: ""
           - runner: windows-latest
@@ -232,7 +232,7 @@ jobs:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
           - target: i686-pc-windows-msvc
