@@ -1,7 +1,7 @@
 //! Static shell-command reading shared by the task-file and tool-config scanners.
 //!
 //! Only the command word of each `;` / `|` / `&` / newline separated segment is
-//! considered, after skipping env assignments, wrappers (`env`, `uv run`, ...)
+//! considered (separators inside quotes and `case` patterns split nothing), after skipping env assignments, wrappers (`env`, `uv run`, ...)
 //! and `python -m`. Arguments, `$(...)` substitutions and variables are never
 //! treated as commands, so `echo pytest` or `$(COVERAGE) run` stay silent.
 
@@ -24,9 +24,10 @@ pub(super) type KnownBinary<'a> = &'a dyn Fn(&str) -> bool;
 const ENVIRONMENT_TOOLS: [&str; 11] = [
     "pip", "pip3", "uv", "uvx", "pipx", "poetry", "pdm", "hatch", "rye", "pipenv", "conda",
 ];
-const WRAPPERS: [&str; 10] = [
-    "exec", "env", "time", "nohup", "command", "sudo", "then", "do", "else", "!",
+const WRAPPERS: [&str; 11] = [
+    "exec", "env", "time", "nohup", "command", "sudo", "then", "do", "else", "!", "{",
 ];
+const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
 const RUNNERS: [&str; 6] = ["uv", "poetry", "pdm", "hatch", "rye", "pipenv"];
 
 /// Hits collected by one scanner, merged into `ConfigScanResult` by the caller.
@@ -478,16 +479,362 @@ pub(super) fn command_binaries(command: &str, known: KnownBinary<'_>) -> Vec<Str
     binaries
 }
 
-/// Calls `visit` with the cleaned words of each `;` / `|` / `&` / newline
-/// separated segment, joining backslash continuations first.
+/// Calls `visit` with the words of each simple command in `command`, joining
+/// backslash continuations first (see [`ShellSplitter`]).
 fn for_each_segment(command: &str, mut visit: impl FnMut(&[&str])) {
-    for segment in join_continuations(command).split(['\n', ';', '|', '&']) {
-        let words: Vec<&str> = segment
-            .split_whitespace()
-            .map(clean_word)
-            .filter(|word| !word.is_empty())
-            .collect();
+    let chars: Vec<char> = join_continuations(command).chars().collect();
+    let mut segments = Vec::new();
+    ShellSplitter::new(0, &mut segments).split(&chars);
+    for words in &segments {
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
         visit(&words);
+    }
+}
+
+/// How deep `sh -c "..."` scripts are read inside one another.
+const MAX_SHELL_NESTING: usize = 4;
+
+/// Splits a shell string into simple commands at unquoted newlines, `;`,
+/// `|`, `&`, `(` and `)` (#1341).
+///
+/// Quoting is read as a shell reads it: `'...'`, `"..."`, `\x` and the
+/// bodies of `$(...)`, `$((...))`, `${...}` and backticks are data inside one
+/// word, so `echo "<source|wheel>"` and `X="${1:?a|wheel}"` run only `echo`
+/// and nothing. A substitution keeps its raw text, `$` included, so it stays
+/// computed and is never a command (module doc). A backslash escapes only a
+/// character the shell treats as special, so `C:\venv\pytest.exe` keeps
+/// its separators.
+///
+/// The pattern list of a `case` arm (`a|wheel)`, `(a) ;;`) is skipped where
+/// a pattern may start: after `case WORD in`, after `;;` / `;&` / `;;&`, and
+/// at the start of a line outside a subshell, since a script is read line by
+/// line and its `case` line is not in view. An unterminated quote or
+/// substitution runs to the end of the string as data, so the words after it
+/// name no command. `sh -c` / `bash -c` scripts are split in turn.
+struct ShellSplitter<'o> {
+    depth: usize,
+    out: &'o mut Vec<Vec<String>>,
+    words: Vec<String>,
+    word: Option<String>,
+    pattern_next: bool,
+    subshells: usize,
+}
+
+impl<'o> ShellSplitter<'o> {
+    fn new(depth: usize, out: &'o mut Vec<Vec<String>>) -> Self {
+        Self {
+            depth,
+            out,
+            words: Vec::new(),
+            word: None,
+            pattern_next: true,
+            subshells: 0,
+        }
+    }
+
+    fn split(&mut self, chars: &[char]) {
+        let mut at = 0;
+        while let Some(&ch) = chars.get(at) {
+            if self.pattern_next && self.word.is_none() && self.words.is_empty() {
+                if matches!(ch, ' ' | '\t' | '\r') {
+                    at += 1;
+                    continue;
+                }
+                self.pattern_next = false;
+                if self.subshells == 0
+                    && let Some(end) = case_pattern_end(chars, at)
+                {
+                    debug_assert!(end > at);
+                    at = end;
+                    continue;
+                }
+            }
+            let next = match ch {
+                ' ' | '\t' | '\r' => {
+                    self.end_word();
+                    at + 1
+                },
+                '\n' | ';' | '|' | '&' | '(' | ')' => self.separator(chars, at),
+                '#' if self.word.is_none() => chars
+                    .get(at..)
+                    .and_then(|rest| rest.iter().position(|&ch| ch == '\n'))
+                    .map_or(chars.len(), |offset| at + offset),
+                '\'' => {
+                    let end = closing(chars, at + 1, '\'');
+                    self.push_raw(chars.get(at + 1..end).unwrap_or_default());
+                    end + 1
+                },
+                '"' => self.double_quoted(chars, at + 1),
+                '\\' => self.escape(chars, at, is_shell_special),
+                '$' | '`' => self.substitution(chars, at, false),
+                _ => {
+                    self.push(ch);
+                    at + 1
+                },
+            };
+            // A step that does not advance would rescan, and grow the word, forever.
+            debug_assert!(next > at);
+            at = next;
+        }
+        self.end_segment();
+    }
+
+    /// Ends the segment at the separator at `at`; returns the index after it.
+    fn separator(&mut self, chars: &[char], at: usize) -> usize {
+        self.end_segment();
+        match chars.get(at..).unwrap_or_default() {
+            ['\n', ..] => {
+                self.pattern_next = true;
+                at + 1
+            },
+            [';', ';', '&', ..] => {
+                self.pattern_next = true;
+                at + 3
+            },
+            [';', ';' | '&', ..] => {
+                self.pattern_next = true;
+                at + 2
+            },
+            // `name()` opens and closes at once: no subshell is left open.
+            ['(', ..] => {
+                self.subshells += 1;
+                at + 1
+            },
+            [')', ..] => {
+                self.subshells = self.subshells.saturating_sub(1);
+                at + 1
+            },
+            _ => at + 1,
+        }
+    }
+
+    /// The backslash at `at`: the next character when `escapes` it, else a
+    /// literal backslash.
+    fn escape(&mut self, chars: &[char], at: usize, escapes: fn(char) -> bool) -> usize {
+        match chars.get(at + 1) {
+            Some(&next) if escapes(next) => {
+                self.push(next);
+                at + 2
+            },
+            _ => {
+                self.push('\\');
+                at + 1
+            },
+        }
+    }
+
+    /// The text of a `"..."` starting at `at`; returns the index after it.
+    fn double_quoted(&mut self, chars: &[char], mut at: usize) -> usize {
+        self.word.get_or_insert_with(String::new);
+        while let Some(&ch) = chars.get(at) {
+            let next = match ch {
+                '"' => return at + 1,
+                '\\' => self.escape(chars, at, |next| matches!(next, '"' | '$' | '`' | '\\')),
+                '$' | '`' => self.substitution(chars, at, true),
+                _ => {
+                    self.push(ch);
+                    at + 1
+                },
+            };
+            // A step that does not advance would rescan, and grow the word, forever.
+            debug_assert!(next > at);
+            at = next;
+        }
+        at
+    }
+
+    /// `$(...)`, `$((...))`, `${...}` or a backtick body at `at`, kept raw in
+    /// the current word; a lone `$` is itself. Inside `"..."` an apostrophe
+    /// in `${...}` is a literal (`"${MSG:-it's}"`), not a quote.
+    fn substitution(&mut self, chars: &[char], at: usize, quoted: bool) -> usize {
+        let end = match (chars.get(at), chars.get(at + 1)) {
+            (Some('`'), _) => closing(chars, at + 1, '`') + 1,
+            (Some('$'), Some('(')) => balanced(chars, at, ('(', ')'), false),
+            (Some('$'), Some('{')) => balanced(chars, at, ('{', '}'), quoted),
+            _ => at + 1,
+        };
+        let end = end.min(chars.len());
+        self.push_raw(chars.get(at..end).unwrap_or_default());
+        end
+    }
+
+    fn push(&mut self, ch: char) {
+        self.word.get_or_insert_with(String::new).push(ch);
+    }
+
+    fn push_raw(&mut self, chars: &[char]) {
+        self.word.get_or_insert_with(String::new).extend(chars);
+    }
+
+    fn end_word(&mut self) {
+        let Some(word) = self.word.take() else {
+            return;
+        };
+        if word.is_empty() {
+            return;
+        }
+        self.words.push(word);
+        // `case WORD in`, also after `then` / `do`: a pattern list follows.
+        let start = self
+            .words
+            .iter()
+            .take_while(|word| WRAPPERS.contains(&word.as_str()))
+            .count();
+        if let Some([case, _, .., last]) = self.words.get(start..)
+            && case == "case"
+            && last == "in"
+        {
+            self.end_segment();
+            self.pattern_next = true;
+        }
+    }
+
+    fn end_segment(&mut self) {
+        if let Some(word) = self.word.take().filter(|word| !word.is_empty()) {
+            self.words.push(word);
+        }
+        if self.words.is_empty() {
+            return;
+        }
+        let mut words = std::mem::take(&mut self.words);
+        // A command word holding whitespace is a quoted script: `sh -c "a; b"`,
+        // or a whole command quoted once more (`run: "pytest -q"`).
+        let start = command_start(&words.iter().map(String::as_str).collect::<Vec<_>>());
+        let script = words
+            .get(start)
+            .is_some_and(|word| word.contains([' ', '\t', '\n']) && self.depth < MAX_SHELL_NESTING)
+            .then(|| {
+                let script = words.swap_remove(start);
+                words.truncate(start);
+                script
+            });
+        if !words.is_empty() {
+            self.out.push(words);
+        }
+        if let Some(script) = script {
+            let chars: Vec<char> = script.chars().collect();
+            ShellSplitter::new(self.depth + 1, self.out).split(&chars);
+        }
+    }
+}
+
+/// A character a backslash escapes outside quotes.
+fn is_shell_special(ch: char) -> bool {
+    matches!(
+        ch,
+        ' ' | '\t'
+            | '\n'
+            | '"'
+            | '\''
+            | '\\'
+            | '|'
+            | ';'
+            | '&'
+            | '$'
+            | '`'
+            | '('
+            | ')'
+            | '<'
+            | '>'
+            | '#'
+    )
+}
+
+/// Index of the first `close` at or after `from`, or the end.
+fn closing(chars: &[char], from: usize, close: char) -> usize {
+    chars
+        .get(from..)
+        .and_then(|rest| rest.iter().position(|&ch| ch == close))
+        .map_or(chars.len(), |offset| from + offset)
+}
+
+/// Index after the `close` matching the first `open` at or after `at`,
+/// skipping quotes
+/// (apostrophes are literals when `literal_apostrophe`), or the end.
+fn balanced(
+    chars: &[char],
+    at: usize,
+    (open, close): (char, char),
+    literal_apostrophe: bool,
+) -> usize {
+    let mut depth = 0usize;
+    let mut index = at;
+    while let Some(&ch) = chars.get(index) {
+        let next = match ch {
+            '\'' if !literal_apostrophe => closing(chars, index + 1, '\'') + 1,
+            '"' => {
+                let mut end = index + 1;
+                while let Some(&ch) = chars.get(end) {
+                    let step = match ch {
+                        '\\' => 2,
+                        '"' => break,
+                        _ => 1,
+                    };
+                    let before = end;
+                    end += step;
+                    debug_assert!(end > before);
+                }
+                end + 1
+            },
+            '\\' => index + 2,
+            _ if ch == open => {
+                depth += 1;
+                index + 1
+            },
+            _ if ch == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return index + 1;
+                }
+                index + 1
+            },
+            _ => index + 1,
+        };
+        debug_assert!(next > index);
+        index = next;
+    }
+    chars.len()
+}
+
+/// Index of the `)` closing a `case` arm's pattern list starting at `at`
+/// (`a|b)`, `a | "b c")`), which the caller reads as a separator, or `None`
+/// when the text there is not one: a pattern is one word, the `)` follows
+/// the last one directly, and a list never holds a separator, a redirection,
+/// a subshell or a substitution. The optional `(` before the list is not
+/// read, so `(pytest)` stays a subshell.
+fn case_pattern_end(chars: &[char], at: usize) -> Option<usize> {
+    let mut index = at;
+    loop {
+        while matches!(chars.get(index), Some(' ' | '\t')) {
+            index += 1;
+        }
+        let start = index;
+        while let Some(&ch) = chars.get(index) {
+            let next = match ch {
+                ' ' | '\t' | '|' | ')' => break,
+                '\'' => closing(chars, index + 1, '\'') + 1,
+                '"' => closing(chars, index + 1, '"') + 1,
+                '\\' => index + 2,
+                // `(` also refuses a `$(...)` substitution.
+                '(' | ';' | '&' | '\n' | '<' | '>' | '`' => return None,
+                _ => index + 1,
+            };
+            debug_assert!(next > index);
+            index = next;
+        }
+        if index == start {
+            return None;
+        }
+        if chars.get(index) == Some(&')') {
+            return Some(index);
+        }
+        while matches!(chars.get(index), Some(' ' | '\t')) {
+            index += 1;
+        }
+        if chars.get(index) != Some(&'|') {
+            return None;
+        }
+        index += 1;
     }
 }
 
@@ -1084,15 +1431,6 @@ fn is_python_path(word: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
 }
 
-fn clean_word(word: &str) -> &str {
-    let word = word.trim_matches(['"', '\'', '`']);
-    if word.starts_with('$') {
-        word
-    } else {
-        word.trim_matches(['(', ')'])
-    }
-}
-
 fn command_start(words: &[&str]) -> usize {
     let mut index = 0;
     while let Some(word) = words.get(index) {
@@ -1110,9 +1448,17 @@ fn prefix_width(word: &str, next: Option<&str>) -> usize {
         return 1;
     }
     let name = command_name(word);
-    let takes_script = matches!(name, "sh" | "bash") && next == Some("-c");
-    let runs_command = RUNNERS.contains(&name) && next == Some("run");
-    if takes_script || runs_command { 2 } else { 0 }
+    // `sh -c`, `bash -lc`, `bash -e -c`: the flags are skipped next.
+    let takes_flags = SHELLS.contains(&name)
+        && next.is_some_and(|next| next.starts_with('-') && !next.starts_with("--"));
+    if takes_flags {
+        return 1;
+    }
+    if RUNNERS.contains(&name) && next == Some("run") {
+        2
+    } else {
+        0
+    }
 }
 
 fn is_env_assignment(word: &str) -> bool {
@@ -1232,6 +1578,178 @@ mod tests {
         assert_eq!(binaries("$VENV/bin/pytest"), Vec::<String>::new());
         assert_eq!(binaries("{{venv}}/bin/pytest"), Vec::<String>::new());
         assert_eq!(binaries("python manage.py -m pytest"), Vec::<String>::new());
+    }
+
+    fn segments(command: &str) -> Vec<Vec<String>> {
+        let mut segments = Vec::new();
+        for_each_segment(command, |words| {
+            segments.push(words.iter().map(|word| (*word).to_owned()).collect());
+        });
+        segments
+    }
+
+    /// Subshell depth and the separators after an arm decide where a pattern
+    /// may start.
+    #[test]
+    fn separators_track_subshells_and_case_arms() {
+        // A closed subshell leaves the next line at top level.
+        assert_eq!(segments("(a)\nwheel|x) pytest"), [["a"], ["pytest"]]);
+        // Inside an open subshell a line start is a command, not a pattern.
+        assert_eq!(
+            segments("(\n  foo | bar)\npytest"),
+            [["foo"], ["bar"], ["pytest"]]
+        );
+        // The arm after `;;`, `;&` and `;;&` starts with a pattern, wherever
+        // the separator sits.
+        for separator in [";;", ";&", ";;&"] {
+            assert_eq!(
+                segments(&format!(
+                    "case \"$1\" in start) serve {separator} wheel|stop) pytest {separator} esac"
+                )),
+                [
+                    vec!["case", "$1", "in"],
+                    vec!["serve"],
+                    vec!["pytest"],
+                    vec!["esac"]
+                ],
+                "{separator}"
+            );
+        }
+        // `name()` defines a function: its body still runs commands.
+        assert_eq!(
+            segments("longname() { pytest; }"),
+            [vec!["longname"], vec!["{", "pytest"], vec!["}"]]
+        );
+    }
+
+    /// A substitution ends at the bracket that balances its opening one;
+    /// quoted and escaped brackets do not count.
+    #[test]
+    fn substitutions_end_at_the_balancing_bracket() {
+        fn end(text: &str, brackets: (char, char), literal_apostrophe: bool) -> String {
+            let chars: Vec<char> = text.chars().collect();
+            chars[..balanced(&chars, 0, brackets, literal_apostrophe)]
+                .iter()
+                .collect()
+        }
+        let parens = ('(', ')');
+        for text in [
+            "$(a (b) c)",
+            "$(echo ')' x)",
+            "$(echo \")\" x)",
+            "$(echo \"\\\")\" x)",
+            "$(echo \\) x)",
+        ] {
+            assert_eq!(end(&format!("{text} tail)"), parens, false), text);
+        }
+        // Inside `"..."` an apostrophe is a literal (`"${x:-'}'}"`).
+        assert_eq!(end("${x:-'}'} tail}", ('{', '}'), true), "${x:-'}");
+        assert_eq!(end("${x:-'}'} tail}", ('{', '}'), false), "${x:-'}'}");
+        // An unterminated substitution runs to the end.
+        assert_eq!(end("$(echo \"x", parens, false), "$(echo \"x");
+    }
+
+    /// A quoted pattern may hold `)` and `|`; the list ends at the first
+    /// unquoted `)`.
+    #[test]
+    fn quoted_case_patterns_hold_brackets() {
+        for pattern in ["'a)b'|wheel", "\"a)b\"|wheel", "x|'a)b'", "x|\"a)b\""] {
+            let line = format!("{pattern}) pytest");
+            let chars: Vec<char> = line.chars().collect();
+            assert_eq!(
+                case_pattern_end(&chars, 0),
+                Some(pattern.len()),
+                "{pattern}"
+            );
+            assert_eq!(segments(&line), [["pytest"]], "{pattern}");
+        }
+    }
+
+    /// Quotes and escapes are removed; substitutions keep their raw text.
+    #[test]
+    fn words_keep_substitutions_raw() {
+        assert_eq!(segments("echo \"a\\\"b\" c"), [["echo", "a\"b", "c"]]);
+        assert_eq!(
+            segments("echo \"x$(a \"b c\")y\" z"),
+            [["echo", "x$(a \"b c\")y", "z"]]
+        );
+        assert_eq!(segments("X=`a b` c"), [["X=`a b`", "c"]]);
+        assert_eq!(segments("X=$(a b) c ${d e}"), [["X=$(a b)", "c", "${d e}"]]);
+    }
+
+    /// Scripts nested past [`MAX_SHELL_NESTING`] stay one opaque word.
+    #[test]
+    fn shell_scripts_nest_to_a_bound() {
+        let chars: Vec<char> = "sh -c 'pytest -q'".chars().collect();
+        let mut out = Vec::new();
+        ShellSplitter::new(MAX_SHELL_NESTING, &mut out).split(&chars);
+        assert_eq!(out, [["sh", "-c", "pytest -q"]]);
+        let mut out = Vec::new();
+        ShellSplitter::new(MAX_SHELL_NESTING - 1, &mut out).split(&chars);
+        assert_eq!(out, [vec!["sh", "-c"], vec!["pytest", "-q"]]);
+    }
+
+    /// A `|` inside quotes, a parameter expansion or a `case` pattern list
+    /// separates no command; a real pipeline still does (#1341).
+    #[test]
+    fn quoted_text_and_case_patterns_run_no_command() {
+        for command in [
+            "echo \"<source|pytest|docker>\"",
+            "echo '<source|pytest|docker>'",
+            "DIST=\"${1:?usage: <source|pytest|docker>}\"",
+            "DIST=${1:?usage: <source|pytest|docker>}",
+            "DIST=\"<source|pytest|docker>\"",
+            "DIST=\"a pytest\"",
+            "echo a\\|pytest",
+            "X=$(echo a | tr a b)",
+            "X=`echo a | tr a b`",
+            "  source|pytest|docker) ;;",
+            "  source | \"pytest\")",
+            "if x; then case \"$1\" in api|pytest) run ;; esac; fi",
+            "pytest) echo x ;;",
+            "case \"$1\" in\n  source|pytest|docker) ;;\n  *) exit 1 ;;\nesac",
+            "case \"$1\" in source|pytest) ;; celery) ;; esac",
+            "echo \"unterminated | pytest",
+        ] {
+            assert_eq!(binaries(command), Vec::<String>::new(), "{command}");
+        }
+    }
+
+    #[test]
+    fn pipelines_subshells_and_shell_scripts_still_run_commands() {
+        assert_eq!(binaries("producer | pytest -q"), ["pytest"]);
+        assert_eq!(binaries("echo \"a|b\" | pytest -q"), ["pytest"]);
+        assert_eq!(binaries("(cd app && pytest)"), ["pytest"]);
+        assert_eq!(binaries("cd app && (pytest)"), ["pytest"]);
+        assert_eq!(
+            binaries("bash -c 'cd x; celery worker | tee log'"),
+            ["celery"]
+        );
+        assert_eq!(binaries("case \"$1\" in a) pytest ;; esac"), ["pytest"]);
+        assert_eq!(binaries("  a|b) pytest -x ;;"), ["pytest"]);
+        // A quoted or escaped `)` does not close the pattern list.
+        for command in [
+            "'a)b'|celery) pytest ;;",
+            "\"a)b\"|celery) pytest ;;",
+            "a\\)b|celery) pytest ;;",
+            "$x|celery) pytest ;;",
+        ] {
+            assert_eq!(binaries(command), ["pytest"], "{command}");
+        }
+        assert_eq!(binaries("$(x)|celery) pytest"), ["celery", "pytest"]);
+        assert_eq!(binaries("main() { pytest; }"), ["pytest"]);
+        assert_eq!(binaries("pytest  # | celery"), ["pytest"]);
+        assert_eq!(binaries("\"pytest -q\""), ["pytest"]);
+        assert_eq!(binaries("bash -lc 'cd app && celery worker'"), ["celery"]);
+        assert_eq!(binaries("bash -e -c \"pytest -q\""), ["pytest"]);
+        assert_eq!(binaries("(pytest)"), ["pytest"]);
+        assert_eq!(binaries("bash pytest"), Vec::<String>::new());
+        assert_eq!(binaries("bash --norc pytest"), Vec::<String>::new());
+        assert_eq!(binaries("(cd x\n  pytest )"), ["pytest"]);
+        assert_eq!(
+            binaries("echo \"${MSG:-it's done}\"; pytest -q"),
+            ["pytest"]
+        );
     }
 
     /// The module half of an app reference is a dotted name or computed,

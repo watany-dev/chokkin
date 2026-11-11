@@ -438,6 +438,7 @@ fn run_analysis_core(
     } else {
         None
     };
+    let environments = environment_installs(probe);
     // A test the parser could not read is evidence lost, like a root file.
     warnings.extend(production_tests.iter().flatten().flat_map(parse_warnings));
     // Both rule sets only read the analysis; run them side by side.
@@ -449,7 +450,7 @@ fn run_analysis_core(
                     rules: &context,
                     config: &probe.effective_config,
                     strict,
-                    build_scripts: &probe.build_scripts,
+                    build_scripts: &environments,
                     local: &probe.local_trees,
                 },
                 manifest,
@@ -944,6 +945,19 @@ fn parse_production_tests(
     Ok(modules)
 }
 
+/// What each file's own environment installs: a build script's build
+/// requirements (#735) and a subtree requirements file's names (#1340).
+fn environment_installs(probe: &ProbeReport) -> BTreeMap<String, BTreeSet<String>> {
+    let mut installs = probe.build_scripts.clone();
+    for (file, names) in &probe.environment_requirements {
+        installs
+            .entry(file.clone())
+            .or_default()
+            .extend(names.iter().cloned());
+    }
+    installs
+}
+
 fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
     let names = |dependencies: &[DeclaredDependency]| {
         dependencies
@@ -952,12 +966,17 @@ fn scoped_declarations(probe: &ProbeReport) -> ScopedDeclarations {
             .collect::<BTreeSet<_>>()
     };
     ScopedDeclarations {
-        scripts: probe
-            .scripts
-            .iter()
-            .map(|script| (script.path.clone(), names(&script.dependencies)))
-            .chain(probe.build_scripts.clone())
-            .collect(),
+        scripts: {
+            // A PEP 723 script below a subtree requirements file keeps both.
+            let mut scripts = environment_installs(probe);
+            for script in &probe.scripts {
+                scripts
+                    .entry(script.path.clone())
+                    .or_default()
+                    .extend(names(&script.dependencies));
+            }
+            scripts
+        },
         members: probe
             .workspace_inputs
             .iter()
