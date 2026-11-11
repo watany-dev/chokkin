@@ -1045,7 +1045,7 @@ airflow	CHK006	airflow-ctl/src/airflowctl/api/datamodels/generated.py:TaskInstan
 black	CHK006	src/black/parsing.py:matches_grammar	info-expected	library-public-api	no refs anywhere in black repo; internal helper; library mode since #652 keeps the package's public API at info
 django	CHK006	django/conf/global_settings.py:EMAIL_PORT	fp	name-convention	Django default setting read via settings.EMAIL_PORT attribute lookup; documented in docs/ref/settings.txt
 flask	CHK006	src/flask/app.py:T_template_filter	info-expected	library-public-api	TypeVar in flask/app.py unused even in-module; sansio/app.py defines its own copy; library mode since #652 keeps the package's public API at info
-django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	tp	-	deliberately nonexistent package in Django test fixture bad_module.py
+django	CHK010	tests/utils_tests/test_module/bad_module.py:a_package_name_that_does_not_exist	info-expected	dev-context	deliberately nonexistent package in Django test fixture bad_module.py, which test_module_loading.py loads only by name inside assertRaises(ImportError) (#1223)
 fastapi	CHK010	scripts/docs.py:mkdocs	info-expected	dev-context	undeclared third-party: mkdocs (only transitive via mkdocs-material in requirements-docs.txt) (info in scripts/ since #694)
 langchain	CHK010	libs/partners/huggingface/langchain_huggingface/llms/huggingface_pipeline.py:optimum	info-expected	optional-import	undeclared third-party: optimum (optional OpenVINO backend, not in huggingface pyproject/uv.lock) (info since #695)
 llama_index	CHK010	llama-index-core/llama_index/core/bridge/langchain.py:langchain_community	tp	-	undeclared third-party: langchain-community (not in llama-index-core pyproject/uv.lock or root)
@@ -2278,7 +2278,7 @@ healthchecks	CHK003	hc/api/views.py:pydantic_core	tp	-	"from pydantic_core impor
 
 # #1089: CHK010 that are the project's intent, hand-labelled by reading the pinned
 # clones (nothing executed). Not part of the precision sample.
-uvicorn	CHK010	tests/importer/raise_import_error.py:does_not_exist	fp	dev-context	test fixture reached only through the loader string in tests/importer/test_importer.py (import_from_string inside pytest.raises(ImportError)); the import is broken on purpose (# noqa)
+uvicorn	CHK010	tests/importer/raise_import_error.py:does_not_exist	info-expected	dev-context	test fixture reached only through the loader string in tests/importer/test_importer.py (import_from_string inside pytest.raises(ImportError)); the import is broken on purpose (# noqa)
 fastmcp	CHK010	tests/downstream/smoke_langchain_mcp.py:langchain	fp	dev-context	downstream smoke script run as `uv run --isolated --with 'langchain[mcp]'` (docstring); pyproject [tool.ty.src] exclude notes langchain is installed per-job in CI
 fastmcp	CHK010	tests/downstream/smoke_langchain_mcp.py:langchain_core	fp	dev-context	downstream smoke script run as `uv run --isolated --with 'langchain[mcp]'` (docstring); pyproject [tool.ty.src] exclude notes langchain is installed per-job in CI
 fastmcp	CHK010	tests/downstream/smoke_langchain_mcp_adapters.py:langchain	fp	dev-context	downstream smoke script run with `uv run --isolated --with` its packages (docstring); pyproject [tool.ty.src] exclude notes they are installed per-job in CI

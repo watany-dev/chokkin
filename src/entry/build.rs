@@ -3,7 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::{ChokkinConfig, EntrySpec, ProjectMode};
-use crate::manifest::{DeclaredDependency, LoadedManifest, normalize_distribution_name};
+use crate::manifest::{
+    DeclaredDependency, DependencyOrigin, LoadedManifest, normalize_distribution_name,
+};
 use crate::parser::ParseSummary;
 use crate::path_util::{is_submodule, join_rel};
 use crate::plugins::{
@@ -259,11 +261,11 @@ fn collect_member_entries(
 /// unmapped as it was before #933, not a skipped read.
 fn unresolved_target(
     module: &str,
-    file: &str,
-    label: &str,
+    declared: Declared<'_>,
     sources: &DiscoveredSources,
     production: bool,
 ) -> EntryWarning {
+    let Declared { file, line, label } = declared;
     let on_disk = |path: &str| {
         path.split('/')
             .fold(sources.root.path.clone(), |dir, part| dir.join(part))
@@ -278,8 +280,37 @@ fn unresolved_target(
         _ => EntryWarning::UnresolvedModuleTarget {
             module: module.to_owned(),
             file: file.to_owned(),
+            line,
             label: label.to_owned(),
         },
+    }
+}
+
+/// Where a target is declared: the file, its line when known, and the label.
+#[derive(Clone, Copy)]
+struct Declared<'a> {
+    file: &'a str,
+    line: Option<u32>,
+    label: &'a str,
+}
+
+impl<'a> From<&'a ReferenceOrigin> for Declared<'a> {
+    fn from(origin: &'a ReferenceOrigin) -> Self {
+        Self {
+            file: &origin.file,
+            line: origin.line,
+            label: &origin.label,
+        }
+    }
+}
+
+impl<'a> From<&'a DependencyOrigin> for Declared<'a> {
+    fn from(origin: &'a DependencyOrigin) -> Self {
+        Self {
+            file: &origin.file,
+            line: origin.line,
+            label: &origin.label,
+        }
     }
 }
 
@@ -332,6 +363,7 @@ fn collect_manifest_entries(
             warnings.push(EntryWarning::UnresolvedModuleTarget {
                 module: entry_point.target.trim().to_owned(),
                 file: entry_point.origin.file.clone(),
+                line: entry_point.origin.line,
                 label: entry_point.origin.label.clone(),
             });
             continue;
@@ -339,8 +371,7 @@ fn collect_manifest_entries(
         let Some(path) = resolve_module_to_path(&module, &sources.layout, known_paths) else {
             warnings.push(unresolved_target(
                 &module,
-                &entry_point.origin.file,
-                &entry_point.origin.label,
+                (&entry_point.origin).into(),
                 sources,
                 production,
             ));
@@ -430,7 +461,12 @@ fn collect_plugin_entries(plugins: &PluginHints, candidates: &mut Vec<EntryCandi
                 context: entry.context,
                 origin: EntryOrigin::Plugin {
                     plugin: contrib.plugin,
-                    label: entry.origin.label.clone(),
+                    label: match entry.origin.line {
+                        Some(line) => {
+                            format!("{} at {}:{line}", entry.origin.label, entry.origin.file)
+                        },
+                        None => entry.origin.label.clone(),
+                    },
                 },
             });
         }
@@ -634,13 +670,7 @@ fn collect_server_app_entries(
         let Some(path) = resolve_module_to_path(module, &sources.layout, known_paths)
             .or_else(|| beside_origin(module, &command.origin.file, known_paths))
         else {
-            let warning = unresolved_target(
-                module,
-                &command.origin.file,
-                &command.origin.label,
-                sources,
-                production,
-            );
+            let warning = unresolved_target(module, (&command.origin).into(), sources, production);
             if matches!(warning, EntryWarning::MissingEntryPath { .. }) {
                 warnings.push(warning);
             }
@@ -704,8 +734,7 @@ fn collect_symbol_ref_entries(
         else {
             warnings.push(unresolved_target(
                 &symbol_ref.module,
-                &symbol_ref.origin.file,
-                &symbol_ref.origin.label,
+                (&symbol_ref.origin).into(),
                 sources,
                 production,
             ));

@@ -261,6 +261,21 @@ pub enum ParseSeverity {
     Warning,
 }
 
+/// One argument of a notebook cell's install command (`%pip install`,
+/// `!pip install`, `%conda install`), which declares the distribution for
+/// that notebook's imports (#991).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotebookInstall {
+    /// 1-based notebook line.
+    pub line: u32,
+    /// The argument as written.
+    pub argument: String,
+    /// The normalized distribution it installs; `None` when the argument is
+    /// not read (a requirements file, a path, a variable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distribution: Option<String>,
+}
+
 /// Non-fatal parse diagnostic; analysis continues.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParseDiagnostic {
@@ -359,6 +374,16 @@ pub struct ServerApp {
     pub app_dir: bool,
 }
 
+/// A command a notebook cell runs (#992): what a shell escape (`!cmd`)
+/// runs, or the `python` command a `%run` stands for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotebookCommand {
+    /// The command as a shell reads it.
+    pub command: String,
+    /// 1-based line in the notebook's cells.
+    pub line: u32,
+}
+
 /// Result of parsing one `.py` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
@@ -416,6 +441,9 @@ pub struct ParsedModule {
     /// programs it may run. Computed program names supply no usage evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shell_commands: Vec<String>,
+    /// What the notebook's cells install into its kernel (#991).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notebook_installs: Vec<NotebookInstall>,
     /// In a module that edits `sys.path`, string literals that may name the
     /// added directory, as `/`-separated relative paths (`""` is the
     /// module's own directory) (#719).
@@ -485,6 +513,10 @@ pub struct ParsedModule {
     /// Apps passed to uvicorn as `module:attr` literals (#1004).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_apps: Vec<ServerApp>,
+    /// Commands a notebook's cells run in a shell or with `%run`, which
+    /// run project scripts as a task file's do (#992).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notebook_commands: Vec<NotebookCommand>,
     /// Non-fatal parse issues.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<ParseDiagnostic>,
@@ -583,6 +615,16 @@ mod tests {
             tested_before: Vec::new(),
             caller_guarded: false,
         }
+    }
+
+    #[test]
+    fn only_a_relative_import_stores_its_level() {
+        let mut import = import(ImportKind::Import, "os", None, None);
+        let absolute = serde_json::to_value(&import).expect("serialize");
+        assert!(absolute.get("relative_level").is_none(), "{absolute}");
+        import.relative_level = 2;
+        let relative = serde_json::to_value(&import).expect("serialize");
+        assert_eq!(relative["relative_level"], 2);
     }
 
     #[test]

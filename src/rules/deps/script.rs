@@ -21,7 +21,7 @@ use crate::sources::DiscoveredFile;
 /// Third-party imports made directly by a script file; project reconciliation
 /// must not see them.
 pub(super) fn is_script_third_party(import: &ResolvedImport, script_paths: &HashSet<&str>) -> bool {
-    import.origin == ModuleOrigin::ThirdParty && script_paths.contains(import.file.as_str())
+    import.origin == ModuleOrigin::ThirdParty && script_paths.contains(&*import.file)
 }
 
 /// Per-script CHK002 and CHK003 candidates for reachable scripts.
@@ -129,10 +129,7 @@ impl<'a> ScriptIndex<'a> {
     ) -> Self {
         let mut imports: FxHashMap<&str, Vec<&ResolvedImport>> = FxHashMap::default();
         for import in &resolution.imports {
-            imports
-                .entry(import.file.as_str())
-                .or_default()
-                .push(import);
+            imports.entry(&*import.file).or_default().push(import);
         }
         let paths = sorted_paths(files);
         // Reversed so the first module of a path wins.
@@ -190,15 +187,17 @@ fn used_distribution(
     if import.origin == ModuleOrigin::Stdlib {
         return None;
     }
-    let by_name = (import.origin != ModuleOrigin::ThirdParty).then(|| import.import_root.clone());
+    let by_name =
+        (import.origin != ModuleOrigin::ThirdParty).then(|| import.import_root.to_string());
     let mapped = import_map
         .candidates(&import.import_root)
         .map(|(distributions, _)| distributions)
         .unwrap_or_default();
     import
         .distribution
-        .iter()
-        .cloned()
+        .as_deref()
+        .map(str::to_owned)
+        .into_iter()
         .chain(by_name)
         .chain(mapped)
         .map(|name| normalize_distribution_name(&name))
@@ -246,7 +245,7 @@ fn missing_in_script(
             ),
             workspace_member: None,
             origins: vec![Origin::Import {
-                file: import.file.clone(),
+                file: import.file.to_string(),
                 line: import.line,
                 module: import.full_module.clone(),
             }],
@@ -347,9 +346,9 @@ mod tests {
 
     fn import(module: &str, distribution: &str, line: u32) -> ResolvedImport {
         ResolvedImport {
-            import_root: module.to_owned(),
+            import_root: module.into(),
             full_module: module.to_owned(),
-            file: "scripts/tool.py".to_owned(),
+            file: "scripts/tool.py".into(),
             workspace_member: None,
             line: Some(line),
             reference: None,
@@ -358,7 +357,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some(distribution.to_owned()),
+            distribution: Some(distribution.into()),
             confidence: ResolveConfidence::Certain,
         }
     }
@@ -690,7 +689,7 @@ mod tests {
             invalid_requirements: Vec::new(),
         };
         let helper_import = ResolvedImport {
-            file: "scripts/common_utils.py".to_owned(),
+            file: "scripts/common_utils.py".into(),
             ..import("rich", "rich", 2)
         };
         let unmapped = ResolvedImport {
@@ -767,7 +766,7 @@ mod tests {
             invalid_requirements: Vec::new(),
         };
         let at = |file: &str, module: &str, distribution: &str| ResolvedImport {
-            file: file.to_owned(),
+            file: file.into(),
             ..import(module, distribution, 1)
         };
         let resolution = ResolutionIndex {

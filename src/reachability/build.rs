@@ -8,6 +8,7 @@ use crate::graph::{FileId, ProjectGraph};
 use crate::parser::ParseSummary;
 use crate::path_util::parent_rel;
 use crate::plugins::PluginHints;
+use crate::resolver::PytestImportPaths;
 use crate::sources::{
     DiscoveredSources, FileContext, FileKind, PublicSurface, build_glob_set, is_test_harness_name,
     member_ships,
@@ -35,9 +36,32 @@ pub fn analyze_reachability(
     parse: &ParseSummary,
     production: bool,
 ) -> Result<ReachabilityReport, ReachabilityError> {
+    let pytest = PytestImportPaths::build(sources);
+    analyze_reachability_with_pytest(graph, sources, entry, plugins, parse, production, pytest)
+}
+
+/// [`analyze_reachability`] with the pytest search paths import resolution
+/// already built from `sources` (#1326).
+///
+/// # Errors
+///
+/// Returns `ReachabilityError` when framework globs cannot be compiled.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
+pub(crate) fn analyze_reachability_with_pytest(
+    graph: &ProjectGraph,
+    sources: &DiscoveredSources,
+    entry: &EntryPlan,
+    plugins: &PluginHints,
+    parse: &ParseSummary,
+    production: bool,
+    pytest: PytestImportPaths,
+) -> Result<ReachabilityReport, ReachabilityError> {
     let sys_path_imports: Vec<_> = plugins.sys_path_imports().cloned().collect();
-    let module_index =
-        ModuleIndex::build(graph, sources).with_sys_path_hints(sources, parse, &sys_path_imports);
+    let module_index = ModuleIndex::with_pytest(graph, sources, pytest);
+    let module_index = module_index.with_sys_path_hints(sources, parse, &sys_path_imports);
     let plugin_ref_files = plugins
         .module_refs()
         .filter_map(|reference| {

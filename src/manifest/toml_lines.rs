@@ -1,35 +1,44 @@
-//! Line numbers for `pyproject.toml` declarations.
+//! Line numbers for `pyproject.toml` declarations and plugin settings.
 //!
 //! Extraction reads the file into a `toml::Table`, which keeps no positions.
-//! The declarations it yields carry a key-path label (`project.dependencies[0]`,
-//! `tool.poetry.dependencies.zope.interface`); this walks each label through
-//! the spanned `DeTable` the table was deserialized from (#983). A label the
-//! walk cannot follow keeps `line: None`, the value it had before, so reports
-//! lose nothing they showed.
+//! The declarations and entry points it yields carry a key-path label
+//! (`project.dependencies[0]`, `tool.poetry.dependencies.zope.interface`,
+//! `project.scripts.serve`); this walks each label through the spanned
+//! `DeTable` the table was deserialized from (#983, #882). A label the walk
+//! cannot follow keeps `line: None`, the value it had before, so reports lose
+//! nothing they showed.
 
 use ruff_text_size::TextSize;
 use toml::de::{DeTable, DeValue};
 
 use crate::parser::LineIndex;
 
-use super::types::DeclaredDependency;
+use super::types::DependencyOrigin;
 
-/// Set `origin.line` on every declaration from `file` that has none;
-/// `document` is `contents` parsed.
-pub(super) fn fill_declaration_lines<'a>(
+/// Set `line` on every origin from `file` that has none; `document` is
+/// `contents` parsed.
+pub(super) fn fill_origin_lines<'a>(
     document: &DeTable<'_>,
     contents: &str,
     file: &str,
-    declarations: impl IntoIterator<Item = &'a mut DeclaredDependency>,
+    origins: impl IntoIterator<Item = &'a mut DependencyOrigin>,
 ) {
     let lines = LineIndex::new(contents);
-    for declaration in declarations
+    for origin in origins
         .into_iter()
-        .filter(|declaration| declaration.origin.file == file && declaration.origin.line.is_none())
+        .filter(|origin| origin.file == file && origin.line.is_none())
     {
-        declaration.origin.line =
-            table_offset(document, &declaration.origin.label).map(|offset| line_of(&lines, offset));
+        origin.line = table_offset(document, &origin.label).map(|offset| line_of(&lines, offset));
     }
+}
+
+/// 1-based line of the item `label` names in the TOML `contents`
+/// (`tool.pytest.ini_options.pytest_plugins[1]`), for a reader that keeps
+/// only the parsed table; `None` when `contents` does not parse or the
+/// label leads nowhere.
+pub(crate) fn toml_label_line(contents: &str, label: &str) -> Option<u32> {
+    let document = DeTable::parse(contents).ok()?;
+    table_offset(document.get_ref(), label).map(|offset| line_of(&LineIndex::new(contents), offset))
 }
 
 /// Byte offset of the item `label` names under `value`.
@@ -66,7 +75,7 @@ fn line_of(lines: &LineIndex, offset: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::{DependencyContext, DependencyOrigin};
+    use super::super::types::{DeclaredDependency, DependencyContext};
     use super::*;
 
     fn offset_line(contents: &str, label: &str) -> Option<u32> {
@@ -127,11 +136,13 @@ mod tests {
             declaration("pyproject.toml", Some(7)),
             declaration("requirements.txt", None),
         ];
-        fill_declaration_lines(
+        fill_origin_lines(
             document.get_ref(),
             contents,
             "pyproject.toml",
-            &mut declarations,
+            declarations
+                .iter_mut()
+                .map(|declaration| &mut declaration.origin),
         );
         let lines: Vec<_> = declarations.iter().map(|d| d.origin.line).collect();
         assert_eq!(lines, [Some(2), Some(7), None]);

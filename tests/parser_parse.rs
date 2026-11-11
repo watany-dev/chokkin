@@ -522,9 +522,8 @@ fn parse_project_sources_warns_about_unreadable_notebook_cells() {
 }
 
 /// `IPython` syntax is rewritten into the Python it stands for, so a notebook
-/// with magics and shell escapes is read; a cell whose magic is not
-/// recognized, or that still does not parse, is dropped with a warning at its
-/// line and leaves a gap (#962).
+/// with magics and shell escapes is read; a cell that still does not parse is
+/// dropped with a warning at its line and leaves a gap (#962).
 #[test]
 fn parse_project_sources_reads_notebook_cells_with_ipython_syntax() {
     let module = parse_notebook(
@@ -547,8 +546,21 @@ fn parse_project_sources_reads_notebook_cells_with_ipython_syntax() {
         .collect();
     assert_eq!(
         imports,
-        [("pandas", 3), ("torch", 6), ("ngql", 8), ("os", 18)]
+        [
+            ("pandas", 3),
+            ("torch", 6),
+            ("ngql", 8),
+            ("streamlit", 13),
+            ("os", 18)
+        ]
     );
+    // Shell escapes hand back what they run (#992).
+    let commands: Vec<(u32, &str)> = module
+        .notebook_commands
+        .iter()
+        .map(|run| (run.line, run.command.as_str()))
+        .collect();
+    assert_eq!(commands, [(2, "ls"), (9, "ls")]);
     let warnings: Vec<(u32, &str)> = module
         .diagnostics
         .iter()
@@ -556,16 +568,10 @@ fn parse_project_sources_reads_notebook_cells_with_ipython_syntax() {
         .collect();
     assert_eq!(
         warnings,
-        [
-            (
-                12,
-                "code cell not read: cell magic `%%writefile` is not recognized"
-            ),
-            (
-                16,
-                "code cell not read: syntax error: Expected a parameter or the end of the parameter list"
-            ),
-        ]
+        [(
+            16,
+            "code cell not read: syntax error: Expected a parameter or the end of the parameter list"
+        ),]
     );
 }
 

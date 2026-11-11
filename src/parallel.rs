@@ -154,9 +154,36 @@ where
     })
 }
 
+/// Drop `value` on a detached thread, so freeing a large intermediate
+/// overlaps the caller's remaining work instead of running on its path.
+///
+/// A failed spawn drops the closure, and `value` with it, on the caller. A
+/// process that exits first skips the rest of the drop, which only returns
+/// memory to the OS.
+pub(crate) fn drop_in_background<T: Send + 'static>(value: T) {
+    let spawned = std::thread::Builder::new()
+        .name("chokkin-drop".to_owned())
+        .spawn(move || drop(value));
+    drop(spawned);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drop_in_background_drops_the_value_off_the_calling_thread() {
+        struct Probe(std::sync::mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop_in_background(Probe(sender));
+        let dropped_on = receiver.recv().expect("the value is dropped");
+        assert_ne!(dropped_on, std::thread::current().id());
+    }
 
     #[test]
     fn worker_count_stays_sequential_for_small_inputs() {

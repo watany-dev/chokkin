@@ -91,7 +91,15 @@ fn main() -> ExitCode {
         &overrides,
         args.analyze_options(),
     ) {
-        Ok(report) => run_analysis(&args, &report),
+        Ok(report) => {
+            let status = run_analysis(&args, &report);
+            #[expect(
+                clippy::mem_forget,
+                reason = "the process is about to exit, which frees the report faster than its destructors would (#1327)"
+            )]
+            std::mem::forget(report);
+            status
+        },
         Err(error) => fail(&error, error.is_usage_error()),
     }
 }

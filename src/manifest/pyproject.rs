@@ -15,7 +15,7 @@ use super::pep508::canonical_version_specifiers;
 use super::pep508_util::{
     normalize_distribution_name, parse_pep508_requirement, pep508_distribution_name,
 };
-use super::toml_lines::fill_declaration_lines;
+use super::toml_lines::fill_origin_lines;
 use super::types::{
     DeclaredDependency, DependencyContext, DependencyOrigin, EntryPointDecl, ExtrasState,
     ProjectMetadata, UvToolSettings,
@@ -144,14 +144,21 @@ pub(super) fn extract_pyproject(
         extract_dependency_groups(groups, &rel, &mut result.dependencies, &mut result.warnings);
     }
 
-    fill_declaration_lines(
+    fill_origin_lines(
         document.get_ref(),
         &contents,
         &rel,
         result
             .dependencies
             .iter_mut()
-            .chain(&mut result.constraints),
+            .chain(&mut result.constraints)
+            .map(|declaration| &mut declaration.origin)
+            .chain(
+                result
+                    .entry_points
+                    .iter_mut()
+                    .map(|entry| &mut entry.origin),
+            ),
     );
     Ok(result)
 }

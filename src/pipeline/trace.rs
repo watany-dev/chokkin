@@ -120,9 +120,10 @@ fn lexical_normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// Format a reachability trace as a tree for CLI output.
+/// Format a reachability trace as a tree for CLI output. An import that
+/// `modules` resolves through a symlink inside the root names the link (#1001).
 #[must_use]
-pub(super) fn format_trace(path: &TracePath) -> String {
+pub(super) fn format_trace(path: &TracePath, modules: &ModuleIndex) -> String {
     let mut out = String::from("Trace path:\n");
     for (index, step) in path.steps.iter().enumerate() {
         let prefix = if index + 1 == path.steps.len() {
@@ -131,19 +132,28 @@ pub(super) fn format_trace(path: &TracePath) -> String {
             "├─ "
         };
         out.push_str(prefix);
-        out.push_str(&escape_control(&format_step(step)));
+        out.push_str(&escape_control(&format_step(step, modules)));
         out.push('\n');
     }
     out
 }
 
-fn format_step(step: &TraceStep) -> String {
+fn format_step(step: &TraceStep, index: &ModuleIndex) -> String {
+    let through = |module: &str| {
+        index
+            .symlink_for(module)
+            .map_or_else(String::new, |(link, target)| {
+                format!(", through symlink `{link}` -> `{target}`")
+            })
+    };
     match step {
         TraceStep::File { path, .. } => format!("file {path}"),
-        TraceStep::Import { module, line } => format!("import {module} (line {line})"),
+        TraceStep::Import { module, line } => {
+            format!("import {module} (line {line}{})", through(module))
+        },
         TraceStep::PluginRef { module, label } => format!("plugin ref {module} ({label})"),
         TraceStep::DynamicImport { module, line } => {
-            format!("dynamic import {module} (line {line})")
+            format!("dynamic import {module} (line {line}{})", through(module))
         },
     }
 }
@@ -187,7 +197,7 @@ pub fn trace_output(
         },
     };
     if let Some(path) = trace_to_file(report, file_id) {
-        return format_trace(&path);
+        return format_trace(&path, &ModuleIndex::build(graph, sources));
     }
     format_negative_trace(report, graph, entry, sources, target, file_id)
 }

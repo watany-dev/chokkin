@@ -7,7 +7,7 @@ use crate::config::{ChokkinConfig, ResolvedWorkspaceMember};
 use crate::manifest::{LoadedManifest, ProjectMetadata, UvSourceKind, UvToolSettings};
 use crate::path_util::{resolve_under_root, strip_source_suffix};
 
-use super::layout::infer_layout;
+use super::layout::{PytestConfigs, infer_layout};
 use super::types::DiscoveredFile;
 
 /// Every way the root names a tree of its own checkout, decided once at
@@ -81,9 +81,14 @@ impl LocalTrees {
             // Probe warns about a tree outside the root (#1042).
             let mut packages = match resolve_under_root(&canonical_root, &root.join(path)) {
                 Ok(Some(dir)) => {
-                    infer_layout(&dir, &metadata, &UvToolSettings::default())
-                        .0
-                        .packages
+                    infer_layout(
+                        &dir,
+                        &metadata,
+                        &UvToolSettings::default(),
+                        &PytestConfigs::default(),
+                    )
+                    .0
+                    .packages
                 },
                 Ok(None) | Err(_) => Vec::new(),
             };

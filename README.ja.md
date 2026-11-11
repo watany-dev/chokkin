@@ -12,6 +12,8 @@
 uvx chokkin
 ```
 
+![FastAPI プロジェクトで chokkin が未使用ファイル・依存を検出し、根拠を説明し、修正をプレビューする様子](https://raw.githubusercontent.com/watany-dev/chokkin/main/docs/demo/demo.gif)
+
 セットアップはこれだけです。chokkin は `pyproject.toml`、requirements 系ファイル、lockfile、各種ツール設定を読み、entry point からプロジェクト全体の到達性グラフを組み立てて、どこからも到達しないものを報告します。Python 版の [Knip](https://knip.dev/) です。コマンド1つ、設定ゼロ、必要になったら CI gate まで一直線に進めます。
 
 - **設定ゼロ。** layout、entry point、dependency group、framework は自動で検出します。`[tool.chokkin]` を書くのは精度を詰めたくなってからで十分です。
@@ -23,7 +25,7 @@ uvx chokkin
 ## 何が出るか
 
 ```text
-chokkin 0.7.12
+chokkin 0.7.13
 
 Project: acme-api
 Config : pyproject.toml
@@ -185,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: watany-dev/chokkin@f6d097a5595fa4c1d6a7d3b67154d9b30e5c1d46 # v0.7.3
+      - uses: watany-dev/chokkin@35ee2f13a9c56ee2ebd15c2c91d0245862a4979a # v0.7.12
         with:
           baseline: chokkin-baseline.json
           sarif-file: chokkin.sarif
@@ -196,6 +198,8 @@ jobs:
 ```
 
 上の例のように、action はタグをコメントに残してフルコミット SHA で固定してください。タグは付け替えられますが SHA は変わらず、Dependabot は両方を更新します。
+
+input はすべて省略できます。`with:` を書かなければ `github` reporter で chokkin を実行し、各 finding を pull request に annotation として出して、reportable な finding があれば job を失敗させます(上記の exit code を参照)。baseline ができたら `baseline` を足してください。
 
 | Input | Default | 説明 |
 | --- | --- | --- |
@@ -211,7 +215,7 @@ action を使わない場合は `uvx` でバージョンを固定します。
 
 ```yaml
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uvx chokkin@0.7.12 --baseline chokkin-baseline.json --reporter github
+      - run: uvx chokkin@0.7.13 --baseline chokkin-baseline.json --reporter github
 ```
 
 ### pre-commit

@@ -13,7 +13,7 @@ use crate::resolver::{ImportMap, ResolutionIndex, ResolvedImport};
 use crate::rules::types::{
     DependencyReport, IssueCandidate, WorkspaceDependencyBoundary, sort_candidates,
 };
-use crate::rules::{DependencyRuleContext, RuleContext};
+use crate::rules::{DependencyRuleContext, NotebookInstalls, RuleContext};
 use crate::sources::PublicSurface;
 
 use super::binary::{BinaryProviders, detect_unlisted_binaries};
@@ -177,6 +177,11 @@ fn detect_undeclared_imports(
     // declaration for what the build environment installs (#735).
     let resolution = dependency.rules.resolution;
     let without_build = without_build_environment_imports(resolution, dependency.build_scripts);
+    let without_installed = without_notebook_installs(
+        without_build.as_ref().unwrap_or(resolution),
+        &NotebookInstalls::new(dependency.rules.parse),
+    );
+    let without_build = without_installed.or(without_build);
     let rules = RuleContext {
         resolution: without_build.as_ref().unwrap_or(resolution),
         ..*dependency.rules
@@ -214,8 +219,8 @@ fn without_build_environment_imports(
 ) -> Option<ResolutionIndex> {
     let provided = |import: &ResolvedImport| {
         build_scripts
-            .get(&import.file)
-            .zip(import.distribution.as_ref())
+            .get(&*import.file)
+            .zip(import.distribution.as_deref())
             .is_some_and(|(requires, distribution)| requires.contains(distribution))
     };
     resolution
@@ -225,6 +230,25 @@ fn without_build_environment_imports(
         .then(|| {
             let mut resolution = resolution.clone();
             resolution.imports.retain(|import| !provided(import));
+            resolution
+        })
+}
+
+/// A notebook needs no project declaration for what it installs into its
+/// own kernel (#991).
+fn without_notebook_installs(
+    resolution: &ResolutionIndex,
+    installs: &NotebookInstalls<'_>,
+) -> Option<ResolutionIndex> {
+    resolution
+        .imports
+        .iter()
+        .any(|import| installs.provides(import))
+        .then(|| {
+            let mut resolution = resolution.clone();
+            resolution
+                .imports
+                .retain(|import| !installs.provides(import));
             resolution
         })
 }
@@ -409,9 +433,9 @@ mod tests {
         reachability.reachable.insert(file_id);
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(ResolvedImport {
-            import_root: "requests".to_owned(),
+            import_root: "requests".into(),
             full_module: "requests".to_owned(),
-            file: "src/app.py".to_owned(),
+            file: "src/app.py".into(),
             workspace_member: None,
             line: Some(1),
             reference: None,
@@ -420,7 +444,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
-            distribution: Some("requests".to_owned()),
+            distribution: Some("requests".into()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }));
         let plugins = PluginHints::default();
@@ -434,6 +458,7 @@ mod tests {
                     sources: &sources,
                     parse: &parse,
                     surface: None,
+                    cache: &crate::rules::RuleCache::default(),
                 },
                 config: &config,
                 strict: false,
@@ -484,6 +509,7 @@ mod tests {
                     sources: &sources,
                     parse: &parse,
                     surface: None,
+                    cache: &crate::rules::RuleCache::default(),
                 },
                 config: &config,
                 strict: false,
@@ -546,6 +572,7 @@ mod tests {
                     sources: &sources,
                     parse: &parse,
                     surface: None,
+                    cache: &crate::rules::RuleCache::default(),
                 },
                 config: &config,
                 strict: true,
@@ -596,9 +623,9 @@ mod tests {
         reachability.reachable.insert(file_id);
         let mut resolution = ResolutionIndex::default();
         resolution.imports.push(Arc::new(ResolvedImport {
-            import_root: "yaml".to_owned(),
+            import_root: "yaml".into(),
             full_module: "yaml".to_owned(),
-            file: "src/app.py".to_owned(),
+            file: "src/app.py".into(),
             workspace_member: None,
             line: Some(1),
             reference: None,
@@ -607,7 +634,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
-            distribution: Some("pyyaml".to_owned()),
+            distribution: Some("pyyaml".into()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         }));
         let plugins = PluginHints::default();
@@ -621,6 +648,7 @@ mod tests {
                     sources: &sources,
                     parse: &parse,
                     surface: None,
+                    cache: &crate::rules::RuleCache::default(),
                 },
                 config: &config,
                 strict: false,

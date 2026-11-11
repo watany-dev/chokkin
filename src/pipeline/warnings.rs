@@ -264,7 +264,7 @@ impl ProbeWarning {
                 | PluginsWarning::PluginExtractFailed { .. } => (None, None),
             },
             Self::Entry(warning) => match warning {
-                EntryWarning::UnresolvedModuleTarget { file, .. } => (Some(file), None),
+                EntryWarning::UnresolvedModuleTarget { file, line, .. } => (Some(file), *line),
                 EntryWarning::MissingEntryPath { .. } | EntryWarning::NoEntryRoot => (None, None),
             },
             Self::Resolve(warning) => match warning {
@@ -1268,6 +1268,7 @@ mod tests {
             ProbeWarning::Entry(EntryWarning::UnresolvedModuleTarget {
                 module: "acme.cli".to_owned(),
                 file: "pyproject.toml".to_owned(),
+                line: None,
                 label: "project.scripts.acme".to_owned(),
             })
             .to_string(),

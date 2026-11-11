@@ -107,25 +107,25 @@ pub(super) fn detect_misplaced_dependencies(
         let weight = ImportSignals {
             site: import
                 .statement_line()
-                .and_then(|line| strengths.get(&(import.file.clone(), line)))
+                .and_then(|line| strengths.get(&(import.file.to_string(), line)))
                 .copied()
                 .unwrap_or(ImportStrength::TopLevel),
             platform_guard_only: import.platform_guarded && !import.optional,
-            eager: eager.contains(import.file.as_str()),
-            exposed: exposed.contains(import.file.as_str()),
-            certain: certain.contains(import.file.as_str()),
+            eager: eager.contains(&*import.file),
+            exposed: exposed.contains(&*import.file),
+            certain: certain.contains(&*import.file),
             opt_in: is_opt_in_import(&import.file, &import.import_root, &sources.layout)
                 || in_integration(&import.file, &sources.layout, &integrations),
             command: is_management_command(&import.file),
             test_support: is_test_support(&import.file, &sources.layout),
-            predicate: predicates.contains(&(member, import.import_root.as_str())),
-            host_loaded: host_loaded.contains(&(import.file.as_str(), distribution.as_str()))
+            predicate: predicates.contains(&(member, &*import.import_root)),
+            host_loaded: host_loaded.contains(&(&*import.file, &**distribution))
                 || renders_in_notebook(import, &strengths),
         }
         .weigh();
         let report_key = (
             workspace_member.unwrap_or_default().to_owned(),
-            distribution.clone(),
+            distribution.to_string(),
         );
         // An ignored site drops out before the sites are weighed, so it neither
         // hides the others nor lends them its strength; only when every site
@@ -161,7 +161,7 @@ pub(super) fn detect_misplaced_dependencies(
             IssueCandidate {
                 rule: RuleId::Chk005,
                 subject: IssueSubject::Distribution {
-                    name: distribution.clone(),
+                    name: distribution.to_string(),
                 },
                 severity: Severity::Warning,
                 confidence: Confidence::Certain,
@@ -199,7 +199,7 @@ fn is_runtime_third_party(
 ) -> bool {
     import.origin == ModuleOrigin::ThirdParty
         && !import.never_runs
-        && reachable.contains(import.file.as_str())
+        && reachable.contains(&*import.file)
         && usage_context_for_import(&import.file, import.context, sources) == UsageContext::Runtime
 }
 
@@ -474,7 +474,7 @@ fn integration_packages(
         let Some(depth) = names
             .iter()
             .skip(1)
-            .position(|name| *name == import.import_root)
+            .position(|name| *name == &*import.import_root)
         else {
             continue;
         };
@@ -667,7 +667,7 @@ fn renders_in_notebook(
         && import.distribution.as_deref() == Some("ipython")
         && import
             .statement_line()
-            .and_then(|line| strengths.get(&(import.file.clone(), line)))
+            .and_then(|line| strengths.get(&(import.file.to_string(), line)))
             == Some(&ImportStrength::Deferred)
 }
 
@@ -687,7 +687,7 @@ fn is_notebook_module(module: &str) -> bool {
 
 fn import_origin(import: &ResolvedImport) -> Origin {
     Origin::Import {
-        file: import.file.clone(),
+        file: import.file.to_string(),
         line: import.line,
         module: import.full_module.clone(),
     }
@@ -1052,9 +1052,9 @@ mod tests {
     #[test]
     fn function_local_ipython_display_imports_render_in_notebooks() {
         let import = |module: &str, line: u32| ResolvedImport {
-            import_root: "IPython".to_owned(),
+            import_root: "IPython".into(),
             full_module: module.to_owned(),
-            file: "acme/display_utils.py".to_owned(),
+            file: "acme/display_utils.py".into(),
             workspace_member: None,
             line: Some(line),
             reference: None,
@@ -1063,7 +1063,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some("ipython".to_owned()),
+            distribution: Some("ipython".into()),
             confidence: crate::resolver::ResolveConfidence::Certain,
         };
         let strengths = HashMap::from([
@@ -1083,7 +1083,7 @@ mod tests {
         assert!(!renders(&import("IPython.core.magic", 2)));
         assert!(!renders(&import("IPython.displayhook", 2)));
         let mut other = import("IPython.display", 2);
-        other.distribution = Some("ipython-fork".to_owned());
+        other.distribution = Some("ipython-fork".into());
         assert!(!renders(&other));
     }
 

@@ -9,7 +9,7 @@ use super::types::{
     BinaryUsage, PluginContribution, PluginEntry, ReferenceOrigin, SymbolReference,
 };
 use super::util::{
-    origin_for_file, parse_module_symbol, parse_uvicorn_script_target, read_pyproject_table,
+    parse_module_symbol, parse_uvicorn_script_target, read_pyproject_table, toml_origin,
     uvicorn_tool_from_pyproject,
 };
 use super::warnings::PluginsWarning;
@@ -35,14 +35,17 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         match read_pyproject_table(&pyproject_path) {
             Ok(table) => {
                 if let Some(uvicorn) = uvicorn_tool_from_pyproject(&table) {
-                    let origin = origin_for_file(root, &pyproject_path, "tool.uvicorn");
+                    let origin = toml_origin(root, &pyproject_path, "tool.uvicorn");
                     if let Some(app) = uvicorn.get("app").and_then(|v| v.as_str())
                         && let Some((module, symbol)) = parse_module_symbol(app)
                     {
                         contrib.symbol_refs.push(SymbolReference {
                             module,
                             symbol,
-                            origin: origin.clone(),
+                            origin: ReferenceOrigin {
+                                line: toml_origin(root, &pyproject_path, "tool.uvicorn.app").line,
+                                ..origin.clone()
+                            },
                         });
                     }
                     contrib.binary_usages.push(BinaryUsage {
@@ -63,22 +66,19 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
                         if let Some(target_str) = target.as_str()
                             && let Some((module, symbol)) = parse_uvicorn_script_target(target_str)
                         {
+                            let origin = toml_origin(
+                                root,
+                                &pyproject_path,
+                                format!("project.scripts.{name}"),
+                            );
                             contrib.symbol_refs.push(SymbolReference {
                                 module,
                                 symbol,
-                                origin: ReferenceOrigin {
-                                    file: "pyproject.toml".to_owned(),
-                                    line: None,
-                                    label: format!("project.scripts.{name}"),
-                                },
+                                origin: origin.clone(),
                             });
                             contrib.binary_usages.push(BinaryUsage {
                                 binary: "uvicorn".to_owned(),
-                                origin: ReferenceOrigin {
-                                    file: "pyproject.toml".to_owned(),
-                                    line: None,
-                                    label: format!("project.scripts.{name}"),
-                                },
+                                origin,
                                 config_section: false,
                                 inferred: false,
                             });

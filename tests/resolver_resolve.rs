@@ -79,7 +79,7 @@ fn resolves_stdlib_import() {
 fn resolves_first_party_import() {
     let index = resolve_fixture("first_party");
     assert!(index.imports.iter().any(|resolved| {
-        resolved.import_root == "acme" && resolved.origin == ModuleOrigin::FirstParty
+        &*resolved.import_root == "acme" && resolved.origin == ModuleOrigin::FirstParty
     }));
 }
 
@@ -87,12 +87,12 @@ fn resolves_first_party_import() {
 fn resolves_workspace_member_import_from_resolved_member_id() {
     let index = resolve_fixture("uv_workspace_member");
     assert!(index.imports.iter().any(|resolved| {
-        resolved.import_root == "api"
+        &*resolved.import_root == "api"
             && resolved.origin == ModuleOrigin::FirstParty
             && resolved.workspace_member.is_none()
     }));
     assert!(index.imports.iter().any(|resolved| {
-        resolved.import_root == "os" && resolved.workspace_member.as_deref() == Some("api")
+        &*resolved.import_root == "os" && resolved.workspace_member.as_deref() == Some("api")
     }));
 }
 
@@ -102,7 +102,7 @@ fn resolves_yaml_to_pyyaml() {
     let yaml = index
         .imports
         .iter()
-        .find(|resolved| resolved.import_root == "yaml")
+        .find(|resolved| &*resolved.import_root == "yaml")
         .expect("yaml import");
     assert_eq!(yaml.origin, ModuleOrigin::ThirdParty);
     assert_eq!(yaml.distribution.as_deref(), Some("pyyaml"));
@@ -115,7 +115,7 @@ fn resolves_pil_to_pillow() {
     let pil = index
         .imports
         .iter()
-        .find(|resolved| resolved.import_root == "PIL")
+        .find(|resolved| &*resolved.import_root == "PIL")
         .expect("PIL import");
     assert_eq!(pil.distribution.as_deref(), Some("pillow"));
 }
@@ -126,7 +126,7 @@ fn user_package_module_map_overrides_bundled() {
     let custom = index
         .imports
         .iter()
-        .find(|resolved| resolved.import_root == "yaml")
+        .find(|resolved| &*resolved.import_root == "yaml")
         .expect("yaml");
     assert_eq!(custom.distribution.as_deref(), Some("custom-yaml"));
     assert_eq!(custom.confidence, ResolveConfidence::Likely);
@@ -138,7 +138,7 @@ fn venv_metadata_takes_priority() {
     let demo = index
         .imports
         .iter()
-        .find(|resolved| resolved.import_root == "demo_pkg")
+        .find(|resolved| &*resolved.import_root == "demo_pkg")
         .expect("demo_pkg");
     assert_eq!(demo.distribution.as_deref(), Some("demo-dist"));
 }
@@ -200,7 +200,7 @@ fn pep723_requires_python_sets_the_script_stdlib_target() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.file == file && resolved.import_root == "tomllib")
+            .find(|resolved| &*resolved.file == file && &*resolved.import_root == "tomllib")
             .unwrap_or_else(|| panic!("tomllib import in {file}"))
     };
 
@@ -238,13 +238,13 @@ fn declared_name_resolves_an_unmapped_normalized_root() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == root)
+            .find(|resolved| &*resolved.import_root == root)
             .map(|resolved| (resolved.origin, resolved.distribution.clone()))
             .expect("import")
     };
     assert_eq!(
         origin("resolvelib"),
-        (ModuleOrigin::ThirdParty, Some("resolvelib".to_owned()))
+        (ModuleOrigin::ThirdParty, Some("resolvelib".into()))
     );
     assert_eq!(origin("notdeclaredanywhere"), (ModuleOrigin::Unknown, None));
 }
@@ -281,8 +281,8 @@ fn each_site_picks_its_own_declared_candidate_for_a_shared_root() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.file == file)
-            .and_then(|resolved| resolved.distribution.clone())
+            .find(|resolved| &*resolved.file == file)
+            .and_then(|resolved| resolved.distribution.as_deref().map(str::to_owned))
             .expect("import")
     };
     assert_eq!(distribution("main.py"), "pydantic-ai-slim");
@@ -321,7 +321,7 @@ fn dotted_map_entry_overrides_a_first_party_root_without_the_module() {
     assert_eq!(origin("poetry.console"), (ModuleOrigin::FirstParty, None));
     assert_eq!(
         origin("poetry.core.version"),
-        (ModuleOrigin::ThirdParty, Some("poetry-core".to_owned()))
+        (ModuleOrigin::ThirdParty, Some("poetry-core".into()))
     );
 }
 
@@ -385,7 +385,7 @@ fn declared_distributions_with_differing_import_names_resolve() {
     ] {
         assert_eq!(
             distribution(module),
-            (ModuleOrigin::ThirdParty, Some(expected.to_owned())),
+            (ModuleOrigin::ThirdParty, Some(expected.into())),
             "{module}"
         );
     }
@@ -529,7 +529,7 @@ fn declared_distribution_named_like_the_import_resolves_without_map_entry() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == name)
+            .find(|resolved| &*resolved.import_root == name)
             .unwrap_or_else(|| panic!("{name} import"))
     };
 
@@ -559,7 +559,7 @@ fn normalized_root_resolves_only_through_a_declared_or_locked_name() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == name)
+            .find(|resolved| &*resolved.import_root == name)
             .map_or_else(
                 || panic!("{name} import"),
                 |resolved| (resolved.origin, resolved.distribution.clone()),
@@ -568,11 +568,11 @@ fn normalized_root_resolves_only_through_a_declared_or_locked_name() {
 
     assert_eq!(
         root("foo_bar"),
-        (ModuleOrigin::ThirdParty, Some("foo-bar".to_owned()))
+        (ModuleOrigin::ThirdParty, Some("foo-bar".into()))
     );
     assert_eq!(
         root("Locked_Only"),
-        (ModuleOrigin::ThirdParty, Some("locked-only".to_owned()))
+        (ModuleOrigin::ThirdParty, Some("locked-only".into()))
     );
     assert_eq!(root("e2e_config"), (ModuleOrigin::Unknown, None));
     assert!(index.warnings.iter().any(|warning| matches!(
@@ -602,7 +602,7 @@ fn affixed_declared_name_resolves_as_maybe() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == name)
+            .find(|resolved| &*resolved.import_root == name)
             .map_or_else(
                 || panic!("{name} import"),
                 |resolved| {
@@ -619,7 +619,7 @@ fn affixed_declared_name_resolves_as_maybe() {
         root("widget"),
         (
             ModuleOrigin::ThirdParty,
-            Some("widget-py".to_owned()),
+            Some("widget-py".into()),
             ResolveConfidence::Maybe
         )
     );
@@ -644,7 +644,7 @@ fn build_requirement_resolves_without_a_distribution() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == name)
+            .find(|resolved| &*resolved.import_root == name)
             .map_or_else(
                 || panic!("{name} import"),
                 |resolved| {
@@ -686,7 +686,7 @@ fn pyodide_runtime_modules_resolve_unless_a_package_provides_them() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == name)
+            .find(|resolved| &*resolved.import_root == name)
             .map(|resolved| (resolved.origin, resolved.distribution.clone()))
             .expect("import")
     };
@@ -710,7 +710,7 @@ fn pyodide_runtime_modules_resolve_unless_a_package_provides_them() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.import_root == name)
+            .find(|resolved| &*resolved.import_root == name)
             .and_then(|resolved| resolved.distribution.clone())
     };
     assert_eq!(distribution("js").as_deref(), Some("js-shim"));
@@ -727,7 +727,7 @@ fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
         index
             .imports
             .iter()
-            .find(|resolved| resolved.full_module == "pytest_asyncio" && resolved.file == file)
+            .find(|resolved| resolved.full_module == "pytest_asyncio" && &*resolved.file == file)
             .map(|resolved| resolved.context)
     };
     assert_eq!(
@@ -749,7 +749,7 @@ fn pytest_plugins_take_file_context_and_stay_quiet_when_unresolved() {
         .imports
         .iter()
         .find(|resolved| {
-            resolved.full_module == "pytest_asyncio" && resolved.file == "tests/conftest.py"
+            resolved.full_module == "pytest_asyncio" && &*resolved.file == "tests/conftest.py"
         })
         .expect("pytest_asyncio reference");
     assert_eq!(plugin.reference.as_deref(), Some("pytest_plugins"));
@@ -766,7 +766,7 @@ fn dead_stdlib_fallback_never_runs_and_softens_the_unresolved_warning() {
     let site = index
         .imports
         .iter()
-        .find(|resolved| resolved.import_root == "dummy_threading")
+        .find(|resolved| &*resolved.import_root == "dummy_threading")
         .expect("dummy_threading import");
     // Not optional: it is not "used when installed" but never run (#1027).
     assert!(!site.optional);
@@ -933,7 +933,7 @@ fn removed_stdlib_modules_follow_the_backport_table() {
                 let import = index
                     .imports
                     .iter()
-                    .find(|import| import.import_root == root)
+                    .find(|import| &*import.import_root == root)
                     .expect("the import resolves");
                 let case = format!("{root} with {requires} declaring {declared:?}");
                 let stdlib = ships.0 <= window.1 && window.0 <= ships.1;

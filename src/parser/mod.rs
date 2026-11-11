@@ -15,6 +15,7 @@ mod import_check;
 mod ipython;
 mod lines;
 mod module_guard;
+mod notebook_install;
 mod parse;
 mod platform_guard;
 mod registry;
@@ -39,6 +40,8 @@ pub(crate) use relative::{NOT_IN_PACKAGE, resolve_relative_import};
 #[cfg(test)]
 pub(crate) use types::DynamicImport;
 pub(crate) use types::ImportRef;
+#[cfg(test)]
+pub(crate) use types::NotebookCommand;
 #[cfg(test)]
 pub(crate) use types::ParseDiagnostic;
 #[cfg(test)]

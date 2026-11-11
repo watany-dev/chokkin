@@ -1,5 +1,5 @@
 name: chokkin
-description: Report unused files, dependencies, and symbols in a Python project.
+description: Find unused files, dependencies, and symbols in Python projects. Zero config, with PR annotations, SARIF, and baselines.
 author: watany-dev
 branding:
   icon: scissors
@@ -10,7 +10,7 @@ inputs:
     description: chokkin version to run from PyPI (e.g. "0.6.0"), "latest", or the path of a chokkin wheel (*.whl, relative to working-directory).
     required: false
     # Bumped together with Cargo.toml / pyproject.toml on each release.
-    default: "0.7.12"
+    default: "0.7.13"
   working-directory:
     description: Project root to analyze.
     required: false
@@ -44,7 +44,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
     # Runs before the gating step so the report exists even when that step fails.
     - id: sarif

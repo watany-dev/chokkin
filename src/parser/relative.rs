@@ -23,7 +23,7 @@ pub(crate) fn resolve_relative_import(
     let current_module = relative_module_name(file_path, layout)?;
     let is_init = file_path.ends_with("__init__.py");
     let containing_package = containing_package(&current_module, is_init);
-    if containing_package.is_empty() && level > 0 {
+    if containing_package.is_empty() {
         return None;
     }
 

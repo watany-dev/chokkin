@@ -185,7 +185,7 @@ pub(crate) fn pep508_distribution_name(raw: &str) -> Option<String> {
 /// Distribution name of a requirements-file line, read the way
 /// [`parse_requirement`] reads it.
 #[must_use]
-pub(super) fn requirement_name(trimmed: &str) -> Option<String> {
+pub(crate) fn requirement_name(trimmed: &str) -> Option<String> {
     parse_pip_requirement(trimmed)
         .map(|requirement| normalize_distribution_name(&requirement.name))
         .or_else(|| egg_name_fallback(trimmed))

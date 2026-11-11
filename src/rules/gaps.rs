@@ -213,6 +213,12 @@ pub enum GapKind {
     /// `target` is the file; it lowers that import's CHK010 alone to an info
     /// note at likely.
     ComputedSysPathImport,
+    /// A notebook's install command (`%pip install`, `!pip install`) has an
+    /// argument that names no distribution (#991): a requirements file, a
+    /// path, a variable, an option not known. It may install anything the
+    /// notebook imports, so it lowers that notebook's missing-dependency
+    /// findings to info notes at maybe. `site` is the argument and its line.
+    UnreadNotebookInstall,
 }
 
 /// How a gap changes a finding in its scope.
@@ -323,7 +329,9 @@ impl GapKind {
                 IssueSubject::Import { .. },
             )
             | (
-                Self::AssumedTargetVersion | Self::AssumedScriptTargetVersion,
+                Self::AssumedTargetVersion
+                | Self::AssumedScriptTargetVersion
+                | Self::UnreadNotebookInstall,
                 RuleId::Chk003 | RuleId::Chk004 | RuleId::Chk010,
                 IssueSubject::Import { .. },
             )
@@ -442,6 +450,9 @@ impl GapKind {
             Self::ComputedSysPathImport => {
                 "a computed `sys.path` entry may make the project file of that name importable"
             },
+            Self::UnreadNotebookInstall => {
+                "the notebook installs from an argument that could not be read, which may provide it"
+            },
         }
     }
 }
@@ -545,6 +556,9 @@ impl Gap {
             },
             (GapKind::ComputedSysPathImport, IssueSubject::Import { module, file, .. }) => {
                 *file == self.file && self.names_root(module)
+            },
+            (GapKind::UnreadNotebookInstall, IssueSubject::Import { file, .. }) => {
+                *file == self.file
             },
             _ => true,
         };
@@ -745,6 +759,19 @@ fn module_gaps(
         if module.has_opaque_dynamic_import {
             push(GapKind::OpaqueDynamicImport);
         }
+        if let Some(install) = module
+            .notebook_installs
+            .iter()
+            .find(|install| install.distribution.is_none())
+        {
+            gaps.push(Gap {
+                file: module.path.clone(),
+                kind: GapKind::UnreadNotebookInstall,
+                member: None,
+                target: None,
+                site: Some((install.argument.clone(), Some(install.line))),
+            });
+        }
         gaps.extend(unresolved_relative_gaps(module));
     }
     gaps
@@ -823,7 +850,8 @@ fn unread_public_module_gaps(reachability: &ReachabilityReport) -> Vec<Gap> {
 /// One gap per file and module, in a reachable file or a public orphan whose
 /// imports CHK002 counts (#942), at the import sites CHK010 warns about: a
 /// `TYPE_CHECKING` or optional import never fails, a docs or dev file runs
-/// outside the installed package, and a first-party miss is a typo rather
+/// outside the installed package, a test file the tests load only by name
+/// may be broken on purpose (#1223), and a first-party miss is a typo rather
 /// than a distribution (§12). A script's block installs what the script runs
 /// with, so its imports count in any context.
 fn unresolved_import_gaps(
@@ -832,6 +860,7 @@ fn unresolved_import_gaps(
     scripts: &[InlineScript],
 ) -> Vec<Gap> {
     let is_script = |file: &str| scripts.iter().any(|script| script.path == file);
+    let name_loaded = std::cell::OnceCell::new();
     let mut sites: BTreeMap<(&str, &str), Option<u32>> = BTreeMap::new();
     for warning in &context.resolution.warnings {
         let ResolveWarning::UnresolvedImport {
@@ -854,7 +883,11 @@ fn unresolved_import_gaps(
                     file_context(file, context.sources),
                     FileContext::Docs | FileContext::Dev
                 ))
-            && !is_first_party_import(import, &context.sources.layout, &manifest.metadata);
+            && !is_first_party_import(import, &context.sources.layout, &manifest.metadata)
+            && (is_script(file)
+                || !name_loaded
+                    .get_or_init(|| context.name_loaded_test_files())
+                    .contains(file.as_str()));
         if !counts {
             continue;
         }
@@ -1053,7 +1086,7 @@ fn string_distribution_ref_gaps(context: &RuleContext<'_>) -> Vec<Gap> {
         let Some(distribution) = reference.distribution.as_deref() else {
             continue;
         };
-        let file = reference.file.as_str();
+        let file = &*reference.file;
         if !is_reached(file, context.graph, context.reachability) && !public_orphans.contains(file)
         {
             continue;
@@ -1327,7 +1360,7 @@ fn path_source_gaps(imports: &[Arc<ResolvedImport>], dirs: &[String]) -> Vec<Gap
         if !dirs.iter().any(|dir| is_under(&import.file, dir)) {
             continue;
         }
-        let site = (import.file.as_str(), import.line);
+        let site = (&*import.file, import.line);
         // A plugin reference without a line sorts last in its file.
         let order = |a: &(&str, Option<u32>), b: &(&str, Option<u32>)| {
             (a.0, a.1.is_none(), a.1).cmp(&(b.0, b.1.is_none(), b.1))
@@ -2429,9 +2462,9 @@ mod tests {
     #[test]
     fn path_source_import_gap_names_the_first_site_under_the_directory() {
         let import = |distribution: Option<&str>, file: &str, line| ResolvedImport {
-            import_root: "click".to_owned(),
+            import_root: "click".into(),
             full_module: "click".to_owned(),
-            file: file.to_owned(),
+            file: file.into(),
             workspace_member: None,
             line,
             reference: None,
@@ -2440,7 +2473,7 @@ mod tests {
             platform_guarded: false,
             never_runs: false,
             origin: crate::graph::ModuleOrigin::ThirdParty,
-            distribution: distribution.map(str::to_owned),
+            distribution: distribution.map(Into::into),
             confidence: crate::resolver::ResolveConfidence::Certain,
         };
         let imports = [
@@ -3246,7 +3279,7 @@ mod tests {
         const NAMES: [&str; 6] = ["requests", "rich", "yaml", "acme", "psycopg", "hiredis"];
         const MEMBERS: [Option<&str>; 3] = [None, Some("a"), Some("b")];
 
-        const KINDS: [GapKind; 34] = [
+        const KINDS: [GapKind; 35] = [
             GapKind::UnreadModule,
             GapKind::SkippedEntry,
             GapKind::NoEntryRoot,
@@ -3281,6 +3314,7 @@ mod tests {
             GapKind::SubclassRegistry,
             GapKind::ModuleSelfReference,
             GapKind::ComputedSysPathImport,
+            GapKind::UnreadNotebookInstall,
         ];
 
         /// The rules each kind's documentation says it may lower, written
@@ -3316,7 +3350,8 @@ mod tests {
                 GapKind::InvalidScriptRequirement => &[RuleId::Chk003],
                 GapKind::ArchiveRequirement
                 | GapKind::AssumedTargetVersion
-                | GapKind::AssumedScriptTargetVersion => {
+                | GapKind::AssumedScriptTargetVersion
+                | GapKind::UnreadNotebookInstall => {
                     &[RuleId::Chk003, RuleId::Chk004, RuleId::Chk010]
                 },
                 GapKind::ArchiveRuntimeRequirement | GapKind::UnreadImageTree => &[

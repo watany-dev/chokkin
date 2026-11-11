@@ -106,6 +106,10 @@ pub struct LayoutInfo {
     /// context from this chain, as the directory above it would on
     /// `sys.path` (#896).
     pub package_dirs: BTreeSet<String>,
+    /// Root-relative symlinks inside the root, each to its target's
+    /// root-relative path. Python imports through a link at the link's path,
+    /// so the file behind it has one module name more (#1001).
+    pub symlinks: BTreeMap<String, String>,
 }
 
 /// Layout of one workspace member.
@@ -175,6 +179,8 @@ impl LayoutInfo {
             hasher.field_str(&member.layout.cache_key_hash());
         }
         hash_str_list(&mut hasher, &self.package_dirs);
+        // `symlinks` stay out: a file parses the same at its own path
+        // whatever links name it.
         hasher.finish()
     }
 }

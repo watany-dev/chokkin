@@ -67,7 +67,11 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8], sync: bool) -> io::Result<
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing parent directory"))?;
-    let original_metadata = fs::metadata(path).ok();
+    // Only a regular file lends its permissions: a planted link must not copy
+    // the mode of whatever it points at onto the new file.
+    let original_metadata = fs::symlink_metadata(path)
+        .ok()
+        .filter(fs::Metadata::is_file);
     let (temp_path, mut file) = create_temp_in(parent)?;
     let result = (|| {
         file.write_all(bytes)?;
@@ -177,5 +181,25 @@ mod tests {
 
         let mode = fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_replaces_a_link_without_borrowing_its_target_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().expect("tempdir");
+        let target = dir.path().join("outside");
+        fs::write(&target, "keep").expect("write");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o777)).expect("chmod");
+        let link = dir.path().join("clock");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        atomic_write(&link, b"new", false).expect("atomic write");
+
+        assert_eq!(fs::read_to_string(&target).expect("read target"), "keep");
+        let metadata = fs::symlink_metadata(&link).expect("meta");
+        assert!(metadata.is_file());
+        assert_ne!(metadata.permissions().mode() & 0o777, 0o777);
     }
 }

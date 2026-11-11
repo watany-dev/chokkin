@@ -48,7 +48,6 @@ pub struct ScopedDeclarations {
 #[must_use]
 #[expect(
     clippy::too_many_arguments,
-    clippy::too_many_lines,
     reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
 )]
 pub fn resolve_imports_for_analysis(
@@ -62,6 +61,40 @@ pub fn resolve_imports_for_analysis(
     script_targets: &BTreeMap<String, StdlibRange>,
     scoped: &ScopedDeclarations,
 ) -> ResolutionIndex {
+    resolve_imports_with_pytest(
+        config,
+        manifest,
+        sources,
+        parse,
+        plugin_refs,
+        sys_path_imports,
+        local,
+        script_targets,
+        scoped,
+    )
+    .0
+}
+
+/// [`resolve_imports_for_analysis`], also returning the pytest search paths
+/// before any `sys.path` hint, for the later phases to start from instead of
+/// reading every member's `pyproject.toml` again (#1326).
+#[must_use]
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "takes one output per earlier pipeline phase; a bundle struct would only rename them"
+)]
+pub(crate) fn resolve_imports_with_pytest(
+    config: &ChokkinConfig,
+    manifest: &LoadedManifest,
+    sources: &DiscoveredSources,
+    parse: &ParseSummary,
+    plugin_refs: &[ModuleReference],
+    sys_path_imports: &[SysPathImport],
+    local: &LocalTrees,
+    script_targets: &BTreeMap<String, StdlibRange>,
+    scoped: &ScopedDeclarations,
+) -> (ResolutionIndex, PytestImportPaths) {
     let stdlib = StdlibRange::for_project(
         config.target_version.as_ref(),
         manifest.metadata.requires_python.as_deref(),
@@ -71,23 +104,26 @@ pub fn resolve_imports_for_analysis(
     let mut warnings = Vec::new();
     // The pytest search paths read only the sources and the parse; build
     // them beside the venv index and the local module sets.
-    let (pytest_paths, (venv_index, local_modules, indexed_roots)) = crate::parallel::join(
-        sources.files.len(),
-        || {
-            PytestImportPaths::build(sources).with_sys_path_hints(
-                &sources.root.path,
-                parse,
-                sys_path_imports,
-            )
-        },
-        || {
-            (
-                load_venv_index(&manifest.root, &mut warnings),
-                local.modules(&sources.files),
-                indexed_roots(sources),
-            )
-        },
-    );
+    let ((unhinted_pytest, pytest_paths), (venv_index, local_modules, indexed_roots)) =
+        crate::parallel::join(
+            sources.files.len(),
+            || {
+                let unhinted = PytestImportPaths::build(sources);
+                let hinted = unhinted.clone().with_sys_path_hints(
+                    &sources.root.path,
+                    parse,
+                    sys_path_imports,
+                );
+                (unhinted, hinted)
+            },
+            || {
+                (
+                    load_venv_index(&manifest.root, &mut warnings),
+                    local.modules(&sources.files),
+                    indexed_roots(sources),
+                )
+            },
+        );
     let binary_resolutions = build_binary_map(config, &venv_index);
     let resolver = Resolver {
         sources,
@@ -106,9 +142,10 @@ pub fn resolve_imports_for_analysis(
     // Sites resolve per module on workers, each with its own root cache;
     // warnings then merge in module order, so they read as a sequential run.
     let per_module =
-        crate::parallel::map_in_order_with(&parse.modules, RootCache::new, |cache, module| {
+        crate::parallel::map_in_order_with(&parse.modules, RootCache::default, |cache, module| {
             let file_stdlib = script_targets.get(&module.path).copied().unwrap_or(stdlib);
-            resolver.module_sites(module, file_stdlib, cache)
+            let file = resolver.site_file(&module.path);
+            resolver.module_sites(module, &file, file_stdlib, cache)
         });
     let mut imports = Vec::new();
     let mut merge = WarningMerge::default();
@@ -134,13 +171,13 @@ pub fn resolve_imports_for_analysis(
     // Plugin references resolve on workers too: airflow names 2.7k modules
     // by string, and each unresolved one walks every declaration (#1087).
     let per_reference =
-        crate::parallel::map_in_order_with(plugin_refs, RootCache::new, |cache, reference| {
+        crate::parallel::map_in_order_with(plugin_refs, RootCache::default, |cache, reference| {
             let mut log = Vec::new();
             let import = resolver.site(
                 &Site {
                     full_module: &reference.module,
                     imported: &reference.module,
-                    file: &reference.origin.file,
+                    file: &resolver.site_file(&reference.origin.file),
                     line: reference.origin.line,
                     reference: Some(&reference.origin.label),
                     context: ImportContext::Runtime,
@@ -163,14 +200,15 @@ pub fn resolve_imports_for_analysis(
 
     let string_refs = resolver.string_refs(parse, stdlib);
 
-    ResolutionIndex {
+    let index = ResolutionIndex {
         imports,
         string_refs,
         warnings,
         transitive: manifest.lockfile.clone(),
         binary_resolutions,
         pytest_plugin_distributions: venv_index.pytest_plugins,
-    }
+    };
+    (index, unhinted_pytest)
 }
 
 /// Read-only inputs every import site resolves against, shared by the
@@ -194,7 +232,7 @@ struct Resolver<'a> {
 struct Site<'s> {
     full_module: &'s str,
     imported: &'s str,
-    file: &'s str,
+    file: &'s SiteFile,
     line: Option<u32>,
     reference: Option<&'s str>,
     context: ImportContext,
@@ -221,7 +259,7 @@ struct SiteOutcome {
 enum SiteWarning {
     /// Raised resolving the root behind this cache key: reported at the key's
     /// first lookup in module order only, whichever worker computed it.
-    Root((StdlibRange, String), Vec<ResolveWarning>),
+    Root((StdlibRange, Arc<str>), Vec<ResolveWarning>),
     /// Raised by the site itself.
     Site(ResolveWarning),
 }
@@ -230,7 +268,7 @@ enum SiteWarning {
 /// raised them.
 #[derive(Default)]
 struct WarningMerge {
-    reported_roots: BTreeSet<(StdlibRange, String)>,
+    reported_roots: BTreeSet<(StdlibRange, Arc<str>)>,
 }
 
 impl WarningMerge {
@@ -304,12 +342,36 @@ impl<'a> DeclaredNames<'a> {
 /// Keyed by (stdlib range, import root): stdlib membership depends on the
 /// range, which differs between PEP 723 scripts.
 /// Each entry keeps the warnings computing it raised, for [`WarningMerge`].
-type RootCache = BTreeMap<(StdlibRange, String), (RootResolution, Vec<ResolveWarning>)>;
+/// Root names are interned, so a hit allocates nothing and every site of a
+/// root shares one name (#1329).
+#[derive(Default)]
+struct RootCache {
+    names: HashSet<Arc<str>>,
+    entries: BTreeMap<(StdlibRange, Arc<str>), (RootResolution, Vec<ResolveWarning>)>,
+}
+
+impl RootCache {
+    fn intern(&mut self, name: &str) -> Arc<str> {
+        if let Some(interned) = self.names.get(name) {
+            return Arc::clone(interned);
+        }
+        let interned: Arc<str> = Arc::from(name);
+        self.names.insert(Arc::clone(&interned));
+        interned
+    }
+}
+
+/// The file an import site sits in, built once per file: every site in it
+/// shares the path and the owning member (#1329).
+struct SiteFile {
+    path: Arc<str>,
+    member: Option<Arc<str>>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RootResolution {
     origin: ModuleOrigin,
-    distribution: Option<String>,
+    distribution: Option<Arc<str>>,
     confidence: ResolveConfidence,
 }
 
@@ -331,6 +393,7 @@ impl Resolver<'_> {
     fn module_sites(
         &self,
         module: &ParsedModule,
+        file: &SiteFile,
         stdlib: StdlibRange,
         cache: &mut RootCache,
     ) -> Vec<SiteOutcome> {
@@ -357,7 +420,7 @@ impl Resolver<'_> {
                 &Site {
                     full_module: &import.module,
                     imported: &imported,
-                    file: &module.path,
+                    file,
                     line: Some(import.line),
                     reference: None,
                     context: import.context,
@@ -376,7 +439,7 @@ impl Resolver<'_> {
                 &Site {
                     full_module: &dynamic.module,
                     imported: &dynamic.module,
-                    file: &module.path,
+                    file,
                     line: Some(dynamic.line),
                     reference: None,
                     context: ImportContext::Runtime,
@@ -399,7 +462,7 @@ impl Resolver<'_> {
                 &Site {
                     full_module: &plugin.module,
                     imported: &plugin.module,
-                    file: &module.path,
+                    file,
                     line: Some(plugin.line),
                     reference: Some("pytest_plugins"),
                     context: plugin_context,
@@ -429,11 +492,14 @@ impl Resolver<'_> {
             .filter(|file| file.context == FileContext::Runtime)
             .map(|file| file.path.as_str())
             .collect();
-        let per_module =
-            crate::parallel::map_in_order_with(&parse.modules, RootCache::new, |cache, module| {
+        let per_module = crate::parallel::map_in_order_with(
+            &parse.modules,
+            RootCache::default,
+            |cache, module| {
                 if !runtime.contains(module.path.as_str()) {
                     return Vec::new();
                 }
+                let file = self.site_file(&module.path);
                 module
                     .module_refs
                     .iter()
@@ -443,7 +509,7 @@ impl Resolver<'_> {
                             &Site {
                                 full_module: name,
                                 imported: name,
-                                file: &module.path,
+                                file: &file,
                                 line: Some(reference.line),
                                 reference: None,
                                 context: ImportContext::Runtime,
@@ -460,8 +526,16 @@ impl Resolver<'_> {
                         (import.origin == ModuleOrigin::ThirdParty).then_some(import)
                     })
                     .collect()
-            });
+            },
+        );
         per_module.into_iter().flatten().collect()
+    }
+
+    fn site_file(&self, path: &str) -> SiteFile {
+        SiteFile {
+            path: Arc::from(path),
+            member: self.owners.owner(path),
+        }
     }
 
     fn plugin_context(&self, module: &ParsedModule) -> ImportContext {
@@ -503,17 +577,21 @@ impl Resolver<'_> {
             manifest,
             ref declared,
             local,
-            ref owners,
             import_map,
             venv_imports,
             scoped,
             pytest_paths,
             local_modules,
             indexed_roots,
+            ..
         } = *self;
 
-        let root_name = import_root(full_module).to_owned();
-        let workspace_member = owners.owner(file);
+        let root_name = cache.intern(import_root(full_module));
+        let SiteFile {
+            path: ref shared_file,
+            member: ref workspace_member,
+        } = *file;
+        let file: &str = shared_file;
         let member = workspace_member.as_deref();
         let pick =
             |candidates: &[String]| site_candidate(candidates, file, member, scoped, declared);
@@ -531,26 +609,29 @@ impl Resolver<'_> {
                 confidence: ResolveConfidence::Certain,
             }
         } else {
-            let (core, raised) = cache.entry((stdlib, root_name.clone())).or_insert_with(|| {
-                let mut raised = Vec::new();
-                let core = resolve_import_root(
-                    &root_name,
-                    stdlib,
-                    sources,
-                    manifest,
-                    declared,
-                    local,
-                    import_map,
-                    venv_imports,
-                    &mut raised,
-                );
-                (core, raised)
-            });
+            let (core, raised) = cache
+                .entries
+                .entry((stdlib, Arc::clone(&root_name)))
+                .or_insert_with(|| {
+                    let mut raised = Vec::new();
+                    let core = resolve_import_root(
+                        &root_name,
+                        stdlib,
+                        sources,
+                        manifest,
+                        declared,
+                        local,
+                        import_map,
+                        venv_imports,
+                        &mut raised,
+                    );
+                    (core, raised)
+                });
             // Logged on every lookup, hit or miss: which site computes the entry
             // depends on the worker schedule; the first in module order reports.
             if !raised.is_empty() {
                 warnings.push(SiteWarning::Root(
-                    (stdlib, root_name.clone()),
+                    (stdlib, Arc::clone(&root_name)),
                     raised.clone(),
                 ));
             }
@@ -603,7 +684,7 @@ impl Resolver<'_> {
                 // is a namespace or script-sibling fallback (#589), or a module in a
                 // directory the file's `sys.path` edits add (#719).
                 .or_else(|| {
-                    (indexed_roots.contains(&root_name)
+                    (indexed_roots.contains(&*root_name)
                         || pytest_paths.provides_fallback(file, &root_name))
                     .then_some(RootResolution {
                         origin: ModuleOrigin::FirstParty,
@@ -631,7 +712,7 @@ impl Resolver<'_> {
 
         if core.origin == ModuleOrigin::Unknown {
             warnings.push(SiteWarning::Site(ResolveWarning::UnresolvedImport {
-                import: root_name.clone(),
+                import: root_name.to_string(),
                 file: file.to_owned(),
                 line,
                 reference: reference.map(str::to_owned),
@@ -648,8 +729,8 @@ impl Resolver<'_> {
         ResolvedImport {
             import_root: root_name,
             full_module: full_module.to_owned(),
-            file: file.to_owned(),
-            workspace_member,
+            file: Arc::clone(shared_file),
+            workspace_member: workspace_member.clone(),
             line,
             reference: reference.map(str::to_owned),
             context,
@@ -708,7 +789,7 @@ fn resolve_import_root(
         if backport.is_some() {
             return RootResolution {
                 origin: ModuleOrigin::ThirdParty,
-                distribution: backport,
+                distribution: backport.map(Arc::from),
                 confidence: ResolveConfidence::Certain,
             };
         }
@@ -773,7 +854,7 @@ fn declared_match(distribution: String, declared: &DeclaredNames<'_>) -> Option<
         .declares_or_locks(&distribution)
         .then_some(RootResolution {
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some(distribution),
+            distribution: Some(distribution.into()),
             confidence: ResolveConfidence::Likely,
         })
 }
@@ -813,7 +894,7 @@ fn declared_portion(
         || declared.declares(&distribution))
     .then_some(RootResolution {
         origin: ModuleOrigin::ThirdParty,
-        distribution: Some(distribution),
+        distribution: Some(distribution.into()),
         confidence: ResolveConfidence::Likely,
     })
 }
@@ -824,7 +905,7 @@ fn root_loose_match(root_name: &str, declared: &DeclaredNames<'_>) -> Option<Roo
     let locked = declared.locked.keys();
     loose_declared_match(
         &normalize_distribution_name(root_name),
-        declared.dependencies.iter().chain(locked).cloned(),
+        declared.dependencies.iter().chain(locked),
     )
 }
 
@@ -841,7 +922,7 @@ fn contextless_requirement_match(
     let confidence = if declared.contextless.contains(&distribution) {
         ResolveConfidence::Likely
     } else {
-        loose_declared_match(&distribution, declared.contextless.iter().cloned())?.confidence
+        loose_declared_match(&distribution, &declared.contextless)?.confidence
     };
     Some(RootResolution {
         origin: ModuleOrigin::ThirdParty,
@@ -898,11 +979,11 @@ fn scoped_declaration(
                 .any(|name| *name == distribution)
                 .then_some(RootResolution {
                     origin: ModuleOrigin::ThirdParty,
-                    distribution: Some(distribution),
+                    distribution: Some(distribution.into()),
                     confidence: ResolveConfidence::Likely,
                 })
         },
-        ScopedMatch::Loose => loose_declared_match(&distribution, declared().cloned()),
+        ScopedMatch::Loose => loose_declared_match(&distribution, declared()),
     }
 }
 
@@ -910,17 +991,17 @@ fn scoped_declaration(
 /// `py` / `python` affix (`markdown-it-py` for `markdown_it`, `odfpy` for
 /// `odf`, `pydocket` for `docket`). Weaker than an exact match, so `Maybe`;
 /// limited to declared or locked names so a local module never passes as one
-/// (#361).
-fn loose_declared_match(
+/// (#361). Borrows the names: an unresolved root scans every one (#1329).
+fn loose_declared_match<S: AsRef<str>>(
     distribution: &str,
-    declared: impl IntoIterator<Item = String>,
+    declared: impl IntoIterator<Item = S>,
 ) -> Option<RootResolution> {
     declared
         .into_iter()
-        .find(|name| affix_stripped(name).any(|stripped| stripped == distribution))
+        .find(|name| affix_stripped(name.as_ref()).any(|stripped| stripped == distribution))
         .map(|name| RootResolution {
             origin: ModuleOrigin::ThirdParty,
-            distribution: Some(name),
+            distribution: Some(name.as_ref().into()),
             confidence: ResolveConfidence::Maybe,
         })
 }
@@ -968,7 +1049,7 @@ impl<'a> MemberOwners<'a> {
     }
 
     /// The member whose directory is the longest whole-directory prefix of `file`.
-    fn owner(&self, file: &str) -> Option<String> {
+    fn owner(&self, file: &str) -> Option<Arc<str>> {
         if self.0.is_empty() {
             return None;
         }
@@ -976,7 +1057,7 @@ impl<'a> MemberOwners<'a> {
         let mut dir = normalized.as_str();
         loop {
             if let Some(id) = self.0.get(dir) {
-                return Some((*id).to_owned());
+                return Some(Arc::from(*id));
             }
             dir = &dir[..dir.rfind('/')?];
         }
@@ -1009,7 +1090,7 @@ fn site_candidate(
     member: Option<&str>,
     scoped: &ScopedDeclarations,
     declared: &DeclaredNames<'_>,
-) -> Option<String> {
+) -> Option<Arc<str>> {
     let in_member = |sets: &BTreeMap<String, BTreeSet<String>>, name: &str| {
         member
             .and_then(|member| sets.get(member))
@@ -1031,7 +1112,7 @@ fn site_candidate(
         .iter()
         .find_map(|prefers| candidates.iter().find(|name| prefers(name)))
         .or_else(|| candidates.first())
-        .cloned()
+        .map(|name| Arc::from(name.as_str()))
 }
 
 fn root_resolution_from_candidates(
@@ -1062,7 +1143,7 @@ fn root_resolution_from_candidates(
     };
     RootResolution {
         origin: ModuleOrigin::ThirdParty,
-        distribution: candidates.first().cloned(),
+        distribution: candidates.first().map(|name| Arc::from(name.as_str())),
         confidence,
     }
 }
@@ -1115,7 +1196,7 @@ mod tests {
             owner("packages\\api\\plugins\\x.py").as_deref(),
             Some("plugins")
         );
-        assert_eq!(owner("packages/api"), Some("api".to_owned()));
+        assert_eq!(owner("packages/api").as_deref(), Some("api"));
         assert_eq!(owner("packages/api2/app.py"), None);
         assert_eq!(owner("src/app.py"), None);
     }
@@ -1143,7 +1224,7 @@ mod tests {
         assert_eq!(found.confidence, ResolveConfidence::Maybe);
         assert_eq!(
             loose_declared_match("odf", declared()).and_then(|r| r.distribution),
-            Some("odfpy".to_owned())
+            Some("odfpy".into())
         );
         assert_eq!(loose_declared_match("docket", declared()), None);
         assert_eq!(loose_declared_match("markdown-it-py", declared()), None);
@@ -1204,7 +1285,7 @@ mod tests {
                     .find(|name| affix_stripped(name).any(|core| core == root))
                     .cloned();
                 let found = loose_declared_match(&root, declared);
-                prop_assert_eq!(found.as_ref().and_then(|r| r.distribution.clone()), expected);
+                prop_assert_eq!(found.as_ref().and_then(|r| r.distribution.as_deref().map(str::to_owned)), expected);
                 if let Some(found) = found {
                     prop_assert_eq!(found.confidence, ResolveConfidence::Maybe);
                     prop_assert_ne!(found.distribution.as_deref(), Some(root.as_str()));

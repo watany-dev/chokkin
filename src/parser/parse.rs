@@ -19,8 +19,11 @@ use super::depth::{MAX_AST_DEPTH, Unwalkable, parse_walkable_module};
 use super::encoding::decode_python_source;
 use super::error::ParseError;
 use super::ignores::extract_ignores_with;
+use super::ipython::PythonCell;
 use super::lines::LineIndex;
-use super::types::{ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule};
+use super::types::{
+    NotebookCommand, NotebookInstall, ParseDiagnostic, ParseSeverity, ParseSummary, ParsedModule,
+};
 use super::visit::ModuleVisitor;
 
 /// Parse one `.py` file under `root` (static only; never executes Python).
@@ -143,13 +146,18 @@ fn parse_notebook_file(
     // IPython syntax fails the joined cells as a whole, so read them one by
     // one, as IPython does (#962).
     if parsed.skipped
-        && let Some((source, unread)) = ipython_cells(&notebook)
+        && let Some(cells) = ipython_cells(&notebook)
     {
-        let reread = parse_python_source(path, &source, layout, file_context, target);
+        let reread = parse_python_source(path, &cells.source, layout, file_context, target);
         if !reread.skipped {
             parsed = reread;
-            parsed.has_unread_cells |= !unread.is_empty();
-            parsed.diagnostics.extend(unread);
+            parsed.has_unread_cells |= !cells.unread.is_empty();
+            parsed.diagnostics.extend(cells.unread);
+            parsed
+                .diagnostics
+                .extend(cells.installs.iter().filter_map(unread_install_diagnostic));
+            parsed.notebook_installs = cells.installs;
+            parsed.notebook_commands = cells.commands;
         }
     }
     // A skipped notebook is unknown as a whole, so a dropped cell adds nothing.
@@ -186,14 +194,31 @@ impl NotebookSource {
     }
 }
 
+/// The code cells read one by one.
+struct IpythonCells {
+    /// The cells' Python, on the notebook's lines.
+    source: String,
+    /// One warning per cell that was not read.
+    unread: Vec<ParseDiagnostic>,
+    /// What the read cells run in a shell or with `%run` (#992).
+    commands: Vec<NotebookCommand>,
+    /// What the read cells install (#991).
+    installs: Vec<NotebookInstall>,
+}
+
 /// Read each code cell on its own, rewriting its `IPython` syntax into Python
 /// when it does not parse as it is. A cell that still does not parse is
 /// blanked, keeping the lines of the cells after it, and warned about with
-/// one warning per cell. `None` when no cell could be read, which leaves the
+/// one warning per cell; what it runs or installs is not kept, as nothing
+/// else of it is. `None` when no cell could be read, which leaves the
 /// notebook skipped.
-fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnostic>)> {
+fn ipython_cells(notebook: &NotebookSource) -> Option<IpythonCells> {
+    let extensions =
+        super::ipython::loads_extension(notebook.cells.iter().flatten().map(String::as_str));
     let mut source = String::new();
     let mut unread = Vec::new();
+    let mut commands = Vec::new();
+    let mut installs = Vec::new();
     let mut read_any = false;
     let mut first_line = 1;
     for cell in &notebook.cells {
@@ -205,14 +230,32 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnost
         // Python ends a line at a lone `\r` too; `lines()` does not.
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let lines = text.lines().count();
-        match python_cell(&text) {
-            Ok(python) => {
+        let line_of = |line: usize| u32::try_from(first_line + line).unwrap_or(u32::MAX);
+        match python_cell(&text, extensions) {
+            Ok(cell) => {
                 read_any = true;
-                source.push_str(&python);
+                source.push_str(&cell.python);
+                installs.extend(
+                    cell.installs
+                        .into_iter()
+                        .map(|(line, install)| NotebookInstall {
+                            line: line_of(line),
+                            argument: install.argument,
+                            distribution: install.distribution,
+                        }),
+                );
+                commands.extend(
+                    cell.commands
+                        .into_iter()
+                        .map(|(line, command)| NotebookCommand {
+                            command,
+                            line: line_of(line),
+                        }),
+                );
             },
             Err((line, error)) => {
                 unread.push(ParseDiagnostic {
-                    line: u32::try_from(first_line + line).unwrap_or(u32::MAX),
+                    line: line_of(line),
                     message: format!("code cell not read: {error}"),
                     severity: ParseSeverity::Warning,
                 });
@@ -222,19 +265,41 @@ fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnost
         source.push('\n');
         first_line += lines + 1;
     }
-    read_any.then_some((source, unread))
+    read_any.then_some(IpythonCells {
+        source,
+        unread,
+        commands,
+        installs,
+    })
+}
+
+/// An install argument not read: the notebook's missing-dependency findings
+/// are lowered for it (#991).
+fn unread_install_diagnostic(install: &NotebookInstall) -> Option<ParseDiagnostic> {
+    install.distribution.is_none().then(|| ParseDiagnostic {
+        line: install.line,
+        message: format!(
+            "install argument `{}` is not read, so the notebook's missing-dependency findings are info notes",
+            install.argument
+        ),
+        severity: ParseSeverity::Warning,
+    })
 }
 
 /// `text` as Python, or the 0-based line of the cell and what failed there.
-fn python_cell(text: &str) -> Result<String, (usize, String)> {
+fn python_cell(text: &str, extensions: bool) -> Result<PythonCell, (usize, String)> {
     if parse_walkable_module(text).is_ok() {
-        return Ok(text.to_owned());
+        return Ok(PythonCell {
+            python: text.to_owned(),
+            commands: Vec::new(),
+            installs: Vec::new(),
+        });
     }
-    let python = super::ipython::cell_to_python(text)?;
-    match parse_walkable_module(&python) {
-        Ok(_) => Ok(python),
+    let cell = super::ipython::cell_to_python(text, extensions)?;
+    match parse_walkable_module(&cell.python) {
+        Ok(_) => Ok(cell),
         Err(unwalkable) => {
-            let diagnostic = unwalkable_diagnostic(&LineIndex::new(&python), &unwalkable);
+            let diagnostic = unwalkable_diagnostic(&LineIndex::new(&cell.python), &unwalkable);
             let line = usize::try_from(diagnostic.line)
                 .unwrap_or(1)
                 .saturating_sub(1);
@@ -571,7 +636,7 @@ fn provisional_parse_cache_context(
         config_hash: stable_list_hash(&sources.effective_globs),
         manifest_hash: sources.layout.cache_key_hash(),
         target_version: target.as_str().to_owned(),
-        unit_version: "parse-v57".to_owned(),
+        unit_version: "parse-v58".to_owned(),
     }
 }
 
@@ -658,33 +723,113 @@ mod tests {
         LayoutInfo::default()
     }
 
+    /// The read cells' source and the warnings of those not read.
+    fn ipython_cells(notebook: &NotebookSource) -> Option<(String, Vec<ParseDiagnostic>)> {
+        super::ipython_cells(notebook).map(|cells| (cells.source, cells.unread))
+    }
+
+    #[test]
+    fn a_stub_parses_to_an_empty_module_at_its_path() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = write_temp_py(temp.path(), "x.pyi", "import os\n");
+        let file = DiscoveredFile {
+            path: "x.pyi".to_owned(),
+            kind: FileKind::Stub,
+            context: FileContext::Runtime,
+        };
+        let parsed = parse_discovered_file(
+            &root,
+            &file,
+            &empty_layout(),
+            &TargetVersion::default_py311(),
+        )
+        .expect("parse");
+        assert_eq!(
+            parsed,
+            ParsedModule {
+                path: "x.pyi".to_owned(),
+                ..ParsedModule::default()
+            }
+        );
+    }
+
     #[test]
     fn ipython_cells_keep_every_cell_on_its_notebook_lines() {
         let notebook = NotebookSource {
             cells: vec![
                 Some("!ls\r\nimport os\r".to_owned()),
                 None,
-                Some("x = 1\r%run helper.py\n".to_owned()),
+                Some("x = 1\r%run $helper\n!python b.py\n".to_owned()),
+                Some("%run a.py\n".to_owned()),
             ],
         };
-        let (source, unread) = ipython_cells(&notebook).expect("a cell is read");
-        assert_eq!(source, "pass\nimport os\n\n\n\n\n\n");
+        let cells = super::ipython_cells(&notebook).expect("a cell is read");
+        assert_eq!(cells.source, "pass\nimport os\n\n\n\n\n\n\npass\n\n");
         assert_eq!(
-            unread,
+            cells.unread,
             [ParseDiagnostic {
                 line: 6,
-                message: "code cell not read: line magic `%run` is not recognized".to_owned(),
+                message: "code cell not read: line magic `%run` runs a computed name `$helper`"
+                    .to_owned(),
                 severity: ParseSeverity::Warning,
             }]
+        );
+        // An unread cell's commands are not run either.
+        assert_eq!(
+            cells.commands,
+            [
+                NotebookCommand {
+                    command: "ls".to_owned(),
+                    line: 1,
+                },
+                NotebookCommand {
+                    command: "python a.py".to_owned(),
+                    line: 9,
+                },
+            ]
         );
     }
 
     #[test]
     fn ipython_cells_with_no_readable_cell_leave_the_notebook_skipped() {
         let notebook = NotebookSource {
-            cells: vec![Some("%run helper.py\n".to_owned()), None],
+            cells: vec![Some("%run $helper\n".to_owned()), None],
         };
-        assert_eq!(ipython_cells(&notebook), None);
+        assert!(ipython_cells(&notebook).is_none());
+    }
+
+    /// Install commands keep their notebook line, and a cell not read keeps
+    /// nothing it installs (#991).
+    #[test]
+    fn ipython_cells_collect_what_read_cells_install() {
+        let notebook = NotebookSource {
+            cells: vec![
+                Some("%pip install -q python-dotenv -r req.txt\nimport dotenv\n".to_owned()),
+                Some("import os\n!{sys.executable} -m pip install rich\n".to_owned()),
+                Some("!pip install pandas\n%run $helper\n".to_owned()),
+            ],
+        };
+        let cells = super::ipython_cells(&notebook).expect("a cell is read");
+        let install = |line, argument: &str, distribution: Option<&str>| NotebookInstall {
+            line,
+            argument: argument.to_owned(),
+            distribution: distribution.map(str::to_owned),
+        };
+        assert_eq!(
+            cells.installs,
+            [
+                install(1, "python-dotenv", Some("python-dotenv")),
+                install(1, "-r req.txt", None),
+                install(5, "rich", Some("rich")),
+            ]
+        );
+        assert_eq!(
+            unread_install_diagnostic(&cells.installs[1]).map(|diagnostic| diagnostic.message),
+            Some(
+                "install argument `-r req.txt` is not read, so the notebook's missing-dependency findings are info notes"
+                    .to_owned()
+            )
+        );
     }
 
     #[test]

@@ -17,7 +17,7 @@ use chokkin::internals::{
     load_config, parse_project_sources_with_cache, resolve_imports_for_analysis,
     resolve_target_version,
 };
-use chokkin::internals::{DependencyRuleContext, RuleContext};
+use chokkin::internals::{DependencyRuleContext, RuleCache, RuleContext};
 use chokkin::{RuntimeOverrides, probe_project};
 
 fn fixture(name: &str) -> PathBuf {
@@ -150,6 +150,7 @@ fn reconcile_inputs(inputs: &DepsInputs, strict: bool) -> chokkin::internals::De
                 sources: &inputs.sources,
                 parse: &inputs.parse,
                 surface: inputs.surface.as_ref(),
+                cache: &RuleCache::default(),
             },
             config: &inputs.config,
             strict,

@@ -18,7 +18,7 @@ use chokkin::internals::{
     emit_issues, extract_manifest, extract_plugin_hints_with_parse, load_config,
     parse_project_sources_with_cache, resolve_imports_for_analysis, resolve_target_version,
 };
-use chokkin::internals::{DependencyRuleContext, RuleContext};
+use chokkin::internals::{DependencyRuleContext, RuleCache, RuleContext};
 use chokkin::{ExitStatus, RuntimeOverrides};
 
 fn fixture(name: &str) -> PathBuf {
@@ -100,6 +100,7 @@ fn load_emit_with_strict_deps(path: &Path, strict_deps: bool) -> EmitInputs {
         sources: &sources,
         parse: &parse,
         surface: surface.as_ref(),
+        cache: &RuleCache::default(),
     };
     let deps = reconcile_with_context(
         &DependencyRuleContext {

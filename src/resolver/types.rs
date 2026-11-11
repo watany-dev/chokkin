@@ -22,14 +22,15 @@ pub enum ResolveConfidence {
 /// One resolved import reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedImport {
-    /// Top-level import name (`yaml` from `yaml.loader`).
-    pub import_root: String,
+    /// Top-level import name (`yaml` from `yaml.loader`), shared by every
+    /// site of the root (#1329).
+    pub import_root: Arc<str>,
     /// Full dotted module from the import statement.
     pub full_module: String,
-    /// Source file path.
-    pub file: String,
+    /// Source file path, shared by every site in the file (#1329).
+    pub file: Arc<str>,
     /// Workspace member id that owns `file`, when the import comes from a member.
-    pub workspace_member: Option<String>,
+    pub workspace_member: Option<Arc<str>>,
     /// 1-based line number; `None` when a plugin reference has no position.
     pub line: Option<u32>,
     /// Config setting that names the module (`extensions`, `INSTALLED_APPS`,
@@ -49,7 +50,7 @@ pub struct ResolvedImport {
     /// Classification origin.
     pub origin: ModuleOrigin,
     /// Normalized PEP 508 distribution name when third-party.
-    pub distribution: Option<String>,
+    pub distribution: Option<Arc<str>>,
     /// Resolution confidence.
     pub confidence: ResolveConfidence,
 }

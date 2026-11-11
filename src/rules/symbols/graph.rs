@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
+use crate::sources::{LayoutInfo, SymlinkModules};
 
-use super::public::star_imports;
+use super::public::StarChain;
 
 /// Rules-local symbol identifier (distinct from graph `SymbolId` if added later).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -76,9 +77,34 @@ pub(super) fn build_registry(
 /// each time is quadratic in project size; this index is built in one pass
 /// over the parsed modules and resolves each lookup in O(1). The value marks
 /// whether the symbol was referenced from a module other than its own.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct ReferenceIndex {
     entries: FxHashMap<SymbolId, bool>,
+    opaque: OpaqueStars,
+}
+
+/// Star-imported modules missing from the indexed ones, and the star
+/// imports above them. Such a module may bind any name, so recording each
+/// referenced name for each of them would grow as their product (#1049):
+/// whether a name reaches a referenced module from one is asked instead.
+#[derive(Debug, Clone, Default)]
+struct OpaqueStars {
+    modules: FxHashSet<Box<str>>,
+    chain: StarChain<Box<str>, Exports>,
+}
+
+impl OpaqueStars {
+    /// Whether `target` names an opaque module whose `name` the star imports
+    /// carry to a module where `entries` has it referenced. Each such use is
+    /// external: an opaque module imports nothing the index read.
+    fn reaches_referenced(&self, target: &SymbolId, entries: &FxHashMap<SymbolId, bool>) -> bool {
+        self.modules.contains(target.module.as_str())
+            && self
+                .chain
+                .reaches(&target.module, &target.name, true, |module| {
+                    entries.contains_key(&SymbolId::new(module, target.name.as_str()))
+                })
+    }
 }
 
 impl ReferenceIndex {
@@ -89,7 +115,12 @@ impl ReferenceIndex {
     /// Modules without a module name (e.g. `tests/` without `__init__.py`)
     /// still count as importers: their path never equals a module name, so
     /// every reference they make is external.
-    pub(super) fn build(modules: &[&ParsedModule], module_names: &HashMap<&str, String>) -> Self {
+    pub(super) fn build(
+        modules: &[&ParsedModule],
+        module_names: &HashMap<&str, String>,
+        layout: &LayoutInfo,
+    ) -> Self {
+        let symlinks = SymlinkModules::new(layout);
         let known_modules: FxHashSet<&str> = module_names.values().map(String::as_str).collect();
         let stars = StarImports::build(modules, module_names);
 
@@ -97,10 +128,22 @@ impl ReferenceIndex {
             modules,
             || (Self::default(), StarCache::new()),
             |(index, cache), _, module| {
-                index.add_module(module, module_names, &known_modules, &stars, cache);
+                index.add_module(
+                    module,
+                    module_names,
+                    &known_modules,
+                    &symlinks,
+                    &stars,
+                    cache,
+                );
             },
         );
-        Self::merge(partials.into_iter().map(|(index, _)| index).collect())
+        let mut index = Self::merge(partials.into_iter().map(|(index, _)| index).collect());
+        index.opaque = OpaqueStars {
+            modules: stars.opaque.iter().map(|&module| module.into()).collect(),
+            chain: stars.chain.above(&stars.opaque),
+        };
+        index
     }
 
     /// Union of indexes built apart by workers. A mark only ORs into its
@@ -127,6 +170,7 @@ impl ReferenceIndex {
         module: &'m ParsedModule,
         module_names: &'m HashMap<&str, String>,
         known_modules: &FxHashSet<&'m str>,
+        symlinks: &SymlinkModules,
         stars: &StarImports<'a>,
         cache: &mut StarCache<'a>,
     ) {
@@ -145,6 +189,8 @@ impl ReferenceIndex {
         let mut recorded: FxHashSet<(&str, &str)> = FxHashSet::default();
         let mut record = |target_module: &'m str, name: &'m str| {
             if recorded.insert((target_module, name)) {
+                // A module named through a symlink is the one at its target.
+                let target_module = symlinks.canonical(target_module);
                 self.record(importer, SymbolId::new(target_module, name), stars, cache);
             }
         };
@@ -172,7 +218,7 @@ impl ReferenceIndex {
                     submodule.push_str(package);
                     submodule.push('.');
                     submodule.push_str(name);
-                    if let Some(&submodule) = known_modules.get(submodule.as_str()) {
+                    if let Some(&submodule) = known_modules.get(&*symlinks.canonical(&submodule)) {
                         for &name in names_by_receiver.get(binding).into_iter().flatten() {
                             record(submodule, name);
                         }
@@ -235,32 +281,39 @@ impl ReferenceIndex {
 
     /// Returns `true` when `target` is referenced from any module.
     pub(super) fn is_referenced(&self, target: &SymbolId) -> bool {
-        self.entries.contains_key(target)
+        self.lookup(target).is_some()
     }
 
     /// Returns `true` when `target` is referenced from a different module.
     pub(super) fn is_externally_referenced(&self, target: &SymbolId) -> bool {
-        matches!(self.entries.get(target), Some(true))
+        self.lookup(target) == Some(true)
+    }
+
+    /// Whether `target` is referenced, and whether from a different module.
+    fn lookup(&self, target: &SymbolId) -> Option<bool> {
+        let direct = self.entries.get(target).copied();
+        if direct != Some(true) && self.opaque.reaches_referenced(target, &self.entries) {
+            return Some(true);
+        }
+        direct
     }
 }
 
 /// `from m import *` edges between named modules.
 #[derive(Default)]
 struct StarImports<'a> {
-    /// Names each star-importing module defines itself, shadowing
-    /// star-imported ones.
-    defines: FxHashMap<&'a str, FxHashSet<&'a str>>,
-    /// The modules that star-import each module.
-    parents: FxHashMap<&'a str, Vec<&'a str>>,
+    chain: StarChain<&'a str, &'a Exports>,
+    /// The modules each module star-imports: [`StarChain::parents`] turned
+    /// around.
+    children: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules that define or import each name. A forwarded
     /// reference can only meet a symbol or a re-export there, so the
     /// packages a name merely passes through are never recorded (#803).
     binders: FxHashMap<&'a str, Vec<&'a str>>,
     /// Star-imported modules missing from the parsed ones, such as reachable
-    /// modules left out of the `--production` evidence: they may bind any name.
+    /// modules left out of the `--production` evidence: they may bind any
+    /// name, so [`ReferenceIndex`] asks about them when queried (#1049).
     opaque: Vec<&'a str>,
-    /// `__all__` of the modules that bind one.
-    exports: FxHashMap<&'a str, &'a Exports>,
 }
 
 /// [`StarImports::sources`] per symbol, kept by each indexing worker.
@@ -268,35 +321,21 @@ type StarCache<'a> = HashMap<SymbolId, Vec<&'a str>>;
 
 impl<'a> StarImports<'a> {
     fn build(modules: &[&'a ParsedModule], module_names: &'a HashMap<&str, String>) -> Self {
-        let mut stars = Self::default();
-        for module in modules {
-            let Some(name) = module_names.get(module.path.as_str()) else {
-                continue;
-            };
-            let targets: Vec<_> = star_imports(module)
-                .filter(|target| target != name)
-                .collect();
-            for &target in &targets {
-                stars.parents.entry(target).or_default().push(name.as_str());
-            }
-            if !targets.is_empty() {
-                stars.defines.entry(name.as_str()).or_default().extend(
-                    module
-                        .symbols
-                        .iter()
-                        .filter(|symbol| !symbol.in_type_checking)
-                        .map(|symbol| symbol.name.as_str()),
-                );
-            }
-            stars.exports.insert(name.as_str(), &module.exports);
-        }
+        let mut stars = Self {
+            chain: StarChain::build(modules.iter().filter_map(|&module| {
+                module_names
+                    .get(module.path.as_str())
+                    .map(|name| (name.as_str(), module))
+            })),
+            ..Self::default()
+        };
         let mut parsed = FxHashSet::default();
         for module in modules {
             let Some(name) = module_names.get(module.path.as_str()) else {
                 continue;
             };
             parsed.insert(name.as_str());
-            if !stars.parents.contains_key(name.as_str()) {
+            if !stars.chain.parents.contains_key(name.as_str()) {
                 continue;
             }
             for bound in bound_names(module) {
@@ -304,71 +343,87 @@ impl<'a> StarImports<'a> {
             }
         }
         stars.opaque = stars
+            .chain
             .parents
             .keys()
             .copied()
             .filter(|module| !parsed.contains(module))
             .collect();
+        for (&child, parents) in &stars.chain.parents {
+            for &parent in parents {
+                stars.children.entry(parent).or_default().push(child);
+            }
+        }
         stars
     }
 
-    /// Cached per symbol: a module that imports a package in many function
-    /// bodies records each `pkg.name` access once per import.
+    /// The parsed modules whose binding of `target.name` the star imports
+    /// carry into `target.module`. Cached per symbol: a module that imports
+    /// a package in many function bodies records each `pkg.name` access once
+    /// per import.
+    ///
+    /// The same as [`StarChain::reaches`] from each binder, in two walks
+    /// shared by all of them (#810): up from every binder to the modules the
+    /// name climbs to, then down from `target.module` through those. Binders
+    /// of a common name share their ancestors, which one walk per binder
+    /// would climb again each time.
     fn sources<'c>(&self, target: &SymbolId, cache: &'c mut StarCache<'a>) -> &'c [&'a str] {
-        if !self.defines.contains_key(target.module.as_str()) {
+        if !self.chain.defines.contains_key(target.module.as_str()) {
             return &[];
         }
         if !cache.contains_key(target) {
-            let sources = self
-                .binders
-                .get(target.name.as_str())
-                .into_iter()
-                .flatten()
-                .chain(&self.opaque)
-                .copied()
-                .filter(|&binder| self.reaches(&target.module, binder, &target.name))
-                .collect();
+            let sources = self.climb_down(&target.module, &target.name);
             cache.insert(target.clone(), sources);
         }
         &cache[target]
     }
 
-    /// Whether `module` reaches `name` in `binder` through chained star
-    /// imports. Each hop hands on the names `Exports::may_hand_on` allows, and
-    /// stops at a module defining `name` itself. Walks up from `binder`: a
-    /// name has few binders, while a package can star-import hundreds of
-    /// modules.
-    fn reaches(&self, module: &str, binder: &'a str, name: &str) -> bool {
-        if !self.hands_on(binder, name) {
-            return false;
-        }
-        let mut queue = vec![binder];
-        let mut seen = FxHashSet::from_iter([binder]);
+    fn climb_down(&self, goal: &str, name: &str) -> Vec<&'a str> {
+        let binders = self.binders.get(name).map_or(&[][..], Vec::as_slice);
+        let mut climbed: FxHashSet<&str> = binders
+            .iter()
+            .copied()
+            .filter(|&binder| self.chain.hands_on(binder, name))
+            .collect();
+        let mut queue: Vec<&str> = climbed.iter().copied().collect();
+        let mut arrives = false;
         while let Some(current) = queue.pop() {
-            for &parent in self.parents.get(current).into_iter().flatten() {
-                if self.defines[parent].contains(name) {
+            for &parent in self.chain.parents.get(current).into_iter().flatten() {
+                if self.chain.shadows(parent, name) {
                     continue;
                 }
-                if parent == module {
-                    return true;
-                }
-                if !self.hands_on(parent, name) {
-                    continue;
-                }
-                if seen.insert(parent) {
+                if parent == goal {
+                    arrives = true;
+                } else if self.chain.hands_on(parent, name) && climbed.insert(parent) {
                     queue.push(parent);
                 }
             }
         }
-        false
-    }
-
-    fn hands_on(&self, module: &str, name: &str) -> bool {
-        self.exports
-            .get(module)
+        if !arrives {
+            return Vec::new();
+        }
+        // Every module the walk down meets hands `name` on to `goal`.
+        let mut carried = FxHashSet::default();
+        let mut queue = vec![goal];
+        let mut expanded = FxHashSet::from_iter([goal]);
+        while let Some(current) = queue.pop() {
+            if self.chain.shadows(current, name) {
+                continue;
+            }
+            for &child in self.children.get(current).into_iter().flatten() {
+                if climbed.contains(child) {
+                    carried.insert(child);
+                    if expanded.insert(child) {
+                        queue.push(child);
+                    }
+                }
+            }
+        }
+        binders
+            .iter()
             .copied()
-            .unwrap_or(&Exports::Absent)
-            .may_hand_on(name)
+            .filter(|binder| carried.contains(binder))
+            .collect()
     }
 }
 
@@ -490,7 +545,7 @@ mod tests {
             ),
             (run.path.as_str(), "in_container.run".to_owned()),
         ]);
-        let index = ReferenceIndex::build(&[&utils, &run], &names);
+        let index = ReferenceIndex::build(&[&utils, &run], &names, &LayoutInfo::default());
         assert!(index.is_externally_referenced(&SymbolId::new(
             "in_container.in_container_utils",
             "run_command"
@@ -517,8 +572,66 @@ mod tests {
             (helpers.path.as_str(), "tools.helpers".to_owned()),
             (run.path.as_str(), "tools.run".to_owned()),
         ]);
-        let index = ReferenceIndex::build(&[&helpers, &run], &names);
+        let index = ReferenceIndex::build(&[&helpers, &run], &names, &LayoutInfo::default());
         assert!(index.is_externally_referenced(&SymbolId::new("tools.helpers", "load")));
+    }
+
+    #[test]
+    fn opaque_star_targets_are_asked_about_not_recorded_per_name() {
+        // `pkg` star-imports modules the index did not read, which may bind
+        // any name: one entry per (name, target) pair grows as their
+        // product (#1049).
+        const TARGETS: usize = 40;
+        const NAMES: usize = 40;
+        let package = ParsedModule {
+            path: "pkg/__init__.py".to_owned(),
+            symbols: vec![SymbolDef {
+                name: "n0".to_owned(),
+                kind: crate::parser::SymbolKind::Function,
+                line: 1,
+                is_public: true,
+                decorators: Vec::new(),
+                in_type_checking: false,
+                used_in_module: false,
+            }],
+            imports: (0..TARGETS)
+                .map(|index| {
+                    import(
+                        ImportKind::ImportFrom,
+                        &format!("vendor.m{index}"),
+                        Some("*"),
+                        None,
+                    )
+                })
+                .collect(),
+            ..ParsedModule::default()
+        };
+        let app = ParsedModule {
+            path: "app.py".to_owned(),
+            imports: (0..NAMES)
+                .map(|index| {
+                    import(
+                        ImportKind::ImportFrom,
+                        "pkg",
+                        Some(&format!("n{index}")),
+                        None,
+                    )
+                })
+                .collect(),
+            ..ParsedModule::default()
+        };
+        let names = HashMap::from([
+            (package.path.as_str(), "pkg".to_owned()),
+            (app.path.as_str(), "app".to_owned()),
+        ]);
+        let index = ReferenceIndex::build(&[&package, &app], &names, &LayoutInfo::default());
+        // One entry per name `app` imports, and one per star import.
+        assert_eq!(index.entries.len(), NAMES + TARGETS);
+        assert!(index.is_externally_referenced(&SymbolId::new("vendor.m7", "n3")));
+        assert!(index.is_referenced(&SymbolId::new("vendor.m39", "n39")));
+        // `pkg` defines `n0` itself, which shadows a star-imported one.
+        assert!(!index.is_referenced(&SymbolId::new("vendor.m7", "n0")));
+        assert!(!index.is_referenced(&SymbolId::new("vendor.m7", "unused")));
     }
 
     #[test]
@@ -548,7 +661,7 @@ mod tests {
             .map(|(index, module)| (module.path.as_str(), format!("lib.m{index}")))
             .collect();
         let refs: Vec<&ParsedModule> = modules.iter().collect();
-        let index = ReferenceIndex::build(&refs, &names);
+        let index = ReferenceIndex::build(&refs, &names, &LayoutInfo::default());
         for module in 0..COUNT {
             let name = format!("lib.m{module}");
             let solo = SymbolId::new(&name, "solo");
@@ -567,19 +680,21 @@ mod tests {
                 .iter()
                 .map(|&(name, external)| (SymbolId::new("lib", name), external))
                 .collect(),
+            opaque: OpaqueStars::default(),
         };
         let merged = ReferenceIndex::merge(vec![
             index(&[("shared", true), ("only_small", true)]),
             index(&[("shared", false), ("internal", false), ("external", true)]),
         ]);
         assert_eq!(
-            merged,
+            merged.entries,
             index(&[
                 ("shared", true),
                 ("only_small", true),
                 ("internal", false),
                 ("external", true),
             ])
+            .entries
         );
     }
 
@@ -734,15 +849,27 @@ mod tests {
                 .zip(module_names)
                 .collect();
             let stars = StarImports::build(&refs, &names);
+            let opaque = OpaqueStars {
+                modules: stars.opaque.iter().map(|&module| module.into()).collect(),
+                chain: stars.chain.above(&stars.opaque),
+            };
             let mut cache = StarCache::new();
             let mut sources = Sources::new();
             for index in 0..MODULES {
                 for name in NAMES {
-                    let found = stars
-                        .sources(&SymbolId::new(module_name(index), name), &mut cache)
+                    let target = SymbolId::new(module_name(index), name);
+                    let mut found: BTreeSet<String> = stars
+                        .sources(&target, &mut cache)
                         .iter()
                         .map(|&source| source.to_owned())
                         .collect();
+                    // The index asks about an opaque binder when queried:
+                    // with only `target` referenced, `OPAQUE.name` is
+                    // referenced exactly when it reaches `target`.
+                    let referenced = FxHashMap::from_iter([(target, true)]);
+                    if opaque.reaches_referenced(&SymbolId::new(OPAQUE, name), &referenced) {
+                        found.insert(OPAQUE.to_owned());
+                    }
                     sources.insert((module_name(index), name), found);
                 }
             }
@@ -755,8 +882,9 @@ mod tests {
         /// got itself, filtered by its `__all__`: a known list hands on what
         /// it lists (empty counts as none), a partial or unread one may hand
         /// on anything (#951), and without one the names not starting with
-        /// `_` go. A module's own definitions shadow what it would get.
-        fn namespaces(modules: &[Module]) -> Vec<BTreeSet<(&'static str, usize)>> {
+        /// `_` go. With `shadow`, a module's own definitions shadow what it
+        /// would get.
+        fn namespaces(modules: &[Module], shadow: bool) -> Vec<BTreeSet<(&'static str, usize)>> {
             let hands_on =
                 |target: usize, name: &str| match modules.get(target).map(|module| &module.all) {
                     Some(All::Known(all)) if !all.is_empty() => {
@@ -783,7 +911,7 @@ mod tests {
                     let defines: BTreeSet<_> = module
                         .symbols
                         .iter()
-                        .filter(|&&(_, in_type_checking)| !in_type_checking)
+                        .filter(|&&(_, in_type_checking)| shadow && !in_type_checking)
                         .map(|&(name, _)| NAMES[name])
                         .collect();
                     for &target in module.stars.iter().filter(|&&target| target != index) {
@@ -809,7 +937,7 @@ mod tests {
         /// put `name` from that binder into `pkg`.
         fn reference(modules: &[Module]) -> Sources {
             let mut sources = Sources::new();
-            for (index, pairs) in namespaces(modules).iter().enumerate() {
+            for (index, pairs) in namespaces(modules, true).iter().enumerate() {
                 for name in NAMES {
                     let found = pairs
                         .iter()
@@ -822,9 +950,12 @@ mod tests {
             sources
         }
 
-        /// The registered symbols the star imports put into a public module
-        /// that `PublicApi` leaves out of the library's API.
-        fn unexported_star_symbols(modules: &[Module]) -> Vec<SymbolId> {
+        /// The registered symbols on which `PublicApi` and the star imports
+        /// under Python's rules, without shadowing, disagree: no `__all__`
+        /// lists them, and either the star imports put them into a public
+        /// module that `PublicApi` leaves out of the library's API, or the
+        /// other way round (#960).
+        fn mismatched_star_symbols(modules: &[Module]) -> Vec<SymbolId> {
             let order: Vec<_> = (0..modules.len()).collect();
             let (parsed, module_names) = project(modules, &order);
             let refs: Vec<&ParsedModule> = parsed.iter().collect();
@@ -834,7 +965,7 @@ mod tests {
                 .zip(module_names)
                 .collect();
             let api = PublicApi::build(&refs, &names, ReferenceIndex::default());
-            let namespaces = namespaces(modules);
+            let namespaces = namespaces(modules, false);
             build_registry(&refs, &names)
                 .into_iter()
                 .filter(|entry| {
@@ -842,7 +973,7 @@ mod tests {
                         .iter()
                         .position(|&index| module_name(index) == entry.id.module)
                         .expect("registered module");
-                    namespaces.iter().enumerate().any(|(public, pairs)| {
+                    let reached = namespaces.iter().enumerate().any(|(public, pairs)| {
                         is_public_module(&module_name(public))
                             && pairs.contains(&(
                                 NAMES
@@ -851,7 +982,8 @@ mod tests {
                                     .expect("generated name"),
                                 index,
                             ))
-                    }) && !api.exports_symbol(entry)
+                    });
+                    !entry.in_all && reached != api.exports_symbol(entry)
                 })
                 .map(|entry| entry.id)
                 .collect()
@@ -916,8 +1048,8 @@ mod tests {
             }
 
             #[test]
-            fn star_symbols_in_a_public_module_are_api(modules in modules()) {
-                prop_assert_eq!(unexported_star_symbols(&modules), Vec::<SymbolId>::new());
+            fn star_symbols_in_a_public_module_are_exactly_the_api(modules in modules()) {
+                prop_assert_eq!(mismatched_star_symbols(&modules), Vec::<SymbolId>::new());
             }
         }
 
@@ -976,7 +1108,7 @@ mod tests {
                             "{modules:?}"
                         );
                         assert_eq!(
-                            unexported_star_symbols(&modules),
+                            mismatched_star_symbols(&modules),
                             Vec::<SymbolId>::new(),
                             "{modules:?}"
                         );
