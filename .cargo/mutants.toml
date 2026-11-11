@@ -53,4 +53,7 @@ exclude_re = [
     # A cache without the paths resolution built builds the same ones from
     # the same sources on first use: only the time changes (#1326).
     "replace RuleCache::with_pytest -> Self with Default::default\\(\\)",
+    # The bundle size only picks how many threads decode it; any count
+    # decodes the same lines in order (#1328).
+    "replace / with (\\*|%) in ParseCacheBundle::decode",
 ]
