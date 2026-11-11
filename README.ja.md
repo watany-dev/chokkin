@@ -225,7 +225,7 @@ chokkin は [pre-commit](https://pre-commit.com/) の hook も提供していま
 ```yaml
 repos:
   - repo: https://github.com/watany-dev/chokkin
-    rev: v0.7.13 # hook を含む最初のリリース
+    rev: v0.7.14 # hook を含む最初のリリース
     hooks:
       - id: chokkin
         args: [--baseline, chokkin-baseline.json]
@@ -241,7 +241,7 @@ repos:
         name: chokkin
         entry: chokkin
         language: python
-        additional_dependencies: [chokkin==0.7.12]
+        additional_dependencies: [chokkin==0.7.13]
         args: [--baseline, chokkin-baseline.json]
         pass_filenames: false
         always_run: true

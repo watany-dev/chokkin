@@ -321,7 +321,7 @@ changed and ignores the file list pre-commit passes:
 ```yaml
 repos:
   - repo: https://github.com/watany-dev/chokkin
-    rev: v0.7.13 # the first release with the hook
+    rev: v0.7.14 # the first release with the hook
     hooks:
       - id: chokkin
         args: [--baseline, chokkin-baseline.json]
@@ -340,7 +340,7 @@ repos:
         name: chokkin
         entry: chokkin
         language: python
-        additional_dependencies: [chokkin==0.7.12]
+        additional_dependencies: [chokkin==0.7.13]
         args: [--baseline, chokkin-baseline.json]
         pass_filenames: false
         always_run: true
