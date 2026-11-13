@@ -54,7 +54,7 @@ jobs:
           persist-credentials: false
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       # `--list` only parses the source, so the runner's preinstalled cargo is enough.
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-mutants@27.1.0
       - name: Count mutants and pick the shards
@@ -126,7 +126,7 @@ jobs:
       # start without a target directory, so the cache never serves a mutant
       # build, and the action exports CARGO_INCREMENTAL=0, which turns every
       # mutant's rebuild into a full one. The Makefile sets CARGO_INCREMENTAL=1.
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest@0.9.133
       - name: Mutate

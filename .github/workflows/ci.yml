@@ -69,7 +69,7 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt,clippy
           rustup default "$RUST_TOOLCHAIN"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-machete@0.9.2
       - name: cargo fmt
@@ -109,7 +109,7 @@ jobs:
           rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: needs.changes.outputs.code != 'false'
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         if: needs.changes.outputs.code != 'false'
         with:
           tool: cargo-nextest@0.9.133
@@ -231,7 +231,7 @@ jobs:
           # target/llvm-cov-target, and an exact key hit skips the save, so
           # without a new key the instrumented deps are rebuilt on every run.
           key: llvm-cov
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-llvm-cov@0.9.1
       # Source-based coverage runs the tests in parallel; tarpaulin's ptrace
@@ -294,7 +294,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
         with:
           tool: cargo-deny@0.19.2
       - run: cargo deny check advisories licenses bans sources
@@ -352,7 +352,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           version: 1.24.1
           persona: auditor
@@ -382,7 +382,7 @@ jobs:
           semgrep scan --config p/default --error --sarif --output semgrep.sarif
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: semgrep.sarif
           category: semgrep
