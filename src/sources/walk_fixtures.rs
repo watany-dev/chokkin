@@ -17,6 +17,14 @@ use super::warnings::SourcesWarning;
 
 type Outcome = (Vec<DiscoveredFile>, Vec<SourcesWarning>);
 
+fn sorted_warnings(warnings: &[SourcesWarning]) -> Vec<SourcesWarning> {
+    let mut warnings = warnings.to_vec();
+    // Debug includes the variant and every field; keep the original values
+    // for comparison so duplicates and their contents are still checked.
+    warnings.sort_by_cached_key(|warning| format!("{warning:?}"));
+    warnings
+}
+
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create parent");
@@ -64,7 +72,18 @@ fn walk_roots(roots: &[PathBuf], custom: &[String]) -> Vec<Outcome> {
         for root in roots {
             let shared = walk(&cache, root, custom, respect);
             let fresh = walk(&SourcesCache::default(), root, custom, respect);
-            assert_eq!(shared, fresh, "root {}, respect {respect}", root.display());
+            assert_eq!(
+                shared.0,
+                fresh.0,
+                "root {}, respect {respect}",
+                root.display()
+            );
+            assert_eq!(
+                sorted_warnings(&shared.1),
+                sorted_warnings(&fresh.1),
+                "root {}, respect {respect}",
+                root.display()
+            );
             outcomes.push(shared);
         }
     }
@@ -83,6 +102,25 @@ fn no_warnings(outcomes: &[Outcome]) {
     for outcome in outcomes {
         assert_eq!(outcome.1, [], "{:?}", paths(outcome));
     }
+}
+
+#[test]
+fn sorted_warnings_ignore_order_but_keep_duplicates() {
+    let first = SourcesWarning::GitignoreUnreadable {
+        path: "a/.gitignore".to_owned(),
+    };
+    let second = SourcesWarning::GitignoreUnreadable {
+        path: "b/.gitignore".to_owned(),
+    };
+    let warnings = [first.clone(), second.clone(), first.clone()];
+    assert_eq!(
+        sorted_warnings(&warnings),
+        sorted_warnings(&[second.clone(), first.clone(), first.clone()])
+    );
+    assert_ne!(
+        sorted_warnings(&warnings),
+        sorted_warnings(&[first, second])
+    );
 }
 
 #[test]
@@ -376,7 +414,7 @@ fn unreadable_nested_gitignore_warns_once_per_file() {
         expected.push(gitignore("lib/.gitignore"));
     }
     expected.push(gitignore("pkg/sub/.gitignore"));
-    assert_eq!(outcomes[0].1, expected);
+    assert_eq!(sorted_warnings(&outcomes[0].1), sorted_warnings(&expected));
     assert_eq!(outcomes[1].1, [gitignore("sub/.gitignore")]);
     // Without `respect_gitignore` no ignore file is read.
     no_warnings(&outcomes[2..]);
