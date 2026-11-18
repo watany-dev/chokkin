@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A pre-commit hook (`.pre-commit-hooks.yaml`, id `chokkin`) that analyzes
+  the whole project on every commit.
+
 ### Changed
 - A run no longer waits on freeing its analysis before it exits: the report
   is left to the OS and the intermediate parse and resolution data is freed
