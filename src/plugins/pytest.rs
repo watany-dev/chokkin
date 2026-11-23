@@ -13,7 +13,7 @@ use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
 };
 use super::util::{
-    IniSection, origin_for_file, parse_path_list, pytest_options_from_pyproject, pytest_test_globs,
+    IniSection, origin_for_file, pytest_options_from_pyproject, pytest_test_globs,
     read_ini_section, read_pyproject_table, toml_origin,
 };
 use super::warnings::PluginsWarning;
@@ -56,9 +56,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         }
     }
 
-    // Order is precedence. Only `pytest.ini` warns when empty, because pytest
-    // selects it as the config file even without a `[pytest]` section.
-    for (file, section_name, label, warn_if_empty) in [
+    // Order is precedence. pytest selects `pytest.ini` as the config file even
+    // without a `[pytest]` section, so only it warns when empty, and its
+    // defaults then apply rather than a later file's options.
+    for (file, section_name, label, selected_when_empty) in [
         ("pytest.ini", "pytest", "pytest.ini [pytest]", true),
         ("setup.cfg", "tool:pytest", "setup.cfg [tool:pytest]", false),
     ] {
@@ -71,10 +72,11 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         }
         match read_ini_section(&path, section_name) {
             Ok(section) if section.is_empty() => {
-                if warn_if_empty {
+                if selected_when_empty {
                     warnings.push(PluginsWarning::PytestConfigUnreadable {
                         path: rel_to_root(root, &path),
                     });
+                    break;
                 }
             },
             Ok(section) => {
@@ -86,10 +88,10 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
                     .and_then(|index| u32::try_from(index + 1).ok());
                 config_origin = Some(origin);
                 if let Some(value) = section.get("testpaths") {
-                    testpaths = parse_path_list(value);
+                    testpaths = split_words(value);
                 }
                 if let Some(value) = section.get("python_files") {
-                    python_files = parse_path_list(value);
+                    python_files = split_words(value);
                 }
             },
             Err(error) => {
@@ -269,15 +271,11 @@ fn pyproject_import_settings(path: &Path) -> Option<PytestImportSettings> {
                 .collect(),
             _ => Vec::new(),
         });
-    let words = |key: &str| match options.get(key) {
-        Some(toml::Value::String(text)) => split_words(text),
-        _ => str_list(options, key),
-    };
     Some(PytestImportSettings {
-        pythonpath: words("pythonpath"),
+        pythonpath: str_list(options, "pythonpath"),
         importlib: has_importlib_mode(&addopts),
-        testpaths: words("testpaths"),
-        python_files: words("python_files"),
+        testpaths: str_list(options, "testpaths"),
+        python_files: str_list(options, "python_files"),
         django_settings_module: ds_option(&addopts)
             .or_else(|| {
                 options
@@ -341,11 +339,11 @@ fn has_importlib_mode(addopts: &[String]) -> bool {
     })
 }
 
-/// Read a pytest option given either as a comma/newline-separated string or as
-/// an array of strings.
+/// Read a pytest option given either as a whitespace-separated string, which
+/// pytest splits as it does an INI value, or as an array of strings.
 fn str_list(options: &toml::Table, key: &str) -> Vec<String> {
     match options.get(key) {
-        Some(toml::Value::String(value)) => parse_path_list(value),
+        Some(toml::Value::String(value)) => split_words(value),
         Some(toml::Value::Array(items)) => items
             .iter()
             .filter_map(|item| item.as_str().map(str::to_owned))

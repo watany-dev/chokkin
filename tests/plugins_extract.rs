@@ -258,6 +258,80 @@ fn pytest_setup_cfg_fixture() {
     assert!(entry_paths(contrib).contains(&"tests/test_cfg.py"));
 }
 
+/// pytest splits an INI `testpaths` / `python_files` on whitespace, as it
+/// does a TOML string; a comma is part of the name.
+#[test]
+fn pytest_ini_options_split_on_whitespace() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    for (rel, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\n",
+        ),
+        (
+            "pytest.ini",
+            "[pytest]\ntestpaths = tests/unit\n    tests/e2e\npython_files = check_*.py,x check_*.py\n",
+        ),
+        ("tests/unit/check_a.py", ""),
+        ("tests/e2e/check_b.py", ""),
+        ("tests/other/check_c.py", ""),
+    ] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, text).expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let contrib = pytest_contrib(&hints);
+    let mut paths = entry_paths(contrib);
+    paths.sort_unstable();
+    assert_eq!(paths, ["tests/e2e/check_b.py", "tests/unit/check_a.py"]);
+    assert!(
+        contrib
+            .entries
+            .iter()
+            .all(|entry| entry.origin.label == "pytest.ini [pytest]")
+    );
+    assert!(hints.warnings.is_empty(), "{:?}", hints.warnings);
+}
+
+/// pytest takes `pytest.ini` as its config even without a `[pytest]`
+/// section, so a `setup.cfg` after it is not read (and pytest's defaults
+/// apply).
+#[test]
+fn pytest_ini_without_section_wins_over_setup_cfg() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    for (rel, text) in [
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0\"\n",
+        ),
+        ("pytest.ini", "[other]\nkey = value\n"),
+        ("setup.cfg", "[tool:pytest]\ntestpaths = tests/unit\n"),
+        ("tests/unit/test_a.py", ""),
+        ("tests/e2e/test_b.py", ""),
+    ] {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, text).expect("write file");
+    }
+
+    let hints = extract_at(root);
+    let mut paths = entry_paths(pytest_contrib(&hints));
+    paths.sort_unstable();
+    assert_eq!(paths, ["tests/e2e/test_b.py", "tests/unit/test_a.py"]);
+    assert!(
+        hints.warnings.iter().any(|warning| matches!(
+            warning,
+            PluginsWarning::PytestConfigUnreadable { path } if path == "pytest.ini"
+        )),
+        "{:?}",
+        hints.warnings
+    );
+}
+
 /// References and entries read from TOML, INI and YAML settings carry the
 /// line that names them: each `pytest_plugins` string, `[tool.uvicorn]`
 /// `app`, a uvicorn `project.scripts` command, a pre-commit hook `id`, and

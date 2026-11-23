@@ -291,15 +291,27 @@ pub(super) fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsEr
 }
 
 /// Parse one INI section from file contents.
+///
+/// An indented line after a key continues its value, joined with `\n` as
+/// `configparser` does (`testpaths =` then one path per line).
 pub(super) fn parse_ini_section(contents: &str, section_name: &str) -> IniSection {
     let mut in_section = false;
     let mut section = IniSection::new();
+    let mut last_key: Option<String> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             continue;
         }
+        if line.starts_with([' ', '\t'])
+            && let Some(value) = last_key.as_ref().and_then(|key| section.get_mut(key))
+        {
+            value.push('\n');
+            value.push_str(trimmed);
+            continue;
+        }
+        last_key = None;
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             let name = trimmed[1..trimmed.len() - 1].trim();
             in_section = name == section_name;
@@ -310,6 +322,7 @@ pub(super) fn parse_ini_section(contents: &str, section_name: &str) -> IniSectio
         }
         if let Some((key, value)) = split_ini_assignment(trimmed) {
             section.insert(key.to_owned(), value.to_owned());
+            last_key = Some(key.to_owned());
         }
     }
 
@@ -354,16 +367,6 @@ pub(super) fn uvicorn_tool_from_pyproject(table: &toml::Table) -> Option<&toml::
         .and_then(Value::as_table)
         .and_then(|tool| tool.get("uvicorn"))
         .and_then(Value::as_table)
-}
-
-/// Parse a comma- or newline-separated pytest path list.
-pub(super) fn parse_path_list(value: &str) -> Vec<String> {
-    value
-        .split([',', '\n'])
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 /// Build test file glob patterns from pytest options.
@@ -845,6 +848,18 @@ mod tests {
             section.get("testpaths").map(String::as_str),
             Some("integration")
         );
+    }
+
+    #[test]
+    fn parse_ini_section_joins_continuation_lines() {
+        let contents = "[pytest]\naddopts =\n    -q\n\n    # note\n    --import-mode=importlib\ntestpaths = a\n  b\n[other]\nx = 1\n  y\n";
+        let section = parse_ini_section(contents, "pytest");
+        assert_eq!(
+            section.get("addopts").map(String::as_str),
+            Some("\n-q\n--import-mode=importlib")
+        );
+        assert_eq!(section.get("testpaths").map(String::as_str), Some("a\nb"));
+        assert_eq!(section.len(), 2);
     }
 
     #[test]
