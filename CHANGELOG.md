@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `[sys.executable, "-mvirtualenv", d]`, with the module joined to `-m`,
+  counts as a use of `virtualenv` like `"-m", "virtualenv"` does, so the
+  dependency is no longer CHK002 (#1345).
+
 ## [0.7.14] - 2026-11-23
 
 ### Added

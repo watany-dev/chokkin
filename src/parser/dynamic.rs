@@ -241,7 +241,7 @@ pub(super) fn pytest_plugin_names(value: &Expr) -> Vec<(&str, &Expr)> {
 /// environment.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum PythonRun {
-    /// `[sys.executable, "-m", "module", …]`.
+    /// `[sys.executable, "-m", "module", …]` or `[sys.executable, "-mmodule", …]`.
     Module(String),
     /// `[sys.executable, <file>, …]` with a path the parser cannot follow.
     File,
@@ -259,15 +259,19 @@ pub(super) fn python_run(elts: &[Expr]) -> Option<PythonRun> {
     {
         return None;
     }
-    match rest {
-        [flag, module, ..] if str_constant(flag) == Some("-m") => str_constant(module)
-            .filter(|module| is_dotted_identifier(module))
-            .map(|module| PythonRun::Module(module.to_owned())),
-        [argument, ..] if str_constant(argument).is_none_or(|value| !value.starts_with('-')) => {
-            Some(PythonRun::File)
-        },
-        _ => None,
+    let (argument, after) = rest.split_first()?;
+    let argument = str_constant(argument);
+    // Python reads `-mpkg` as `-m pkg` (#1345).
+    if let Some(module) = argument.and_then(|value| value.strip_prefix("-m")) {
+        let module = match module {
+            "" => str_constant(after.first()?)?,
+            module => module,
+        };
+        return is_dotted_identifier(module).then(|| PythonRun::Module(module.to_owned()));
     }
+    argument
+        .is_none_or(|value| !value.starts_with('-'))
+        .then_some(PythonRun::File)
 }
 
 /// The program in a command string or the literal head of an argv list/tuple.
@@ -812,6 +816,11 @@ mod tests {
             run(r#"[sys.executable, "-m", "virtualenv", path]"#),
             Some(PythonRun::Module("virtualenv".to_owned()))
         );
+        // Python reads `-mvirtualenv` as `-m virtualenv` (#1345).
+        assert_eq!(
+            run(r#"[sys.executable, "-mvirtualenv", path]"#),
+            Some(PythonRun::Module("virtualenv".to_owned()))
+        );
         assert_eq!(
             run("(sys.executable, script.as_posix())"),
             Some(PythonRun::File)
@@ -827,6 +836,8 @@ mod tests {
     fn ignores_other_argument_lists() {
         assert_eq!(run(r#"[sys.executable, "-c", code]"#), None);
         assert_eq!(run(r#"[sys.executable, "-m", name]"#), None);
+        assert_eq!(run(r#"[sys.executable, "-m"]"#), None);
+        assert_eq!(run(r#"[sys.executable, "-mpkg/x"]"#), None);
         assert_eq!(run("[sys.executable]"), None);
         assert_eq!(run(r#"["python", "-m", "pip"]"#), None);
         assert_eq!(run(r#"[os.executable, "tool.py"]"#), None);
