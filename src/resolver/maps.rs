@@ -357,6 +357,12 @@ mod tests {
             ("msgpack", "msgpack-python"),
             ("psycopg2", "psycopg2"),
             ("PIL", "pillow-simd"),
+            // defnull's `multipart` beside python-multipart (#1346), and
+            // the passlib fork beside passlib (#1351).
+            ("multipart", "multipart"),
+            ("multipart", "python-multipart"),
+            ("passlib", "libpass"),
+            ("passlib", "passlib"),
         ] {
             let candidates = import_map.candidates(import_root);
             assert!(
@@ -364,6 +370,62 @@ mod tests {
                     .as_ref()
                     .is_some_and(|(c, _)| c.iter().any(|d| d == distribution)),
                 "expected {import_root} -> {distribution}, got {candidates:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolves_oss_corpus_misses() {
+        // Import names that differ from their distribution, found running the
+        // OSS corpus without a venv (#1351).
+        let import_map = ImportMap::build(&default_config());
+        for (import_root, distribution) in [
+            ("pylsp_jsonrpc", "python-lsp-jsonrpc"),
+            ("thop", "ultralytics-thop"),
+            ("pynvml", "nvidia-ml-py"),
+            ("auditlog", "django-auditlog"),
+            ("cachalot", "django-cachalot"),
+            ("compression_middleware", "django-compression-middleware"),
+            ("multiselectfield", "django-multiselectfield"),
+            ("django_softdelete", "django-soft-delete"),
+            ("treenode", "django-treenode"),
+            ("zxingcpp", "zxing-cpp"),
+        ] {
+            assert_eq!(
+                import_map.candidates(import_root),
+                Some((vec![distribution.to_owned()], ResolveConfidence::Certain)),
+                "{import_root}"
+            );
+        }
+        for (module, distribution) in [
+            (
+                "azure.ai.documentintelligence.models",
+                "azure-ai-documentintelligence",
+            ),
+            (
+                "llama_index.embeddings.huggingface",
+                "llama-index-embeddings-huggingface",
+            ),
+            (
+                "llama_index.embeddings.ollama",
+                "llama-index-embeddings-ollama",
+            ),
+            (
+                "llama_index.embeddings.openai_like",
+                "llama-index-embeddings-openai-like",
+            ),
+            ("llama_index.llms.ollama", "llama-index-llms-ollama"),
+            (
+                "llama_index.llms.openai_like",
+                "llama-index-llms-openai-like",
+            ),
+        ] {
+            assert_eq!(
+                import_map
+                    .namespace_candidates(module)
+                    .map(|(_, candidates, confidence)| (candidates, confidence)),
+                Some((vec![distribution.to_owned()], ResolveConfidence::Certain)),
+                "{module}"
             );
         }
     }
