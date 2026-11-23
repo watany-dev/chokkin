@@ -148,5 +148,47 @@ class WidenTest(unittest.TestCase):
                 self.assertTrue((root / target).exists(), target)
 
 
+class KeepRecentTest(unittest.TestCase):
+    SOURCE = "".join(f"line {number}\n" for number in range(1, 11))
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        (self.root / "src").mkdir()
+        (self.root / "src/a.rs").write_text(self.SOURCE, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.directory.cleanup()
+
+    def test_changed_lines_counts_additions_and_both_sides_of_a_removal(self) -> None:
+        diff = section("src/a.rs", "@@ -2,4 +2,3 @@", " line 2\n+line 3\n-old\n-older\n line 4\n line 5\n")
+        self.assertEqual(widen_diff.changed_lines(diff), {"src/a.rs": {3, 4}})
+
+    def test_only_lines_both_diffs_change_are_kept_with_the_tree_text(self) -> None:
+        pr = section("src/a.rs", "@@ -1,0 +2,4 @@", "+line 2\n+line 3\n+line 4\n+line 5\n") + section(
+            "src/a.rs", "@@ -5,0 +9,1 @@", "+line 9\n"
+        )
+        recent = section("src/a.rs", "@@ -2,0 +3,1 @@", "+line 3\n") + section(
+            "src/a.rs", "@@ -3,0 +5,1 @@", "+line 5\n"
+        )
+        out, report = widen_diff.keep_recent(self.root, pr, recent)
+        self.assertEqual(
+            out,
+            "diff --git a/src/a.rs b/src/a.rs\n--- a/src/a.rs\n+++ b/src/a.rs\n"
+            "@@ -2,0 +3,1 @@\n+line 3\n@@ -3,0 +5,1 @@\n+line 5\n",
+        )
+        self.assertEqual(report, "since the last passing commit: 2 of 5 changed lines")
+
+    def test_a_line_only_the_base_changed_or_a_non_rust_file_is_dropped(self) -> None:
+        (self.root / "notes.md").write_text("x\n", encoding="utf-8")
+        pr = section("src/a.rs", "@@ -1,0 +2,1 @@", "+line 2\n") + section("notes.md", "@@ -0,0 +1,1 @@", "+x\n")
+        recent = section("src/a.rs", "@@ -7,1 +7,1 @@", "-was 7\n+line 7\n") + section(
+            "notes.md", "@@ -0,0 +1,1 @@", "+x\n"
+        )
+        out, report = widen_diff.keep_recent(self.root, pr, recent)
+        self.assertEqual(out, "")
+        self.assertEqual(report, "since the last passing commit: 0 of 1 changed lines")
+
+
 if __name__ == "__main__":
     unittest.main()

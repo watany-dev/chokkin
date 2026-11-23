@@ -3,8 +3,9 @@ name: Verification
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes and in files whose tests it cut
 # (#1118), weekly one slice of `make mutants` (all of src/) in turn (#1123).
-# A draft PR skips mutants: each push would rerun every mutant of the diff, so
-# they run once the PR is marked ready and on each push after that.
+# A draft PR skips mutants, and a push to a PR whose mutants passed on an
+# earlier commit runs only the lines changed since that commit, so iterating on
+# a PR does not rerun every mutant of its diff each time.
 # Both split into shards (about 50 mutants on a PR, at most 100 weekly) so
 # each finishes within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
@@ -51,10 +52,14 @@ jobs:
       !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # find the PR's last commit whose mutants passed
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.plan.outputs.shards }}
       total: ${{ steps.plan.outputs.total }}
+      since: ${{ steps.since.outputs.since }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -64,6 +69,37 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-mutants@27.1.0
+      - name: Find the last commit whose mutants passed
+        id: since
+        if: github.event_name == 'pull_request'
+        # The newest earlier commit of this PR whose plan and `Mutants` both
+        # succeeded (a draft's skipped run does not count) and that the head
+        # still contains (a force-push drops it). Everything the PR changed up
+        # to it passed then, so this push only needs the lines changed since.
+        # A cancelled or failed run never counts, so its lines carry over to
+        # the next push. Any API or git failure falls back to the whole diff.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          since=""
+          candidates=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/verification.yml/runs" \
+            -f event=pull_request -f branch="$HEAD_REF" -f status=completed -f per_page=30 \
+            --jq '.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO and .head_sha != env.HEAD_SHA) | "\(.id) \(.head_sha)"' |
+            head -n 10) || candidates=""
+          while read -r run sha; do
+            [ -n "$sha" ] || continue
+            git merge-base --is-ancestor "$sha" "$HEAD_SHA" 2>/dev/null || continue
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+              --jq '[.jobs[] | select((.name == "Mutants (plan)" or .name == "Mutants") and .conclusion == "success")] | length') || continue
+            if [ "$passed" = 2 ]; then since=$sha; break; fi
+          done <<< "$candidates"
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          if [ -n "$since" ]; then
+            echo "Mutants passed on ${since::7}: only lines changed since then run." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Count mutants and pick the shards
         id: plan
         # A mutant takes about 40 s at -j 2 (incremental rebuild plus the
@@ -77,6 +113,7 @@ jobs:
         # minutes on 2026-10-19.
         env:
           SLICE: ${{ inputs.mutants-slice }}
+          MUTANTS_SINCE: ${{ steps.since.outputs.since }}
         run: |
           case "$SLICE" in "" | [0-9] | [1-9][0-9]) ;; *) echo "mutants-slice must be a number: $SLICE" >&2; exit 1 ;; esac
           mkdir -p target
@@ -140,6 +177,7 @@ jobs:
         id: mutate
         env:
           SHARD: ${{ matrix.shard }}/${{ needs.mutants-plan.outputs.total }}
+          MUTANTS_SINCE: ${{ needs.mutants-plan.outputs.since }}
         # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
         # counts as caught, and exit 3 hides missed mutants in the same run.
         # The timeout bounds time only: a mutant that allocates forever ran the

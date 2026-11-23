@@ -202,7 +202,16 @@ stable check name to require in branch protection. A draft PR skips the
 mutants (the check reports skipped, which branch protection accepts), since
 every push would rerun all of the diff's mutants; marking the PR ready for
 review runs them, and every push after that does too. Open a PR as a draft
-while it is still changing.
+while it is still changing. A push to a PR whose mutants already passed on an
+earlier commit runs only the lines changed since that commit: the plan job
+finds the newest earlier commit of the PR whose `Mutants (plan)` and `Mutants`
+both succeeded and that the head still contains, and `make mutants-diff
+MUTANTS_SINCE=<commit>` keeps only the lines both the PR's diff and the diff
+since that commit change (`--since` in `scripts/mutants-diff.py`). A cancelled
+or failed run never counts, so its lines carry over to the next push, and a
+force-push or any API failure falls back to the whole diff. What this gives
+up: a line the push did not touch is not rerun even if the push changed code
+it calls; the weekly run still covers it.
 
 Most of a mutant's cost is its rebuild, so the `mutants` job skips
 `Swatinem/rust-cache` (its cache never reaches cargo-mutants' scratch copies,
