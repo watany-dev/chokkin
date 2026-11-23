@@ -240,6 +240,28 @@ mod tests {
         );
     }
 
+    /// Root `tasks/` scripts are entries only as dev code: a flat app's
+    /// runtime `tasks` package is reached by import (#1349).
+    #[test]
+    fn detects_root_tasks_tree_only_in_dev_context() {
+        let mut sources = sources_with(&["tasks/jobs.py", "tasks/release.py"], &src_layout());
+        sources.files[0].context = FileContext::Runtime;
+        sources.files[1].context = FileContext::Dev;
+        let rules: Vec<_> = detect_auto_entries(&sources)
+            .into_iter()
+            .map(|entry| (entry.spec.path, entry.origin))
+            .collect();
+        assert_eq!(
+            rules,
+            [(
+                "tasks/release.py".to_owned(),
+                EntryOrigin::Auto {
+                    rule: "tasks/**".to_owned()
+                }
+            )]
+        );
+    }
+
     #[test]
     fn detects_root_github_tree() {
         let sources = sources_with(

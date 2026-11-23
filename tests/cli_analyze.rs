@@ -10935,32 +10935,42 @@ fn binary_manage_py_naming_test_settings_keeps_library_mode() {
         ),
         ("site_conf.settings", "site_conf/settings.py", "app"),
     ] {
-        let manage = manage(settings);
-        let project = write_project(&[
-            ("pyproject.toml", pyproject),
-            (
-                "src/acme/__init__.py",
-                "from django.apps import AppConfig\n\n\nclass AcmeConfig(AppConfig):\n    name = \"acme\"\n",
-            ),
-            ("src/acme/utils.py", "def helper():\n    return 1\n"),
-            ("manage.py", &manage),
-            ("tests/__init__.py", ""),
-            ("tests/testapp/__init__.py", ""),
-            ("site_conf/__init__.py", ""),
-            (settings_file, "INSTALLED_APPS = [\"acme\"]\n"),
-        ]);
-        // `--production` drops the tests, yet decides the same mode.
-        for production in [None, Some("--production")] {
-            let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
-                .args(["--no-cache", "--reporter", "json"])
-                .args(production)
-                .arg(project.path())
-                .output()
-                .expect("run chokkin");
-            let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
-            assert_eq!(json["mode"], mode, "{settings} {production:?}: {json}");
-            if mode == "library" {
-                assert_eq!(json["issues"], serde_json::json!([]), "{json}");
+        // A flat package sorts before `manage.py`: only `manage.py` turns
+        // test code.
+        for package in ["src/acme", "acme"] {
+            let manage = manage(settings);
+            let project = write_project(&[
+                ("pyproject.toml", pyproject),
+                (
+                    &format!("{package}/__init__.py"),
+                    "from django.apps import AppConfig\n\n\nclass AcmeConfig(AppConfig):\n    name = \"acme\"\n",
+                ),
+                (
+                    &format!("{package}/utils.py"),
+                    "def helper():\n    return 1\n",
+                ),
+                ("manage.py", &manage),
+                ("tests/__init__.py", ""),
+                ("tests/testapp/__init__.py", ""),
+                ("site_conf/__init__.py", ""),
+                (settings_file, "INSTALLED_APPS = [\"acme\"]\n"),
+            ]);
+            // `--production` drops the tests, yet decides the same mode.
+            for production in [None, Some("--production")] {
+                let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+                    .args(["--no-cache", "--reporter", "json"])
+                    .args(production)
+                    .arg(project.path())
+                    .output()
+                    .expect("run chokkin");
+                let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+                assert_eq!(
+                    json["mode"], mode,
+                    "{package} {settings} {production:?}: {json}"
+                );
+                if mode == "library" {
+                    assert_eq!(json["issues"], serde_json::json!([]), "{json}");
+                }
             }
         }
     }
