@@ -647,13 +647,18 @@ impl Resolver<'_> {
                     ..core
                 }),
                 (ModuleOrigin::Stdlib, _) | (_, None) => core,
-                // A first-party root may share its namespace with a distribution
+                // A local root may share its namespace with a distribution
                 // (`poetry` and `poetry.core`); the local tree wins when it has the
-                // module itself.
-                (ModuleOrigin::FirstParty, Some((module, ..)))
+                // module itself, also under a PEP 420 parent that is no layout
+                // package (`src/poetry/` without `__init__.py`, #1347).
+                (ModuleOrigin::FirstParty | ModuleOrigin::Unknown, Some((module, ..)))
                     if local_modules.contains_key(module) =>
                 {
-                    core
+                    RootResolution {
+                        origin: ModuleOrigin::FirstParty,
+                        distribution: None,
+                        confidence: ResolveConfidence::Certain,
+                    }
                 },
                 (_, Some((_, distributions, confidence))) => {
                     let mut raised = Vec::new();

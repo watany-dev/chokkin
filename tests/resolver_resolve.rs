@@ -462,6 +462,35 @@ fn ambiguous_namespace_import_warns_once() {
 }
 
 #[test]
+fn local_namespace_module_wins_under_a_pep420_parent() {
+    // `src/poetry/` has no `__init__.py`, so `poetry` is not a layout package;
+    // the local `poetry.core` still beats the bundled `poetry-core` (#1347).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"poetry-core\"\nversion = \"1\"\ndependencies = []\n",
+        ),
+        ("src/poetry/core/__init__.py", ""),
+        ("src/poetry/core/spdx/__init__.py", ""),
+        ("src/poetry/core/spdx/license.py", "X = 1\n"),
+        (
+            "src/poetry/core/spdx/helpers.py",
+            "from poetry.core.spdx.license import X\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "poetry.core.spdx.license")
+        .expect("import");
+    assert_eq!(
+        (resolved.origin, resolved.distribution.as_deref()),
+        (ModuleOrigin::FirstParty, None)
+    );
+}
+
+#[test]
 fn nested_fixture_does_not_count_as_the_local_namespace_module() {
     let temp = temp_project(&[
         (
