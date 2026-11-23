@@ -24,8 +24,11 @@ pub(super) type KnownBinary<'a> = &'a dyn Fn(&str) -> bool;
 const ENVIRONMENT_TOOLS: [&str; 11] = [
     "pip", "pip3", "uv", "uvx", "pipx", "poetry", "pdm", "hatch", "rye", "pipenv", "conda",
 ];
-const WRAPPERS: [&str; 11] = [
-    "exec", "env", "time", "nohup", "command", "sudo", "then", "do", "else", "!", "{",
+/// Words after which the next word is the command: wrappers, and the
+/// keywords that start a command list (`if pytest; then`, #1359).
+const WRAPPERS: [&str; 15] = [
+    "exec", "env", "time", "nohup", "command", "sudo", "if", "elif", "while", "until", "then",
+    "do", "else", "!", "{",
 ];
 const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
 const RUNNERS: [&str; 6] = ["uv", "poetry", "pdm", "hatch", "rye", "pipenv"];
@@ -1554,6 +1557,20 @@ mod tests {
         assert_eq!(binaries("sh -c \"alembic upgrade head\""), ["alembic"]);
         assert_eq!(binaries("cd app && uvicorn main:app"), ["uvicorn"]);
         assert_eq!(binaries("C:\\venv\\Scripts\\pytest.exe"), ["pytest"]);
+    }
+
+    /// A condition's command runs (#1359).
+    #[test]
+    fn reads_command_word_after_condition_keywords() {
+        for command in [
+            "if pytest -q; then echo ok; fi",
+            "if ! pytest -q; then exit 1; fi",
+            "while pytest -x; do sleep 1; done",
+            "until pytest; do sleep 1; done",
+            "if x; then :; elif pytest; then :; fi",
+        ] {
+            assert_eq!(binaries(command), ["pytest"], "{command}");
+        }
     }
 
     #[test]
