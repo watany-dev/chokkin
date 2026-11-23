@@ -159,6 +159,9 @@ tlc:
 # mutants-diff: only the mutants on lines changed since BASE (default origin/main),
 #               plus every mutant of a file whose tests lost a line
 #               (scripts/mutants-diff.py, #1118); what the PR check runs.
+#               With MUTANTS_SINCE=<commit> (an earlier commit of the branch
+#               whose mutants passed), only those lines that also changed
+#               since that commit; CI sets it per push.
 # kani:         #[cfg(kani)] proof harnesses; needs `cargo install --locked
 #               kani-verifier@0.68.0 && cargo kani setup`.
 #               Not part of `make check`. See docs/dev/formal/README.md.
@@ -177,7 +180,10 @@ mutants:
 mutants-diff:
 	mkdir -p target
 	git diff $(BASE)... > target/mutants-pr.diff
-	python3 scripts/mutants-diff.py target/mutants-pr.diff > target/mutants.diff 2> target/mutants-widened.txt; \
+	$(if $(MUTANTS_SINCE),git diff $(MUTANTS_SINCE) > target/mutants-since.diff)
+	python3 scripts/mutants-diff.py target/mutants-pr.diff \
+		$(if $(MUTANTS_SINCE),--since target/mutants-since.diff) \
+		> target/mutants.diff 2> target/mutants-widened.txt; \
 		status=$$?; cat target/mutants-widened.txt >&2; exit $$status
 	$(MUTANTS_ENV) cargo mutants -j 2 --in-diff target/mutants.diff $(ARGS)
 

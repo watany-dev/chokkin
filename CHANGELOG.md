@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `[sys.executable, "-mvirtualenv", d]`, with the module joined to `-m`,
+  counts as a use of `virtualenv` like `"-m", "virtualenv"` does, so the
+  dependency is no longer CHK002 (#1345).
+- `runpy.run_module("pip")`, what `python -m pip` runs, counts as a use of
+  `pip` and makes a first-party module it names reachable, like
+  `importlib.import_module`; like `[sys.executable, "-m", "pip"]`, an
+  undeclared module it names is not CHK003. A computed name lowers
+  confidence as an opaque dynamic import (#1344).
 - A tool called only in a shell condition (`if pytest -q; then`,
   `while ruff check .; do`, `until`, `elif`) counts as used (#1359).
 - A Dockerfile `RUN <<EOF` heredoc body, and one fed to a shell
