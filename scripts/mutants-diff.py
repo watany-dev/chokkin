@@ -21,7 +21,13 @@ A test file `TEST_TARGETS` does not name (the end-to-end suites, a new file),
 a fixture, and any other file under `tests/` widen nothing: the report on
 stderr lists them, and the weekly full run is what checks that code.
 
-Usage: mutants-diff.py DIFF > widened.diff
+With `--since RECENT`, RECENT is a diff from an earlier commit of the same PR
+whose mutants passed to the same tree. Both diffs are widened, and only the
+lines both change are kept, so a push reruns only what changed since that
+commit. A line is "changed" as `cargo mutants --in-diff` counts it: added, or
+either side of a removal.
+
+Usage: mutants-diff.py DIFF [--since RECENT] > widened.diff
 """
 
 import re
@@ -213,12 +219,78 @@ def widen(root: Path, diff: str) -> tuple[str, list[str]]:
     return "".join(sections), report
 
 
+def changed_lines(diff: str) -> dict[str, set[int]]:
+    """New-side lines `cargo mutants --in-diff` matches, per file.
+
+    That is every added line and the lines either side of a removal, as its
+    `affected_lines` counts them; context lines do not count.
+    """
+    found: dict[str, set[int]] = {}
+    for file in split_diff(diff):
+        lines = found.setdefault(file.path, set())
+        line = 0
+        in_hunk = after_removal = False
+        for row in file.text.splitlines():
+            if match := HUNK.match(row):
+                line, in_hunk, after_removal = int(match.group(1)), True, False
+            elif not in_hunk:
+                continue
+            elif row.startswith("-"):
+                after_removal = True
+                if line > 1:
+                    lines.add(line - 1)
+            elif row.startswith(("+", " ")):
+                if after_removal or row.startswith("+"):
+                    lines.add(line)
+                after_removal = False
+                line += 1
+    return found
+
+
+def keep_recent(root: Path, diff: str, recent: str) -> tuple[str, str]:
+    """A diff of only the `.rs` lines both diffs change, and a report line.
+
+    Each kept line is written as an insertion holding its text from `root`,
+    which `--in-diff` checks against the tree it mutates.
+    """
+    recent_lines = changed_lines(recent)
+    sections = []
+    total = kept = 0
+    for path, lines in sorted(changed_lines(diff).items()):
+        if not path.endswith(".rs") or not (root / path).is_file():
+            continue
+        text = (root / path).read_text(encoding="utf-8").splitlines()
+        lines = {line for line in lines if 1 <= line <= len(text)}
+        common = sorted(lines & recent_lines.get(path, set()))
+        total += len(lines)
+        kept += len(common)
+        runs: list[list[int]] = []
+        for line in common:
+            if runs and runs[-1][-1] == line - 1:
+                runs[-1].append(line)
+            else:
+                runs.append([line])
+        hunks = []
+        inserted = 0
+        for run in runs:
+            body = "".join(f"+{text[line - 1]}\n" for line in run)
+            hunks.append(f"@@ -{run[0] - 1 - inserted},0 +{run[0]},{len(run)} @@\n{body}")
+            inserted += len(run)
+        if hunks:
+            sections.append(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{''.join(hunks)}")
+    return "".join(sections), f"since the last passing commit: {kept} of {total} changed lines"
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    if len(argv) not in (2, 4) or (len(argv) == 4 and argv[2] != "--since"):
         print(__doc__.strip().splitlines()[-1], file=sys.stderr)
         return 2
     diff = Path(argv[1]).read_text(encoding="utf-8")
     widened, report = widen(Path.cwd(), diff)
+    if len(argv) == 4:
+        recent, _ = widen(Path.cwd(), Path(argv[3]).read_text(encoding="utf-8"))
+        widened, line = keep_recent(Path.cwd(), widened, recent)
+        report.append(line)
     sys.stdout.write(widened)
     for line in report:
         print(line, file=sys.stderr)
