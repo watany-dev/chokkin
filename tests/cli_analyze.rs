@@ -2994,6 +2994,36 @@ fn binary_undeclared_monorepo_members_are_auto_detected() {
     assert!(!project.path().join("llama-index-core/.chokkin").exists());
 }
 
+/// The root declares a detected member's distribution without a local source
+/// (gradio's `gradio_client==2.7.2`) and imports it: the import resolves to
+/// the member tree, and the declaration is used (#1342). The member's own
+/// imports do not use the root's declarations, since the root installs the
+/// member from the index rather than shipping its tree.
+#[test]
+fn binary_root_declaration_of_a_detected_member_is_used_through_its_tree() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"1\"\ndependencies = [\"acme-client==1.0\", \"httpx\"]\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n",
+        ),
+        ("src/acme/__init__.py", "import acme_client\n"),
+        (
+            "client/pyproject.toml",
+            "[project]\nname = \"acme-client\"\nversion = \"1\"\ndependencies = [\"httpx\"]\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n",
+        ),
+        ("client/acme_client/__init__.py", "import httpx\n"),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(
+        !keys.contains(&("CHK002".to_owned(), "acme-client".to_owned())),
+        "{keys:?}"
+    );
+    assert!(
+        keys.contains(&("CHK002".to_owned(), "httpx".to_owned())),
+        "{keys:?}"
+    );
+}
+
 /// A declared member without an app entry ships its own wheel, so its
 /// orphans are library-scored like a detected member's, even when only its
 /// tests reach them and `--production` drops the tests. Files its wheel does
@@ -7264,6 +7294,30 @@ fn binary_cached_run_sees_a_created_extra_requirements_include() {
     fs::write(project.path().join("shared.txt"), "pytest\n").expect("write include");
     let stderr = run();
     assert!(!stderr.contains(stopped), "{stderr}");
+}
+
+/// Creating the `.in` beside a fixed requirements name turns the `.txt`
+/// into pip-compile pins, so a cached run reads the `.in` instead, even when
+/// the `.in` is no extra requirements candidate (`dev-requirements.in`,
+/// #1343).
+#[test]
+fn binary_cached_run_sees_a_created_requirements_in() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("dev-requirements.txt", "rich==13.0\n"),
+    ]);
+    let rich = ("CHK002".to_owned(), "rich".to_owned());
+
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(keys.contains(&rich), "{keys:?}");
+
+    fs::write(project.path().join("dev-requirements.in"), "").expect("write .in");
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(!keys.contains(&rich), "{keys:?}");
 }
 
 /// An include shared by several requirements files is read once per includer,

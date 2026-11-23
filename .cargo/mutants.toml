@@ -56,4 +56,8 @@ exclude_re = [
     # The bundle size only picks how many threads decode it; any count
     # decodes the same lines in order (#1328).
     "replace / with (\\*|%) in ParseCacheBundle::decode",
+    # Parsing a member the root takes from the index too only adds imports
+    # the used check drops: it reads a member's own imports only when the
+    # root ships its tree (#1342). The guard only skips the parse.
+    "replace is_local_source_member -> bool with true",
 ]
