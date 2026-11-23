@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- A root `requirements.txt` (or another fixed requirements name) beside a
+  same-name `.in` is pip-compile output: the `.in` declares in its place
+  and the pinned transitive dependencies no longer report CHK002 (#1343).
 - A cached run no longer fails when a file a requirements file includes
   with `-r` was deleted since; the cache misses and the run re-reads the
   manifest.
