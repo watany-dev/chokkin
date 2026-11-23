@@ -714,8 +714,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         };
         let loads_prefix = matches!(
             value,
-            Expr::Call(call) if self.loader_names.loader(&call.func).is_some()
-                && module_prefix(call).is_some()
+            Expr::Call(call) if self.loader_names.loader(&call.func)
+                .is_some_and(|loader| module_prefix(call, loader).is_some())
         );
         if loads_prefix {
             self.prefix_modules.insert(name.id.to_string(), index);
@@ -744,7 +744,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     LiteralTarget::Module(module) => Some(module),
                     LiteralTarget::Opaque | LiteralTarget::Nothing => None,
                 },
-                Loader::DunderImport => None,
+                // `run_module` returns the module's globals as a `dict`.
+                Loader::DunderImport | Loader::RunModule => None,
             },
             Expr::Name(name) => self.literal_modules.get(name.id.as_str()).cloned(),
             _ => None,
@@ -885,14 +886,17 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             {
                 match target {
                     LiteralTarget::Module(module) => {
-                        let dynamic = self.dynamic_import(module, call);
+                        let mut dynamic = self.dynamic_import(module, call);
+                        // Like `[sys.executable, "-m", "pip"]`: a use, but
+                        // never reported missing (`pip` rarely is declared).
+                        dynamic.optional |= matches!(loader, Loader::RunModule);
                         self.parsed.dynamic_imports.push(dynamic);
                     },
                     LiteralTarget::Opaque => self.parsed.has_opaque_dynamic_import = true,
                     LiteralTarget::Nothing => {},
                 }
             } else if !arguments.args.is_empty() || !arguments.keywords.is_empty() {
-                if let Some(module) = module_prefix(call) {
+                if let Some(module) = module_prefix(call, loader) {
                     let prefix = self.dynamic_import(module, call);
                     self.parsed.dynamic_import_prefixes.push(prefix);
                 }
@@ -2977,6 +2981,36 @@ sys.path.insert(0, 'src')
             .collect();
         assert_eq!(modules, vec![("acme.a", 2), ("acme.b", 4)]);
         assert!(!parsed.has_opaque_dynamic_import);
+    }
+
+    /// `runpy.run_module` loads its module like `python -m` does (#1344).
+    #[test]
+    fn run_module_literals_are_optional_dynamic_imports() {
+        let parsed = visit_source(
+            "from runpy import run_module\ndef install():\n    run_module(\"pip\", run_name=\"__main__\")\nimport runpy as rp\nrp.run_module(mod_name=\"acme.cli\")\nrunpy.run_module(\"acme.tool\")\n",
+        );
+        let modules: Vec<_> = parsed
+            .dynamic_imports
+            .iter()
+            .map(|dynamic| (dynamic.module.as_str(), dynamic.line, dynamic.optional))
+            .collect();
+        assert_eq!(
+            modules,
+            vec![
+                ("pip", 3, true),
+                ("acme.cli", 5, true),
+                ("acme.tool", 6, true)
+            ]
+        );
+        assert!(!parsed.has_opaque_dynamic_import);
+
+        // Its result is a `dict`, not the module.
+        let parsed = visit_source("import runpy\nrunpy.run_module(\"acme.tool\").get(\"x\")\n");
+        assert_eq!(parsed.loaded_module_accesses, []);
+
+        let parsed = visit_source("import runpy\nrunpy.run_module(name)\n");
+        assert_eq!(parsed.dynamic_imports, []);
+        assert!(parsed.has_opaque_dynamic_import);
     }
 
     #[test]
