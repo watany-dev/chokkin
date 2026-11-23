@@ -16,6 +16,6 @@ pub(crate) use context::{
 };
 pub(crate) use duplicate::duplicate_to_remove;
 pub(crate) use reconcile::member_indexes;
-pub(crate) use used::local_source_member;
+pub(crate) use used::is_local_source_member;
 
 pub use reconcile::reconcile_with_context;

@@ -7296,6 +7296,30 @@ fn binary_cached_run_sees_a_created_extra_requirements_include() {
     assert!(!stderr.contains(stopped), "{stderr}");
 }
 
+/// Creating the `.in` beside a fixed requirements name turns the `.txt`
+/// into pip-compile pins, so a cached run reads the `.in` instead, even when
+/// the `.in` is no extra requirements candidate (`dev-requirements.in`,
+/// #1343).
+#[test]
+fn binary_cached_run_sees_a_created_requirements_in() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("dev-requirements.txt", "rich==13.0\n"),
+    ]);
+    let rich = ("CHK002".to_owned(), "rich".to_owned());
+
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(keys.contains(&rich), "{keys:?}");
+
+    fs::write(project.path().join("dev-requirements.in"), "").expect("write .in");
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(!keys.contains(&rich), "{keys:?}");
+}
+
 /// An include shared by several requirements files is read once per includer,
 /// but its warning is printed once (#888).
 #[test]

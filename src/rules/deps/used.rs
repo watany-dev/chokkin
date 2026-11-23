@@ -330,14 +330,14 @@ impl<'a> MemberImports<'a> {
     }
 }
 
-/// Normalized name of `member` when `root` declares it and takes it from a
-/// local `workspace` / `path` source.
-pub(crate) fn local_source_member(
+/// Whether `root` declares `member` and takes it from a local `workspace` /
+/// `path` source.
+pub(crate) fn is_local_source_member(
     root: &LoadedManifest,
     local: &LocalTrees,
     member: &LoadedManifest,
-) -> Option<String> {
-    declared_member(root, member).filter(|name| local.is_local_source(name))
+) -> bool {
+    declared_member(root, member).is_some_and(|name| local.is_local_source(&name))
 }
 
 /// Normalized name of `member` when `root` declares it, from any source.
