@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-11-23
+
+### Added
+- Notebooks read `%pip install`, `!pip install`,
+  `!{sys.executable} -m pip install`, `!uv pip install` and
+  `%conda install` as the notebook's own declarations: the kernel it runs in
+  has the distribution, so the notebook's imports of it no longer report
+  CHK003 / CHK004 / CHK005 or CHK010. An argument that names no
+  distribution (`-r file`, a path, an IPython expansion, an unknown option)
+  warns and lowers that notebook's missing-dependency findings to info /
+  maybe. Installs elsewhere (`--target`, `conda -n`) declare nothing
+  (#991).
+- Notebooks follow `%run x.py`, `%run -m pkg.mod` and shell escapes
+  (`!python x.py`, `!streamlit run app.py`) as command targets, read a
+  `%%writefile x.py` cell body as Python, turn `%load_ext X` and
+  `%aimport` into imports, and, once a notebook loads an extension, drop
+  the unknown magics it may register (`%%sql`) instead of treating them as
+  unreadable (#992).
+- A requirements file inside a package directory (a container's or a model
+  server's environment) satisfies the imports below its directory without
+  joining the root declarations (#1340).
+
 ### Changed
 - A run no longer waits on freeing its analysis before it exits: the report
   is left to the OS and the intermediate parse and resolution data is freed
@@ -20,18 +42,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on every core: a warm run on apache/airflow (8.5k modules, 31 MB cache)
   takes 7% less wall time, and decoding the cache 60% less (#1328). The
   first run after upgrading reparses every file.
-
-### Fixed
-- The wheel binary compiles the ruff parser crates at full optimization
-  again, as the `dist` profile intended: wheels ran 12-18% slower than a
-  `release` build, now 5-8%, for 0.1 MB more.
-
-### Changed
 - Reachability and the rules reuse the pytest search paths import
   resolution builds instead of building them three more times, re-reading
   every workspace member's `pyproject.toml` each time, and work out the
   test files loaded only by name once: airflow runs about 4% faster cold
   (#1326).
+- Pytest discovery parses each pytest config once instead of about eight
+  times, a fifth of the work on llama_index's 608 members (#1323).
+- Star imports from modules the index did not read are checked when a
+  symbol is queried instead of recorded per referenced name, and one walk
+  covers all the binders of a name (#1049, #810).
+- CHK010 for an import in a test fixture that tests load only through a
+  module-name string, to see the import fail (uvicorn's
+  `raise_import_error.py`, django's `bad_module.py`), is info, and the
+  import is no unresolved-import gap. A file a test also imports by
+  statement still warns (#1318).
+
+### Fixed
+- The wheel binary compiles the ruff parser crates at full optimization
+  again, as the `dist` profile intended: wheels ran 12-18% slower than a
+  `release` build, now 5-8%, for 0.1 MB more.
+- Imports through a symlink inside the project root
+  (`acme/compat -> _impl/compat`) resolve to the file behind it, which is
+  reachable and has its symbols referenced; `--trace` names the link
+  (#1001).
+- A name that a middle module's `__all__` leaves out of a
+  `from m import *` chain no longer counts as library API or as a config
+  setting (#960).
+- Shell commands split only at unquoted separators, skip `case` patterns,
+  and read heredoc bodies only when a shell runs them:
+  `echo "<source|wheel>"` and a `cat <<EOF` help text no longer report an
+  undeclared binary (CHK008) (#1341).
+- The cache never writes through a symlink or a non-directory on its path
+  inside the analyzed checkout: such an entry reads as a miss and is not
+  written or swept.
+- The `setup.py` evaluator charges strings by length and each `if` / `try`
+  branch for the copy it makes, so repeated `s = s + s` stops at the cap
+  instead of exhausting memory.
 
 ## [0.7.13] - 2026-10-29
 
