@@ -20,6 +20,7 @@ pub(crate) use context::{
     apply_member_context, assign_file_context, assign_layout_file_context, in_examples_dir,
     in_templates_dir, is_test_data_path, is_test_harness_name,
 };
+pub(crate) use dirs::{TASKS_DIR, in_root_tasks_dir};
 pub use discover::discover_sources;
 pub(crate) use discover::{
     Discovery, discover_named_files, discover_sources_cached, only_entry_trees_reach,

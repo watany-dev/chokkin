@@ -227,21 +227,42 @@ pub fn extract_manifest(
     let docs_group = DependencyContext::Group("docs".to_owned());
     let tests_group = DependencyContext::Group("tests".to_owned());
     let requirements_txt_context = requirements_txt_context(&sources, &dependencies);
-    let requirements_specs: &[(&str, &DependencyContext)] = &[
-        ("requirements.txt", &requirements_txt_context),
-        ("requirements-dev.txt", &dev_group),
-        ("dev-requirements.txt", &dev_group),
-        ("requirements-docs.txt", &docs_group),
-        ("requirements-tests.txt", &tests_group),
-        ("requirements-test.txt", &tests_group),
+    // Each fixed name with the `.in` pip-compile would build it from.
+    let requirements_specs: &[(&str, &str, &DependencyContext)] = &[
+        (
+            "requirements.txt",
+            "requirements.in",
+            &requirements_txt_context,
+        ),
+        ("requirements-dev.txt", "requirements-dev.in", &dev_group),
+        ("dev-requirements.txt", "dev-requirements.in", &dev_group),
+        ("requirements-docs.txt", "requirements-docs.in", &docs_group),
+        (
+            "requirements-tests.txt",
+            "requirements-tests.in",
+            &tests_group,
+        ),
+        (
+            "requirements-test.txt",
+            "requirements-test.in",
+            &tests_group,
+        ),
     ];
 
     let mut requirements_runtime_declared = false;
-    for (filename, context) in requirements_specs {
+    for (txt, source, context) in requirements_specs {
         // Already read as `install_requires`; reading it again would report
         // every entry as a duplicate.
-        if setup_files_read.iter().any(|read| read == filename) {
+        if setup_files_read.iter().any(|read| read == txt) {
             continue;
+        }
+        // A `.txt` beside its `.in` is pip-compile output pinning the
+        // transitive environment: the `.in` declares in its place, and the
+        // pins only add names (#786, #1343).
+        let compiled = is_file_named(root_path, txt) && is_file_named(root_path, source);
+        let filename = if compiled { source } else { txt };
+        if !compiled && is_file_named(root_path, txt) {
+            sources.requirements_missing.push((*source).to_owned());
         }
         let extracted = extract_requirements_file(root_path, filename, context)?;
         if extracted.skipped {
@@ -367,7 +388,7 @@ fn manifest_cache_key(
             config_hash: stable_hex_hash(format!("{:?}", config.effective).as_bytes()),
             manifest_hash: stable_hex_hash(format!("{:?}", config.uv_workspace).as_bytes()),
             target_version: target.as_str().to_owned(),
-            unit_version: "manifest-extract-v23".to_owned(),
+            unit_version: "manifest-extract-v24".to_owned(),
         },
         inputs,
     })
@@ -404,10 +425,14 @@ fn read_extra_requirements(
     warnings: &mut Vec<ManifestWarning>,
 ) {
     let candidates = extra_requirements_candidates(root);
+    // A fixed name's `.in` was read in its place, so it counts here even when
+    // its name is not a candidate (`dev-requirements.in`).
+    let compiled_from: BTreeSet<String> = sources.requirements_files.iter().cloned().collect();
     let compiled = |file: &str| {
         let path = root.join(file);
+        let source = path.with_extension("in");
         path.extension().is_some_and(|ext| ext == "txt")
-            && candidates.contains(&path.with_extension("in"))
+            && (candidates.contains(&source) || compiled_from.contains(&rel_to_root(root, &source)))
     };
     for path in &candidates {
         let rel = rel_to_root(root, path);

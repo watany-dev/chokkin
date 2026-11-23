@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `[sys.executable, "-mvirtualenv", d]`, with the module joined to `-m`,
+  counts as a use of `virtualenv` like `"-m", "virtualenv"` does, so the
+  dependency is no longer CHK002 (#1345).
+- `runpy.run_module("pip")`, what `python -m pip` runs, counts as a use of
+  `pip` and makes a first-party module it names reachable, like
+  `importlib.import_module`; like `[sys.executable, "-m", "pip"]`, an
+  undeclared module it names is not CHK003. A computed name lowers
+  confidence as an opaque dynamic import (#1344).
+- The bundled package map knows 17 more import names that differ from their
+  distribution (`passlib` from libpass, `pylsp_jsonrpc`, `thop`, `pynvml`,
+  `treenode` and other Django apps, `zxingcpp`,
+  `azure.ai.documentintelligence`, llama-index integrations), and a
+  namespace import also matches a declared distribution named after its
+  first three segments (`llama-index-readers-file` for
+  `llama_index.readers.file`), so these no longer report CHK002 with CHK003
+  / CHK010 without a venv (#1351).
+- `import multipart` resolves to a declared `multipart` (defnull/multipart)
+  instead of always to python-multipart (#1346).
+- A project's own namespace module under a PEP 420 parent without
+  `__init__.py` (`src/poetry/core/` in poetry-core) stays first-party
+  instead of resolving to the bundled map's distribution and reporting
+  CHK003 (#1347).
+- A namespace import whose map entry has several distributions no longer
+  warns `maps to several distributions` when one of them is declared
+  (`llama-index-core` for `llama_index.core`).
+- A tool called only in a shell condition (`if pytest -q; then`,
+  `while ruff check .; do`, `until`, `elif`) counts as used (#1359).
+- A Dockerfile `RUN <<EOF` heredoc body, and one fed to a shell
+  (`RUN bash <<EOF`), is read as commands; a body written to a file, fed to
+  another interpreter (`RUN python3 <<EOF`, a non-`sh` shebang) or given to
+  `COPY` stays data (#1358).
+- A root `requirements.txt` (or another fixed requirements name) beside a
+  same-name `.in` is pip-compile output: the `.in` declares in its place
+  and the pinned transitive dependencies no longer report CHK002 (#1343).
+- A hatch env and a same-name `[dependency-groups]` group
+  (`[tool.hatch.envs.default]` and `dev`) install separately, so a
+  distribution listed in both is no longer a CHK009 warning that `--fix`
+  removes (#1348).
+- The root's declaration of a workspace member's distribution without a
+  `workspace` / `path` source (gradio's `gradio_client==2.7.2` beside
+  `client/python/`) is used when the root imports the member's tree, and
+  no longer reports CHK002 (#1342).
+- A cached run no longer fails when a file a requirements file includes
+  with `-r` was deleted since; the cache misses and the run re-reads the
+  manifest.
+- src, flat and package-root layouts read a root `tasks/` (release and
+  maintenance scripts, pypa/build's `tasks/release.py`) as dev entries, so
+  a dependency group only those scripts import is no longer CHK002 certain.
+  A flat app's `tasks` package stays runtime code (#1349).
+- `--explain` of a distribution nothing imports names the import its map
+  gives (`top-level modules: git` for gitpython), not the distribution
+  (#1349).
+- A root `manage.py` whose `DJANGO_SETTINGS_MODULE` names settings in a test
+  directory (a reusable Django app's test runner) is test code: it no
+  longer turns the library into an app whose public modules are CHK001
+  certain, and `--production` drops it (#1350).
+- Unreadable `.gitignore` and path warnings below the root come out in path
+  order instead of the file system's directory order (#1357).
+
 ## [0.7.14] - 2026-11-23
 
 ### Added

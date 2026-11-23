@@ -414,7 +414,8 @@ fn unreadable_nested_gitignore_warns_once_per_file() {
         expected.push(gitignore("lib/.gitignore"));
     }
     expected.push(gitignore("pkg/sub/.gitignore"));
-    assert_eq!(sorted_warnings(&outcomes[0].1), sorted_warnings(&expected));
+    // In path order whatever order the file system lists them in (#1357).
+    assert_eq!(outcomes[0].1, expected);
     assert_eq!(outcomes[1].1, [gitignore("sub/.gitignore")]);
     // Without `respect_gitignore` no ignore file is read.
     no_warnings(&outcomes[2..]);

@@ -647,13 +647,18 @@ impl Resolver<'_> {
                     ..core
                 }),
                 (ModuleOrigin::Stdlib, _) | (_, None) => core,
-                // A first-party root may share its namespace with a distribution
+                // A local root may share its namespace with a distribution
                 // (`poetry` and `poetry.core`); the local tree wins when it has the
-                // module itself.
-                (ModuleOrigin::FirstParty, Some((module, ..)))
+                // module itself, also under a PEP 420 parent that is no layout
+                // package (`src/poetry/` without `__init__.py`, #1347).
+                (ModuleOrigin::FirstParty | ModuleOrigin::Unknown, Some((module, ..)))
                     if local_modules.contains_key(module) =>
                 {
-                    core
+                    RootResolution {
+                        origin: ModuleOrigin::FirstParty,
+                        distribution: None,
+                        confidence: ResolveConfidence::Certain,
+                    }
                 },
                 (_, Some((_, distributions, confidence))) => {
                     let mut raised = Vec::new();
@@ -663,7 +668,10 @@ impl Resolver<'_> {
                         Some(confidence),
                         &mut raised,
                     );
-                    warnings.extend(raised.into_iter().map(SiteWarning::Site));
+                    // A declared candidate settles it, as in [`resolve_import_root`].
+                    if !distributions.iter().any(|name| declared.declares(name)) {
+                        warnings.extend(raised.into_iter().map(SiteWarning::Site));
+                    }
                     RootResolution {
                         distribution: pick(&distributions),
                         ..core
@@ -859,16 +867,19 @@ fn declared_match(distribution: String, declared: &DeclaredNames<'_>) -> Option<
         })
 }
 
-/// A namespace package portion declared under its first two segments
-/// (`sphinxcontrib-log-cabinet` for `sphinxcontrib.log_cabinet`, #809). The
-/// shared root alone names no distribution.
+/// A namespace package portion declared under its first three or two
+/// segments, deeper first (`llama-index-readers-file` for
+/// `llama_index.readers.file`, #1351; `sphinxcontrib-log-cabinet` for
+/// `sphinxcontrib.log_cabinet`, #809). The shared root alone names no
+/// distribution.
 fn namespace_declared_match(module: &str, declared: &DeclaredNames<'_>) -> Option<RootResolution> {
-    let mut segments = module.split('.');
-    let (namespace, portion) = (segments.next()?, segments.next()?);
-    declared_match(
-        normalize_distribution_name(&format!("{namespace}-{portion}")),
-        declared,
-    )
+    let segments: Vec<&str> = module.split('.').take(3).collect();
+    (2..=segments.len()).rev().find_map(|depth| {
+        declared_match(
+            normalize_distribution_name(&segments[..depth].join("-")),
+            declared,
+        )
+    })
 }
 
 /// A namespace portion declared under its first two segments beats the

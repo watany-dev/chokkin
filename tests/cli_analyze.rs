@@ -2994,6 +2994,36 @@ fn binary_undeclared_monorepo_members_are_auto_detected() {
     assert!(!project.path().join("llama-index-core/.chokkin").exists());
 }
 
+/// The root declares a detected member's distribution without a local source
+/// (gradio's `gradio_client==2.7.2`) and imports it: the import resolves to
+/// the member tree, and the declaration is used (#1342). The member's own
+/// imports do not use the root's declarations, since the root installs the
+/// member from the index rather than shipping its tree.
+#[test]
+fn binary_root_declaration_of_a_detected_member_is_used_through_its_tree() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"1\"\ndependencies = [\"acme-client==1.0\", \"httpx\"]\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n",
+        ),
+        ("src/acme/__init__.py", "import acme_client\n"),
+        (
+            "client/pyproject.toml",
+            "[project]\nname = \"acme-client\"\nversion = \"1\"\ndependencies = [\"httpx\"]\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n",
+        ),
+        ("client/acme_client/__init__.py", "import httpx\n"),
+    ]);
+    let keys = issue_keys(&json_issues(project.path(), &[]));
+    assert!(
+        !keys.contains(&("CHK002".to_owned(), "acme-client".to_owned())),
+        "{keys:?}"
+    );
+    assert!(
+        keys.contains(&("CHK002".to_owned(), "httpx".to_owned())),
+        "{keys:?}"
+    );
+}
+
 /// A declared member without an app entry ships its own wheel, so its
 /// orphans are library-scored like a detected member's, even when only its
 /// tests reach them and `--production` drops the tests. Files its wheel does
@@ -7268,6 +7298,30 @@ fn binary_cached_run_sees_a_created_extra_requirements_include() {
     assert!(!stderr.contains(stopped), "{stderr}");
 }
 
+/// Creating the `.in` beside a fixed requirements name turns the `.txt`
+/// into pip-compile pins, so a cached run reads the `.in` instead, even when
+/// the `.in` is no extra requirements candidate (`dev-requirements.in`,
+/// #1343).
+#[test]
+fn binary_cached_run_sees_a_created_requirements_in() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n",
+        ),
+        ("acme/__init__.py", ""),
+        ("dev-requirements.txt", "rich==13.0\n"),
+    ]);
+    let rich = ("CHK002".to_owned(), "rich".to_owned());
+
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(keys.contains(&rich), "{keys:?}");
+
+    fs::write(project.path().join("dev-requirements.in"), "").expect("write .in");
+    let keys = issue_keys(&json_issues(project.path(), &["--strict"]));
+    assert!(!keys.contains(&rich), "{keys:?}");
+}
+
 /// An include shared by several requirements files is read once per includer,
 /// but its warning is printed once (#888).
 #[test]
@@ -10898,6 +10952,105 @@ fn binary_root_entry_scripts_are_read_in_package_layouts() {
             "{package}: {stdout}"
         );
     }
+}
+
+/// Root `tasks/` holds release and maintenance scripts run by hand or by
+/// invoke (pypa/build, pdm, virtualenv), so every layout reads it as dev
+/// entries and a dependency group only it imports is used (#1349).
+#[test]
+fn binary_root_tasks_scripts_are_dev_entries_in_package_layouts() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[dependency-groups]\ntyping = [\"gitpython\"]\ndev = [{ include-group = \"typing\" }]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    for package in ["acme", "src/acme"] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject),
+            (&format!("{package}/__init__.py"), ""),
+            ("tasks/release.py", "from git import Repo\n"),
+        ]);
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(issue_keys(&issues), Vec::new(), "{package}: {issues:?}");
+    }
+}
+
+/// A reusable Django app keeps a root `manage.py` only to run its suite
+/// with test settings: it is test code, so the library stays a library and
+/// its public modules are no orphans (#1350). A `manage.py` that names
+/// runtime settings still makes the project an app.
+#[test]
+fn binary_manage_py_naming_test_settings_keeps_library_mode() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"1\"\ndependencies = [\"django\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    let manage = |settings: &str| {
+        format!(
+            "import os, sys\nif __name__ == \"__main__\":\n    os.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"{settings}\")\n    from django.core.management import execute_from_command_line\n    execute_from_command_line(sys.argv)\n"
+        )
+    };
+    for (settings, settings_file, mode) in [
+        (
+            "tests.testapp.settings",
+            "tests/testapp/settings.py",
+            "library",
+        ),
+        ("site_conf.settings", "site_conf/settings.py", "app"),
+    ] {
+        // A flat package sorts before `manage.py`: only `manage.py` turns
+        // test code.
+        for package in ["src/acme", "acme"] {
+            let manage = manage(settings);
+            let project = write_project(&[
+                ("pyproject.toml", pyproject),
+                (
+                    &format!("{package}/__init__.py"),
+                    "from django.apps import AppConfig\n\n\nclass AcmeConfig(AppConfig):\n    name = \"acme\"\n",
+                ),
+                (
+                    &format!("{package}/utils.py"),
+                    "def helper():\n    return 1\n",
+                ),
+                ("manage.py", &manage),
+                ("tests/__init__.py", ""),
+                ("tests/testapp/__init__.py", ""),
+                ("site_conf/__init__.py", ""),
+                (settings_file, "INSTALLED_APPS = [\"acme\"]\n"),
+            ]);
+            // `--production` drops the tests, yet decides the same mode.
+            for production in [None, Some("--production")] {
+                let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+                    .args(["--no-cache", "--reporter", "json"])
+                    .args(production)
+                    .arg(project.path())
+                    .output()
+                    .expect("run chokkin");
+                let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+                assert_eq!(
+                    json["mode"], mode,
+                    "{package} {settings} {production:?}: {json}"
+                );
+                if mode == "library" {
+                    assert_eq!(json["issues"], serde_json::json!([]), "{json}");
+                }
+            }
+        }
+    }
+}
+
+/// `--explain` of a distribution nothing imports names the import its map
+/// gives (`git`), not the distribution (#1349).
+#[test]
+fn binary_explain_unimported_distribution_names_its_mapped_import() {
+    let project = write_project(&[(
+        "pyproject.toml",
+        "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"GitPython\"]\n",
+    )]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:gitpython"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("top-level modules: git\n"), "{stderr}");
+    assert!(
+        stderr.contains("no reachable file imports git\n"),
+        "{stderr}"
+    );
 }
 
 /// `helper.PY` is collected and named like `helper.py`, as Python on

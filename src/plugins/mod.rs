@@ -33,7 +33,7 @@ mod warnings;
 
 pub(crate) use django::{
     INCLUDE_LABEL as DJANGO_INCLUDE_LABEL, SETTINGS_LABEL as DJANGO_SETTINGS_LABEL,
-    STAR_IMPORT_LABEL as DJANGO_STAR_IMPORT_LABEL,
+    STAR_IMPORT_LABEL as DJANGO_STAR_IMPORT_LABEL, mark_test_manage,
 };
 pub(crate) use doctools::sphinx_config_file;
 pub(crate) use enablers::{EnablerScope, resolve_plugin_activations};

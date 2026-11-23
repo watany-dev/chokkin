@@ -191,14 +191,29 @@ runs nothing on a PR that only deletes or weakens tests, so
 a `#[cfg(test)]` block's own file, or the source an integration test pins
 (`TEST_TARGETS`). End-to-end suites and fixtures pin no narrower code and are
 left to the weekly run (#1118). Both fail on a missed mutant
-(#837). A failed weekly or full run opens an issue listing its missed
-mutants, or comments on the one still open (`mutants-issue`, #1119): GitHub's
-scheduled-workflow e-mail alone left a missed mutant on main for days (#1117).
+(#837). A failed weekly or full run opens a new issue listing its missed
+mutants (`mutants-issue`, #1119): GitHub's scheduled-workflow e-mail alone
+left a missed mutant on main for days (#1117), and comments on one long-open
+issue went unnoticed just the same (#1353). A mutant an open issue already
+lists is left out, and a run whose missed mutants are all filed opens none.
 Each shard's summary also lists its timed-out mutants, which count as caught
 but may be a missed mutant that only slows a test down. The plan job counts the mutants with
 `--list` and splits a PR's run into shards of about 50 (at most 12), so a
 large diff still finishes within the 60-minute job timeout. `Mutants` is the one
-stable check name to require in branch protection.
+stable check name to require in branch protection. A draft PR skips the
+mutants (the check reports skipped, which branch protection accepts), since
+every push would rerun all of the diff's mutants; marking the PR ready for
+review runs them, and every push after that does too. Open a PR as a draft
+while it is still changing. A push to a PR whose mutants already passed on an
+earlier commit runs only the lines changed since that commit: the plan job
+finds the newest earlier commit of the PR whose `Mutants (plan)` and `Mutants`
+both succeeded and that the head still contains, and `make mutants-diff
+MUTANTS_SINCE=<commit>` keeps only the lines both the PR's diff and the diff
+since that commit change (`--since` in `scripts/mutants-diff.py`). A cancelled
+or failed run never counts, so its lines carry over to the next push, and a
+force-push or any API failure falls back to the whole diff. What this gives
+up: a line the push did not touch is not rerun even if the push changed code
+it calls; the weekly run still covers it.
 
 Most of a mutant's cost is its rebuild, so the `mutants` job skips
 `Swatinem/rust-cache` (its cache never reaches cargo-mutants' scratch copies,

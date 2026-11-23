@@ -13,6 +13,7 @@ use crate::path_util::rel_to_root;
 use crate::sources::is_dockerfile;
 
 use super::commands::{KnownBinary, SourceHits};
+use super::config_scan::{Heredoc, shebang_interpreter, strip_shell_comment};
 use super::config_text::{
     PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, origin_at, read_root_file,
     toml_words, yaml_block_body,
@@ -25,6 +26,7 @@ const JUSTFILE_NAMES: [&str; 3] = ["justfile", "Justfile", ".justfile"];
 const PROCFILE: &str = "Procfile";
 const GITLAB_CI: &str = ".gitlab-ci.yml";
 const DOCKER_INSTRUCTIONS: [&str; 3] = ["RUN", "CMD", "ENTRYPOINT"];
+const HEREDOC_INSTRUCTIONS: [&str; 3] = ["RUN", "COPY", "ADD"];
 const GITLAB_SCRIPT_KEYS: [&str; 3] = ["script:", "before_script:", "after_script:"];
 const PDM_SCRIPTS: &str = "tool.pdm.scripts";
 const POE_TASKS: &str = "tool.poe.tasks";
@@ -156,22 +158,61 @@ fn is_just_recipe_header(line: &str) -> bool {
     !trimmed.starts_with(['#', '[']) && trimmed.contains(':') && !trimmed.contains(":=")
 }
 
+/// `RUN` / `CMD` / `ENTRYPOINT` commands, and the here-document bodies a
+/// shell runs (#1358): a bare `RUN <<EOF` (past `--mount` style flags) unless
+/// its first line is a non-`sh` shebang, and one fed to a shell
+/// (`RUN bash <<EOF`). Any other body (`RUN cat <<EOF > file`,
+/// `RUN python3 <<EOF`, `COPY <<EOF`) is data and adds nothing.
 pub(super) fn scan_dockerfile(
     rel: &str,
     contents: &str,
     known: KnownBinary<'_>,
     hits: &mut SourceHits,
 ) {
+    let mut heredoc: Option<Heredoc> = None;
+    let mut shebang_next = false;
     for (index, line) in logical_lines(contents) {
+        if let Some(open) = &mut heredoc {
+            if open.ends_at(&line) {
+                heredoc = None;
+                continue;
+            }
+            if std::mem::take(&mut shebang_next)
+                && let Some(interpreter) = shebang_interpreter(&line)
+            {
+                open.runs_shell = interpreter.ends_with("sh");
+            }
+            let command = strip_shell_comment(&line);
+            if open.runs_shell && !command.trim().is_empty() {
+                hits.push_deploy_command(command, known, &origin_at(rel, index, "RUN"));
+            }
+            continue;
+        }
         let Some((instruction, rest)) = line.trim_start().split_once(char::is_whitespace) else {
             continue;
         };
+        if HEREDOC_INSTRUCTIONS
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(instruction))
+        {
+            heredoc = Heredoc::opened_by(rest);
+        }
         let Some(label) = DOCKER_INSTRUCTIONS
             .into_iter()
             .find(|name| name.eq_ignore_ascii_case(instruction))
         else {
             continue;
         };
+        if label == "RUN"
+            && let Some(open) = &mut heredoc
+            && rest
+                .split_whitespace()
+                .find(|word| !word.starts_with("--"))
+                .is_some_and(|word| word.starts_with("<<"))
+        {
+            open.runs_shell = true;
+            shebang_next = true;
+        }
         let command = docker_command(rest.trim());
         hits.push_deploy_command(&command, known, &origin_at(rel, index, label));
     }
@@ -539,6 +580,28 @@ mod tests {
                 ("alembic".to_owned(), Some(2)),
                 ("gunicorn".to_owned(), Some(4)),
                 ("uvicorn".to_owned(), Some(5)),
+            ]
+        );
+    }
+
+    /// A heredoc body runs as commands only when the shell reads it (#1358).
+    #[test]
+    fn dockerfile_heredoc_bodies_run_only_when_fed_to_a_shell() {
+        let contents = "RUN <<EOF\npytest -q # x\nEOF\n\
+            RUN --mount=type=cache,target=/root <<-EOF\n\tcelery --version\n\tEOF\n\
+            RUN bash <<EOF\nalembic upgrade head\nEOF\n\
+            RUN cat <<EOF > /app/start.sh\nmypy .\nRUN gunicorn\nEOF\n\
+            RUN python3 <<'EOF'\ncoverage = 1\nEOF\n\
+            COPY <<EOF /etc/x\nCMD uvicorn\nEOF\n\
+            RUN <<EOF\n#!/usr/bin/env python3\npytest = 1\nEOF\n\
+            RUN <<EOF\n#!/bin/sh -e\nuvicorn app:app\nEOF\n";
+        assert_eq!(
+            scanned(scan_dockerfile, contents),
+            [
+                ("pytest".to_owned(), Some(2)),
+                ("celery".to_owned(), Some(5)),
+                ("alembic".to_owned(), Some(8)),
+                ("uvicorn".to_owned(), Some(26)),
             ]
         );
     }

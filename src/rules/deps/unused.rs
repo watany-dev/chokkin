@@ -7,7 +7,7 @@ use crate::graph::GraphEdge;
 use crate::manifest::normalize_distribution_name;
 use crate::manifest::{DeclaredDependency, PythonRange, marker_always_holds};
 use crate::reachability::ReachabilityReport;
-use crate::resolver::{ResolvedImport, import_root};
+use crate::resolver::{ResolvedImport, import_root, mapped_imports};
 use crate::rules::RuleContext;
 use crate::rules::types::{
     ExplainData, IssueCandidate, IssueSubject, Origin, RuleId, Severity, import_site,
@@ -69,7 +69,7 @@ pub(super) fn detect_unused_dependencies(
         details.extend(include_path_details(dep));
         if let Some(context) = evidence {
             details.extend(build_requires_note(&dep.name, context));
-            details.extend(build_reachability_evidence(&dep.name, context));
+            details.extend(build_reachability_evidence(&dep.name, context, config));
         }
 
         candidates.push(IssueCandidate {
@@ -137,8 +137,9 @@ fn build_requires_note(distribution: &str, context: &UnusedEvidenceContext<'_>) 
 fn build_reachability_evidence(
     distribution: &str,
     context: &UnusedEvidenceContext<'_>,
+    config: &ChokkinConfig,
 ) -> Vec<String> {
-    let top_level = top_level_modules_for_distribution(distribution, context);
+    let top_level = top_level_modules_for_distribution(distribution, context, config);
     let mut details = Vec::new();
     if top_level.is_empty() {
         return details;
@@ -203,6 +204,7 @@ fn import_evidence_line(import: &ResolvedImport) -> String {
 fn top_level_modules_for_distribution(
     distribution: &str,
     context: &UnusedEvidenceContext<'_>,
+    config: &ChokkinConfig,
 ) -> BTreeSet<String> {
     let mut modules = BTreeSet::new();
 
@@ -231,6 +233,15 @@ fn top_level_modules_for_distribution(
         }
     }
 
+    // Nothing imported it: name what an import would match (`git` for
+    // gitpython, #1349), not the distribution.
+    if modules.is_empty() {
+        modules.extend(
+            mapped_imports(config, distribution)
+                .iter()
+                .map(|module| import_root(module).to_owned()),
+        );
+    }
     if modules.is_empty() {
         modules.insert(normalize_distribution_name(distribution));
     }

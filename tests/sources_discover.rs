@@ -73,6 +73,7 @@ fn infers_src_layout() {
             "scripts/**/*.{py,pyi,ipynb}".to_owned(),
             "docs/**/*.{py,pyi,ipynb}".to_owned(),
             "examples/**/*.{py,pyi,ipynb}".to_owned(),
+            "tasks/**/*.{py,pyi,ipynb}".to_owned(),
             "**/*.ipynb".to_owned(),
             "conftest.py".to_owned(),
             "setup.py".to_owned(),

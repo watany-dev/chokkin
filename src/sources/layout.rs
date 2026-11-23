@@ -14,7 +14,7 @@ use crate::manifest::{
 use crate::path_util::{join_rel, strip_py_suffix};
 use crate::plugins::{PytestImportSettings, pytest_import_settings};
 
-use super::dirs::{default_scanned_dirs, is_non_package_dir, local_package_dirs};
+use super::dirs::{TASKS_DIR, default_scanned_dirs, is_non_package_dir, local_package_dirs};
 use super::glob::check_braces;
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
@@ -528,6 +528,9 @@ fn default_globs(layout: ProjectLayout, package_root: &str, packages: &[String])
     // The singular `test/` is where sqlalchemy and CPython-style projects
     // keep their suite; without it the symbols only tests call read as unused.
     globs.extend(default_scanned_dirs().map(|dir| format!("{dir}/**/*.{{py,pyi,ipynb}}")));
+    if layout != ProjectLayout::Unknown {
+        globs.push(format!("{TASKS_DIR}/**/*.{{py,pyi,ipynb}}"));
+    }
     // Notebooks are entries at any depth (§8); outside the package they are
     // dev code (§10), so reading them never makes a dependency runtime.
     if layout != ProjectLayout::Unknown {
@@ -1553,6 +1556,7 @@ mod tests {
                 "scripts/**/*.{py,pyi,ipynb}".to_owned(),
                 "docs/**/*.{py,pyi,ipynb}".to_owned(),
                 "examples/**/*.{py,pyi,ipynb}".to_owned(),
+                "tasks/**/*.{py,pyi,ipynb}".to_owned(),
                 "**/*.ipynb".to_owned(),
                 "conftest.py".to_owned(),
                 "setup.py".to_owned(),

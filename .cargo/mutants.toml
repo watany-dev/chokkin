@@ -59,4 +59,8 @@ exclude_re = [
     # `no:name` is no dotted name, so `push_plugin_module` drops it too: the
     # guard only says why (#1353).
     "replace match guard module.starts_with\\(\"no:\"\\) with false in push_addopts",
+    # Parsing a member the root takes from the index too only adds imports
+    # the used check drops: it reads a member's own imports only when the
+    # root ships its tree (#1342). The guard only skips the parse.
+    "replace is_local_source_member -> bool with true",
 ]
