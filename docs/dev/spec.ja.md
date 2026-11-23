@@ -825,6 +825,10 @@ CHK009 (duplicate_dependency) は、同じ distribution の宣言のうち片方
   -> CHK009 "pytest is declared more than once in group:test"
   -> specifier が違う場合 (pytest>=7 と pytest>=8) は両方が制約なので報告しない
   -> extras が違う場合 (httpx と httpx[http2]) も片方を消すと extras を失うので報告しない
+  -> hatch の env (`[tool.hatch.envs.default]` は group:dev) と同名の `[dependency-groups]` の group は
+     別の context とする。`hatch env create` と `uv sync --group dev` は別々に install するので、
+     片方を消すともう片方の環境から抜ける (#1348)。hatch の env どうしは、env が `default` の
+     依存を継承するので今までどおり同じ group 名なら同じ context
 runtime 宣言と group / optional extra / build の宣言
   -> CHK009 "requests is declared in multiple contexts: group:dev, runtime" (info / likely、--fix しない)
   -> group は単独で install されることがあり (CI の uv sync --only-group lint)、extras は
