@@ -198,7 +198,11 @@ Each shard's summary also lists its timed-out mutants, which count as caught
 but may be a missed mutant that only slows a test down. The plan job counts the mutants with
 `--list` and splits a PR's run into shards of about 50 (at most 12), so a
 large diff still finishes within the 60-minute job timeout. `Mutants` is the one
-stable check name to require in branch protection.
+stable check name to require in branch protection. A draft PR skips the
+mutants (the check reports skipped, which branch protection accepts), since
+every push would rerun all of the diff's mutants; marking the PR ready for
+review runs them, and every push after that does too. Open a PR as a draft
+while it is still changing.
 
 Most of a mutant's cost is its rebuild, so the `mutants` job skips
 `Swatinem/rust-cache` (its cache never reaches cargo-mutants' scratch copies,

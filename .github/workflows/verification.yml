@@ -3,6 +3,8 @@ name: Verification
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes and in files whose tests it cut
 # (#1118), weekly one slice of `make mutants` (all of src/) in turn (#1123).
+# A draft PR skips mutants: each push would rerun every mutant of the diff, so
+# they run once the PR is marked ready and on each push after that.
 # Both split into shards (about 50 mutants on a PR, at most 100 weekly) so
 # each finishes within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
@@ -11,7 +13,9 @@ name: Verification
 on:
   # No paths filter: `Mutants` is meant to be a required check, and a PR without
   # Rust changes passes it with zero mutants instead of leaving it pending.
+  # ready_for_review starts the mutants a draft skipped.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
@@ -41,7 +45,10 @@ env:
 jobs:
   mutants-plan:
     name: Mutants (plan)
-    if: github.event_name != 'workflow_dispatch' || inputs.full-mutants
+    # `pull_request` is unset outside a PR, so only a draft PR is skipped.
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.full-mutants) &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -187,7 +194,8 @@ jobs:
     # Non-blocking until a few weeks of results show how noisy the runners are
     # and whether --threshold needs tuning (#836).
     name: Bench gate (PR vs base, non-blocking)
-    if: github.event_name == 'pull_request'
+    # The draft already ran it on the same commit.
+    if: github.event_name == 'pull_request' && github.event.action != 'ready_for_review'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: true
@@ -246,7 +254,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # One stable check name for branch protection, whatever the shard count.
+  # One stable check name for branch protection, whatever the shard count. On a
+  # draft PR the plan is skipped, so this is skipped too, which a required
+  # check accepts; marking the PR ready runs it for real.
   mutants-result:
     name: Mutants
     needs: [mutants-plan, mutants]
@@ -314,6 +324,8 @@ jobs:
 
   kani:
     name: Kani proofs
+    # The draft already ran it on the same commit.
+    if: github.event.action != 'ready_for_review'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
