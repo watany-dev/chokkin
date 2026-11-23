@@ -22,7 +22,7 @@ use crate::manifest::util::read_to_string;
 use crate::parser::{LineIndex, resolve_relative_import};
 use crate::path_util::is_file_named;
 use crate::rules::import_site;
-use crate::sources::FileContext;
+use crate::sources::{DiscoveredSources, FileContext, assign_layout_file_context};
 
 use super::commands::is_dotted_identifier;
 use super::context::PluginContext;
@@ -127,12 +127,17 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
     let known: BTreeSet<String> = ctx.sources.files.iter().map(|f| f.path.clone()).collect();
 
     if has_manage {
+        let context = if names_test_settings(root, &ctx.sources.layout) {
+            FileContext::Test
+        } else {
+            FileContext::Runtime
+        };
         contrib.entries.push(PluginEntry {
             spec: crate::config::EntrySpec {
                 path: "manage.py".to_owned(),
                 symbol: None,
             },
-            context: FileContext::Runtime,
+            context,
             origin: ReferenceOrigin {
                 file: "manage.py".to_owned(),
                 line: None,
@@ -322,6 +327,44 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         )));
 
     (contrib, warnings)
+}
+
+/// Give the root `manage.py` test context when it names test settings
+/// ([`names_test_settings`]), so it is neither the app signal (§8) nor the
+/// runtime code a project's `manage.py` is (#1350).
+pub(crate) fn mark_test_manage(sources: &mut DiscoveredSources) {
+    let root = sources.root.path.as_path();
+    let layout = &sources.layout;
+    if let Some(manage) = sources
+        .files
+        .iter_mut()
+        .find(|file| file.path == "manage.py" && file.context == FileContext::Runtime)
+        && names_test_settings(root, layout)
+    {
+        manage.context = FileContext::Test;
+    }
+}
+
+/// Whether the root `manage.py` sets `DJANGO_SETTINGS_MODULE` to a module
+/// whose file lies in a test directory: a reusable app keeps one only to run
+/// its suite (django-extensions' `tests.testapp.settings`). The context
+/// comes from the path, so `--production`, which drops the tests, decides
+/// the same. Settings named in a form not read, or missing, are not test
+/// settings.
+fn names_test_settings(root: &Path, layout: &crate::sources::LayoutInfo) -> bool {
+    let Ok(contents) = read_to_string(&root.join("manage.py")) else {
+        return false;
+    };
+    let Some((module, _)) = extract_django_settings_module(&contents) else {
+        return false;
+    };
+    let base = module.replace('.', "/");
+    [format!("{base}.py"), format!("{base}/__init__.py")]
+        .iter()
+        .any(|path| {
+            root.join(path).is_file()
+                && assign_layout_file_context(path, layout) == FileContext::Test
+        })
 }
 
 /// The glob Django's migration loader reads in every installed app.

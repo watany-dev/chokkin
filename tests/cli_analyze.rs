@@ -10915,6 +10915,57 @@ fn binary_root_tasks_scripts_are_dev_entries_in_package_layouts() {
     }
 }
 
+/// A reusable Django app keeps a root `manage.py` only to run its suite
+/// with test settings: it is test code, so the library stays a library and
+/// its public modules are no orphans (#1350). A `manage.py` that names
+/// runtime settings still makes the project an app.
+#[test]
+fn binary_manage_py_naming_test_settings_keeps_library_mode() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"1\"\ndependencies = [\"django\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    let manage = |settings: &str| {
+        format!(
+            "import os, sys\nif __name__ == \"__main__\":\n    os.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"{settings}\")\n    from django.core.management import execute_from_command_line\n    execute_from_command_line(sys.argv)\n"
+        )
+    };
+    for (settings, settings_file, mode) in [
+        (
+            "tests.testapp.settings",
+            "tests/testapp/settings.py",
+            "library",
+        ),
+        ("site_conf.settings", "site_conf/settings.py", "app"),
+    ] {
+        let manage = manage(settings);
+        let project = write_project(&[
+            ("pyproject.toml", pyproject),
+            (
+                "src/acme/__init__.py",
+                "from django.apps import AppConfig\n\n\nclass AcmeConfig(AppConfig):\n    name = \"acme\"\n",
+            ),
+            ("src/acme/utils.py", "def helper():\n    return 1\n"),
+            ("manage.py", &manage),
+            ("tests/__init__.py", ""),
+            ("tests/testapp/__init__.py", ""),
+            ("site_conf/__init__.py", ""),
+            (settings_file, "INSTALLED_APPS = [\"acme\"]\n"),
+        ]);
+        // `--production` drops the tests, yet decides the same mode.
+        for production in [None, Some("--production")] {
+            let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+                .args(["--no-cache", "--reporter", "json"])
+                .args(production)
+                .arg(project.path())
+                .output()
+                .expect("run chokkin");
+            let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+            assert_eq!(json["mode"], mode, "{settings} {production:?}: {json}");
+            if mode == "library" {
+                assert_eq!(json["issues"], serde_json::json!([]), "{json}");
+            }
+        }
+    }
+}
+
 /// `--explain` of a distribution nothing imports names the import its map
 /// gives (`git`), not the distribution (#1349).
 #[test]
