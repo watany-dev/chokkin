@@ -172,10 +172,11 @@ pub fn build_binary_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::default_config;
 
     #[test]
     fn mapped_imports_prefer_the_user_map_and_match_normalized_names() {
-        let mut config = crate::config::default_config();
+        let mut config = default_config();
         assert_eq!(mapped_imports(&config, "GitPython"), ["git"]);
         assert_eq!(
             mapped_imports(&config, "not-a-known-dist"),
@@ -186,7 +187,6 @@ mod tests {
             .insert("git_python".to_owned(), vec!["mygit".to_owned()]);
         assert_eq!(mapped_imports(&config, "git-python"), ["mygit"]);
     }
-    use crate::config::default_config;
 
     #[test]
     fn overlays_do_not_mutate_bundled_defaults() {
