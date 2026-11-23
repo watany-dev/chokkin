@@ -3,6 +3,9 @@ name: Verification
 # Test-effectiveness checks (#418, #837). A missed mutant fails the run: on a
 # PR only the mutants on lines the PR changes and in files whose tests it cut
 # (#1118), weekly one slice of `make mutants` (all of src/) in turn (#1123).
+# A draft PR skips mutants, and a push to a PR whose mutants passed on an
+# earlier commit runs only the lines changed since that commit, so iterating on
+# a PR does not rerun every mutant of its diff each time.
 # Both split into shards (about 50 mutants on a PR, at most 100 weekly) so
 # each finishes within a job timeout. kani runs on demand, weekly, and on PRs that change a
 # file holding `#[cfg(kani)]` harnesses (#860). On PRs the benchmark
@@ -11,7 +14,9 @@ name: Verification
 on:
   # No paths filter: `Mutants` is meant to be a required check, and a PR without
   # Rust changes passes it with zero mutants instead of leaving it pending.
+  # ready_for_review starts the mutants a draft skipped.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
@@ -41,13 +46,20 @@ env:
 jobs:
   mutants-plan:
     name: Mutants (plan)
-    if: github.event_name != 'workflow_dispatch' || inputs.full-mutants
+    # `pull_request` is unset outside a PR, so only a draft PR is skipped.
+    if: >-
+      (github.event_name != 'workflow_dispatch' || inputs.full-mutants) &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # find the PR's last commit whose mutants passed
     outputs:
       count: ${{ steps.plan.outputs.count }}
       shards: ${{ steps.plan.outputs.shards }}
       total: ${{ steps.plan.outputs.total }}
+      since: ${{ steps.since.outputs.since }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,6 +69,37 @@ jobs:
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-mutants@27.1.0
+      - name: Find the last commit whose mutants passed
+        id: since
+        if: github.event_name == 'pull_request'
+        # The newest earlier commit of this PR whose plan and `Mutants` both
+        # succeeded (a draft's skipped run does not count) and that the head
+        # still contains (a force-push drops it). Everything the PR changed up
+        # to it passed then, so this push only needs the lines changed since.
+        # A cancelled or failed run never counts, so its lines carry over to
+        # the next push. Any API or git failure falls back to the whole diff.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          since=""
+          candidates=$(gh api -X GET "repos/$GITHUB_REPOSITORY/actions/workflows/verification.yml/runs" \
+            -f event=pull_request -f branch="$HEAD_REF" -f status=completed -f per_page=30 \
+            --jq '.workflow_runs[] | select(.head_repository.full_name == env.HEAD_REPO and .head_sha != env.HEAD_SHA) | "\(.id) \(.head_sha)"' |
+            head -n 10) || candidates=""
+          while read -r run sha; do
+            [ -n "$sha" ] || continue
+            git merge-base --is-ancestor "$sha" "$HEAD_SHA" 2>/dev/null || continue
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+              --jq '[.jobs[] | select((.name == "Mutants (plan)" or .name == "Mutants") and .conclusion == "success")] | length') || continue
+            if [ "$passed" = 2 ]; then since=$sha; break; fi
+          done <<< "$candidates"
+          echo "since=$since" >> "$GITHUB_OUTPUT"
+          if [ -n "$since" ]; then
+            echo "Mutants passed on ${since::7}: only lines changed since then run." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Count mutants and pick the shards
         id: plan
         # A mutant takes about 40 s at -j 2 (incremental rebuild plus the
@@ -70,6 +113,7 @@ jobs:
         # minutes on 2026-10-19.
         env:
           SLICE: ${{ inputs.mutants-slice }}
+          MUTANTS_SINCE: ${{ steps.since.outputs.since }}
         run: |
           case "$SLICE" in "" | [0-9] | [1-9][0-9]) ;; *) echo "mutants-slice must be a number: $SLICE" >&2; exit 1 ;; esac
           mkdir -p target
@@ -133,6 +177,7 @@ jobs:
         id: mutate
         env:
           SHARD: ${{ matrix.shard }}/${{ needs.mutants-plan.outputs.total }}
+          MUTANTS_SINCE: ${{ needs.mutants-plan.outputs.since }}
         # Exit 2 (missed) and 3 (timeout) are left to the next step: a timeout
         # counts as caught, and exit 3 hides missed mutants in the same run.
         # The timeout bounds time only: a mutant that allocates forever ran the
@@ -187,7 +232,8 @@ jobs:
     # Non-blocking until a few weeks of results show how noisy the runners are
     # and whether --threshold needs tuning (#836).
     name: Bench gate (PR vs base, non-blocking)
-    if: github.event_name == 'pull_request'
+    # The draft already ran it on the same commit.
+    if: github.event_name == 'pull_request' && github.event.action != 'ready_for_review'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     continue-on-error: true
@@ -246,7 +292,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # One stable check name for branch protection, whatever the shard count.
+  # One stable check name for branch protection, whatever the shard count. On a
+  # draft PR the plan is skipped, so this is skipped too, which a required
+  # check accepts; marking the PR ready runs it for real.
   mutants-result:
     name: Mutants
     needs: [mutants-plan, mutants]
@@ -263,8 +311,11 @@ jobs:
 
   # A failed weekly or full run on main files its missed mutants as an issue
   # (#1119): the scheduled-workflow e-mail alone left #1117 on main for days.
-  # One open issue collects every failed run, each as a comment. A cancelled
-  # run (superseded, or stopped by hand) files nothing.
+  # Each failed run opens its own issue, so it shows up as new work in the
+  # issue list; comments on one long-open issue went unnoticed (#1353). A
+  # mutant an open issue already lists is left out, and a run whose every
+  # missed mutant is already filed opens nothing. A cancelled run (superseded,
+  # or stopped by hand) files nothing.
   mutants-issue:
     name: Mutants (file missed on main)
     needs: [mutants-plan, mutants]
@@ -275,7 +326,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      issues: write # gh issue create / comment
+      issues: write # gh issue create
     steps:
       # A shard whose runner was lost uploads nothing; file the issue anyway.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -283,13 +334,25 @@ jobs:
         with:
           pattern: mutants-*
           path: shards
-      - name: Open or update the issue
+      - name: Open the issue
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: "test: cargo-mutants found missed mutants on main"
+          # Also matches the single issue the job used to comment on (#1353).
+          MATCH: missed mutants on main
         run: |
           missed=$(cat shards/*/missed.txt 2>/dev/null | sort -u || true)
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --search "\"$MATCH\" in:title" --json title,body,comments \
+            --jq '.[] | select(.title | contains(env.MATCH)) | .body, .comments[].body' > filed.txt
+          all=$(printf '%s\n' "$missed" | grep -c . || true)
+          if [ -n "$missed" ]; then
+            missed=$(printf '%s\n' "$missed" | grep -vxFf filed.txt || true)
+            if [ -z "$missed" ]; then
+              echo "All $all missed mutants are already in an open issue; nothing filed."
+              exit 0
+            fi
+          fi
           {
             echo "The [${GITHUB_EVENT_NAME} cargo-mutants run]($RUN_URL) failed on \`${GITHUB_SHA::7}\`."
             echo
@@ -302,18 +365,18 @@ jobs:
             else
               echo "No shard reported a missed mutant: the plan or a shard did not finish (job timeout, runner lost, build failure). See the run."
             fi
+            if [ "$(printf '%s\n' "$missed" | grep -c .)" -lt "$all" ]; then
+              echo
+              echo "The run also missed mutants an open issue already lists; they are left out here."
+            fi
           } > body.md
-          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "\"$TITLE\" in:title" --json number,title \
-            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file body.md
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
-          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --body-file body.md \
+            --title "test: cargo-mutants $MATCH ($(date -u +%F), ${GITHUB_SHA::7})"
 
   kani:
     name: Kani proofs
+    # The draft already ran it on the same commit.
+    if: github.event.action != 'ready_for_review'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
