@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The bundled package map knows 17 more import names that differ from their
+  distribution (`passlib` from libpass, `pylsp_jsonrpc`, `thop`, `pynvml`,
+  `treenode` and other Django apps, `zxingcpp`,
+  `azure.ai.documentintelligence`, llama-index integrations), and a
+  namespace import also matches a declared distribution named after its
+  first three segments (`llama-index-readers-file` for
+  `llama_index.readers.file`), so these no longer report CHK002 with CHK003
+  / CHK010 without a venv (#1351).
+- `import multipart` resolves to a declared `multipart` (defnull/multipart)
+  instead of always to python-multipart (#1346).
+- A project's own namespace module under a PEP 420 parent without
+  `__init__.py` (`src/poetry/core/` in poetry-core) stays first-party
+  instead of resolving to the bundled map's distribution and reporting
+  CHK003 (#1347).
+
 ## [0.7.14] - 2026-11-23
 
 ### Added

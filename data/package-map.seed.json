@@ -1545,6 +1545,108 @@
       "imports": [
         "split_settings"
       ]
+    },
+    {
+      "distribution": "libpass",
+      "imports": [
+        "passlib"
+      ]
+    },
+    {
+      "distribution": "python-lsp-jsonrpc",
+      "imports": [
+        "pylsp_jsonrpc"
+      ]
+    },
+    {
+      "distribution": "ultralytics-thop",
+      "imports": [
+        "thop"
+      ]
+    },
+    {
+      "distribution": "nvidia-ml-py",
+      "imports": [
+        "pynvml"
+      ]
+    },
+    {
+      "distribution": "django-auditlog",
+      "imports": [
+        "auditlog"
+      ]
+    },
+    {
+      "distribution": "django-cachalot",
+      "imports": [
+        "cachalot"
+      ]
+    },
+    {
+      "distribution": "django-compression-middleware",
+      "imports": [
+        "compression_middleware"
+      ]
+    },
+    {
+      "distribution": "django-multiselectfield",
+      "imports": [
+        "multiselectfield"
+      ]
+    },
+    {
+      "distribution": "django-soft-delete",
+      "imports": [
+        "django_softdelete"
+      ]
+    },
+    {
+      "distribution": "django-treenode",
+      "imports": [
+        "treenode"
+      ]
+    },
+    {
+      "distribution": "zxing-cpp",
+      "imports": [
+        "zxingcpp"
+      ]
+    },
+    {
+      "distribution": "azure-ai-documentintelligence",
+      "imports": [
+        "azure.ai.documentintelligence"
+      ]
+    },
+    {
+      "distribution": "llama-index-embeddings-huggingface",
+      "imports": [
+        "llama_index.embeddings.huggingface"
+      ]
+    },
+    {
+      "distribution": "llama-index-embeddings-ollama",
+      "imports": [
+        "llama_index.embeddings.ollama"
+      ]
+    },
+    {
+      "distribution": "llama-index-embeddings-openai-like",
+      "imports": [
+        "llama_index.embeddings.openai_like"
+      ]
+    },
+    {
+      "distribution": "llama-index-llms-ollama",
+      "imports": [
+        "llama_index.llms.ollama"
+      ]
+    },
+    {
+      "distribution": "llama-index-llms-openai-like",
+      "imports": [
+        "llama_index.llms.openai_like"
+      ]
     }
   ],
   "auto_packages": [

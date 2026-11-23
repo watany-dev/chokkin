@@ -864,16 +864,19 @@ fn declared_match(distribution: String, declared: &DeclaredNames<'_>) -> Option<
         })
 }
 
-/// A namespace package portion declared under its first two segments
-/// (`sphinxcontrib-log-cabinet` for `sphinxcontrib.log_cabinet`, #809). The
-/// shared root alone names no distribution.
+/// A namespace package portion declared under its first three or two
+/// segments, deeper first (`llama-index-readers-file` for
+/// `llama_index.readers.file`, #1351; `sphinxcontrib-log-cabinet` for
+/// `sphinxcontrib.log_cabinet`, #809). The shared root alone names no
+/// distribution.
 fn namespace_declared_match(module: &str, declared: &DeclaredNames<'_>) -> Option<RootResolution> {
-    let mut segments = module.split('.');
-    let (namespace, portion) = (segments.next()?, segments.next()?);
-    declared_match(
-        normalize_distribution_name(&format!("{namespace}-{portion}")),
-        declared,
-    )
+    let segments: Vec<&str> = module.split('.').take(3).collect();
+    (2..=segments.len()).rev().find_map(|depth| {
+        declared_match(
+            normalize_distribution_name(&segments[..depth].join("-")),
+            declared,
+        )
+    })
 }
 
 /// A namespace portion declared under its first two segments beats the

@@ -463,6 +463,40 @@ fn ambiguous_namespace_import_warns_once() {
 }
 
 #[test]
+fn declared_three_segment_portion_owns_its_namespace_import() {
+    // llama-index ships one distribution per integration
+    // (`llama-index-readers-file` for `llama_index.readers.file`); the
+    // two-segment portion `llama-index-readers` names none of them (#1351).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-readers-file\", \"acme-cloud-storage\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "from llama_index.readers.file import PDFReader\nimport acme.cloud.storage.blob\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    for (module, expected) in [
+        ("llama_index.readers.file", "llama-index-readers-file"),
+        ("acme.cloud.storage.blob", "acme-cloud-storage"),
+    ] {
+        let resolved = index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == module)
+            .expect("import");
+        assert_eq!(
+            (resolved.origin, resolved.distribution.as_deref()),
+            (ModuleOrigin::ThirdParty, Some(expected)),
+            "{module}"
+        );
+    }
+}
+
+#[test]
 fn local_namespace_module_wins_under_a_pep420_parent() {
     // `src/poetry/` has no `__init__.py`, so `poetry` is not a layout package;
     // the local `poetry.core` still beats the bundled `poetry-core` (#1347).
