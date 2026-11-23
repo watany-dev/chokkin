@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- src, flat and package-root layouts read a root `tasks/` (release and
+  maintenance scripts, pypa/build's `tasks/release.py`) as dev entries, so
+  a dependency group only those scripts import is no longer CHK002 certain.
+  A flat app's `tasks` package stays runtime code (#1349).
+- `--explain` of a distribution nothing imports names the import its map
+  gives (`top-level modules: git` for gitpython), not the distribution
+  (#1349).
+- A root `manage.py` whose `DJANGO_SETTINGS_MODULE` names settings in a test
+  directory (a reusable Django app's test runner) is test code: it no
+  longer turns the library into an app whose public modules are CHK001
+  certain, and `--production` drops it (#1350).
+- Unreadable `.gitignore` and path warnings below the root come out in path
+  order instead of the file system's directory order (#1357).
+
 ## [0.7.14] - 2026-11-23
 
 ### Added
