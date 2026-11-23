@@ -175,6 +175,11 @@ fn counts_as_use(file: &str, reachable: &HashSet<&str>, graph: &ProjectGraph) ->
 /// `apache-airflow-task-sdk`, since the root ships both trees. Those imports
 /// may resolve to a distribution (`airflow` maps to `apache-airflow`), so only
 /// the member tree decides.
+///
+/// A member the root declares without a local source (gradio's
+/// `gradio_client==2.7.2` beside `client/python/`, #1342) is used the same
+/// way when the root imports its tree, but its own imports use nothing: the
+/// root installs it from the index instead of shipping its tree.
 pub(super) fn mark_workspace_source_distributions(
     manifest: &LoadedManifest,
     dependency: &DependencyRuleContext<'_>,
@@ -213,9 +218,10 @@ pub(super) fn mark_workspace_source_distributions(
     let paths = sorted_paths(&context.sources.files);
     let mut members = Vec::new();
     for boundary in workspace_boundaries {
-        let Some(name) = local_source_member(manifest, local, boundary.manifest) else {
+        let Some(name) = declared_member(manifest, boundary.manifest) else {
             continue;
         };
+        let ships = local.is_local_source(&name);
         let Some(member_path) = member_path(manifest, boundary.manifest) else {
             continue;
         };
@@ -226,13 +232,13 @@ pub(super) fn mark_workspace_source_distributions(
             "",
             boundary.files.iter().map(|file| file.path.as_str()),
         ));
-        members.push((name, member_path, boundary.imports, provided));
+        members.push((name, member_path, ships, boundary.imports, provided));
     }
     if members.is_empty() {
         return;
     }
 
-    let providers = Providers::new(members.iter().map(|(_, _, _, provided)| provided));
+    let providers = Providers::new(members.iter().map(|(_, _, _, _, provided)| provided));
     let member_imports = MemberImports::new(context.resolution);
 
     let mut provided = vec![false; members.len()];
@@ -259,8 +265,8 @@ pub(super) fn mark_workspace_source_distributions(
         }
         for index in now_used {
             done[index] = true;
-            let (name, member_path, imports, _) = &members[index];
-            if !member_path.is_empty() {
+            let (name, member_path, ships, imports, _) = &members[index];
+            if *ships && !member_path.is_empty() {
                 found.extend(member_imports.under(member_path));
                 found.extend(imports.iter().map(String::as_str));
             }
@@ -331,12 +337,16 @@ pub(crate) fn local_source_member(
     local: &LocalTrees,
     member: &LoadedManifest,
 ) -> Option<String> {
+    declared_member(root, member).filter(|name| local.is_local_source(name))
+}
+
+/// Normalized name of `member` when `root` declares it, from any source.
+fn declared_member(root: &LoadedManifest, member: &LoadedManifest) -> Option<String> {
     let name = normalize_distribution_name(member.metadata.name.as_deref()?);
-    let declared = root
-        .dependencies
+    root.dependencies
         .iter()
-        .any(|dep| normalize_distribution_name(&dep.name) == name);
-    (declared && local.is_local_source(&name)).then_some(name)
+        .any(|dep| normalize_distribution_name(&dep.name) == name)
+        .then_some(name)
 }
 
 /// Root-relative `/` path of a workspace member; empty for the root itself.
@@ -845,7 +855,9 @@ mod tests {
     /// inside `core`, and `util` only through an import in an `sdk` file the
     /// root does not inventory (#712). `extra` is imported only by an
     /// unreachable file, so `lone`, which only `extra` imports, stays unused.
-    /// `stray` is not declared, and `plain` has no workspace source.
+    /// `stray` is not declared. `plain` has no workspace source: the root's
+    /// import of its tree uses it, but its own import of `lonepkg` does not
+    /// use `lone`, since the root does not ship its tree (#1342).
     #[test]
     fn workspace_sources_are_used_through_member_trees() {
         let root = std::env::temp_dir().join("ws");
@@ -859,7 +871,7 @@ mod tests {
             .map(|name| (name, manifest_at(root.join(name), name, &[], &[])));
         let imports = |name: &str| match name {
             "sdk" => vec!["utilpkg.helpers".to_owned()],
-            "extra" => vec!["lonepkg".to_owned()],
+            "extra" | "plain" => vec!["lonepkg".to_owned()],
             _ => Vec::new(),
         };
         let member_imports = members.each_ref().map(|(name, _)| imports(name));
@@ -912,7 +924,7 @@ mod tests {
         );
         let mut used: Vec<String> = used.into_iter().collect();
         used.sort();
-        assert_eq!(used, ["core", "sdk", "util"]);
+        assert_eq!(used, ["core", "plain", "sdk", "util"]);
     }
 
     /// Members are marked in rounds: each round adds, in declaration order,

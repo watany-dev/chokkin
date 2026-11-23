@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`[tool.hatch.envs.default]` and `dev`) install separately, so a
   distribution listed in both is no longer a CHK009 warning that `--fix`
   removes (#1348).
+- The root's declaration of a workspace member's distribution without a
+  `workspace` / `path` source (gradio's `gradio_client==2.7.2` beside
+  `client/python/`) is used when the root imports the member's tree, and
+  no longer reports CHK002 (#1342).
 - A cached run no longer fails when a file a requirements file includes
   with `-r` was deleted since; the cache misses and the run re-reads the
   manifest.
