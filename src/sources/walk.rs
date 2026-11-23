@@ -59,7 +59,8 @@ pub(super) struct Collected {
     /// candidates (#1240). The project globs do not apply; the exclusions
     /// and ignore rules do.
     pub command_files: Vec<String>,
-    /// What the walk could not read.
+    /// What the walk could not read: the ignore files above and at the
+    /// root first, then what lies below it, sorted by message.
     pub warnings: Vec<SourcesWarning>,
     /// Root-relative links to a directory or source file inside the root,
     /// each with its target's root-relative path (#1001).
@@ -199,9 +200,10 @@ fn configure_walker(
     builder
 }
 
-/// Ignore file errors of a walked directory, as `ignore` attaches them to
-/// its entry, and a `.gitignore` below the walk root that `ignore` could not
-/// read and dropped (#915). The root's own is [`root_gitignore_warning`]'s.
+/// Ignore file errors of a directory below the walk root, as `ignore`
+/// attaches them to its entry, and a `.gitignore` there that `ignore` could
+/// not read and dropped (#915). The root's own are [`walker`]'s and
+/// [`root_gitignore_warning`]'s.
 fn dir_warnings(
     root: &Path,
     cache: &SourcesCache,
@@ -210,16 +212,14 @@ fn dir_warnings(
     warnings: &mut Vec<SourcesWarning>,
 ) {
     let path = entry.path();
-    // A symlinked root keeps its link type but is walked as a directory.
-    if !(file_type.is_dir() || (entry.depth() == 0 && path.is_dir())) {
+    if entry.depth() == 0 || !file_type.is_dir() {
         return;
     }
     let dir = cache.dir(path);
     for error in dir.errors() {
         push_walk_error(path, error, warnings);
     }
-    if entry.depth() > 0
-        && dir.root_load() == RootLoad::Unreadable
+    if dir.root_load() == RootLoad::Unreadable
         && let Some(warning) = nested_gitignore_unreadable(root, path)
     {
         warnings.push(warning);
@@ -300,37 +300,23 @@ impl SkippedSymlinks {
         }
     }
 
-    /// Append the links in path order: the walk meets them in directory
-    /// order, which the file system picks. Returns the links inside the root.
+    /// Append the links; returns the links inside the root.
     fn finish(mut self, warnings: &mut Vec<SourcesWarning>) -> BTreeMap<String, String> {
-        self.warnings.sort_by_cached_key(ToString::to_string);
         warnings.append(&mut self.warnings);
         self.inside
     }
 }
 
-/// Source files whose paths are not UTF-8 (#1146).
-#[derive(Default)]
-struct NonUtf8Paths(Vec<SourcesWarning>);
-
-impl NonUtf8Paths {
-    /// Record `rel` if it is not UTF-8. Its lossy `rel_str` names no file on
-    /// disk, and Python cannot import the module, so it is skipped out loud.
-    fn skips(&mut self, rel: &Path, rel_str: &str) -> bool {
-        if rel.to_str().is_some() {
-            return false;
-        }
-        self.0.push(SourcesWarning::NonUtf8Path {
-            path: rel_str.to_owned(),
-        });
-        true
+/// Skip `rel` out loud if it is not UTF-8 (#1146). Its lossy `rel_str`
+/// names no file on disk, and Python cannot import the module.
+fn skips_non_utf8(rel: &Path, rel_str: &str, warnings: &mut Vec<SourcesWarning>) -> bool {
+    if rel.to_str().is_some() {
+        return false;
     }
-
-    /// Append the paths in path order, not the walk's directory order.
-    fn finish(mut self, warnings: &mut Vec<SourcesWarning>) {
-        self.0.sort_by_cached_key(ToString::to_string);
-        warnings.append(&mut self.0);
-    }
+    warnings.push(SourcesWarning::NonUtf8Path {
+        path: rel_str.to_owned(),
+    });
+    true
 }
 
 /// A symlink the walk did not follow.
@@ -519,6 +505,12 @@ fn walker(
         for error in ancestors.iter().flat_map(|ancestors| ancestors.errors()) {
             push_walk_error(root, error, warnings);
         }
+        // A symlinked root keeps its link type but is walked as a directory.
+        if root.is_dir() {
+            for error in options.cache.dir(root).errors() {
+                push_walk_error(root, error, warnings);
+            }
+        }
         GitignoreFilter::new(root, options.cache, ancestors)
     });
     Ok(configure_walker(
@@ -544,12 +536,12 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     let mut command_files = Vec::new();
     let mut warnings = Vec::new();
     let mut symlinks = SkippedSymlinks::default();
-    let mut non_utf8 = NonUtf8Paths::default();
     let ignore = options
         .respect_gitignore
         .then(|| WalkIgnore::new(cache, &root));
 
     let builder = walker(options, &mut warnings)?;
+    let above_walk = warnings.len();
 
     for result in builder.build() {
         let entry = match result {
@@ -585,7 +577,7 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
             continue;
         }
 
-        if non_utf8.skips(rel, &rel_str) {
+        if skips_non_utf8(rel, &rel_str, &mut warnings) {
             continue;
         }
 
@@ -611,8 +603,10 @@ pub(super) fn collect_files(options: &CollectOptions<'_>) -> Result<Collected, S
     files.sort_by(|left, right| left.path.cmp(&right.path));
     held_tests.sort_by(|left, right| left.path.cmp(&right.path));
     command_files.sort();
-    non_utf8.finish(&mut warnings);
     let symlinks = symlinks.finish(&mut warnings);
+    // The walk meets paths in the directory order the file system picks
+    // (#1357); the ignore files above and at the root keep their precedence.
+    warnings[above_walk..].sort_by_cached_key(ToString::to_string);
     Ok(Collected {
         files,
         held_tests,
