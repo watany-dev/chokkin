@@ -168,14 +168,24 @@ fn removable_among(declarations: &[&DeclaredDependency], repeated: &[bool]) -> V
 
 type ContextKey<'k> = (
     &'k DependencyContext,
+    bool,
     Option<&'k str>,
     &'k BTreeSet<&'k str>,
     &'k BTreeSet<String>,
 );
 
+/// A hatch env is installed by `hatch env create`, apart from the PEP 735
+/// group its name maps to (`default` is `group:dev`), so the two never
+/// share a context (#1348). Envs stay one install path among themselves:
+/// they inherit the `default` env's dependencies.
+fn hatch_env(dep: &DeclaredDependency) -> bool {
+    dep.origin.label.starts_with("tool.hatch.envs.")
+}
+
 fn context_key<'k>(item: &'k Prepared<'_>) -> ContextKey<'k> {
     (
         &item.dep.context,
+        hatch_env(item.dep),
         item.dep.marker.as_deref(),
         &item.specifiers,
         &item.extras,
@@ -414,7 +424,7 @@ mod tests {
         if a.origin == b.origin || a.marker != b.marker {
             return false;
         }
-        if a.context == b.context {
+        if a.context == b.context && hatch_env(a) == hatch_env(b) {
             return specifier_set(a) == specifier_set(b) && extra_set(a) == extra_set(b);
         }
         let (runtime, refinement) = match (&a.context, &b.context) {
@@ -454,7 +464,9 @@ mod tests {
     /// pairwise definition.
     fn pairwise(declarations: &[&DeclaredDependency]) -> (Vec<bool>, Vec<bool>) {
         (
-            pairwise_involved(declarations, |a, b| a.context == b.context),
+            pairwise_involved(declarations, |a, b| {
+                a.context == b.context && hatch_env(a) == hatch_env(b)
+            }),
             pairwise_involved(declarations, |_, _| true),
         )
     }
@@ -589,6 +601,29 @@ mod tests {
             ]),
             Vec::<String>::new()
         );
+    }
+
+    /// A hatch env and a PEP 735 group of one name install separately
+    /// (`hatch env create`, `uv sync --group dev`): removing either drops it
+    /// from that environment (#1348). Inside hatch's envs a repeat stays one.
+    #[test]
+    fn hatch_env_does_not_repeat_a_same_name_group() {
+        let labeled = |line: u32, label: &str| DeclaredDependency {
+            origin: DependencyOrigin {
+                file: "pyproject.toml".to_owned(),
+                line: Some(line),
+                label: label.to_owned(),
+            },
+            ..dep("pre-commit", group("dev"))
+        };
+        let pep735 = labeled(1, "dependency-groups.dev[0]");
+        let hatch = labeled(2, "tool.hatch.envs.default.dependencies[0]");
+        assert_eq!(
+            messages(&[pep735.clone(), hatch.clone()]),
+            Vec::<String>::new()
+        );
+        let hatch_dev = labeled(3, "tool.hatch.envs.dev.dependencies[0]");
+        assert_eq!(messages(&[pep735, hatch, hatch_dev]).len(), 1);
     }
 
     #[test]

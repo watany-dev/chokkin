@@ -581,11 +581,14 @@ fn manifest_input_fingerprints(
     if let Some(lockfile) = &sources.lockfile {
         paths.push(root.join(&lockfile.path));
     }
-    for path in &sources.requirements_files {
-        paths.push(root.join(path));
-    }
     let mut fingerprints = fingerprint_paths(root, paths)?;
-    for path in &sources.requirements_missing {
+    // A `-r` include the cached run read may be gone now; outside the
+    // candidate names it does not change the key, so it must miss here.
+    for path in sources
+        .requirements_files
+        .iter()
+        .chain(&sources.requirements_missing)
+    {
         let absolute = root.join(path);
         fingerprints.push(if absolute.is_file() {
             SourceFingerprint::from_absolute(root, &absolute)?

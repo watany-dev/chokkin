@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`RUN bash <<EOF`), is read as commands; a body written to a file, fed to
   another interpreter (`RUN python3 <<EOF`, a non-`sh` shebang) or given to
   `COPY` stays data (#1358).
+- A root `requirements.txt` (or another fixed requirements name) beside a
+  same-name `.in` is pip-compile output: the `.in` declares in its place
+  and the pinned transitive dependencies no longer report CHK002 (#1343).
+- A hatch env and a same-name `[dependency-groups]` group
+  (`[tool.hatch.envs.default]` and `dev`) install separately, so a
+  distribution listed in both is no longer a CHK009 warning that `--fix`
+  removes (#1348).
+- The root's declaration of a workspace member's distribution without a
+  `workspace` / `path` source (gradio's `gradio_client==2.7.2` beside
+  `client/python/`) is used when the root imports the member's tree, and
+  no longer reports CHK002 (#1342).
+- A cached run no longer fails when a file a requirements file includes
+  with `-r` was deleted since; the cache misses and the run re-reads the
+  manifest.
 
 ## [0.7.14] - 2026-11-23
 

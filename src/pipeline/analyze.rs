@@ -30,7 +30,7 @@ use crate::resolver::{
     ResolveWarning, ScopedDeclarations, StdlibRange, apply_resolution_to_graph, import_root,
     resolve_imports_with_pytest,
 };
-use crate::rules::deps::local_source_member;
+use crate::rules::deps::is_local_source_member;
 use crate::rules::emit::compute_exit_status;
 use crate::rules::{
     DependencyRuleContext, Gap, GapKind, Issue, IssueCandidate, IssueReport, IssueSubject,
@@ -854,7 +854,7 @@ fn uninventoried_member_files(probe: &ProbeReport) -> Vec<DiscoveredFile> {
         .collect();
     let mut files = Vec::new();
     for input in &probe.workspace_inputs {
-        if local_source_member(&probe.manifest, &probe.local_trees, &input.manifest).is_none() {
+        if !is_local_source_member(&probe.manifest, &probe.local_trees, &input.manifest) {
             continue;
         }
         for file in &input.sources.files {
