@@ -233,6 +233,12 @@
       ]
     },
     {
+      "distribution": "multipart",
+      "imports": [
+        "multipart"
+      ]
+    },
+    {
       "distribution": "GitPython",
       "imports": [
         "git"

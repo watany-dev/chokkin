@@ -297,6 +297,7 @@ pub(crate) static PACKAGE_TO_IMPORTS: &[(&str, &[&str])] = &[
     ("msgpack-python", &["msgpack"]),
     ("mt-940", &["mt940"]),
     ("multidict", &["multidict"]),
+    ("multipart", &["multipart"]),
     ("multiprocess", &["multiprocess"]),
     ("mypy", &["mypy", "mypyc"]),
     ("mypy-extensions", &["mypy_extensions"]),

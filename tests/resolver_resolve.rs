@@ -399,12 +399,12 @@ fn declared_variant_distributions_own_their_shared_import() {
     let temp = temp_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"opencv-python-headless\", \"msgpack-python\", \"psycopg2\", \"pillow-simd\"]\n",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"opencv-python-headless\", \"msgpack-python\", \"psycopg2\", \"pillow-simd\", \"multipart\"]\n",
         ),
         ("app/__init__.py", ""),
         (
             "app/main.py",
-            "import cv2\nimport msgpack\nimport psycopg2\nfrom PIL import Image\n",
+            "import cv2\nimport msgpack\nimport psycopg2\nfrom PIL import Image\nfrom multipart import parse_form_data\n",
         ),
     ]);
     let index = resolve_path(temp.path());
@@ -413,6 +413,7 @@ fn declared_variant_distributions_own_their_shared_import() {
         ("msgpack", "msgpack-python"),
         ("psycopg2", "psycopg2"),
         ("PIL", "pillow-simd"),
+        ("multipart", "multipart"),
     ] {
         let resolved = index
             .imports
