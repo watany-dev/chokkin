@@ -56,4 +56,7 @@ exclude_re = [
     # The bundle size only picks how many threads decode it; any count
     # decodes the same lines in order (#1328).
     "replace / with (\\*|%) in ParseCacheBundle::decode",
+    # `no:name` is no dotted name, so `push_plugin_module` drops it too: the
+    # guard only says why (#1353).
+    "replace match guard module.starts_with\\(\"no:\"\\) with false in push_addopts",
 ]

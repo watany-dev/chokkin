@@ -824,6 +824,10 @@ mod tests {
                 Some(("functools.lru_cache", true)),
             ),
             ("@register(app.task(x))", Some(("register", true))),
+            // An open subscript is not continued like an open call, and a
+            // bracket after `#` is comment text, not the closing one.
+            ("@apps[0", None),
+            ("@apps[  # ]", None),
             ("@api.post(\"/\") if flag else f", None),
             ("@", None),
             ("x = \"@app.route('/')\"", None),
@@ -838,6 +842,14 @@ mod tests {
                 "{line}"
             );
         }
+    }
+
+    #[test]
+    fn text_decorator_line_is_the_first_matching_line() {
+        let route = |name: &str, is_call: bool| is_call && name == "app.route";
+        let contents = "import x\n@app.get\n@app.route(\"/\")\ndef f(:\n";
+        assert_eq!(text_decorator_line(contents, route), Some(3));
+        assert_eq!(text_decorator_line("@app.get\n", route), None);
     }
 
     #[test]
@@ -860,6 +872,38 @@ mod tests {
         );
         assert_eq!(section.get("testpaths").map(String::as_str), Some("a\nb"));
         assert_eq!(section.len(), 2);
+    }
+
+    #[test]
+    fn parse_ini_section_skips_comments_and_reads_bracket_values() {
+        let contents = "[pytest]\n# hash = 1\n; semi = 2\nmarkers = a[b]\naddopts = -q\n";
+        let section = parse_ini_section(contents, "pytest");
+        // A value ending in `]` is no section header.
+        assert_eq!(section.keys().collect::<Vec<_>>(), ["addopts", "markers"]);
+    }
+
+    #[test]
+    fn parse_module_symbol_needs_both_sides() {
+        assert_eq!(
+            parse_module_symbol(" pkg.app:api "),
+            Some(("pkg.app".to_owned(), "api".to_owned()))
+        );
+        assert_eq!(parse_module_symbol(":api"), None);
+        assert_eq!(parse_module_symbol("pkg.app:"), None);
+    }
+
+    #[test]
+    fn partial_fields_are_the_incomplete_scans() {
+        let scan = |complete| LiteralScan {
+            values: Vec::new(),
+            starts: Vec::new(),
+            complete,
+        };
+        let scans = BTreeMap::from([
+            ("INSTALLED_APPS".to_owned(), scan(false)),
+            ("MIDDLEWARE".to_owned(), scan(true)),
+        ]);
+        assert_eq!(partial_fields(&scans), ["INSTALLED_APPS"]);
     }
 
     #[test]
@@ -904,7 +948,15 @@ mod tests {
     #[test]
     fn settings_candidates_stop_at_depth_four_and_skip_dirs() {
         let temp = tempfile::TempDir::new().expect("tempdir");
-        for dir in ["a/b/c/d", "a/b/c/d/e", "examples/proj"] {
+        for dir in [
+            "a/b/c/d",
+            "a/b/c/d/e",
+            "examples/proj",
+            ".git/proj",
+            ".venv/proj",
+            "node_modules/proj",
+            "__pycache__/proj",
+        ] {
             let dir = temp.path().join(dir);
             std::fs::create_dir_all(&dir).expect("mkdir");
             std::fs::write(dir.join("settings.py"), "INSTALLED_APPS = []\n").expect("write");

@@ -426,6 +426,37 @@ mod tests {
     }
 
     #[test]
+    fn import_settings_skip_a_tox_ini_without_a_pytest_section() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let root = temp.path();
+        std::fs::write(root.join("tox.ini"), "[tox]\nenv_list = py\n").expect("write tox.ini");
+        assert_eq!(import_settings(root), None);
+        std::fs::write(
+            root.join("setup.cfg"),
+            "[tool:pytest]\npythonpath = src\naddopts =\n    --import-mode=importlib\n",
+        )
+        .expect("write setup.cfg");
+        assert_eq!(
+            import_settings(root),
+            Some(PytestImportSettings {
+                pythonpath: vec!["src".to_owned()],
+                importlib: true,
+                ..PytestImportSettings::default()
+            })
+        );
+    }
+
+    #[test]
+    fn importlib_mode_needs_the_option_and_its_value() {
+        let importlib = |addopts: &str| has_importlib_mode(&split_words(addopts));
+        assert!(importlib("-q --import-mode importlib"));
+        assert!(importlib("--import-mode=importlib"));
+        assert!(!importlib("--import-mode prepend"));
+        assert!(!importlib("-p importlib"));
+        assert!(!importlib("--import-mode"));
+    }
+
+    #[test]
     fn ds_option_outranks_the_ini_option() {
         let temp = tempfile::TempDir::new().expect("tempdir");
         let root = temp.path();

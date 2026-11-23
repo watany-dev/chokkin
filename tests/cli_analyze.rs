@@ -4944,7 +4944,8 @@ fn django_app_project(installed: &str) -> tempfile::TempDir {
         ),
         (
             "mysite/polls/models.py",
-            "from django.db import models\n\n\nclass Question(models.Model):\n    pass\n",
+            // Only `@register` registers: another decorator is no use.
+            "import functools\n\nfrom django.db import models\n\n\nclass Question(models.Model):\n    pass\n\n\n@functools.cache\ndef cached():\n    pass\n",
         ),
         (
             "mysite/polls/admin.py",
@@ -5051,6 +5052,7 @@ fn binary_django_installed_app_conventions_are_used() {
         "CHK001:mysite/polls/orphan.py",
         "CHK001:mysite/polls/templatetags/helpers.py",
         "CHK006:mysite/polls/apps.py:Unused",
+        "CHK006:mysite/polls/models.py:cached",
         "CHK006:mysite/polls/templatetags/extra/__init__.py:dead",
         "CHK006:mysite/polls/templatetags/poll_extras.py:dead",
     ];

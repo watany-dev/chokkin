@@ -211,6 +211,41 @@ fn pytest_binary_usage() {
     );
 }
 
+/// With no config and no test file, only a declared `pytest` keeps the
+/// usage; an explicit config keeps it on its own.
+#[test]
+fn pytest_usage_without_tests_needs_a_config_or_the_dependency() {
+    let temp = tempfile::TempDir::new().expect("tempdir");
+    let root = temp.path();
+    let write = |rel: &str, contents: &str| {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
+        std::fs::write(path, contents).expect("write file");
+    };
+    let pytest_usages = || {
+        let hints = extract_at(root);
+        pytest_contrib(&hints)
+            .binary_usages
+            .iter()
+            .filter(|usage| usage.binary == "pytest")
+            .count()
+    };
+    write("acme/__init__.py", "");
+    let project = "[project]\nname = \"acme\"\nversion = \"0.1.0\"\n";
+    write("pyproject.toml", project);
+    assert_eq!(pytest_usages(), 0);
+    write(
+        "pyproject.toml",
+        &format!("{project}\n[dependency-groups]\ndev = [\"pytest\"]\n"),
+    );
+    assert_eq!(pytest_usages(), 1);
+    write(
+        "pyproject.toml",
+        &format!("{project}\n[tool.pytest.ini_options]\naddopts = \"-q\"\n"),
+    );
+    assert_eq!(pytest_usages(), 1);
+}
+
 #[test]
 fn pytest_defaults_alone_are_an_inferred_pytest_usage() {
     // django runs its `test_*.py` with unittest: without a pytest config or
