@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A tool called only in a shell condition (`if pytest -q; then`,
+  `while ruff check .; do`, `until`, `elif`) counts as used (#1359).
+- A Dockerfile `RUN <<EOF` heredoc body, and one fed to a shell
+  (`RUN bash <<EOF`), is read as commands; a body written to a file, fed to
+  another interpreter (`RUN python3 <<EOF`, a non-`sh` shebang) or given to
+  `COPY` stays data (#1358).
+
 ## [0.7.14] - 2026-11-23
 
 ### Added
