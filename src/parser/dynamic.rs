@@ -14,14 +14,24 @@ pub(super) enum Loader {
     ImportModule,
     /// `__import__(name, globals=None, locals=None, fromlist=(), level=0)`.
     DunderImport,
+    /// `runpy.run_module(mod_name, …)`, what `python -m` runs (#1344).
+    RunModule,
 }
+
+/// A stdlib module, its loader function, and what that function is.
+type LoaderFunction = (&'static str, &'static str, Loader);
+
+const LOADER_FUNCTIONS: [LoaderFunction; 2] = [
+    ("importlib", "import_module", Loader::ImportModule),
+    ("runpy", "run_module", Loader::RunModule),
+];
 
 /// Names one module binds to the dynamic import loaders. A module binds one
 /// or two, and every call and argument is looked up, so a scan beats hashing
 /// each name (#1087).
 pub(super) struct LoaderNames {
-    /// Names bound to the `importlib` module.
-    modules: Vec<String>,
+    /// Names bound to a module of [`LOADER_FUNCTIONS`], with its entry.
+    modules: Vec<(String, &'static LoaderFunction)>,
     /// Names bound directly to a loader function; a later binding wins.
     functions: Vec<(String, Loader)>,
 }
@@ -29,7 +39,10 @@ pub(super) struct LoaderNames {
 impl Default for LoaderNames {
     fn default() -> Self {
         Self {
-            modules: vec!["importlib".to_owned()],
+            modules: LOADER_FUNCTIONS
+                .iter()
+                .map(|entry| (entry.0.to_owned(), entry))
+                .collect(),
             functions: vec![("__import__".to_owned(), Loader::DunderImport)],
         }
     }
@@ -38,42 +51,51 @@ impl Default for LoaderNames {
 impl LoaderNames {
     /// Track `import importlib as il`.
     pub(super) fn record_import(&mut self, alias: &Alias) {
-        if alias.name.as_str() == "importlib"
-            && let Some(asname) = &alias.asname
-            && !self.modules.iter().any(|name| name == asname.as_str())
+        if let Some(asname) = &alias.asname
+            && let Some(entry) = LOADER_FUNCTIONS
+                .iter()
+                .find(|(module, _, _)| *module == alias.name.as_str())
+            && !self.modules.iter().any(|(name, _)| name == asname.as_str())
         {
-            self.modules.push(asname.to_string());
+            self.modules.push((asname.to_string(), entry));
         }
     }
 
     /// Track `from importlib import import_module [as im]`.
     pub(super) fn record_import_from(&mut self, module: Option<&str>, alias: &Alias) {
-        if module == Some("importlib") && alias.name.as_str() == "import_module" {
-            let bound = alias.asname.as_ref().unwrap_or(&alias.name);
-            match self
-                .functions
-                .iter_mut()
-                .find(|(name, _)| name == bound.as_str())
-            {
-                Some((_, loader)) => *loader = Loader::ImportModule,
-                None => self
-                    .functions
-                    .push((bound.to_string(), Loader::ImportModule)),
-            }
+        let Some(&(_, _, loader)) = LOADER_FUNCTIONS
+            .iter()
+            .find(|(name, function, _)| module == Some(*name) && alias.name.as_str() == *function)
+        else {
+            return;
+        };
+        let bound = alias.asname.as_ref().unwrap_or(&alias.name);
+        match self
+            .functions
+            .iter_mut()
+            .find(|(name, _)| name == bound.as_str())
+        {
+            Some((_, existing)) => *existing = loader,
+            None => self.functions.push((bound.to_string(), loader)),
         }
     }
 
-    /// The loader `expr` names: `importlib.import_module` or `__import__`,
-    /// aliases included.
+    /// The loader `expr` names: `importlib.import_module`, `runpy.run_module`
+    /// or `__import__`, aliases included.
     #[must_use]
     pub(super) fn loader(&self, expr: &Expr) -> Option<Loader> {
         match expr {
-            Expr::Attribute(attribute) => (attribute.attr.as_str() == "import_module"
-                && matches!(
-                    &*attribute.value,
-                    Expr::Name(name) if self.modules.iter().any(|module| module == name.id.as_str())
-                ))
-            .then_some(Loader::ImportModule),
+            Expr::Attribute(attribute) => {
+                let Expr::Name(receiver) = &*attribute.value else {
+                    return None;
+                };
+                self.modules
+                    .iter()
+                    .find(|(name, (_, function, _))| {
+                        name == receiver.id.as_str() && *function == attribute.attr.as_str()
+                    })
+                    .map(|(_, (_, _, loader))| *loader)
+            },
             Expr::Name(name) => self
                 .functions
                 .iter()
@@ -96,7 +118,7 @@ pub(super) enum LiteralTarget {
     Nothing,
 }
 
-/// Literal module name passed to a loader call, positionally or as `name=`,
+/// Literal module name passed to a loader call, positionally or by keyword,
 /// made absolute the way `loader` resolves it.
 ///
 /// `current_package` is the `__package__` of the calling module. Returns
@@ -107,10 +129,12 @@ pub(super) fn literal_target(
     loader: Loader,
     current_package: impl FnOnce() -> Option<String>,
 ) -> Option<LiteralTarget> {
-    let name = str_constant(module_argument(call)?)?;
+    let name = str_constant(module_argument(call, loader)?)?;
     let module = match loader {
         Loader::ImportModule => import_module_name(call, name, current_package),
         Loader::DunderImport => dunder_import_name(call, name, current_package),
+        // `runpy` refuses a relative name; its leading dot leaves an empty segment.
+        Loader::RunModule => Ok(name.to_owned()),
     };
     // `importlib` does not require identifiers: a `tests/my-harness/` directory
     // imports as `tests.my-harness`. Only an empty segment can never resolve.
@@ -183,8 +207,8 @@ fn dunder_import_name(
 /// Package whose submodule a loader call builds from a literal prefix:
 /// `"pkg.commands." + name` or `f"pkg.commands.{name}"` gives `pkg.commands`.
 #[must_use]
-pub(super) fn module_prefix(call: &ExprCall) -> Option<String> {
-    let literal = match module_argument(call)? {
+pub(super) fn module_prefix(call: &ExprCall, loader: Loader) -> Option<String> {
+    let literal = match module_argument(call, loader)? {
         Expr::BinOp(binop) if matches!(binop.op, Operator::Add) => leftmost_str(&binop.left)?,
         Expr::FString(fstring) if !fstring.value.is_implicit_concatenated() => {
             &*fstring.value.elements().next()?.as_literal()?.value
@@ -195,8 +219,12 @@ pub(super) fn module_prefix(call: &ExprCall) -> Option<String> {
     is_dotted_identifier(package).then(|| package.to_owned())
 }
 
-fn module_argument(call: &ExprCall) -> Option<&Expr> {
-    argument(call, 0, "name")
+fn module_argument(call: &ExprCall, loader: Loader) -> Option<&Expr> {
+    let keyword = match loader {
+        Loader::ImportModule | Loader::DunderImport => "name",
+        Loader::RunModule => "mod_name",
+    };
+    argument(call, 0, keyword)
 }
 
 pub(super) fn argument<'a>(call: &'a ExprCall, index: usize, keyword: &str) -> Option<&'a Expr> {
@@ -538,7 +566,7 @@ mod tests {
         let Expr::Call(call) = expr(source) else {
             panic!("expected a call");
         };
-        module_prefix(&call)
+        module_prefix(&call, Loader::ImportModule)
     }
 
     fn target(source: &str, loader: Loader) -> Option<LiteralTarget> {
@@ -694,8 +722,32 @@ mod tests {
             names.loader(&expr("importlib.import_module")),
             Some(Loader::ImportModule)
         ));
+        assert!(matches!(
+            names.loader(&expr("runpy.run_module")),
+            Some(Loader::RunModule)
+        ));
         assert!(names.loader(&expr("importlib.reload")).is_none());
         assert!(names.loader(&expr("other.import_module")).is_none());
+        assert!(names.loader(&expr("runpy.import_module")).is_none());
+        assert!(names.loader(&expr("importlib.run_module")).is_none());
+        assert!(names.loader(&expr("runpy.run_path")).is_none());
+    }
+
+    #[test]
+    fn run_module_reads_only_absolute_names() {
+        assert!(matches!(
+            target(r#"run_module("pip", run_name="__main__")"#, Loader::RunModule),
+            Some(LiteralTarget::Module(module)) if module == "pip"
+        ));
+        assert!(matches!(
+            target(r#"run_module(mod_name="pkg.cli")"#, Loader::RunModule),
+            Some(LiteralTarget::Module(module)) if module == "pkg.cli"
+        ));
+        assert!(matches!(
+            target(r#"run_module(".cli")"#, Loader::RunModule),
+            Some(LiteralTarget::Nothing)
+        ));
+        assert!(target(r#"run_module(name="pip")"#, Loader::RunModule).is_none());
     }
 
     #[test]
