@@ -399,12 +399,12 @@ fn declared_variant_distributions_own_their_shared_import() {
     let temp = temp_project(&[
         (
             "pyproject.toml",
-            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"opencv-python-headless\", \"msgpack-python\", \"psycopg2\", \"pillow-simd\"]\n",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"opencv-python-headless\", \"msgpack-python\", \"psycopg2\", \"pillow-simd\", \"multipart\"]\n",
         ),
         ("app/__init__.py", ""),
         (
             "app/main.py",
-            "import cv2\nimport msgpack\nimport psycopg2\nfrom PIL import Image\n",
+            "import cv2\nimport msgpack\nimport psycopg2\nfrom PIL import Image\nfrom multipart import parse_form_data\n",
         ),
     ]);
     let index = resolve_path(temp.path());
@@ -413,6 +413,7 @@ fn declared_variant_distributions_own_their_shared_import() {
         ("msgpack", "msgpack-python"),
         ("psycopg2", "psycopg2"),
         ("PIL", "pillow-simd"),
+        ("multipart", "multipart"),
     ] {
         let resolved = index
             .imports
@@ -459,6 +460,91 @@ fn ambiguous_namespace_import_warns_once() {
         })
         .count();
     assert_eq!(ambiguous, 1, "{:?}", index.warnings);
+}
+
+#[test]
+fn declared_namespace_candidate_settles_the_ambiguity() {
+    // `llama_index.core` is in both llama-index and llama-index-core; the
+    // declared one settles it, as a declared root variant does (#1139).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-core\"]\n",
+        ),
+        ("app/__init__.py", "from llama_index.core import Settings\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    assert!(
+        !index.warnings.iter().any(|warning| matches!(
+            warning,
+            chokkin::internals::ResolveWarning::AmbiguousImport { .. }
+        )),
+        "{:?}",
+        index.warnings
+    );
+}
+
+#[test]
+fn declared_three_segment_portion_owns_its_namespace_import() {
+    // llama-index ships one distribution per integration
+    // (`llama-index-readers-file` for `llama_index.readers.file`); the
+    // two-segment portion `llama-index-readers` names none of them (#1351).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-readers-file\", \"acme-cloud-storage\"]\n",
+        ),
+        ("app/__init__.py", ""),
+        (
+            "app/main.py",
+            "from llama_index.readers.file import PDFReader\nimport acme.cloud.storage.blob\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    for (module, expected) in [
+        ("llama_index.readers.file", "llama-index-readers-file"),
+        ("acme.cloud.storage.blob", "acme-cloud-storage"),
+    ] {
+        let resolved = index
+            .imports
+            .iter()
+            .find(|resolved| resolved.full_module == module)
+            .expect("import");
+        assert_eq!(
+            (resolved.origin, resolved.distribution.as_deref()),
+            (ModuleOrigin::ThirdParty, Some(expected)),
+            "{module}"
+        );
+    }
+}
+
+#[test]
+fn local_namespace_module_wins_under_a_pep420_parent() {
+    // `src/poetry/` has no `__init__.py`, so `poetry` is not a layout package;
+    // the local `poetry.core` still beats the bundled `poetry-core` (#1347).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"poetry-core\"\nversion = \"1\"\ndependencies = []\n",
+        ),
+        ("src/poetry/core/__init__.py", ""),
+        ("src/poetry/core/spdx/__init__.py", ""),
+        ("src/poetry/core/spdx/license.py", "X = 1\n"),
+        (
+            "src/poetry/core/spdx/helpers.py",
+            "from poetry.core.spdx.license import X\n",
+        ),
+    ]);
+    let index = resolve_path(temp.path());
+    let resolved = index
+        .imports
+        .iter()
+        .find(|resolved| resolved.full_module == "poetry.core.spdx.license")
+        .expect("import");
+    assert_eq!(
+        (resolved.origin, resolved.distribution.as_deref()),
+        (ModuleOrigin::FirstParty, None)
+    );
 }
 
 #[test]
