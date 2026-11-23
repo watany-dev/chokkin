@@ -1051,14 +1051,14 @@ pub(super) fn shell_script_commands(contents: &str) -> Vec<(usize, String)> {
 /// (`bash <<EOF`); `cat <<EOF` usage text and `python - <<'PY'` code are
 /// not shell commands. A `<<` inside quotes or `((...))` and one whose
 /// delimiter is not a plain name open nothing, and `<<<` is a here-string.
-struct Heredoc {
+pub(super) struct Heredoc {
     delimiter: String,
     strip_tabs: bool,
-    runs_shell: bool,
+    pub(super) runs_shell: bool,
 }
 
 impl Heredoc {
-    fn opened_by(line: &str) -> Option<Self> {
+    pub(super) fn opened_by(line: &str) -> Option<Self> {
         let (at, _) = line.match_indices("<<").find(|&(at, _)| {
             let before = &line[..at];
             !line[at + 2..].starts_with('<')
@@ -1091,7 +1091,7 @@ impl Heredoc {
         })
     }
 
-    fn ends_at(&self, line: &str) -> bool {
+    pub(super) fn ends_at(&self, line: &str) -> bool {
         let line = line.trim_end_matches('\r');
         let line = if self.strip_tabs {
             line.trim_start_matches('\t')
@@ -1115,7 +1115,7 @@ pub(super) fn is_shell_script(path: &Path, contents: &str) -> bool {
 
 /// Basename of the `#!` interpreter, past `env` and its flags
 /// (`#!/usr/bin/env -S bash -e` → `bash`, `#!/bin/sh -eu` → `sh`).
-fn shebang_interpreter(contents: &str) -> Option<&str> {
+pub(super) fn shebang_interpreter(contents: &str) -> Option<&str> {
     let shebang = contents.lines().next()?.strip_prefix("#!")?;
     let mut words = shebang
         .split_whitespace()
