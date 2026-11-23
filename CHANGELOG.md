@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `[sys.executable, "-mvirtualenv", d]`, with the module joined to `-m`,
+  counts as a use of `virtualenv` like `"-m", "virtualenv"` does, so the
+  dependency is no longer CHK002 (#1345).
+- `runpy.run_module("pip")`, what `python -m pip` runs, counts as a use of
+  `pip` and makes a first-party module it names reachable, like
+  `importlib.import_module`; like `[sys.executable, "-m", "pip"]`, an
+  undeclared module it names is not CHK003. A computed name lowers
+  confidence as an opaque dynamic import (#1344).
 - src, flat and package-root layouts read a root `tasks/` (release and
   maintenance scripts, pypa/build's `tasks/release.py`) as dev entries, so
   a dependency group only those scripts import is no longer CHK002 certain.
