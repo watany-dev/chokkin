@@ -668,7 +668,10 @@ impl Resolver<'_> {
                         Some(confidence),
                         &mut raised,
                     );
-                    warnings.extend(raised.into_iter().map(SiteWarning::Site));
+                    // A declared candidate settles it, as in [`resolve_import_root`].
+                    if !distributions.iter().any(|name| declared.declares(name)) {
+                        warnings.extend(raised.into_iter().map(SiteWarning::Site));
+                    }
                     RootResolution {
                         distribution: pick(&distributions),
                         ..core

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__init__.py` (`src/poetry/core/` in poetry-core) stays first-party
   instead of resolving to the bundled map's distribution and reporting
   CHK003 (#1347).
+- A namespace import whose map entry has several distributions no longer
+  warns `maps to several distributions` when one of them is declared
+  (`llama-index-core` for `llama_index.core`).
 
 ## [0.7.14] - 2026-11-23
 

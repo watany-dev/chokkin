@@ -463,6 +463,28 @@ fn ambiguous_namespace_import_warns_once() {
 }
 
 #[test]
+fn declared_namespace_candidate_settles_the_ambiguity() {
+    // `llama_index.core` is in both llama-index and llama-index-core; the
+    // declared one settles it, as a declared root variant does (#1139).
+    let temp = temp_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\"llama-index-core\"]\n",
+        ),
+        ("app/__init__.py", "from llama_index.core import Settings\n"),
+    ]);
+    let index = resolve_path(temp.path());
+    assert!(
+        !index.warnings.iter().any(|warning| matches!(
+            warning,
+            chokkin::internals::ResolveWarning::AmbiguousImport { .. }
+        )),
+        "{:?}",
+        index.warnings
+    );
+}
+
+#[test]
 fn declared_three_segment_portion_owns_its_namespace_import() {
     // llama-index ships one distribution per integration
     // (`llama-index-readers-file` for `llama_index.readers.file`); the
