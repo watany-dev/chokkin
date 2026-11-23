@@ -480,6 +480,7 @@ docs/conf.py
 alembic/env.py
 scripts/**/*.py
 .github/**/*.py
+tasks/**/*.py（layout が配布する package の外）
 examples/**/*.py
 docs/**/*.py
 **/*.ipynb
@@ -493,6 +494,8 @@ root と各 workspace member 直下の `setup.py` は setuptools がビルド時
 `examples/**` と `docs/**` の `.py` は root 直下と各 workspace member 直下を entry にする（rule `examples/**` / `docs/**`、#666）。どちらも `python examples/foo.py` や `fastmcp run docs/demo.py` で直接実行する単体スクリプトの置き場で、どこからも import されないため。これらは docs / dev context なので、依存の判定には使わず (#694)、解決できない import (CHK010) も info にする。その layout の package 内（flat layout の `examples` package など）は対象外。layout によらず既定の discovery glob は root の `examples/**` と `docs/**` を含むので、src / flat layout でも読む (#1023)。ただしこれらと `**/*.ipynb` の glob でしか拾わない workspace member 内の file は root の inventory に入れない。member は独自の layout を持ち、root の examples ではないため（mcp-python-sdk の `examples/snippets`、flask の `examples/celery`）。root の `examples/` に `__init__.py` があっても module 名は付けない（sqlalchemy の `examples/` は file として実行する）。
 
 root 直下の `scripts/**` と `.github/**` の `.py` も entry にする（rule `scripts/**` / `.github/**`）。`.github/scripts/check_diff.py` のように workflow が `python .github/scripts/x.py` で直接実行し、どこからも import されないため (#734)。workflow の `run:` は読まずに tree 単位で扱い、context は変えない（langchain の `.github/scripts/get_min_versions.py` のように宣言の無い import は CHK003 のまま報告する）。
+
+root 直下の `tasks/**` の `.py` も、layout が配布する package と workspace member の外にあれば dev context の entry にする（rule `tasks/**`、#1349）。pypa/build・pdm・virtualenv の `tasks/release.py` のように、invoke や `python tasks/x.py` で動かす release / 保守の script の置き場で、どこからも import されないため。src / flat / package-root layout でも既定の discovery glob に含める。`scripts/` と違い app の package（flat layout の celery の `tasks` package、root に `manage.py` がある Django project の `tasks/` app）でもありうるので、layout がそれを package に選んだときは runtime のまま entry にもしない。root の `tasks.py` は celery の task module であることが多いので対象外。
 
 コマンドが path で直接実行する `.py` も entry にする (#797)。CI workflow の `run:`（github-actions plugin が無効でも読む）、`repo: local` の pre-commit hook の `entry:`、root の `.agents/skills/<name>/SKILL.md` と `.claude/skills/<name>/SKILL.md` の fenced code block と inline code span から、`python[3] [flags] <path>.py` と `uv run [options] [python] <path>.py`（`-s` / `--script` を含む）、`pipx run [options] <path>.py` (#956)、`streamlit run [options] <path>.py` (#992。option が次の word に値を取りうるので、最初の `.py` の word を script とする) の path を読む。`sudo -E` や `bash -c`、`poetry run` などの wrapper の後ろも読み、`-m` / `-c` やコマンド名だけの `uv run pytest` は対象外。path は root 相対で、同じコマンド内の先行する `cd <dir>` と `uv run --directory <dir>` があればその directory 相対にする。directory 指定が無いとき、workflow は checkout の `path:` 配下で実行することがあるため（fastmcp の `python3 fastmcp/tests/downstream/_harness.py`）、そのままの path が無ければ先頭の component を外した path も試す。skill doc は同梱 script を skill directory 相対で書くことがあるため、skill directory 配下の path も試す。`${{ }}` や `$VAR` を含む path、絶対 path、`..` を含む path は読まない。discovery 済みの file を指すときに限り origin `command: <label> (<file>:<line>)` の entry とし、context は dev にする（`--production` では落とす）。手動や CI で実行する script なので、hatchling の build script (#735) と同じく file の context も dev にして、import する dependency group を CHK005 にせず、未宣言 import の CHK003 は `--strict` 時だけ出す（langchain の `.github/scripts/check_diff.py` の `packaging` は workflow が `pip install` してから実行する）。ただし同じ directory に `__init__.py` がある package の module は package 側から import されうるので file の context を変えない。他の root が本番で動かす file（`[tool.chokkin].entry`、manifest の entry point、runtime の plugin entry と symbol 参照、server の app、§8 の `main.py` / `app.py` / `manage.py` / `asgi.py` / `wsgi.py` の名前の auto entry、Dockerfile と Procfile の command の target）も、command が同じ file を実行するだけでは dev にしない。workflow が `python main.py` を実行しても `main.py` は app のままで、dev にすると `--production` で root が無くなり、そこから届く file と依存がすべて未使用になるため。scan 結果は config scan の cache に入り、SKILL.md も cache の入力にする。
 
@@ -683,6 +686,7 @@ docs/** / workspace member直下の docs/**                    -> docs
 noxfile.py / root・member 直下の setup.py / 各tool設定が参照するscript (hatch の build hook 等) -> dev
 scripts/**                                                  -> dev (設定で変更可)
 examples/** / workspace member直下の examples/**          -> dev
+root直下の tasks/** (配布 package・member の外)              -> dev
 package 外の notebook (.ipynb)                             -> dev
 plugin / [tool.chokkin] のcontext指定が上記を上書きする
 ```

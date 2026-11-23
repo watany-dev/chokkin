@@ -29,6 +29,25 @@ use crate::manifest::normalize_distribution_name;
 use super::bundled::package_modules::PACKAGE_TO_IMPORTS;
 use super::types::ResolveConfidence;
 
+/// The import roots the user map, else the bundled map, gives
+/// `distribution`, as written there; empty when neither names it.
+pub(crate) fn mapped_imports(config: &ChokkinConfig, distribution: &str) -> Vec<String> {
+    let name = normalize_distribution_name(distribution);
+    let names = |candidate: &str| normalize_distribution_name(candidate) == name;
+    config
+        .package_module_map
+        .iter()
+        .find(|(candidate, _)| names(candidate))
+        .map(|(_, imports)| imports.clone())
+        .or_else(|| {
+            PACKAGE_TO_IMPORTS
+                .iter()
+                .find(|(candidate, _)| names(candidate))
+                .map(|(_, imports)| imports.iter().map(|import| (*import).to_owned()).collect())
+        })
+        .unwrap_or_default()
+}
+
 /// Reverse index from import root to distribution candidates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportMap {
@@ -153,6 +172,20 @@ pub fn build_binary_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapped_imports_prefer_the_user_map_and_match_normalized_names() {
+        let mut config = crate::config::default_config();
+        assert_eq!(mapped_imports(&config, "GitPython"), ["git"]);
+        assert_eq!(
+            mapped_imports(&config, "not-a-known-dist"),
+            Vec::<String>::new()
+        );
+        config
+            .package_module_map
+            .insert("git_python".to_owned(), vec!["mygit".to_owned()]);
+        assert_eq!(mapped_imports(&config, "git-python"), ["mygit"]);
+    }
     use crate::config::default_config;
 
     #[test]

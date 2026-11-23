@@ -10898,6 +10898,44 @@ fn binary_root_entry_scripts_are_read_in_package_layouts() {
     }
 }
 
+/// Root `tasks/` holds release and maintenance scripts run by hand or by
+/// invoke (pypa/build, pdm, virtualenv), so every layout reads it as dev
+/// entries and a dependency group only it imports is used (#1349).
+#[test]
+fn binary_root_tasks_scripts_are_dev_entries_in_package_layouts() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[dependency-groups]\ntyping = [\"gitpython\"]\ndev = [{ include-group = \"typing\" }]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    for package in ["acme", "src/acme"] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject),
+            (&format!("{package}/__init__.py"), ""),
+            ("tasks/release.py", "from git import Repo\n"),
+        ]);
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(issue_keys(&issues), Vec::new(), "{package}: {issues:?}");
+    }
+}
+
+/// `--explain` of a distribution nothing imports names the import its map
+/// gives (`git`), not the distribution (#1349).
+#[test]
+fn binary_explain_unimported_distribution_names_its_mapped_import() {
+    let project = write_project(&[(
+        "pyproject.toml",
+        "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"GitPython\"]\n",
+    )]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:gitpython"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("top-level modules: git\n"), "{stderr}");
+    assert!(
+        stderr.contains("no reachable file imports git\n"),
+        "{stderr}"
+    );
+}
+
 /// `helper.PY` is collected and named like `helper.py`, as Python on
 /// Windows and macOS lowercases extensions when it looks a module up: the
 /// import resolves and the file's own imports are read (#1170).
