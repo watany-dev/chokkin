@@ -1159,6 +1159,30 @@ fn extra_requirements_files_declare_only_in_the_context_their_path_names() {
     assert!(second.sources.extra_requirements.contains("mkdocs"));
 }
 
+/// A file the cached run read through `-r` and that is gone now misses the
+/// cache instead of failing the run.
+#[test]
+fn deleted_include_misses_the_manifest_cache() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    std::fs::create_dir(temp.path().join("requirements")).expect("create requirements dir");
+    for (name, contents) in [
+        ("requirements/tests.txt", "-r ../shared.txt\n"),
+        ("shared.txt", "rich\n"),
+    ] {
+        std::fs::write(temp.path().join(name), contents).expect("write project file");
+    }
+    let root = project_root_at(temp.path());
+    let config = load_config(&root).expect("load config");
+    let cache = CacheOptions::default();
+    let first =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("first extraction");
+    assert!(first.sources.extra_requirements.contains("rich"));
+    std::fs::remove_file(temp.path().join("shared.txt")).expect("remove include");
+    let second =
+        extract_manifest_with_cache(&root, &config, Some(&cache)).expect("second extraction");
+    assert!(!second.sources.extra_requirements.contains("rich"));
+}
+
 #[test]
 fn docs_requirements_files_declare_docs_groups() {
     let temp = tempfile::tempdir().expect("temp dir");

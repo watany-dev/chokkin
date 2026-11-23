@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A cached run no longer fails when a file a requirements file includes
+  with `-r` was deleted since; the cache misses and the run re-reads the
+  manifest.
+
 ## [0.7.14] - 2026-11-23
 
 ### Added
