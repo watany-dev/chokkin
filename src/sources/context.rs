@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use super::dirs::{NESTED_TEST_DIR, in_root_test_dir};
+use super::dirs::{NESTED_TEST_DIR, in_root_tasks_dir, in_root_test_dir};
 use super::types::{DiscoveredSources, FileContext, LayoutInfo, ProjectLayout};
 
 /// Assign a file context from a root-relative path.
@@ -60,10 +60,14 @@ fn layout_context(path: &str, context: FileContext, layout: &LayoutInfo) -> File
         None if layout.member_for(path).is_some() => FileContext::Runtime,
         None => context,
     };
-    if context == FileContext::Runtime && is_notebook(path) && !in_distributed_package(path, layout)
+    let root_tasks = in_root_tasks_dir(path) && layout.member_for(path).is_none();
+    if context == FileContext::Runtime
+        && (is_notebook(path) || root_tasks)
+        && !in_distributed_package(path, layout)
     {
         // A notebook is run by hand, never shipped: outside the package it
-        // is analysis or a demo, like `examples/` (#1023).
+        // is analysis or a demo, like `examples/` (#1023). Root `tasks/`
+        // scripts are release tooling (#1349).
         return FileContext::Dev;
     }
     context
@@ -479,6 +483,34 @@ mod tests {
                 expected,
                 "{path}"
             );
+        }
+    }
+
+    /// Root `tasks/` scripts are dev unless the layout ships them: a flat
+    /// app's `tasks` package or a member that lives there (#1349).
+    #[test]
+    fn root_tasks_outside_the_distributed_package_are_dev() {
+        use crate::sources::MemberLayout;
+
+        let src = LayoutInfo::new("src", vec!["acme".to_owned()]);
+        let flat = LayoutInfo::new("", vec!["acme".to_owned(), "tasks".to_owned()]);
+        let member = LayoutInfo {
+            members: vec![MemberLayout {
+                path: "tasks".to_owned(),
+                layout: LayoutInfo::new("src", vec!["tasks".to_owned()]),
+            }],
+            ..src.clone()
+        };
+        let cases = [
+            (&src, "tasks/release.py", FileContext::Dev),
+            (&src, "tasks/sub/util.py", FileContext::Dev),
+            (&src, "acme/tasks/release.py", FileContext::Runtime),
+            (&src, "tasks.py", FileContext::Runtime),
+            (&flat, "tasks/release.py", FileContext::Runtime),
+            (&member, "tasks/src/tasks/x.py", FileContext::Runtime),
+        ];
+        for (layout, path, expected) in cases {
+            assert_eq!(assign_layout_file_context(path, layout), expected, "{path}");
         }
     }
 

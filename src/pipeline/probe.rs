@@ -22,7 +22,7 @@ use crate::manifest::{
 use crate::path_util::{join_rel, rel_to_root, resolve_under_root};
 use crate::plugins::{
     EnablerScope, PluginActivation, PluginActivationReason, discover_plugin_entries,
-    resolve_plugin_activations, sphinx_config_file,
+    mark_test_manage, resolve_plugin_activations, sphinx_config_file,
 };
 use crate::reporters::escape_control;
 use crate::rules::deps::{DeclarationBucket, declaration_buckets};
@@ -267,6 +267,7 @@ pub(super) fn probe_project_with_cache(
     );
     include_plugin_sources(&loaded, &manifest, &discovered, &nested, &mut sources)?;
     let build_scripts = mark_build_scripts_dev(&mut sources, &manifest, &workspace_inputs);
+    mark_test_manage(&mut sources);
     apply_member_context(&mut sources, loaded.effective.production);
     let environment_requirements =
         super::environments::environment_requirements(&manifest, &sources);

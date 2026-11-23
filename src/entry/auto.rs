@@ -1,7 +1,10 @@
 //! §8 automatic entry detection from discovered source files.
 
 use crate::config::EntrySpec;
-use crate::sources::{DiscoveredSources, FileContext, FileKind, ProjectLayout, ROOT_ENTRY_NAMES};
+use crate::sources::{
+    DiscoveredSources, FileContext, FileKind, ProjectLayout, ROOT_ENTRY_NAMES, TASKS_DIR,
+    in_root_tasks_dir,
+};
 
 use super::types::{EntryCandidate, EntryOrigin};
 
@@ -54,12 +57,19 @@ pub(super) fn detect_auto_entries(sources: &DiscoveredSources) -> Vec<EntryCandi
             continue;
         }
 
+        let is_py = std::path::Path::new(path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+        // Dev only outside the shipped package (#1349).
+        if is_py && file.context == FileContext::Dev && in_root_tasks_dir(path) {
+            candidates.push(candidate(path, file.context, format!("{TASKS_DIR}/**")));
+            continue;
+        }
+
         if let Some(tree) = ROOT_SCRIPT_TREES.iter().find(|tree| {
             path.strip_prefix(**tree)
                 .is_some_and(|rest| rest.starts_with('/'))
-        }) && std::path::Path::new(path)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+        }) && is_py
         {
             candidates.push(candidate(path, file.context, format!("{tree}/**")));
         }
@@ -227,6 +237,28 @@ mod tests {
             entries
                 .iter()
                 .any(|entry| entry.spec.path == "scripts/deploy.py")
+        );
+    }
+
+    /// Root `tasks/` scripts are entries only as dev code: a flat app's
+    /// runtime `tasks` package is reached by import (#1349).
+    #[test]
+    fn detects_root_tasks_tree_only_in_dev_context() {
+        let mut sources = sources_with(&["tasks/jobs.py", "tasks/release.py"], &src_layout());
+        sources.files[0].context = FileContext::Runtime;
+        sources.files[1].context = FileContext::Dev;
+        let rules: Vec<_> = detect_auto_entries(&sources)
+            .into_iter()
+            .map(|entry| (entry.spec.path, entry.origin))
+            .collect();
+        assert_eq!(
+            rules,
+            [(
+                "tasks/release.py".to_owned(),
+                EntryOrigin::Auto {
+                    rule: "tasks/**".to_owned()
+                }
+            )]
         );
     }
 

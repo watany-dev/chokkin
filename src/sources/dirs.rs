@@ -32,6 +32,17 @@ pub(super) fn is_non_package_dir(name: &str) -> bool {
         || name.starts_with("e2e")
 }
 
+/// Root directory of release and maintenance scripts run by hand or by
+/// invoke (pypa/build's `tasks/release.py`, #1349). Unlike `scripts/` it may
+/// be an app's package (a celery `tasks` package), so only its files outside
+/// the shipped package are dev.
+pub(crate) const TASKS_DIR: &str = "tasks";
+
+pub(crate) fn in_root_tasks_dir(path: &str) -> bool {
+    path.split_once('/')
+        .is_some_and(|(top, _)| top == TASKS_DIR)
+}
+
 pub(super) fn in_root_test_dir(path: &str) -> bool {
     path.split_once('/')
         .is_some_and(|(top, _)| TEST_DIRS.contains(&top))

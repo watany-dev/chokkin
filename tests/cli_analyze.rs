@@ -10952,6 +10952,105 @@ fn binary_root_entry_scripts_are_read_in_package_layouts() {
     }
 }
 
+/// Root `tasks/` holds release and maintenance scripts run by hand or by
+/// invoke (pypa/build, pdm, virtualenv), so every layout reads it as dev
+/// entries and a dependency group only it imports is used (#1349).
+#[test]
+fn binary_root_tasks_scripts_are_dev_entries_in_package_layouts() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"0\"\ndependencies = []\n\n[dependency-groups]\ntyping = [\"gitpython\"]\ndev = [{ include-group = \"typing\" }]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    for package in ["acme", "src/acme"] {
+        let project = write_project(&[
+            ("pyproject.toml", pyproject),
+            (&format!("{package}/__init__.py"), ""),
+            ("tasks/release.py", "from git import Repo\n"),
+        ]);
+        let issues = json_issues(project.path(), &["--no-cache"]);
+        assert_eq!(issue_keys(&issues), Vec::new(), "{package}: {issues:?}");
+    }
+}
+
+/// A reusable Django app keeps a root `manage.py` only to run its suite
+/// with test settings: it is test code, so the library stays a library and
+/// its public modules are no orphans (#1350). A `manage.py` that names
+/// runtime settings still makes the project an app.
+#[test]
+fn binary_manage_py_naming_test_settings_keeps_library_mode() {
+    let pyproject = "[project]\nname = \"acme\"\nversion = \"1\"\ndependencies = [\"django\"]\n\n[build-system]\nrequires = [\"hatchling\"]\nbuild-backend = \"hatchling.build\"\n";
+    let manage = |settings: &str| {
+        format!(
+            "import os, sys\nif __name__ == \"__main__\":\n    os.environ.setdefault(\"DJANGO_SETTINGS_MODULE\", \"{settings}\")\n    from django.core.management import execute_from_command_line\n    execute_from_command_line(sys.argv)\n"
+        )
+    };
+    for (settings, settings_file, mode) in [
+        (
+            "tests.testapp.settings",
+            "tests/testapp/settings.py",
+            "library",
+        ),
+        ("site_conf.settings", "site_conf/settings.py", "app"),
+    ] {
+        // A flat package sorts before `manage.py`: only `manage.py` turns
+        // test code.
+        for package in ["src/acme", "acme"] {
+            let manage = manage(settings);
+            let project = write_project(&[
+                ("pyproject.toml", pyproject),
+                (
+                    &format!("{package}/__init__.py"),
+                    "from django.apps import AppConfig\n\n\nclass AcmeConfig(AppConfig):\n    name = \"acme\"\n",
+                ),
+                (
+                    &format!("{package}/utils.py"),
+                    "def helper():\n    return 1\n",
+                ),
+                ("manage.py", &manage),
+                ("tests/__init__.py", ""),
+                ("tests/testapp/__init__.py", ""),
+                ("site_conf/__init__.py", ""),
+                (settings_file, "INSTALLED_APPS = [\"acme\"]\n"),
+            ]);
+            // `--production` drops the tests, yet decides the same mode.
+            for production in [None, Some("--production")] {
+                let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+                    .args(["--no-cache", "--reporter", "json"])
+                    .args(production)
+                    .arg(project.path())
+                    .output()
+                    .expect("run chokkin");
+                let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+                assert_eq!(
+                    json["mode"], mode,
+                    "{package} {settings} {production:?}: {json}"
+                );
+                if mode == "library" {
+                    assert_eq!(json["issues"], serde_json::json!([]), "{json}");
+                }
+            }
+        }
+    }
+}
+
+/// `--explain` of a distribution nothing imports names the import its map
+/// gives (`git`), not the distribution (#1349).
+#[test]
+fn binary_explain_unimported_distribution_names_its_mapped_import() {
+    let project = write_project(&[(
+        "pyproject.toml",
+        "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"GitPython\"]\n",
+    )]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--explain", "CHK002:gitpython"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    assert!(stderr.contains("top-level modules: git\n"), "{stderr}");
+    assert!(
+        stderr.contains("no reachable file imports git\n"),
+        "{stderr}"
+    );
+}
+
 /// `helper.PY` is collected and named like `helper.py`, as Python on
 /// Windows and macOS lowercases extensions when it looks a module up: the
 /// import resolves and the file's own imports are read (#1170).
