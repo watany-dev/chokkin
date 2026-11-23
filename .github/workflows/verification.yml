@@ -311,8 +311,11 @@ jobs:
 
   # A failed weekly or full run on main files its missed mutants as an issue
   # (#1119): the scheduled-workflow e-mail alone left #1117 on main for days.
-  # One open issue collects every failed run, each as a comment. A cancelled
-  # run (superseded, or stopped by hand) files nothing.
+  # Each failed run opens its own issue, so it shows up as new work in the
+  # issue list; comments on one long-open issue went unnoticed (#1353). A
+  # mutant an open issue already lists is left out, and a run whose every
+  # missed mutant is already filed opens nothing. A cancelled run (superseded,
+  # or stopped by hand) files nothing.
   mutants-issue:
     name: Mutants (file missed on main)
     needs: [mutants-plan, mutants]
@@ -323,7 +326,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      issues: write # gh issue create / comment
+      issues: write # gh issue create
     steps:
       # A shard whose runner was lost uploads nothing; file the issue anyway.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -331,13 +334,25 @@ jobs:
         with:
           pattern: mutants-*
           path: shards
-      - name: Open or update the issue
+      - name: Open the issue
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TITLE: "test: cargo-mutants found missed mutants on main"
+          # Also matches the single issue the job used to comment on (#1353).
+          MATCH: missed mutants on main
         run: |
           missed=$(cat shards/*/missed.txt 2>/dev/null | sort -u || true)
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --search "\"$MATCH\" in:title" --json title,body,comments \
+            --jq '.[] | select(.title | contains(env.MATCH)) | .body, .comments[].body' > filed.txt
+          all=$(printf '%s\n' "$missed" | grep -c . || true)
+          if [ -n "$missed" ]; then
+            missed=$(printf '%s\n' "$missed" | grep -vxFf filed.txt || true)
+            if [ -z "$missed" ]; then
+              echo "All $all missed mutants are already in an open issue; nothing filed."
+              exit 0
+            fi
+          fi
           {
             echo "The [${GITHUB_EVENT_NAME} cargo-mutants run]($RUN_URL) failed on \`${GITHUB_SHA::7}\`."
             echo
@@ -350,15 +365,13 @@ jobs:
             else
               echo "No shard reported a missed mutant: the plan or a shard did not finish (job timeout, runner lost, build failure). See the run."
             fi
+            if [ "$(printf '%s\n' "$missed" | grep -c .)" -lt "$all" ]; then
+              echo
+              echo "The run also missed mutants an open issue already lists; they are left out here."
+            fi
           } > body.md
-          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "\"$TITLE\" in:title" --json number,title \
-            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file body.md
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
-          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --body-file body.md \
+            --title "test: cargo-mutants $MATCH ($(date -u +%F), ${GITHUB_SHA::7})"
 
   kani:
     name: Kani proofs

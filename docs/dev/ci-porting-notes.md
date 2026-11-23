@@ -191,9 +191,11 @@ runs nothing on a PR that only deletes or weakens tests, so
 a `#[cfg(test)]` block's own file, or the source an integration test pins
 (`TEST_TARGETS`). End-to-end suites and fixtures pin no narrower code and are
 left to the weekly run (#1118). Both fail on a missed mutant
-(#837). A failed weekly or full run opens an issue listing its missed
-mutants, or comments on the one still open (`mutants-issue`, #1119): GitHub's
-scheduled-workflow e-mail alone left a missed mutant on main for days (#1117).
+(#837). A failed weekly or full run opens a new issue listing its missed
+mutants (`mutants-issue`, #1119): GitHub's scheduled-workflow e-mail alone
+left a missed mutant on main for days (#1117), and comments on one long-open
+issue went unnoticed just the same (#1353). A mutant an open issue already
+lists is left out, and a run whose missed mutants are all filed opens none.
 Each shard's summary also lists its timed-out mutants, which count as caught
 but may be a missed mutant that only slows a test down. The plan job counts the mutants with
 `--list` and splits a PR's run into shards of about 50 (at most 12), so a
