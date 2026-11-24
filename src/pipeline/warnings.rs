@@ -269,7 +269,8 @@ impl ProbeWarning {
             },
             Self::Resolve(warning) => match warning {
                 ResolveWarning::UnresolvedImport { file, line, .. } => (Some(file), *line),
-                ResolveWarning::VenvDistributionIgnored { path, .. } => (Some(path), None),
+                ResolveWarning::VenvDistributionIgnored { path, .. }
+                | ResolveWarning::VenvDistributionUnread { path } => (Some(path), None),
                 ResolveWarning::AmbiguousImport { .. }
                 | ResolveWarning::VenvSitePackagesAmbiguous { .. }
                 | ResolveWarning::VenvUnreadable { .. } => (None, None),
@@ -622,6 +623,10 @@ fn write_resolve_warning(
         ResolveWarning::VenvDistributionIgnored { path, name } => write!(
             formatter,
             "resolve: ignored `{path}`: `{name}` is not a PEP 508 distribution name"
+        ),
+        ResolveWarning::VenvDistributionUnread { path } => write!(
+            formatter,
+            "resolve: could not read the import names of `{path}`; its imports resolve as without a virtualenv"
         ),
         ResolveWarning::VenvSitePackagesAmbiguous {
             path,

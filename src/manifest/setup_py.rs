@@ -195,28 +195,76 @@ pub(super) fn extract_setup_py(
     }
 
     result.runtime_unknown = match install_requires {
-        Some(items) => !push_items(root, &mut result, &rel, &items, &DependencyContext::Runtime),
-        None => call.unpacked,
-    };
-
-    let mut lost = BTreeSet::new();
-    for (extra, value) in extras_require {
-        if !push_items(
+        Some(items) => !push_items(
             root,
             &mut result,
             &rel,
-            &dependency_items(value),
-            &DependencyContext::SetupExtra(extra.clone()),
-        ) {
-            lost.insert(extra.clone());
-        }
-    }
+            &items,
+            &DependencyContext::Runtime,
+            "install_requires".to_owned(),
+        ),
+        None => call.unpacked,
+    };
+
+    let lost = push_extras(root, &mut result, &rel, extras_require);
     // Extras we cannot name dominate the ones we named but could not read.
     if !lost.is_empty() && !extras_hidden {
         result.extras = Some(ExtrasState::Partial(lost));
     }
 
     Ok(result)
+}
+
+/// Push each `extras_require` entry; returns the extras part of which could
+/// not be read.
+fn push_extras(
+    root: &Path,
+    result: &mut SetupPyExtraction,
+    rel: &str,
+    extras_require: &[(String, Value)],
+) -> BTreeSet<String> {
+    let mut lost = BTreeSet::new();
+    for (key, value) in extras_require {
+        // `extra:marker` puts the marker on every requirement of the key, and
+        // an empty extra makes them install requirements (#1410).
+        let (extra, marker) = key.split_once(':').map_or_else(
+            || (key.trim(), None),
+            |(extra, marker)| {
+                (
+                    extra.trim(),
+                    Some(marker.trim()).filter(|marker| !marker.is_empty()),
+                )
+            },
+        );
+        let context = if extra.is_empty() {
+            DependencyContext::Runtime
+        } else {
+            DependencyContext::SetupExtra(extra.to_owned())
+        };
+        let first = result.dependencies.len();
+        let read = push_items(
+            root,
+            result,
+            rel,
+            &dependency_items(value),
+            &context,
+            format!("extras_require.{key}"),
+        );
+        if let Some(marker) = marker {
+            for dependency in &mut result.dependencies[first..] {
+                dependency.marker = Some(match dependency.marker.take() {
+                    Some(own) => format!("({marker}) and ({own})"),
+                    None => marker.to_owned(),
+                });
+            }
+        }
+        if !read && extra.is_empty() {
+            result.runtime_unknown = true;
+        } else if !read {
+            lost.insert(extra.to_owned());
+        }
+    }
+    lost
 }
 
 /// Nothing could be read: dependencies, extras, the name or the modules the
@@ -317,17 +365,18 @@ fn string_keyword(call: &SetupCall, name: &str) -> Option<String> {
 /// A requirement string repeated in one evaluated list is pushed once: lists
 /// built by concatenation (`extras["dev"] = extras["all"] + extras["testing"]`)
 /// repeat the same literal, and setup.py items carry no line to fix (#726).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the label differs from the context for `extras_require` keys without an extra"
+)]
 fn push_items(
     root: &Path,
     result: &mut SetupPyExtraction,
     rel: &str,
     items: &super::setup_py_eval::DependencyItems,
     context: &DependencyContext,
+    argument: String,
 ) -> bool {
-    let argument = match context {
-        DependencyContext::SetupExtra(extra) => format!("extras_require.{extra}"),
-        _ => "install_requires".to_owned(),
-    };
     let mut complete = items.complete;
     let mut seen = HashSet::default();
     for (index, item) in items.items.iter().enumerate() {
@@ -389,6 +438,44 @@ mod tests {
 
     fn extra(name: &str) -> DependencyContext {
         DependencyContext::SetupExtra(name.to_owned())
+    }
+
+    /// `extra:marker` keys put the marker on each requirement, and an empty
+    /// extra declares install requirements (#1410).
+    #[test]
+    fn extras_require_marker_keys_split_into_extra_and_marker() {
+        let result = extract(
+            "setup(install_requires=['requests'], extras_require={\n\
+             \":python_version<'3.8'\": ['importlib-metadata'],\n\
+             \"test: sys_platform=='win32'\": ['pywin32; python_version>=\"3.9\"'],\n\
+             'doc': ['sphinx'],\n\
+             })\n",
+            &[],
+        );
+        let declared: Vec<_> = result
+            .dependencies
+            .iter()
+            .map(|dep| (dep.name.as_str(), &dep.context, dep.marker.as_deref()))
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                ("requests", &DependencyContext::Runtime, None),
+                (
+                    "importlib-metadata",
+                    &DependencyContext::Runtime,
+                    Some("python_version<'3.8'")
+                ),
+                (
+                    "pywin32",
+                    &extra("test"),
+                    Some("(sys_platform=='win32') and (python_version>=\"3.9\")")
+                ),
+                ("sphinx", &extra("doc"), None),
+            ]
+        );
+        assert_eq!(result.extras, Some(ExtrasState::Known));
+        assert!(!result.runtime_unknown);
     }
 
     #[test]

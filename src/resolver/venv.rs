@@ -16,6 +16,10 @@ use super::types::ResolveWarning;
 pub struct VenvIndex {
     /// Import root to normalized distribution names.
     pub imports: BTreeMap<String, Vec<String>>,
+    /// Dotted module (2 segments or more) to the distributions owning the
+    /// file it loads (its `__init__` or module file), kept only under a root
+    /// several distributions share: a PEP 420 namespace's portions (#1391).
+    pub modules: BTreeMap<String, Vec<String>>,
     /// Console script name to normalized distribution names.
     pub binaries: BTreeMap<String, String>,
     /// Distributions registering a `pytest11` entry point (auto-loaded pytest plugins).
@@ -66,22 +70,62 @@ fn read_venv_index(
         let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !file_name.ends_with(".dist-info") {
+        let layout = if file_name.ends_with(".dist-info") {
+            Layout::DistInfo
+        } else if file_name.ends_with(".egg-info") {
+            Layout::EggInfo
+        } else {
             continue;
-        }
-        if let Err(name) = merge_dist_info(&path, &mut index) {
-            warnings.push(ResolveWarning::VenvDistributionIgnored {
+        };
+        match merge_distribution(&path, layout, &mut index) {
+            Ok(Read::Imports) => {},
+            Ok(Read::NoImportNames) => warnings.push(ResolveWarning::VenvDistributionUnread {
+                path: rel_to_root(root, &path),
+            }),
+            Err(name) => warnings.push(ResolveWarning::VenvDistributionIgnored {
                 path: rel_to_root(root, &path),
                 name,
-            });
+            }),
         }
     }
 
-    for imports in index.imports.values_mut() {
+    for imports in index.imports.values_mut().chain(index.modules.values_mut()) {
         imports.sort();
         imports.dedup();
     }
+    let imports = &index.imports;
+    index.modules.retain(|module, _| {
+        imports
+            .get(import_root(module))
+            .is_some_and(|owners| owners.len() > 1)
+    });
     Ok(index)
+}
+
+/// How `importlib.metadata` finds a distribution in site-packages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layout {
+    /// `<name>-<version>.dist-info/` with `METADATA` and a CSV `RECORD` of
+    /// site-packages-relative paths.
+    DistInfo,
+    /// `<name>-<version>[-pyX.Y].egg-info`, a directory with `PKG-INFO` and
+    /// `installed-files.txt` (relative to itself), or a lone `PKG-INFO` file
+    /// from distutils (#1406).
+    EggInfo,
+}
+
+/// What reading one distribution learned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Read {
+    /// Its import names, possibly none (a RECORD naming no module).
+    Imports,
+    /// An egg-info with no file list or `top_level.txt`: its import names are
+    /// unknown, so its imports resolve as without a virtualenv.
+    NoImportNames,
+}
+
+fn import_root(module: &str) -> &str {
+    module.split('.').next().unwrap_or(module)
 }
 
 /// A POSIX venv keeps one `lib/pythonX.Y/site-packages` per interpreter it
@@ -169,51 +213,79 @@ fn major_minor(version: &str) -> Option<(u32, u32)> {
 
 /// `Err` carries a name that is not a PEP 508 project name: pip installs
 /// none such, and trusting one credited `yaml` to `evil\x1b[31m` (#973).
-fn merge_dist_info(dist_info: &Path, index: &mut VenvIndex) -> Result<(), String> {
-    let metadata_path = dist_info.join("METADATA");
+fn merge_distribution(dir: &Path, layout: Layout, index: &mut VenvIndex) -> Result<Read, String> {
+    let lone_file = layout == Layout::EggInfo && dir.is_file();
+    let metadata_path = match layout {
+        Layout::DistInfo => dir.join("METADATA"),
+        Layout::EggInfo if lone_file => dir.to_path_buf(),
+        Layout::EggInfo => dir.join("PKG-INFO"),
+    };
     let Ok(contents) = fs::read_to_string(&metadata_path) else {
-        return Ok(());
+        return Ok(Read::Imports);
     };
     let metadata = parse_metadata(&contents);
     let name = metadata.name.clone().or_else(|| {
-        dist_info
-            .file_name()
+        dir.file_name()
             .and_then(|name| name.to_str())
-            .and_then(dist_info_name)
+            .and_then(distribution_dir_name)
             .map(str::to_owned)
     });
     let Some(name) = name else {
-        return Ok(());
+        return Ok(Read::Imports);
     };
     if !is_project_name(&name) {
         return Err(name);
     }
     let distribution = normalize_distribution_name(&name);
 
-    let top_level_path = dist_info.join("top_level.txt");
-    if let Ok(top_level) = fs::read_to_string(&top_level_path) {
-        for line in top_level.lines() {
-            let import = line.trim();
-            if !import.is_empty() && !import.starts_with('_') {
-                push_import(index, import, &distribution);
-            }
+    // A lone-file egg-info has no `top_level.txt` or file list beside it:
+    // reading under a file fails, so neither needs its own guard.
+    let top_level = fs::read_to_string(dir.join("top_level.txt")).ok();
+    for line in top_level.iter().flat_map(|top_level| top_level.lines()) {
+        let import = line.trim();
+        if !import.is_empty() && !import.starts_with('_') {
+            push_import(index, import, &distribution);
         }
     }
 
-    for import in metadata.import_names {
-        push_import(index, &import, &distribution);
+    for import in metadata
+        .import_names
+        .iter()
+        .chain(&metadata.import_namespaces)
+    {
+        push_import(index, import_root(import), &distribution);
     }
-    for import in metadata.import_namespaces {
-        push_import(index, &import, &distribution);
+    // An `Import-Namespace` loads no file, so it names no module's owner.
+    for import in &metadata.import_names {
+        if import.contains('.') {
+            push_module(index, import, &distribution);
+        }
     }
 
-    let record_path = dist_info.join("RECORD");
-    for import in imports_from_record(&record_path) {
-        push_import(index, &import, &distribution);
+    let files = match layout {
+        Layout::DistInfo => fs::read_to_string(dir.join("RECORD")).ok(),
+        Layout::EggInfo => fs::read_to_string(dir.join("installed-files.txt")).ok(),
+    };
+    for entry in files
+        .iter()
+        .flat_map(|files| installed_modules(files, layout))
+    {
+        push_import(index, &entry.root, &distribution);
+        if let Some(module) = entry.module.filter(|module| module.contains('.')) {
+            push_module(index, &module, &distribution);
+        }
     }
 
-    merge_entry_points(&dist_info.join("entry_points.txt"), &distribution, index);
-    Ok(())
+    merge_entry_points(&dir.join("entry_points.txt"), &distribution, index);
+    let unread = layout == Layout::EggInfo
+        && files.is_none()
+        && top_level.is_none()
+        && metadata.import_names.is_empty();
+    Ok(if unread {
+        Read::NoImportNames
+    } else {
+        Read::Imports
+    })
 }
 
 fn merge_entry_points(path: &Path, distribution: &str, index: &mut VenvIndex) {
@@ -236,41 +308,126 @@ fn push_import(index: &mut VenvIndex, import: &str, distribution: &str) {
         .push(distribution.to_owned());
 }
 
-fn dist_info_name(file_name: &str) -> Option<&str> {
-    let stem = file_name.strip_suffix(".dist-info")?;
-    let (name, _version) = stem.rsplit_once('-')?;
-    Some(name)
+fn push_module(index: &mut VenvIndex, module: &str, distribution: &str) {
+    index
+        .modules
+        .entry(module.to_owned())
+        .or_default()
+        .push(distribution.to_owned());
 }
 
-fn imports_from_record(record_path: &Path) -> Vec<String> {
-    let Ok(contents) = fs::read_to_string(record_path) else {
-        return Vec::new();
-    };
-    let mut imports = std::collections::BTreeSet::new();
+/// The distribution name a `.dist-info` (`<name>-<version>`) or `.egg-info`
+/// (`<name>-<version>[-pyX.Y]`, or a bare `<name>` from a develop install)
+/// directory carries, used when its metadata has no `Name:`.
+fn distribution_dir_name(file_name: &str) -> Option<&str> {
+    if let Some(stem) = file_name.strip_suffix(".dist-info") {
+        return stem.rsplit_once('-').map(|(name, _version)| name);
+    }
+    let stem = file_name.strip_suffix(".egg-info")?;
+    Some(stem.split_once('-').map_or(stem, |(name, _)| name))
+}
+
+/// One importable file a distribution installed.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct InstalledModule {
+    /// Top-level import name: the first directory, or the module a file
+    /// directly in site-packages defines.
+    root: String,
+    /// Dotted module the file loads, `None` for a data file in a package.
+    module: Option<String>,
+}
+
+/// The modules a `RECORD` (CSV, site-packages-relative) or egg-info
+/// `installed-files.txt` (one path per line, relative to the egg-info
+/// directory) lists. Paths outside site-packages (`../../bin/x`), metadata
+/// and files no import loads (`py.typed`, `.pth`, `.pyi`, a directory that is
+/// no identifier) name no module: no `import` statement can spell them.
+fn installed_modules(contents: &str, layout: Layout) -> BTreeSet<InstalledModule> {
+    let mut modules = BTreeSet::new();
     for line in contents.lines() {
-        let Some(path) = line.split(',').next() else {
-            continue;
+        let path = match layout {
+            Layout::DistInfo => csv_first_field(line),
+            Layout::EggInfo => match line.trim().strip_prefix("../") {
+                Some(path) => path.to_owned(),
+                None => continue,
+            },
         };
-        let path = path.trim();
-        if path.is_empty() || path.contains(".dist-info/") {
-            continue;
-        }
-        if let Some(import) = top_level_import_from_record_path(path)
-            && !import.starts_with('_')
+        if let Some(module) = installed_module(&path)
+            && !module.root.starts_with('_')
         {
-            imports.insert(import);
+            modules.insert(module);
         }
     }
-    imports.into_iter().collect()
+    modules
 }
 
-fn top_level_import_from_record_path(path: &str) -> Option<String> {
+/// First field of a CSV row: `csv.writer` may quote any field, and must
+/// when the path holds a `,`; `""` escapes a quote inside (#1404).
+fn csv_first_field(line: &str) -> String {
+    let line = line.trim();
+    let Some(quoted) = line.strip_prefix('"') else {
+        return line.split(',').next().unwrap_or_default().trim().to_owned();
+    };
+    let mut field = String::new();
+    let mut chars = quoted.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '"' && chars.next_if_eq(&'"').is_none() {
+            break;
+        }
+        field.push(ch);
+    }
+    field
+}
+
+fn installed_module(path: &str) -> Option<InstalledModule> {
     let path = path.trim().trim_start_matches("./");
-    if path.is_empty() || path.starts_with('.') {
+    let segments: Vec<&str> = path.split('/').collect();
+    let (file, dirs) = segments.split_last()?;
+    let Some(&root) = dirs.first() else {
+        let module = module_of_file(file)?;
+        return Some(InstalledModule {
+            root: module.to_owned(),
+            module: Some(module.to_owned()),
+        });
+    };
+    if !is_identifier(root) {
         return None;
     }
-    let first = path.split('/').next()?;
-    Some(first.strip_suffix(".py").unwrap_or(first).to_owned())
+    let module = (dirs.iter().all(|dir| is_identifier(dir)))
+        .then(|| module_of_file(file))
+        .flatten()
+        .map(|name| {
+            let package = dirs.join(".");
+            if name == "__init__" {
+                package
+            } else {
+                format!("{package}.{name}")
+            }
+        });
+    Some(InstalledModule {
+        root: root.to_owned(),
+        module,
+    })
+}
+
+/// The module a file name defines: `m.py`, or an extension module
+/// (`m.cpython-312-x86_64-linux-gnu.so`, `m.abi3.so`, `m.so`, `m.cp312-win_amd64.pyd`,
+/// `m.pyd`) up to its first `.` (#1401).
+fn module_of_file(file: &str) -> Option<&str> {
+    let name = match file.rsplit_once('.')? {
+        (stem, "py") => stem,
+        (_, "so" | "pyd") => file.split('.').next()?,
+        _ => return None,
+    };
+    is_identifier(name).then_some(name)
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
 fn entry_point_names(contents: &str, group: &str) -> Vec<String> {
@@ -302,9 +459,25 @@ fn entry_point_names(contents: &str, group: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn record_roots(record: &str) -> Vec<String> {
+        let roots: BTreeSet<String> = installed_modules(record, Layout::DistInfo)
+            .into_iter()
+            .map(|module| module.root)
+            .collect();
+        roots.into_iter().collect()
+    }
+
     #[test]
     fn parses_dist_info_directory_name() {
-        assert_eq!(dist_info_name("PyYAML-6.0.1.dist-info"), Some("PyYAML"));
+        assert_eq!(
+            distribution_dir_name("PyYAML-6.0.1.dist-info"),
+            Some("PyYAML")
+        );
+        assert_eq!(
+            distribution_dir_name("acme_img-1.0-py3.12.egg-info"),
+            Some("acme_img")
+        );
+        assert_eq!(distribution_dir_name("acme_img.egg-info"), Some("acme_img"));
     }
 
     /// A `Name:` outside PEP 508, from METADATA or the directory, credits
@@ -328,7 +501,7 @@ mod tests {
             .expect("write");
             let mut index = VenvIndex::default();
             assert!(
-                merge_dist_info(&dist_info, &mut index).is_err(),
+                merge_distribution(&dist_info, Layout::DistInfo, &mut index).is_err(),
                 "{dir_name}"
             );
             assert_eq!(index, VenvIndex::default(), "{dir_name}");
@@ -453,14 +626,102 @@ mod tests {
 
     #[test]
     fn parses_record_top_level_imports() {
+        assert_eq!(
+            record_roots("yaml/__init__.py,sha256=abc,100\nyaml/loader.py,sha256=def,200\n"),
+            vec!["yaml".to_owned()]
+        );
+    }
+
+    #[test]
+    fn extension_modules_name_their_import_and_other_files_none() {
+        for (file, module) in [
+            ("m.py", Some("m")),
+            ("m.cpython-312-x86_64-linux-gnu.so", Some("m")),
+            ("m.abi3.so", Some("m")),
+            ("m.so", Some("m")),
+            ("m.cp312-win_amd64.pyd", Some("m")),
+            ("m.pyd", Some("m")),
+            ("m.pyi", None),
+            ("py.typed", None),
+            ("m.pth", None),
+            ("1m.py", None),
+            ("my-mod.py", None),
+        ] {
+            assert_eq!(module_of_file(file), module, "{file}");
+        }
+    }
+
+    #[test]
+    fn record_rows_are_csv() {
+        assert_eq!(
+            csv_first_field("acme/__init__.py,sha256=x,0"),
+            "acme/__init__.py"
+        );
+        assert_eq!(
+            csv_first_field("\"acme/__init__.py\",sha256=x,0"),
+            "acme/__init__.py"
+        );
+        assert_eq!(csv_first_field("\"acme/a,b.txt\",,"), "acme/a,b.txt");
+        assert_eq!(
+            csv_first_field("\"acme/\"\"q\"\".txt\",,"),
+            "acme/\"q\".txt"
+        );
+    }
+
+    #[test]
+    fn installed_files_name_the_module_they_load() {
+        let module = |path: &str| installed_module(path).and_then(|module| module.module);
+        assert_eq!(
+            module("acme/billing/__init__.py").as_deref(),
+            Some("acme.billing")
+        );
+        assert_eq!(
+            module("acme/billing/api.py").as_deref(),
+            Some("acme.billing.api")
+        );
+        assert_eq!(module("acme/billing/data.json"), None);
+        assert_eq!(module("acme/my-dir/x.py"), None);
+        assert_eq!(installed_module("acme-1.0.data/x.py"), None);
+        assert_eq!(
+            installed_modules(
+                "../acme/__init__.py\nPKG-INFO\n../../../bin/acme\n",
+                Layout::EggInfo
+            ),
+            BTreeSet::from([InstalledModule {
+                root: "acme".to_owned(),
+                module: Some("acme".to_owned()),
+            }])
+        );
+    }
+
+    /// Module owners are kept only under a root several distributions share.
+    #[test]
+    fn module_index_keeps_shared_roots_only() {
         let dir = tempfile::TempDir::new().expect("tempdir");
-        let record = dir.path().join("RECORD");
-        std::fs::write(
-            &record,
-            "yaml/__init__.py,sha256=abc,100\nyaml/loader.py,sha256=def,200\n",
-        )
-        .expect("write");
-        assert_eq!(imports_from_record(&record), vec!["yaml".to_owned()]);
+        let site = dir.path().join(".venv/lib/python3.12/site-packages");
+        for (name, record) in [
+            ("auth", "acme/auth/__init__.py,,\n"),
+            (
+                "billing",
+                "acme/billing/__init__.py,,\nacme/billing/api.py,,\n",
+            ),
+            ("solo", "solo/core/__init__.py,,\n"),
+        ] {
+            let dist_info = site.join(format!("{name}-1.0.dist-info"));
+            std::fs::create_dir_all(&dist_info).expect("mkdir");
+            std::fs::write(dist_info.join("METADATA"), format!("Name: {name}\n")).expect("write");
+            std::fs::write(dist_info.join("RECORD"), record).expect("write");
+        }
+        let index =
+            read_venv_index(dir.path(), &dir.path().join(".venv"), &mut Vec::new()).expect("read");
+        assert_eq!(
+            index.modules,
+            BTreeMap::from([
+                ("acme.auth".to_owned(), vec!["auth".to_owned()]),
+                ("acme.billing".to_owned(), vec!["billing".to_owned()]),
+                ("acme.billing.api".to_owned(), vec!["billing".to_owned()]),
+            ])
+        );
     }
 
     #[test]
@@ -494,7 +755,7 @@ mod tests {
         )
         .expect("write");
         let mut index = VenvIndex::default();
-        merge_dist_info(&dist_info, &mut index).expect("valid name");
+        merge_distribution(&dist_info, Layout::DistInfo, &mut index).expect("valid name");
         assert_eq!(
             index.imports,
             BTreeMap::from([("demo_pkg".to_owned(), vec!["demo".to_owned()])])
@@ -515,8 +776,9 @@ mod tests {
         }
         let mut index = VenvIndex::default();
         for name in ["tool", "plug"] {
-            merge_dist_info(
+            merge_distribution(
                 &dir.path().join(format!("{name}-1.0.dist-info")),
+                Layout::DistInfo,
                 &mut index,
             )
             .expect("valid name");
@@ -530,14 +792,10 @@ mod tests {
 
     #[test]
     fn record_skips_dist_info_and_parent_relative_paths() {
-        let dir = tempfile::TempDir::new().expect("tempdir");
-        let record = dir.path().join("RECORD");
-        std::fs::write(
-            &record,
-            "demo-1.0.dist-info/METADATA,,\n../../bin/demo,,\n./demo.py,,\n",
-        )
-        .expect("write");
-        assert_eq!(imports_from_record(&record), vec!["demo".to_owned()]);
+        assert_eq!(
+            record_roots("demo-1.0.dist-info/METADATA,,\n../../bin/demo,,\n./demo.py,,\n"),
+            vec!["demo".to_owned()]
+        );
     }
 
     #[test]
@@ -561,7 +819,7 @@ mod tests {
                 version in "[0-9][0-9a-z.+]{0,8}",
             ) {
                 let file_name = format!("{name}-{version}.dist-info");
-                prop_assert_eq!(dist_info_name(&file_name), Some(name.as_str()));
+                prop_assert_eq!(distribution_dir_name(&file_name), Some(name.as_str()));
             }
 
             #[test]
@@ -571,15 +829,17 @@ mod tests {
                 dot_slash in any::<bool>(),
                 module_file in any::<bool>(),
             ) {
+                // A lone file in site-packages is a module only by its suffix.
+                let expected = (module_file || !rest.is_empty()).then(|| first.clone());
                 let mut path = if module_file && rest.is_empty() {
                     format!("{first}.py")
                 } else {
-                    std::iter::once(first.clone()).chain(rest).collect::<Vec<_>>().join("/")
+                    std::iter::once(first).chain(rest).collect::<Vec<_>>().join("/")
                 };
                 if dot_slash {
                     path.insert_str(0, "./");
                 }
-                prop_assert_eq!(top_level_import_from_record_path(&path), Some(first));
+                prop_assert_eq!(installed_module(&path).map(|module| module.root), expected);
             }
         }
     }
