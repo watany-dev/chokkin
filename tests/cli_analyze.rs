@@ -9099,6 +9099,14 @@ fn binary_trace_accepts_absolute_and_cwd_relative_paths() {
         expected
     );
     assert_eq!(trace_stderr_from(&acme, "../acme/util.py"), expected);
+    // #1444: `.//` is `./`, not the start of an absolute path.
+    for target in [
+        ".//src/acme/util.py",
+        "src//acme/util.py",
+        "src/./acme/util.py",
+    ] {
+        assert_eq!(trace_stderr(target), expected, "{target}");
+    }
 }
 
 #[test]
