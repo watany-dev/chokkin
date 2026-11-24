@@ -33,8 +33,7 @@ fn main() {
         out.push('\n');
     };
     for s in all_strings(&['a', '.', '/', '\\'], 6) {
-        emit("normalize_trace_path", &s, &paths::normalize_trace_path(&s));
-        emit("normalize_entry_path", &s, &paths::normalize_entry_path(&s));
+        emit("normalize_user_path", &s, &paths::normalize_user_path(&s));
         emit("normalize_dir", &s, &paths::normalize_dir(&s));
         emit("normalize_path", &s, &paths::normalize_path(&s));
         emit(

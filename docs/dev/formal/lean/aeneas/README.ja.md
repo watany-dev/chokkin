@@ -86,4 +86,4 @@ cd .. && lake build && lake exe check extract/dump.tsv
 - `requires-python` × marker の 6 万件で、chokkin が「常に成り立つ」と言い `packaging` が
   偽とする例は 0 件。
 - PEP 503 の 2 関数と `target_part` は全数で仕様どおり。
-- path 正規化は 4 関数が POSIX の pathname 解決と食い違い、うち 2 件が利用者に見える (#1443、#1444)。
+- path 正規化は 4 関数が POSIX の pathname 解決と食い違い、うち 2 件が利用者に見える (#1443、#1444。#1451 で修正済み)。
