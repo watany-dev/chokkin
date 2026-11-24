@@ -174,6 +174,16 @@ fn json_reporter_normalizes_path_separators() {
 }
 
 #[test]
+fn sarif_reporter_renders_info_as_note() {
+    let mut report = report();
+    report.issues[0].severity = Severity::Info;
+
+    let rendered = render_issues(ReporterId::Sarif, &report, &context());
+
+    assert!(rendered.contains("\"level\": \"note\""), "{rendered}");
+}
+
+#[test]
 fn sarif_reporter_normalizes_artifact_uri_separators() {
     let mut report = report();
     report.issues[0].location.file = Some("src\\acme\\app.py".to_owned());

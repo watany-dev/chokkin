@@ -299,6 +299,15 @@ mod tests {
     }
 
     #[test]
+    fn io_error_is_not_a_usage_error() {
+        let error = InitError::Io {
+            path: PathBuf::from("pyproject.toml"),
+            source: std::io::Error::other("disk full"),
+        };
+        assert!(!error.is_usage_error());
+    }
+
+    #[test]
     fn render_escapes_strings() {
         let block = render_starter_config(
             &["src/**/weird\"name.py".to_owned()],

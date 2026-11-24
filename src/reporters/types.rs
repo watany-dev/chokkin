@@ -33,19 +33,6 @@ impl ReporterId {
             _ => None,
         }
     }
-
-    /// Stable CLI identifier.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Default => "default",
-            Self::Compact => "compact",
-            Self::Json => "json",
-            Self::Markdown => "markdown",
-            Self::Github => "github",
-            Self::Sarif => "sarif",
-        }
-    }
 }
 
 /// Context passed to reporters alongside an [`crate::rules::IssueReport`].

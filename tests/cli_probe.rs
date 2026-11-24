@@ -252,6 +252,25 @@ fn binary_probe_fixture_exits_zero() {
     );
 }
 
+/// A report that cannot be written is an internal error, not a clean probe,
+/// even when the warnings still reach stderr.
+#[cfg(target_os = "linux")]
+#[test]
+fn binary_probe_unwritable_stdout_exits_internal_error() {
+    let root = fixture_path("probe/empty");
+    let full = std::fs::File::create("/dev/full").expect("open /dev/full");
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .arg("--probe")
+        .arg(&root)
+        .stdout(full)
+        .output()
+        .expect("run chokkin");
+    assert_eq!(
+        output.status.code(),
+        Some(ExitStatus::InternalError.code().into())
+    );
+}
+
 #[test]
 fn binary_broken_pyproject_exits_two() {
     let root = fixture_path("manifest/broken_pyproject");
