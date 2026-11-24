@@ -1940,6 +1940,8 @@ mod tests {
             "conda run -n app pytest",
             "mamba run --no-capture-output -p ./env pytest",
             "hatch run lint:pytest",
+            "env A=1 B=2 hatch run -v lint:pytest",
+            "poetry run flock -w 5 /lock pytest",
             "hatch run pytest",
             "uv run nohup pytest",
         ] {
@@ -1948,6 +1950,10 @@ mod tests {
         assert_eq!(binaries("find . -name pytest"), Vec::<String>::new());
         // The extras of `uv run --with` may provide the tool.
         assert_eq!(binaries("uv run --with rich pytest"), Vec::<String>::new());
+        assert_eq!(
+            binaries("env A=1 B=2 C=3 uv run --with rich pytest"),
+            Vec::<String>::new()
+        );
         assert_eq!(
             binaries("uv run --with=\"$DEPS\" pytest"),
             Vec::<String>::new()
