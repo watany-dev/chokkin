@@ -1,12 +1,14 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use ruff_python_ast::visitor::{Visitor, walk_annotation, walk_expr, walk_stmt};
 use ruff_python_ast::{
-    Alias, CmpOp, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall, ExprStringLiteral,
+    Alias, CmpOp, Comprehension, Decorator, ExceptHandler, Expr, ExprAttribute, ExprCall,
+    ExprDictComp, ExprGenerator, ExprList, ExprListComp, ExprSetComp, ExprStringLiteral, ExprTuple,
     Identifier, Operator, Parameters, Stmt, StmtClassDef, StmtIf, StmtImport, StmtImportFrom,
     StmtMatch, StmtReturn, StmtTry,
 };
@@ -14,7 +16,7 @@ use ruff_text_size::{Ranged, TextSize};
 
 use crate::sources::{FileContext, LayoutInfo};
 
-use super::attributes::write_receiver;
+use super::attributes::{is_receiver, write_receiver};
 use super::by_name::{
     adds_computed_path, callee_name, gets_own_name, path_refs, reads_own_namespace,
 };
@@ -22,8 +24,8 @@ use super::condition::{self, Leaf};
 use super::decorators::normalize_decorator;
 use super::deprecation::warns_deprecated_on_import;
 use super::dynamic::{
-    LiteralTarget, Loader, LoaderNames, PythonRun, command_word, edits_sys_path, lists_directory,
-    literal_target, module_list, module_prefix, module_ref_literal, named_load,
+    Caller, LiteralTarget, Loader, LoaderNames, PythonRun, argument, command_word, edits_sys_path,
+    lists_directory, literal_target, module_list, module_prefix, module_ref_literal, named_load,
     pytest_plugin_names, python_run, sys_path_hint,
 };
 use super::exports::extract_exports;
@@ -39,12 +41,17 @@ use super::platform_guard::{
 };
 use super::registry::registry_decorators;
 use super::relative::{module_package, resolve_relative_import, unresolved_relative_diagnostic};
+use super::scopes::{Scope, is_shadowed};
 use super::server_app::ServerNames;
 use super::type_checking::is_type_checking_test;
 use super::types::{
     AttributeAccess, DecoratorSite, DynamicImport, ImportCheck, ImportContext, ImportKind,
     ImportRef, ModuleRef, NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind,
     import_context_for_file,
+};
+use super::values::{
+    Evaluator, Lookup, Memo, Program, Value, Values, bind_pattern, budget, destructure, dotted,
+    dotted_text, elements, extend, may_evaluate_to_module, may_return,
 };
 use super::version_guard::{self, ALL_MINORS, Minors, VersionNames};
 
@@ -167,8 +174,37 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// index in `dynamic_import_prefixes` (#728).
     prefix_modules: FxHashMap<String, usize>,
     /// Names the current scope binds to the module a literal
-    /// `import_module("pkg.m")` returned, with that module's name (#1144).
+    /// `import_module("pkg.m")` returned, with that module's name (#1144),
+    /// and the ones an enclosing scope bound that it does not rebind
+    /// (#1416).
     literal_modules: FxHashMap<String, String>,
+    /// Names the current scope binds to a dotted name (`f = pkg.m`), with
+    /// that name as written, an alias's own alias spelled out; scoped as
+    /// `literal_modules`. Whether the name is a module is decided with the
+    /// rest of [`Self::attribute_sites`] (#1415).
+    module_aliases: FxHashMap<String, Values<'ast>>,
+    /// What each module-level name holds, also as assigned from a function
+    /// through `global` (#1427): what a function body reads it as.
+    global_aliases: FxHashMap<String, Values<'ast>>,
+    /// What module-level functions assign through `global`, whenever they
+    /// run: kept across a module-level rebinding (#1427).
+    global_stores: FxHashMap<String, Values<'ast>>,
+    /// What each dotted attribute was assigned (`pkg.reg.h = pkg.m`, #1427).
+    attribute_stores: FxHashMap<String, Values<'ast>>,
+    /// The module-level functions and classes a value may flow through
+    /// (#1427).
+    program: Program<'ast>,
+    /// What calls and members evaluated to while module-level names held
+    /// the same (#1427).
+    memo: Memo<'ast>,
+    /// The names imports bind, kept up to the imports seen so far, and
+    /// whether one of them is a first-party module's (#1427).
+    import_roots: RefCell<(usize, FxHashMap<String, bool>)>,
+    /// Module-level names bound once to a string literal (#1425).
+    string_constants: FxHashMap<&'ast str, &'ast str>,
+    /// The enclosing function, class, lambda and comprehension scopes,
+    /// innermost last (#1429).
+    scopes: Vec<Scope<'ast>>,
     command_words: BTreeSet<String>,
     sys_path: SysPathHints,
     /// Each distinct dotted-name literal at its first line (#1026).
@@ -178,6 +214,10 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// the ones read through an import binding, which only the whole
     /// module's imports tell.
     attribute_sites: Vec<&'ast ExprAttribute>,
+    /// The `x.attr` and `getattr(x, "attr")` sites whose receiver starts
+    /// with a name in [`Self::module_aliases`]: the receiver with the alias
+    /// spelled out, name and line (#1415).
+    aliased_attribute_sites: Vec<(String, &'ast str, u32)>,
     /// The receiver, name and line of every `getattr(x, "attr")` and kin,
     /// read like `x.attr` (#1143).
     literal_getattr_sites: Vec<(&'ast Expr, &'ast str, u32)>,
@@ -248,11 +288,21 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             server_names: ServerNames::default(),
             prefix_modules: FxHashMap::default(),
             literal_modules: FxHashMap::default(),
+            module_aliases: FxHashMap::default(),
+            global_aliases: FxHashMap::default(),
+            global_stores: FxHashMap::default(),
+            memo: Memo::default(),
+            import_roots: RefCell::default(),
+            attribute_stores: FxHashMap::default(),
+            program: Program::default(),
+            string_constants: FxHashMap::default(),
+            scopes: Vec::new(),
             command_words: BTreeSet::new(),
             sys_path: SysPathHints::default(),
             module_refs: BTreeMap::new(),
             loaded_names: FxHashSet::default(),
             attribute_sites: Vec::new(),
+            aliased_attribute_sites: Vec::new(),
             literal_getattr_sites: Vec::new(),
             string_attribute_sites: Vec::new(),
             function_frames: Vec::new(),
@@ -271,6 +321,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     #[must_use]
     pub(super) fn into_parsed(mut self) -> ParsedModule {
         self.parsed.attribute_accesses = self.import_attribute_accesses();
+        self.export_values();
         self.mark_guarded_private_imports();
         let runs_commands = self
             .parsed
@@ -299,6 +350,33 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             .map(str::to_owned)
             .collect();
         self.parsed.used_import_bindings = used.into_iter().collect();
+        if self
+            .parsed
+            .imports
+            .iter()
+            .any(|import| import.name.as_deref() == Some("*"))
+        {
+            let bound: FxHashSet<&str> = self
+                .parsed
+                .imports
+                .iter()
+                .filter_map(ImportRef::bound_name)
+                .chain(
+                    self.parsed
+                        .symbols
+                        .iter()
+                        .map(|symbol| symbol.name.as_str()),
+                )
+                .collect();
+            let mut reads: Vec<String> = self
+                .loaded_names
+                .iter()
+                .filter(|name| !bound.contains(name.as_str()))
+                .cloned()
+                .collect();
+            reads.sort_unstable();
+            self.parsed.star_reads = reads;
+        }
         for symbol in &mut self.parsed.symbols {
             symbol.used_in_module = self.loaded_names.contains(&symbol.name);
         }
@@ -322,6 +400,67 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.parsed.path_refs.sort_unstable();
         self.parsed.path_refs.dedup();
         self.parsed
+    }
+
+    /// What other modules may read through this one's names, attributes
+    /// and functions (#1427).
+    fn export_values(&mut self) {
+        let mut values: Vec<(String, String)> = self
+            .global_aliases
+            .iter()
+            .chain(&self.attribute_stores)
+            .flat_map(|(target, held)| {
+                dotted(held)
+                    .filter(move |text| text != target)
+                    .map(|text| (target.clone(), text.to_owned()))
+            })
+            .collect();
+        values.sort_unstable();
+        let module_level = |name: &str| {
+            self.global_aliases
+                .get(name)
+                .map_or(Lookup::Free, |values| Lookup::Bound(values.clone()))
+        };
+        let mut returns: Vec<(String, String)> = Vec::new();
+        let reaches = |name: &str| {
+            self.global_aliases.contains_key(name)
+                || self.program.defines(name)
+                || self.is_import_root(name)
+        };
+        for (name, def) in self.program.functions() {
+            if !may_return(def, &reaches) {
+                continue;
+            }
+            let module = |name: &str| self.global_aliases.get(name).cloned();
+            let (calls, nesting) = budget();
+            let first_party = |root: &str| self.import_root(root) == Some(true);
+            let held = Evaluator {
+                program: &self.program,
+                here: &module_level,
+                module: &module,
+                stores: &self.attribute_stores,
+                calls: &calls,
+                nesting: &nesting,
+                memo: &self.memo,
+                first_party: &first_party,
+            }
+            .returns(def);
+            returns.extend(
+                dotted(&held)
+                    .filter(|text| self.may_hold_module(&Value::Dotted((*text).to_owned())))
+                    .map(|text| (name.to_owned(), text.to_owned())),
+            );
+        }
+        returns.sort_unstable();
+        self.parsed.module_values = values;
+        self.parsed.function_returns = returns;
+    }
+
+    fn has_star_import(&self) -> bool {
+        self.parsed
+            .imports
+            .iter()
+            .any(|import| import.name.as_deref() == Some("*"))
     }
 
     /// The attribute sites read through a receiver symbol tracking follows:
@@ -348,6 +487,27 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 self.line_number(*attribute),
             )
         });
+        // `import pkg` reads `pkg.m.name` from `pkg.m` when that is a
+        // submodule, which symbol tracking tells (#1414).
+        // A star import may bind any name the module does not bind itself
+        // (#1421).
+        let star_bound: Option<FxHashSet<&str>> = self.has_star_import().then(|| {
+            self.parsed
+                .symbols
+                .iter()
+                .map(|symbol| symbol.name.as_str())
+                .collect()
+        });
+        let through_import = |receiver: &str| {
+            receivers.contains(receiver)
+                || receiver
+                    .match_indices('.')
+                    .any(|(index, _)| receivers.contains(&receiver[..index]))
+                || star_bound.as_ref().is_some_and(|defined| {
+                    let root = receiver.split('.').next().unwrap_or(receiver);
+                    !defined.contains(root)
+                })
+        };
         let mut receiver = String::new();
         let strings = self
             .string_attribute_sites
@@ -362,14 +522,25 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             .chain(self.literal_getattr_sites.iter().copied())
             .filter_map(|(value, name, line)| {
                 receiver.clear();
-                (write_receiver(value, &mut receiver) && receivers.contains(receiver.as_str()))
-                    .then(|| AttributeAccess {
+                (write_receiver(value, &mut receiver) && through_import(&receiver)).then(|| {
+                    AttributeAccess {
                         receiver: receiver.clone(),
                         name: name.to_owned(),
                         line,
-                    })
+                    }
+                })
             })
             .chain(strings)
+            .chain(
+                self.aliased_attribute_sites
+                    .iter()
+                    .filter(|(receiver, _, _)| through_import(receiver))
+                    .map(|(receiver, name, line)| AttributeAccess {
+                        receiver: receiver.clone(),
+                        name: (*name).to_owned(),
+                        line: *line,
+                    }),
+            )
             .collect()
     }
 
@@ -389,6 +560,9 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             })
             .collect();
         self.parsed.import_checks = import_checks(stmts);
+        self.string_constants = string_constants(stmts);
+        self.program = Program::build(stmts);
+        self.collect_global_stores();
         self.async_library_names = self.scope_async_library_names(None, stmts);
         // Without a plain `sys.platform`-style mention, only an aliased
         // import (`import sys as s`) can make a platform test, so most
@@ -672,7 +846,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let saved_function_depth = self.function_depth;
         let saved_checked_at = self.availability_checked_at;
         let saved_prefix_modules = std::mem::take(&mut self.prefix_modules);
-        let saved_literal_modules = std::mem::take(&mut self.literal_modules);
+        let saved_bindings = self.enter_bindings();
         let saved_caught_depth = self.caught_depth;
         let saved_broad_caught_depth = self.broad_caught_depth;
         self.module_level = false;
@@ -700,9 +874,315 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.function_depth = saved_function_depth;
         self.availability_checked_at = saved_checked_at;
         self.prefix_modules = saved_prefix_modules;
-        self.literal_modules = saved_literal_modules;
+        self.leave_bindings(saved_bindings);
         self.caught_depth = saved_caught_depth;
         self.broad_caught_depth = saved_broad_caught_depth;
+    }
+
+    /// Enter the nested scope on top of [`Self::scopes`]: the names
+    /// `literal_modules` and `module_aliases` hold stay bound there but for
+    /// the ones that scope binds itself (#1416). Returns the outer maps for
+    /// [`Self::leave_bindings`].
+    fn enter_bindings(&mut self) -> OuterBindings<'ast> {
+        let outer = (self.literal_modules.clone(), self.module_aliases.clone());
+        if let Some(scope) = self.scopes.last() {
+            self.literal_modules.retain(|name, _| !scope.binds(name));
+            self.module_aliases.retain(|name, _| !scope.binds(name));
+        }
+        outer
+    }
+
+    fn leave_bindings(&mut self, outer: OuterBindings<'ast>) {
+        (self.literal_modules, self.module_aliases) = outer;
+    }
+
+    /// Track `f = pkg.m`, `f = get()`, `a, f = 0, pkg.m` and the like for
+    /// a later `f.name` (#1415, #1427).
+    fn bind_module_alias(&mut self, target: &'ast Expr, value: &'ast Expr) {
+        let values = self.eval_here(value);
+        self.bind_values(target, values);
+    }
+
+    fn bind_values(&mut self, target: &'ast Expr, values: Values<'ast>) {
+        if values.is_empty() && !self.scopes.is_empty() {
+            // Most assignments in a function hold nothing tracked: they only
+            // drop an alias of the same name.
+            if !self.module_aliases.is_empty() {
+                destructure(target, Vec::new(), &mut |name, _| {
+                    self.module_aliases.remove(name);
+                });
+            }
+            return;
+        }
+        let mut bound = Vec::new();
+        destructure(target, values, &mut |name, values| {
+            bound.push((name, values));
+        });
+        for (name, values) in bound {
+            self.bind_name(name, values);
+        }
+    }
+
+    /// Bind `name` in the current scope; at module level, or declared
+    /// `global`, in the module's too. Values that cannot reach a module are
+    /// dropped first.
+    fn bind_name(&mut self, name: &str, mut values: Values<'ast>) {
+        values.retain(|value| self.may_hold_module(value));
+        let at_module = self.scopes.is_empty();
+        if at_module {
+            self.memo.clear();
+            let mut held = values.clone();
+            extend(
+                &mut held,
+                self.global_stores.get(name).cloned().unwrap_or_default(),
+            );
+            if held.is_empty() {
+                self.global_aliases.remove(name);
+            } else {
+                self.global_aliases.insert(name.to_owned(), held);
+            }
+        } else if !values.is_empty()
+            && self
+                .scopes
+                .last()
+                .is_some_and(|scope| scope.declares_global(name))
+        {
+            self.add_global(name, values.clone());
+        }
+        if values.is_empty() {
+            self.module_aliases.remove(name);
+        } else {
+            self.module_aliases.insert(name.to_owned(), values);
+        }
+    }
+
+    /// Adds what a function assigns to the module-level `name` through
+    /// `global` to what it holds, which until then is the name as written
+    /// (an import's binding, say).
+    fn add_global(&mut self, name: &str, values: Values<'ast>) {
+        self.memo.clear();
+        let held = self
+            .global_aliases
+            .entry(name.to_owned())
+            .or_insert_with(|| vec![Value::Dotted(name.to_owned())]);
+        extend(held, values);
+    }
+
+    /// What the module-level functions assign through `global`, so that a
+    /// function defined before the one assigning reads it too. The imports
+    /// are not known yet, so nothing is filtered: a value no import roots
+    /// reads nothing when the receivers are resolved.
+    fn collect_global_stores(&mut self) {
+        let mut stores: Vec<(&'ast str, Values<'ast>)> = Vec::new();
+        let module = |_: &str| None;
+        let free = |_: &str| Lookup::Free;
+        // Not knowing which imports are first-party either, follow every
+        // call: a third-party one yields a name no module resolves.
+        let first_party = |_: &str| true;
+        for (_, def) in self.program.functions() {
+            let (calls, nesting) = budget();
+            stores.extend(
+                Evaluator {
+                    program: &self.program,
+                    here: &free,
+                    module: &module,
+                    stores: &self.attribute_stores,
+                    calls: &calls,
+                    nesting: &nesting,
+                    memo: &self.memo,
+                    first_party: &first_party,
+                }
+                .global_stores(def),
+            );
+        }
+        for (name, values) in stores {
+            if values.is_empty() {
+                continue;
+            }
+            extend(
+                self.global_stores.entry(name.to_owned()).or_default(),
+                values.clone(),
+            );
+            self.add_global(name, values);
+        }
+    }
+
+    /// Whether `value` may be or hold a module: a dotted name rooted at an
+    /// import binding, or anything made of the module's own code.
+    fn may_hold_module(&self, value: &Value<'ast>) -> bool {
+        match value {
+            Value::Dotted(text) => {
+                let root = text.split('.').next().unwrap_or(text);
+                self.program.defines(root) || self.is_import_root(root)
+            },
+            Value::Seq(elts) => elts
+                .iter()
+                .flatten()
+                .any(|value| self.may_hold_module(value)),
+            Value::Bag(elts) => elts.iter().any(|value| self.may_hold_module(value)),
+            Value::Instance(_) | Value::Method(..) | Value::Lambda(_) => true,
+        }
+    }
+
+    /// Whether `name` is bound by an import (`import pkg.m` binds `pkg`).
+    fn is_import_root(&self, name: &str) -> bool {
+        self.import_root(name).is_some()
+    }
+
+    /// Whether an import binds `name`, and if so whether one that does
+    /// imports from the project's own packages (or relatively).
+    fn import_root(&self, name: &str) -> Option<bool> {
+        let mut roots = self.import_roots.borrow_mut();
+        let (seen, names) = &mut *roots;
+        for import in &self.parsed.imports[*seen..] {
+            let top = import.module.split('.').next().unwrap_or_default();
+            let first_party = import.relative_level > 0
+                || self
+                    .layout
+                    .packages
+                    .iter()
+                    .chain(&self.layout.local_packages)
+                    .chain(
+                        self.layout
+                            .members
+                            .iter()
+                            .flat_map(|member| &member.layout.packages),
+                    )
+                    .any(|package| package == top);
+            let bound = import
+                .bound_name()
+                .into_iter()
+                .chain((import.kind == ImportKind::Import).then_some(top));
+            for bound in bound {
+                *names.entry(bound.to_owned()).or_default() |= first_party;
+            }
+        }
+        *seen = self.parsed.imports.len();
+        names.get(name).copied()
+    }
+
+    /// Whether `expr` may evaluate to something [`Self::may_hold_module`]
+    /// keeps, from a name the walk tracks, an import's or a module-level
+    /// definition.
+    fn may_reach_module(&self, expr: &'ast Expr) -> bool {
+        may_evaluate_to_module(expr, &|name| {
+            self.module_aliases.contains_key(name)
+                || self.global_aliases.contains_key(name)
+                || self.program.defines(name)
+                || self.is_import_root(name)
+                || self
+                    .attribute_stores
+                    .keys()
+                    .any(|stored| stored.split('.').next() == Some(name))
+        })
+    }
+
+    /// What `expr` may evaluate to where the walk is (#1427).
+    fn eval_here(&self, expr: &'ast Expr) -> Values<'ast> {
+        if !self.may_reach_module(expr) {
+            return Vec::new();
+        }
+        let here = |name: &str| {
+            // At module level, what functions assign through `global` adds
+            // to the module's own aliases.
+            let aliases = if self.scopes.is_empty() {
+                &self.global_aliases
+            } else {
+                &self.module_aliases
+            };
+            if let Some(values) = aliases.get(name) {
+                return Lookup::Bound(values.clone());
+            }
+            if is_shadowed(&self.scopes, name) {
+                return Lookup::Local;
+            }
+            self.global_aliases
+                .get(name)
+                .map_or(Lookup::Free, |values| Lookup::Bound(values.clone()))
+        };
+        self.evaluate(&here, expr)
+    }
+
+    fn evaluate(&self, here: &dyn Fn(&str) -> Lookup<'ast>, expr: &'ast Expr) -> Values<'ast> {
+        let module = |name: &str| self.global_aliases.get(name).cloned();
+        let (calls, nesting) = budget();
+        let first_party = |root: &str| self.import_root(root) == Some(true);
+        Evaluator {
+            program: &self.program,
+            here,
+            module: &module,
+            stores: &self.attribute_stores,
+            calls: &calls,
+            nesting: &nesting,
+            memo: &self.memo,
+            first_party: &first_party,
+        }
+        .eval(expr)
+    }
+
+    /// `pkg.reg.h = value` keeps what `value` holds for a later
+    /// `pkg.reg.h.name` (#1427).
+    fn record_attribute_store(&mut self, target: &'ast Expr, value: &'ast Expr) {
+        let Some(text) = dotted_text(target) else {
+            return;
+        };
+        let root = text.split('.').next().unwrap_or(&text);
+        if is_shadowed(&self.scopes, root) {
+            return;
+        }
+        let mut values = self.eval_here(value);
+        values.retain(|value| self.may_hold_module(value));
+        if values.is_empty() {
+            return;
+        }
+        self.memo.clear();
+        extend(self.attribute_stores.entry(text).or_default(), values);
+    }
+
+    /// Where a read of `receiver.name` goes: kept for
+    /// [`Self::import_attribute_accesses`] as written, as the dotted names
+    /// the receiver may evaluate to (an alias, a call, a container, a class
+    /// attribute, #1415, #1427), or not at all when its root is a name the
+    /// scope binds itself and not an import's (#1429).
+    fn receiver_site(&self, receiver: &'ast Expr) -> ReceiverSite {
+        let mut root = receiver;
+        while let Expr::Attribute(attribute) = root {
+            root = &attribute.value;
+        }
+        if let Expr::Name(root) = root {
+            let name = root.id.as_str();
+            let shadowed = is_shadowed(&self.scopes, name);
+            let tracked = self.module_aliases.contains_key(name)
+                || (!shadowed
+                    && (self.global_aliases.contains_key(name) || self.program.defines(name)))
+                || (!self.attribute_stores.is_empty() && self.reads_store(receiver));
+            if !tracked {
+                return if shadowed {
+                    ReceiverSite::Shadowed
+                } else {
+                    ReceiverSite::AsWritten
+                };
+            }
+        }
+        let receivers: Vec<String> = dotted(&self.eval_here(receiver))
+            .map(str::to_owned)
+            .collect();
+        if receivers.is_empty() {
+            ReceiverSite::Shadowed
+        } else {
+            ReceiverSite::Aliased(receivers)
+        }
+    }
+
+    /// Whether the dotted `receiver` passes through an attribute some
+    /// assignment stored a value in.
+    fn reads_store(&self, receiver: &Expr) -> bool {
+        dotted_text(receiver).is_some_and(|text| {
+            self.attribute_stores.contains_key(&text)
+                || text
+                    .match_indices('.')
+                    .any(|(index, _)| self.attribute_stores.contains_key(&text[..index]))
+        })
     }
 
     /// Track `name = import_module("pkg." + x)` for a later
@@ -733,23 +1213,170 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     }
 
     /// The module `expr` evaluates to when it is a literal
-    /// `importlib.import_module("pkg.m")`, or a name the current scope bound
-    /// to one. `__import__("pkg.m")` returns `pkg`, so it is left out.
+    /// `importlib.import_module("pkg.m")`, `__import__("pkg.m", ...)`
+    /// (#1418) or `sys.modules["pkg.m"]` (#1420), an attribute of one, or a
+    /// name the current scope bound to one.
     fn loaded_module(&self, expr: &Expr) -> Option<String> {
         match expr {
-            Expr::Call(call) => match self.loader_names.loader(&call.func)? {
-                Loader::ImportModule => match literal_target(call, Loader::ImportModule, || {
-                    module_package(self.path, self.layout)
-                })? {
-                    LiteralTarget::Module(module) => Some(module),
-                    LiteralTarget::Opaque | LiteralTarget::Nothing => None,
-                },
-                // `run_module` returns the module's globals as a `dict`.
-                Loader::DunderImport | Loader::RunModule => None,
+            Expr::Call(call) => {
+                let loader = self.loader_names.loader(&call.func)?;
+                let LiteralTarget::Module(module) = self.literal_target(call, loader)? else {
+                    return None;
+                };
+                match loader {
+                    Loader::ImportModule => Some(module),
+                    // A non-empty `fromlist` returns the module itself, an
+                    // empty one its top-level package.
+                    Loader::DunderImport => match argument(call, 3, "fromlist") {
+                        None | Some(Expr::NoneLiteral(_)) => Some(top_package(module)),
+                        Some(
+                            Expr::List(ExprList { elts, .. }) | Expr::Tuple(ExprTuple { elts, .. }),
+                        ) => {
+                            if elts.is_empty() {
+                                Some(top_package(module))
+                            } else {
+                                Some(module)
+                            }
+                        },
+                        Some(_) => None,
+                    },
+                    // `run_module` returns the module's globals as a `dict`.
+                    Loader::RunModule => None,
+                }
+            },
+            Expr::Attribute(attribute) => self
+                .loaded_module(&attribute.value)
+                .map(|module| format!("{module}.{}", attribute.attr)),
+            Expr::Subscript(subscript) if is_receiver(&subscript.value, "sys.modules") => {
+                let Expr::Name(sys) = &*subscript.value.as_attribute_expr()?.value else {
+                    return None;
+                };
+                if is_shadowed(&self.scopes, sys.id.as_str()) {
+                    return None;
+                }
+                let constant = |name: &str| self.string_constant(name);
+                let caller = Caller {
+                    package: || None::<String>,
+                    is_package_init: false,
+                    constant: &constant,
+                };
+                caller.str_value(&subscript.slice).map(str::to_owned)
             },
             Expr::Name(name) => self.literal_modules.get(name.id.as_str()).cloned(),
             _ => None,
         }
+    }
+
+    /// [`literal_target`] with what this module's names hold.
+    fn literal_target(&self, call: &ExprCall, loader: Loader) -> Option<LiteralTarget> {
+        let constant = |name: &str| self.string_constant(name);
+        literal_target(
+            call,
+            loader,
+            &Caller {
+                package: || module_package(self.path, self.layout),
+                is_package_init: self.path.ends_with("__init__.py"),
+                constant: &constant,
+            },
+        )
+    }
+
+    /// The literal a module-level name bound once to a string holds, where
+    /// the current scope does not bind the name itself (#1425).
+    fn string_constant(&self, name: &str) -> Option<&'ast str> {
+        if is_shadowed(&self.scopes, name) {
+            return None;
+        }
+        self.string_constants.get(name).copied()
+    }
+
+    /// Walk a lambda, a comprehension or a walrus, which bind names: kept
+    /// out of [`Self::visit_expr`], whose frame every nesting level pays for.
+    #[inline(never)]
+    fn visit_scoped_expr(&mut self, expr: &'ast Expr) {
+        let lambda = match expr {
+            Expr::Lambda(lambda) => lambda,
+            Expr::ListComp(ExprListComp {
+                elt, generators, ..
+            })
+            | Expr::SetComp(ExprSetComp {
+                elt, generators, ..
+            })
+            | Expr::Generator(ExprGenerator {
+                elt, generators, ..
+            }) => {
+                self.visit_comprehension_scope(generators, &[elt]);
+                return;
+            },
+            Expr::DictComp(ExprDictComp {
+                key,
+                value,
+                generators,
+                ..
+            }) => {
+                let results: Vec<&Expr> = key.as_deref().into_iter().chain([&**value]).collect();
+                self.visit_comprehension_scope(generators, &results);
+                return;
+            },
+            Expr::Named(named) => {
+                walk_expr(self, expr);
+                self.bind_module_alias(&named.target, &named.value);
+                return;
+            },
+            _ => {
+                walk_expr(self, expr);
+                return;
+            },
+        };
+        // The defaults are evaluated where the lambda is defined.
+        if let Some(parameters) = &lambda.parameters {
+            self.visit_parameters(parameters);
+        }
+        let caught_depth = std::mem::take(&mut self.caught_depth);
+        let broad_caught_depth = std::mem::take(&mut self.broad_caught_depth);
+        self.function_depth += 1;
+        self.scopes
+            .push(Scope::lambda(lambda.parameters.as_deref(), &lambda.body));
+        let outer = self.enter_bindings();
+        self.visit_expr(&lambda.body);
+        self.leave_bindings(outer);
+        self.scopes.pop();
+        self.function_depth -= 1;
+        self.caught_depth = caught_depth;
+        self.broad_caught_depth = broad_caught_depth;
+    }
+
+    /// Walk a comprehension: its first iterable in the enclosing scope, the
+    /// rest in a scope of its own where the `for` targets are bound (#1429).
+    fn visit_comprehension_scope(
+        &mut self,
+        generators: &'ast [Comprehension],
+        results: &[&'ast Expr],
+    ) {
+        let Some((first, _)) = generators.split_first() else {
+            return;
+        };
+        self.visit_expr(&first.iter);
+        // The first iterable is read in the enclosing scope.
+        let mut items = elements(&self.eval_here(&first.iter));
+        self.scopes.push(Scope::comprehension(generators));
+        let outer = self.enter_bindings();
+        for (index, generator) in generators.iter().enumerate() {
+            self.visit_expr(&generator.target);
+            if index > 0 {
+                self.visit_expr(&generator.iter);
+                items = elements(&self.eval_here(&generator.iter));
+            }
+            self.bind_values(&generator.target, std::mem::take(&mut items));
+            for condition in &generator.ifs {
+                self.visit_expr(condition);
+            }
+        }
+        for result in results {
+            self.visit_expr(result);
+        }
+        self.leave_bindings(outer);
+        self.scopes.pop();
     }
 
     /// The names in the arguments typing reads as type expressions. Kept out
@@ -765,7 +1392,24 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// `import_module("pkg.m").f` reads `f` from `pkg.m` (#1144). Kept out of
     /// [`Self::visit_expr`], whose frame every nesting level pays for.
     fn record_attribute(&mut self, attribute: &'ast ExprAttribute) {
-        self.attribute_sites.push(attribute);
+        // `pkg.m.name = x` and `del pkg.m.name` do not read `name` (#1431).
+        if attribute.ctx.is_load() {
+            self.record_attribute_read(attribute);
+        }
+    }
+
+    fn record_attribute_read(&mut self, attribute: &'ast ExprAttribute) {
+        match self.receiver_site(&attribute.value) {
+            ReceiverSite::AsWritten => self.attribute_sites.push(attribute),
+            ReceiverSite::Aliased(receivers) => {
+                let line = self.line_number(attribute);
+                for receiver in receivers {
+                    self.aliased_attribute_sites
+                        .push((receiver, attribute.attr.as_str(), line));
+                }
+            },
+            ReceiverSite::Shadowed => {},
+        }
         if let Some(module) = self.loaded_module(&attribute.value) {
             let line = self.line_number(attribute);
             self.parsed.loaded_module_accesses.push(AttributeAccess {
@@ -808,11 +1452,20 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// its locals stay out of the frame [`Self::visit_expr`] recurses with
     /// (#1045).
     fn record_literal_getattr(&mut self, call: &'ast ExprCall) {
-        let Some((receiver, name)) = literal_getattr(call) else {
+        let constant = |name: &str| self.string_constant(name);
+        let Some((receiver, name)) = literal_getattr(call, &constant) else {
             return;
         };
         let line = self.line_number(call);
-        self.literal_getattr_sites.push((receiver, name, line));
+        match self.receiver_site(receiver) {
+            ReceiverSite::AsWritten => self.literal_getattr_sites.push((receiver, name, line)),
+            ReceiverSite::Aliased(receivers) => {
+                for receiver in receivers {
+                    self.aliased_attribute_sites.push((receiver, name, line));
+                }
+            },
+            ReceiverSite::Shadowed => {},
+        }
         if let Some(module) = self.loaded_module(receiver) {
             self.parsed.loaded_module_accesses.push(AttributeAccess {
                 receiver: module,
@@ -881,9 +1534,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
         let arguments = &call.arguments;
         if let Some(loader) = self.loader_names.loader(&call.func) {
-            if let Some(target) =
-                literal_target(call, loader, || module_package(self.path, self.layout))
-            {
+            if let Some(target) = self.literal_target(call, loader) {
                 match target {
                     LiteralTarget::Module(module) => {
                         let mut dynamic = self.dynamic_import(module, call);
@@ -930,8 +1581,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// store context (#1142). Kept out of `visit_stmt` so its frame, which
     /// every nesting level pays for, does not grow.
     fn visit_aug_assign_target(&mut self, target: &'ast Expr) {
-        if let Expr::Name(name) = target {
-            insert_name(&mut self.loaded_names, &name.id);
+        match target {
+            Expr::Name(name) => insert_name(&mut self.loaded_names, &name.id),
+            Expr::Attribute(attribute) => self.record_attribute_read(attribute),
+            _ => {},
         }
         self.visit_expr(target);
     }
@@ -1282,7 +1935,15 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// does not grow (#1173).
     fn visit_match(&mut self, match_stmt: &'ast StmtMatch) {
         self.visit_expr(&match_stmt.subject);
+        let subject = self.eval_here(&match_stmt.subject);
         for case in &match_stmt.cases {
+            let mut bound = Vec::new();
+            bind_pattern(&case.pattern, subject.clone(), &mut |name, values| {
+                bound.push((name, values));
+            });
+            for (name, values) in bound {
+                self.bind_name(name, values);
+            }
             // `case m.CONST:` and `case Point(x=0):` read the names in their
             // value and class patterns (#1141).
             self.visit_pattern(&case.pattern);
@@ -1355,6 +2016,11 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let modules = self.scope_platform_modules(Some(&def.parameters), &def.body);
                 let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 let outer_flags = self.enter_scope_names(Some(&def.parameters), &def.body);
+                self.scopes.push(Scope::function(
+                    def.type_params.as_deref(),
+                    Some(&def.parameters),
+                    &def.body,
+                ));
                 self.function_frames
                     .push((def.name.as_str(), &def.parameters));
                 let outer_private = self.private_function;
@@ -1372,6 +2038,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 );
                 self.private_function = outer_private;
                 self.function_frames.pop();
+                self.scopes.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
                 self.platform_modules = outer_modules;
@@ -1390,10 +2057,12 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 let outer_modules = std::mem::replace(&mut self.platform_modules, modules);
                 self.record_class_facts(def);
                 let outer_flags = self.enter_scope_names(None, &def.body);
+                self.scopes.push(Scope::class(&def.body));
                 self.class_frames
                     .push((def.name.as_str(), self.function_frames.len()));
                 self.visit_def_body(&def.name, &def.decorator_list, &def.body, SymbolKind::Class);
                 self.class_frames.pop();
+                self.scopes.pop();
                 self.leave_scope_names(outer_flags);
                 self.async_library_names = outer_names;
                 self.platform_modules = outer_modules;
@@ -1432,6 +2101,10 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 self.visit_expr(&assign.value);
                 for target in &assign.targets {
                     self.bind_prefix_module(target, &assign.value, index);
+                    self.bind_module_alias(target, &assign.value);
+                    if matches!(target, Expr::Attribute(_)) {
+                        self.record_attribute_store(target, &assign.value);
+                    }
                 }
             },
             Stmt::AnnAssign(ann_assign) => {
@@ -1457,6 +2130,7 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                     let index = self.parsed.dynamic_import_prefixes.len();
                     self.visit_expr(value);
                     self.bind_prefix_module(&ann_assign.target, value, index);
+                    self.bind_module_alias(&ann_assign.target, value);
                 }
             },
             Stmt::TypeAlias(alias) => {
@@ -1570,6 +2244,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             Stmt::Match(match_stmt) => self.visit_match(match_stmt),
             Stmt::For(for_stmt) => {
                 self.visit_expr(&for_stmt.iter);
+                let items = elements(&self.eval_here(&for_stmt.iter));
+                self.bind_values(&for_stmt.target, items);
                 self.visit_body(&for_stmt.body);
                 self.visit_body(&for_stmt.orelse);
             },
@@ -1666,28 +2342,70 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             },
             _ => {},
         }
-        let Expr::Lambda(lambda) = expr else {
+        if matches!(
+            expr,
+            Expr::Lambda(_)
+                | Expr::ListComp(_)
+                | Expr::SetComp(_)
+                | Expr::Generator(_)
+                | Expr::DictComp(_)
+                | Expr::Named(_)
+        ) {
+            self.visit_scoped_expr(expr);
+        } else {
             walk_expr(self, expr);
-            return;
-        };
-        // The defaults are evaluated where the lambda is defined.
-        if let Some(parameters) = &lambda.parameters {
-            self.visit_parameters(parameters);
         }
-        let caught_depth = std::mem::take(&mut self.caught_depth);
-        let broad_caught_depth = std::mem::take(&mut self.broad_caught_depth);
-        self.function_depth += 1;
-        self.visit_expr(&lambda.body);
-        self.function_depth -= 1;
-        self.caught_depth = caught_depth;
-        self.broad_caught_depth = broad_caught_depth;
     }
 }
 
+/// The top-level package of a dotted module name.
+fn top_package(mut module: String) -> String {
+    if let Some(dot) = module.find('.') {
+        module.truncate(dot);
+    }
+    module
+}
+
+/// Module-level names bound once, to a string literal, by a top-level
+/// assignment (#1425).
+fn string_constants(stmts: &[Stmt]) -> FxHashMap<&str, &str> {
+    let mut constants: FxHashMap<&str, &str> = stmts
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::Assign(assign) => match (assign.targets.as_slice(), &*assign.value) {
+                ([Expr::Name(name)], Expr::StringLiteral(literal)) => {
+                    Some((name.id.as_str(), literal.value.to_str()))
+                },
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    if !constants.is_empty() {
+        let bindings = bound_names(None, stmts);
+        constants.retain(|name, _| bindings.get(name) == Some(&1));
+    }
+    constants
+}
+
+/// The outer `literal_modules` and `module_aliases` a nested scope restores.
+type OuterBindings<'ast> = (FxHashMap<String, String>, FxHashMap<String, Values<'ast>>);
+
+/// Where [`ModuleVisitor::receiver_site`] keeps a read.
+enum ReceiverSite {
+    AsWritten,
+    Aliased(Vec<String>),
+    Shadowed,
+}
+
 /// The receiver and name of `getattr(x, "name")`, `hasattr`, `setattr` or
-/// `delattr`: the same reference as `x.name`. A computed name, or a call
-/// with too few arguments, is `None` and names nothing.
-fn literal_getattr(call: &ExprCall) -> Option<(&Expr, &str)> {
+/// `delattr`: the same reference as `x.name`. A name `constant` knows reads
+/// as its literal (#1425); any other computed name, or a call with too few
+/// arguments, is `None` and names nothing.
+fn literal_getattr<'a>(
+    call: &'a ExprCall,
+    constant: &dyn Fn(&str) -> Option<&'a str>,
+) -> Option<(&'a Expr, &'a str)> {
     let Expr::Name(func) = &*call.func else {
         return None;
     };
@@ -1697,10 +2415,16 @@ fn literal_getattr(call: &ExprCall) -> Option<(&Expr, &str)> {
     ) {
         return None;
     }
-    let [receiver, Expr::StringLiteral(name), ..] = &*call.arguments.args else {
+    let [receiver, name, ..] = &*call.arguments.args else {
         return None;
     };
-    Some((receiver, name.value.to_str()))
+    let name = match name {
+        Expr::StringLiteral(name) => name.value.to_str(),
+        // A module-level name bound once to a literal (#1425).
+        Expr::Name(name) => constant(name.id.as_str())?,
+        _ => return None,
+    };
+    Some((receiver, name))
 }
 
 /// The name a method call's receiver starts from: `self` for
@@ -2560,6 +3284,10 @@ def scoped():
                 ("acme.a", "direct", 3),
                 ("acme.b", "through_name", 5),
                 ("acme.b", "through_alias", 7),
+                // `__import__` without a `fromlist` returns the top package (#1418).
+                ("acme", "not_c", 8),
+                // A nested scope reads the module's binding (#1416).
+                ("acme.b", "outer_scope", 14),
                 ("acme.e", "inside", 16),
             ]
         );
@@ -3225,7 +3953,6 @@ match value:
             ("I", 17),
             ("J", 18),
             ("K", 18),
-            ("L", 19),
             ("M", 20),
             ("N", 22),
             ("O", 22),
@@ -3239,6 +3966,8 @@ match value:
                 "utils.{name} should be recorded exactly once"
             );
         }
+        // `del utils.L` does not read `L` (#1431).
+        assert!(attribute_lines(&parsed, "L").is_empty());
     }
 
     #[test]
