@@ -154,11 +154,16 @@ fn ini_section_name(trimmed: &str) -> Option<&str> {
 
 /// Lines with `\` continuations joined, each paired with its 0-based start index.
 pub(super) fn logical_lines(contents: &str) -> Vec<(usize, String)> {
+    logical_lines_with(contents, '\\')
+}
+
+/// [`logical_lines`] with `escape` as the continuation character.
+pub(super) fn logical_lines_with(contents: &str, escape: char) -> Vec<(usize, String)> {
     let mut lines = Vec::new();
     let mut pending: Option<(usize, String)> = None;
     for (index, line) in contents.lines().enumerate() {
         let (start, mut text) = pending.take().unwrap_or((index, String::new()));
-        if let Some(body) = line.strip_suffix('\\') {
+        if let Some(body) = line.strip_suffix(escape) {
             text.push_str(body);
             text.push(' ');
             pending = Some((start, text));

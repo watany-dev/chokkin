@@ -2,8 +2,9 @@
 //!
 //! Only the command word of each `;` / `|` / `&` / newline separated segment is
 //! considered (separators inside quotes and `case` patterns split nothing), after skipping env assignments, wrappers (`env`, `uv run`, ...)
-//! and `python -m`. Arguments, `$(...)` substitutions and variables are never
-//! treated as commands, so `echo pytest` or `$(COVERAGE) run` stay silent.
+//! and `python -m`. Arguments and variables are never treated as commands, so
+//! `echo pytest` or `$(COVERAGE) run` stay silent; the body of a `$(...)`
+//! substitution is a script of its own, read as more segments.
 
 use crate::parser::ParseSummary;
 use crate::sources::{DiscoveredFile, FileContext};
@@ -24,14 +25,87 @@ pub(super) type KnownBinary<'a> = &'a dyn Fn(&str) -> bool;
 const ENVIRONMENT_TOOLS: [&str; 11] = [
     "pip", "pip3", "uv", "uvx", "pipx", "poetry", "pdm", "hatch", "rye", "pipenv", "conda",
 ];
-/// Words after which the next word is the command: wrappers, and the
-/// keywords that start a command list (`if pytest; then`, #1359).
-const WRAPPERS: [&str; 15] = [
-    "exec", "env", "time", "nohup", "command", "sudo", "if", "elif", "while", "until", "then",
-    "do", "else", "!", "{",
+/// Keywords after which the next word is the command (`if pytest; then`, #1359).
+const KEYWORDS: [&str; 9] = [
+    "if", "elif", "while", "until", "then", "do", "else", "!", "{",
+];
+
+/// A command that runs the command after its options and operands.
+struct Wrapper {
+    name: &'static str,
+    /// Short options whose value is the next word unless attached (`-n10`).
+    short_values: &'static str,
+    /// Options whose value is the next word unless attached with `=`.
+    long_values: &'static [&'static str],
+    /// Operands before the command (`timeout DURATION`, `flock FILE`).
+    operands: usize,
+}
+
+const fn wrapper(
+    name: &'static str,
+    short_values: &'static str,
+    long_values: &'static [&'static str],
+    operands: usize,
+) -> Wrapper {
+    Wrapper {
+        name,
+        short_values,
+        long_values,
+        operands,
+    }
+}
+
+/// Wrappers as their man pages define them (#1386, #1387, #1388, #1390).
+/// `eval` and `trap` run a string: a quoted one is split as `sh -c` is, and
+/// the words after a `trap` action are its signals.
+const WRAPPERS: [Wrapper; 18] = [
+    wrapper("exec", "a", &[], 0),
+    wrapper("env", "uCP", &["--unset", "--chdir"], 0),
+    wrapper("time", "fo", &["--format", "--output"], 0),
+    wrapper("nohup", "", &[], 0),
+    wrapper("command", "", &[], 0),
+    wrapper(
+        "sudo",
+        "ugCDhprtTU",
+        &[
+            "--user",
+            "--group",
+            "--chdir",
+            "--close-from",
+            "--host",
+            "--prompt",
+            "--role",
+            "--type",
+            "--other-user",
+            "--command-timeout",
+        ],
+        0,
+    ),
+    wrapper("doas", "uC", &[], 0),
+    wrapper("nice", "n", &["--adjustment"], 0),
+    wrapper("stdbuf", "ioe", &["--input", "--output", "--error"], 0),
+    wrapper("setsid", "", &[], 0),
+    wrapper("ionice", "cnpPu", &["--class", "--classdata"], 0),
+    wrapper("xargs", "nILPsdEa", &[], 0),
+    wrapper("timeout", "sk", &["--signal", "--kill-after"], 1),
+    wrapper("taskset", "", &[], 1),
+    wrapper(
+        "flock",
+        "wE",
+        &["--timeout", "--wait", "--conflict-exit-code"],
+        1,
+    ),
+    wrapper("watch", "nq", &["--interval", "--equexit"], 0),
+    wrapper("eval", "", &[], 0),
+    wrapper("trap", "", &[], 0),
 ];
 const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
 const RUNNERS: [&str; 6] = ["uv", "poetry", "pdm", "hatch", "rye", "pipenv"];
+/// `conda run [-n NAME | -p PREFIX] COMMAND` and its drop-in clones (#1394).
+const CONDA_RUNNERS: [&str; 3] = ["conda", "mamba", "micromamba"];
+const CONDA_RUN_VALUE_OPTIONS: [&str; 5] = ["-n", "--name", "-p", "--prefix", "--cwd"];
+/// `find` primaries whose words up to `;` / `+` are a command (#1389).
+const FIND_EXEC: [&str; 4] = ["-exec", "-execdir", "-ok", "-okdir"];
 
 /// Hits collected by one scanner, merged into `ConfigScanResult` by the caller.
 #[derive(Debug, Default)]
@@ -265,18 +339,10 @@ fn segment_tool<'w, 'a>(words: &'w [&'a str]) -> Option<(&'a str, &'w [&'a str])
     if !is_python_word(first) {
         return Some((command_name(first), args));
     }
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        index += 1;
-        match arg.strip_prefix("-m") {
-            Some("") => return Some((args.get(index)?, args.get(index + 1..)?)),
-            Some(module) => return Some((module, args.get(index..)?)),
-            None if matches!(*arg, "-X" | "-W") => index += 1,
-            None if arg.starts_with('-') => {},
-            None => return None,
-        }
+    match python_main(args)? {
+        PythonMain::Module(module, rest) => Some((module, rest)),
+        PythonMain::Code | PythonMain::Stdin | PythonMain::Script(_) => None,
     }
-    None
 }
 
 /// The first word that is neither an option nor a global option's value.
@@ -471,6 +537,9 @@ pub(super) fn command_binaries(command: &str, known: KnownBinary<'_>) -> Vec<Str
     let mut binaries: Vec<String> = Vec::new();
     for_each_segment(command, |words| {
         let start = command_start(words);
+        if runs_with_extras(words.get(..start).unwrap_or_default()) {
+            return;
+        }
         if let Some(binary) = words
             .get(start..)
             .and_then(|rest| command_binary(rest, known))
@@ -482,15 +551,61 @@ pub(super) fn command_binaries(command: &str, known: KnownBinary<'_>) -> Vec<Str
     binaries
 }
 
+/// `uv run --with X tool`: uv installs the extras for this run only, so the
+/// tool may come from them, as with `uvx`, and is no undeclared usage.
+fn runs_with_extras(prefix: &[&str]) -> bool {
+    let Some(run) = prefix
+        .windows(2)
+        .position(|pair| command_name(pair[0]) == "uv" && pair[1] == "run")
+    else {
+        return false;
+    };
+    prefix
+        .get(run + 2..)
+        .unwrap_or_default()
+        .iter()
+        .any(|word| {
+            let option = word.split_once('=').map_or(*word, |(option, _)| option);
+            matches!(
+                option,
+                "-w" | "--with" | "--with-editable" | "--with-requirements"
+            )
+        })
+}
+
 /// Calls `visit` with the words of each simple command in `command`, joining
 /// backslash continuations first (see [`ShellSplitter`]).
 fn for_each_segment(command: &str, mut visit: impl FnMut(&[&str])) {
     let chars: Vec<char> = join_continuations(command).chars().collect();
     let mut segments = Vec::new();
     ShellSplitter::new(0, &mut segments).split(&chars);
-    for words in &segments {
+    for words in &mut segments {
+        strip_hatch_env(words);
         let words: Vec<&str> = words.iter().map(String::as_str).collect();
         visit(&words);
+    }
+}
+
+/// `hatch run ENV:CMD` runs CMD in the environment ENV (#1393).
+fn strip_hatch_env(words: &mut [String]) {
+    let Some(run) = words
+        .windows(2)
+        .position(|pair| command_name(&pair[0]) == "hatch" && pair[1] == "run")
+    else {
+        return;
+    };
+    let options = words.get(run + 2..).unwrap_or_default();
+    let options: Vec<&str> = options.iter().map(String::as_str).collect();
+    let at = run + 2 + option_width(&options, "", &[]);
+    if let Some(word) = words.get_mut(at)
+        && let Some((env, command)) = word.split_once(':')
+        && !env.is_empty()
+        && !command.is_empty()
+        && env
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        *word = command.to_owned();
     }
 }
 
@@ -503,8 +618,9 @@ const MAX_SHELL_NESTING: usize = 4;
 /// Quoting is read as a shell reads it: `'...'`, `"..."`, `\x` and the
 /// bodies of `$(...)`, `$((...))`, `${...}` and backticks are data inside one
 /// word, so `echo "<source|wheel>"` and `X="${1:?a|wheel}"` run only `echo`
-/// and nothing. A substitution keeps its raw text, `$` included, so it stays
-/// computed and is never a command (module doc). A backslash escapes only a
+/// and nothing. A substitution keeps its raw text, `$` included, so the word
+/// stays computed; the body of a `$(...)` or backtick one is split as a
+/// script of its own (#1381). A backslash escapes only a
 /// character the shell treats as special, so `C:\venv\pytest.exe` keeps
 /// its separators.
 ///
@@ -521,6 +637,8 @@ struct ShellSplitter<'o> {
     word: Option<String>,
     pattern_next: bool,
     subshells: usize,
+    /// The last character read was an unquoted `>` or `<`.
+    after_redirect: bool,
 }
 
 impl<'o> ShellSplitter<'o> {
@@ -532,6 +650,7 @@ impl<'o> ShellSplitter<'o> {
             word: None,
             pattern_next: true,
             subshells: 0,
+            after_redirect: false,
         }
     }
 
@@ -552,9 +671,15 @@ impl<'o> ShellSplitter<'o> {
                     continue;
                 }
             }
+            let after_redirect = std::mem::take(&mut self.after_redirect);
             let next = match ch {
                 ' ' | '\t' | '\r' => {
                     self.end_word();
+                    at + 1
+                },
+                // `2>&1`, `>&2`, `&>log`: a redirection, not a separator (#1383).
+                '&' if after_redirect || chars.get(at + 1) == Some(&'>') => {
+                    self.push(ch);
                     at + 1
                 },
                 '\n' | ';' | '|' | '&' | '(' | ')' => self.separator(chars, at),
@@ -571,6 +696,7 @@ impl<'o> ShellSplitter<'o> {
                 '\\' => self.escape(chars, at, is_shell_special),
                 '$' | '`' => self.substitution(chars, at, false),
                 _ => {
+                    self.after_redirect = matches!(ch, '>' | '<');
                     self.push(ch);
                     at + 1
                 },
@@ -658,7 +784,36 @@ impl<'o> ShellSplitter<'o> {
         };
         let end = end.min(chars.len());
         self.push_raw(chars.get(at..end).unwrap_or_default());
+        self.command_substitution(chars, at, end);
         end
+    }
+
+    /// Splits the body of a `$(...)` or backtick substitution spanning
+    /// `at..end` as a script of its own, since the shell runs it (#1381). An
+    /// arithmetic `$((...))` runs nothing.
+    fn command_substitution(&mut self, chars: &[char], at: usize, end: usize) {
+        let body = match chars.get(at..end).unwrap_or_default() {
+            ['$', '(', '(', ..] | [] => return,
+            ['$', '(', body @ ..] | ['`', body @ ..] => body,
+            _ => return,
+        };
+        let body = if let [inner @ .., ')' | '`'] = body {
+            inner
+        } else {
+            body
+        };
+        if self.depth >= MAX_SHELL_NESTING {
+            return;
+        }
+        let mut segments = Vec::new();
+        ShellSplitter::new(self.depth + 1, &mut segments).split(body);
+        // A `cd` there moves only the substitution's subshell.
+        self.out.extend(segments.into_iter().filter(|words| {
+            let words: Vec<&str> = words.iter().map(String::as_str).collect();
+            words
+                .get(command_start(&words))
+                .is_none_or(|word| command_name(word) != "cd")
+        }));
     }
 
     fn push(&mut self, ch: char) {
@@ -681,7 +836,7 @@ impl<'o> ShellSplitter<'o> {
         let start = self
             .words
             .iter()
-            .take_while(|word| WRAPPERS.contains(&word.as_str()))
+            .take_while(|word| KEYWORDS.contains(&word.as_str()))
             .count();
         if let Some([case, _, .., last]) = self.words.get(start..)
             && case == "case"
@@ -853,7 +1008,8 @@ pub(super) struct ScriptRun {
 }
 
 /// `uv run` options whose value is the next word.
-const UV_RUN_VALUE_OPTIONS: [&str; 26] = [
+const UV_RUN_VALUE_OPTIONS: [&str; 27] = [
+    "--directory",
     "-p",
     "--python",
     "-w",
@@ -1017,10 +1173,9 @@ fn segment_target(words: &[&str]) -> Option<Run> {
         if let Some(runner) = module_runner(word) {
             return Some(Run::Target(runner_target(runner, rest)));
         }
-        let width = prefix_width(word, rest.first().copied());
-        if width == 0 {
+        let Prefix::Skip(width) = prefix(words, index) else {
             return None;
-        }
+        };
         index += width;
     }
     None
@@ -1056,31 +1211,71 @@ pub(super) fn is_computed(word: &str) -> bool {
 }
 
 fn python_target(args: &[&str]) -> Option<Run> {
+    Some(match python_main(args)? {
+        PythonMain::Module(module, rest) => Run::Target(match module_runner(module) {
+            Some(runner) => runner_target(runner, rest),
+            None => module_target(module),
+        }),
+        PythonMain::Code => Run::Code,
+        PythonMain::Stdin => Run::Target(PythonTarget::Opaque("-".to_owned())),
+        PythonMain::Script(arg) => Run::Target(path_target(arg)),
+    })
+}
+
+/// What a Python command line runs, read as the interpreter reads its options.
+enum PythonMain<'w, 'a> {
+    /// `-m MOD` and the arguments after it.
+    Module(&'a str, &'w [&'a str]),
+    /// `-c CODE`.
+    Code,
+    /// `-`: the script is read from stdin.
+    Stdin,
+    /// A script path, or what stands in its place.
+    Script(&'a str),
+}
+
+/// The interpreter's command line (getopt style): flags cluster (`-um MOD` is
+/// `-u -m MOD`, #1396), `-m` / `-X` / `-W` take the rest of their cluster or
+/// the next word, `--check-hash-based-pycs` takes the next word (#1397), and
+/// `--` makes the next word the script. `None` when nothing runs (a bare
+/// interpreter, flags alone).
+fn python_main<'w, 'a>(args: &'w [&'a str]) -> Option<PythonMain<'w, 'a>> {
     let mut index = 0;
-    while let Some(arg) = args.get(index) {
+    while let Some(&arg) = args.get(index) {
         index += 1;
-        if let Some(module) = arg.strip_prefix("-m") {
-            let rest = args.get(index..).unwrap_or_default();
-            let (module, rest) = if module.is_empty() {
-                let (module, rest) = rest.split_first()?;
-                (*module, rest)
-            } else {
-                (module, rest)
-            };
-            return Some(Run::Target(match module_runner(module) {
-                Some(runner) => runner_target(runner, rest),
-                None => module_target(module),
-            }));
+        if arg == "-" {
+            return Some(PythonMain::Stdin);
         }
-        if arg.starts_with("-c") {
-            return Some(Run::Code);
+        if arg == "--" {
+            return args.get(index).map(|script| PythonMain::Script(script));
         }
-        if matches!(*arg, "-X" | "-W") {
+        if arg == "--check-hash-based-pycs" {
             index += 1;
-        } else if *arg == "-" {
-            return Some(Run::Target(PythonTarget::Opaque((*arg).to_owned())));
-        } else if !arg.starts_with('-') {
-            return Some(Run::Target(path_target(arg)));
+            continue;
+        }
+        let Some(cluster) = arg.strip_prefix('-') else {
+            return Some(PythonMain::Script(arg));
+        };
+        if cluster.starts_with('-') {
+            continue;
+        }
+        for (at, flag) in cluster.char_indices() {
+            let value = &cluster[at + flag.len_utf8()..];
+            match flag {
+                'c' => return Some(PythonMain::Code),
+                'm' if value.is_empty() => {
+                    let module = args.get(index)?;
+                    return Some(PythonMain::Module(module, args.get(index + 1..)?));
+                },
+                'm' => return Some(PythonMain::Module(value, args.get(index..)?)),
+                'X' | 'W' => {
+                    if value.is_empty() {
+                        index += 1;
+                    }
+                    break;
+                },
+                _ => {},
+            }
         }
     }
     None
@@ -1296,17 +1491,12 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
         } else if UV_RUN_VALUE_OPTIONS.contains(arg) {
             index += 1;
         } else if !arg.starts_with('-') {
-            let rest = args.get(index..).unwrap_or_default();
-            let mut run = if is_python_word(arg) || is_python_variable(arg) {
-                python_target(rest)?
-            } else if let Some(runner) = module_runner(arg) {
-                Run::Target(runner_target(runner, rest))
-            } else if command_name(arg) == "streamlit" && rest.first() == Some(&"run") {
-                streamlit_target(rest.get(1..)?)?
-            } else if is_python_path(arg) {
+            // `uv run app.py` runs a script; anything else (`python`, a
+            // server, another wrapper, #1400) is read as a command of its own.
+            let mut run = if is_python_path(arg) {
                 Run::Target(path_target(arg))
             } else {
-                return None;
+                segment_target(args.get(index - 1..)?)?
             };
             if let Run::Target(PythonTarget::Script(script)) = &mut run {
                 script.directory = directory.map(str::to_owned);
@@ -1434,34 +1624,131 @@ fn is_python_path(word: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
 }
 
+/// Index of the command word: past every [`Prefix::Skip`], or `words.len()`
+/// when the segment runs no command.
 fn command_start(words: &[&str]) -> usize {
     let mut index = 0;
-    while let Some(word) = words.get(index) {
-        let width = prefix_width(word, words.get(index + 1).copied());
-        if width == 0 {
-            break;
+    loop {
+        match prefix(words, index) {
+            Prefix::Skip(width) => index += width,
+            Prefix::Command => return index,
+            Prefix::Nothing => return words.len(),
         }
-        index += width;
     }
-    index
 }
 
-fn prefix_width(word: &str, next: Option<&str>) -> usize {
-    if word.starts_with('-') || is_env_assignment(word) || WRAPPERS.contains(&word) {
-        return 1;
+/// What the word at `index` is to the command of a segment.
+enum Prefix {
+    /// It and the words after it precede the command: skip this many.
+    Skip(usize),
+    /// It is the command word.
+    Command,
+    /// The segment runs no command from here (`command -v black`, #1385),
+    /// or has no word left.
+    Nothing,
+}
+
+/// Skipped: an option, an env assignment, a keyword, a redirection
+/// (`>log`, `2> err`, #1383), `function NAME` (#1382), a [`WRAPPERS`] entry
+/// (by basename, so `/usr/bin/env` too, #1392) with its options and
+/// operands, `find ... -exec`, a shell's options up to its `-c` script, and
+/// `uv run` / `conda run -n ENV` style runners with their options.
+fn prefix(words: &[&str], index: usize) -> Prefix {
+    let Some(&word) = words.get(index) else {
+        return Prefix::Nothing;
+    };
+    let rest = words.get(index + 1..).unwrap_or_default();
+    if word.starts_with('-') || is_env_assignment(word) || KEYWORDS.contains(&word) {
+        return Prefix::Skip(1);
+    }
+    if let Some(target) = redirection_target(word) {
+        return Prefix::Skip(if target.is_empty() { 2 } else { 1 });
+    }
+    if word == "function" {
+        return Prefix::Skip(2);
     }
     let name = command_name(word);
-    // `sh -c`, `bash -lc`, `bash -e -c`: the flags are skipped next.
-    let takes_flags = SHELLS.contains(&name)
-        && next.is_some_and(|next| next.starts_with('-') && !next.starts_with("--"));
-    if takes_flags {
-        return 1;
+    let next = rest.first().copied();
+    if name == "command"
+        && next.is_some_and(|next| {
+            next.starts_with('-') && !next.starts_with("--") && next.contains(['v', 'V'])
+        })
+    {
+        return Prefix::Nothing;
     }
-    if RUNNERS.contains(&name) && next == Some("run") {
-        2
-    } else {
-        0
+    if name == "find" {
+        return rest
+            .iter()
+            .position(|word| FIND_EXEC.contains(word))
+            .map_or(Prefix::Command, |at| Prefix::Skip(at + 2));
     }
+    // `sh -c`, `bash -lc`, `sh -o pipefail -c`: the script is the command word.
+    if SHELLS.contains(&name)
+        && next.is_some_and(|next| next.starts_with('-') && !next.starts_with("--"))
+    {
+        return Prefix::Skip(1 + option_width(rest, "oO", &[]));
+    }
+    if let Some(wrapper) = WRAPPERS.iter().find(|wrapper| wrapper.name == name) {
+        // `flock FILE -c 'cmd'`: the `-c` after the operand is skipped as an
+        // option, and the string is split as `sh -c` scripts are.
+        let options = option_width(rest, wrapper.short_values, wrapper.long_values);
+        return Prefix::Skip(1 + options + wrapper.operands);
+    }
+    if next == Some("run") {
+        let options = rest.get(1..).unwrap_or_default();
+        if RUNNERS.contains(&name) {
+            let values: &[&str] = if name == "uv" {
+                &UV_RUN_VALUE_OPTIONS
+            } else {
+                &[]
+            };
+            return Prefix::Skip(2 + option_width(options, "", values));
+        }
+        if CONDA_RUNNERS.contains(&name) {
+            return Prefix::Skip(2 + option_width(options, "", &CONDA_RUN_VALUE_OPTIONS));
+        }
+    }
+    Prefix::Command
+}
+
+/// How many leading words of `args` are options, with the values of those in
+/// `long_values` (matched whole, so `-p` fits too) and of a cluster ending in
+/// one of `short_values`. A `--` ends them and is counted.
+fn option_width(args: &[&str], short_values: &str, long_values: &[&str]) -> usize {
+    let mut width = 0;
+    while let Some(&arg) = args.get(width) {
+        if arg == "--" {
+            return width + 1;
+        }
+        if !arg.starts_with('-') || arg == "-" {
+            break;
+        }
+        width += 1;
+        if long_values.contains(&arg) {
+            width += 1;
+        } else if !arg.starts_with("--")
+            && let Some(cluster) = arg.get(1..)
+            && let Some(at) = cluster.find(|ch| short_values.contains(ch))
+            && cluster
+                .get(at..)
+                .is_some_and(|tail| tail.chars().count() == 1)
+        {
+            width += 1;
+        }
+    }
+    width
+}
+
+/// The target of a redirection word (`2>` → `""`, `>log` → `log`), or
+/// `None` when the word is no redirection.
+fn redirection_target(word: &str) -> Option<&str> {
+    const OPERATORS: [&str; 12] = [
+        "&>>", "<<<", "<<-", ">>", ">&", "<&", "<>", ">|", "&>", "<<", ">", "<",
+    ];
+    let rest = word.trim_start_matches(|ch: char| ch.is_ascii_digit());
+    OPERATORS
+        .into_iter()
+        .find_map(|operator| rest.strip_prefix(operator))
 }
 
 fn is_env_assignment(word: &str) -> bool {
@@ -1488,25 +1775,21 @@ fn command_binary(words: &[&str], known: KnownBinary<'_>) -> Option<String> {
 
 /// Module run by `python [flags] -m module`, as a binary name.
 fn python_module(args: &[&str], known: KnownBinary<'_>) -> Option<String> {
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        let module = match arg.strip_prefix("-m") {
-            Some("") => args.next().copied()?,
-            Some(module) => module,
-            None if arg.starts_with('-') => continue,
-            None => return None,
-        };
-        return known_binary(module.split('.').next().unwrap_or(module), known);
-    }
-    None
+    let PythonMain::Module(module, _) = python_main(args)? else {
+        return None;
+    };
+    known_binary(module.split('.').next().unwrap_or(module), known)
 }
 
+/// `python`, `python3.12`, `py`, and `pypy` / `pypy3.10`, which share
+/// the interpreter's command line (#1399).
 fn is_python_word(word: &str) -> bool {
     let name = command_name(word).to_ascii_lowercase();
     name == "py"
-        || name
-            .strip_prefix("python")
-            .is_some_and(|version| version.chars().all(|ch| ch.is_ascii_digit() || ch == '.'))
+        || ["python", "pypy"].into_iter().any(|stem| {
+            name.strip_prefix(stem)
+                .is_some_and(|version| version.chars().all(|ch| ch.is_ascii_digit() || ch == '.'))
+        })
 }
 
 /// Basename without a Windows `.exe` suffix.
@@ -1542,6 +1825,178 @@ mod tests {
             name,
             "pytest" | "gunicorn" | "celery" | "alembic" | "coverage" | "pip" | "uvicorn"
         )
+    }
+
+    /// The shell runs a command substitution's body (#1381); an arithmetic
+    /// expansion and a parameter expansion run nothing.
+    #[test]
+    fn command_substitutions_run_their_bodies() {
+        for command in [
+            "out=$(pytest -q)",
+            "echo \"$(pytest)\"",
+            "ver=`pytest --version`",
+            "for x in $(pytest --co -q); do :; done",
+            "echo $(cd x && $(pytest))",
+        ] {
+            assert_eq!(binaries(command), ["pytest"], "{command}");
+        }
+        for command in ["echo $((pytest + 1))", "echo ${pytest}", "echo '$(pytest)'"] {
+            assert_eq!(binaries(command), Vec::<String>::new(), "{command}");
+        }
+        assert_eq!(targets("out=$(python -m pkg.tool)"), ["run pkg.tool"]);
+        // Substitutions nest to MAX_SHELL_NESTING.
+        assert_eq!(binaries("echo $($($($(pytest))))"), ["pytest"]);
+        assert_eq!(binaries("echo $($($($($(pytest)))))"), Vec::<String>::new());
+        // A `cd` inside a substitution moves no later script.
+        assert_eq!(
+            targets("python gen.py --rev $(cd vendor && git rev-parse HEAD)"),
+            ["script gen.py"]
+        );
+    }
+
+    /// `function NAME { ... }` defines a function like `NAME() { ... }` (#1382).
+    #[test]
+    fn function_keyword_bodies_run() {
+        assert_eq!(binaries("function run { pytest; }"), ["pytest"]);
+        assert_eq!(binaries("function run() { pytest; }"), ["pytest"]);
+    }
+
+    /// A redirection may precede the command word (#1383).
+    #[test]
+    fn leading_redirections_are_skipped() {
+        for command in [
+            ">log pytest",
+            "2>err pytest",
+            "</dev/null pytest",
+            "> log pytest",
+            "2>&1 pytest",
+            "&>log pytest",
+            ">>log 2>&1 pytest",
+        ] {
+            assert_eq!(binaries(command), ["pytest"], "{command}");
+        }
+        assert_eq!(binaries("pytest -q 2>&1 | tee log"), ["pytest"]);
+        // `&>` stays in the segment it redirects.
+        assert_eq!(segments("pytest &>log -q"), [["pytest", "&>log", "-q"]]);
+        // A quoted `>` is no redirection: the `&` after it is a separator.
+        assert_eq!(binaries("echo \">\"& pytest"), ["pytest"]);
+    }
+
+    /// `command -v` / `-V` only looks a name up (#1385).
+    #[test]
+    fn command_lookup_runs_nothing() {
+        assert_eq!(
+            binaries("command -v pytest >/dev/null"),
+            Vec::<String>::new()
+        );
+        assert_eq!(binaries("command -V pytest"), Vec::<String>::new());
+        assert_eq!(binaries("command -p pytest"), ["pytest"]);
+    }
+
+    /// A wrapper option's value is not the command (#1386), and every
+    /// wrapper's command after its options and operands is read (#1387,
+    /// #1388, #1389, #1390, #1392).
+    #[test]
+    fn wrappers_skip_option_values_and_operands() {
+        for command in [
+            "sudo -u app pytest",
+            "sudo -E pytest",
+            "sudo --user app pytest",
+            "env -u HOME pytest",
+            "env -C dir pytest",
+            "env -S 'pytest -q'",
+            "exec -a name pytest",
+            "sh -o pipefail -c 'pytest -q'",
+            "bash -euo pipefail -c 'pytest'",
+            "bash -o pipefail pytest",
+            "uv run -p 3.12 pytest",
+            "nice -n 10 pytest",
+            "nice -10 pytest",
+            "stdbuf -oL pytest",
+            "stdbuf -o L pytest",
+            "setsid pytest",
+            "ionice -c 3 pytest",
+            "doas -u app pytest",
+            "ls | xargs -n1 pytest",
+            "ls | xargs -I {} pytest {}",
+            "timeout 600 pytest",
+            "timeout -s KILL 10m pytest",
+            "timeout -- 10 pytest",
+            "taskset -c 0 pytest",
+            "flock /tmp/lock pytest",
+            "flock -w 5 /tmp/lock pytest",
+            "flock /tmp/lock -c 'pytest -q'",
+            "find . -name '*.py' -exec pytest {} \\;",
+            "find . -execdir pytest {} +",
+            "eval 'pytest -q'",
+            "eval pytest",
+            "trap 'pytest' EXIT",
+            "watch -n 5 pytest",
+            "/usr/bin/env pytest",
+            "/usr/bin/nohup pytest",
+            "conda run -n app pytest",
+            "mamba run --no-capture-output -p ./env pytest",
+            "hatch run lint:pytest",
+            "env A=1 B=2 hatch run -v lint:pytest",
+            "poetry run flock -w 5 /lock pytest",
+            "hatch run pytest",
+            "uv run nohup pytest",
+        ] {
+            assert_eq!(binaries(command), ["pytest"], "{command}");
+        }
+        assert_eq!(binaries("find . -name pytest"), Vec::<String>::new());
+        // The extras of `uv run --with` may provide the tool.
+        assert_eq!(binaries("uv run --with rich pytest"), Vec::<String>::new());
+        assert_eq!(
+            binaries("env A=1 B=2 C=3 uv run --with rich pytest"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            binaries("uv run --with=\"$DEPS\" pytest"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            binaries("uv run --with rich python -m pytest"),
+            Vec::<String>::new()
+        );
+        assert_eq!(binaries("trap - EXIT"), Vec::<String>::new());
+    }
+
+    /// Python targets behind the wrappers, the interpreter's option clusters
+    /// and values, and `pypy` (#1393, #1394, #1396, #1397, #1399, #1400).
+    #[test]
+    fn python_targets_behind_wrappers_and_option_clusters() {
+        for command in [
+            "sudo -u app python -m pkg.tool",
+            "hatch run dev:python -m pkg.tool",
+            "conda run -n app python -m pkg.tool",
+            "timeout 600 python -m pkg.tool",
+            "find data -exec python -m pkg.tool {} \\;",
+            "/usr/bin/env python3 -m pkg.tool",
+            "uv run nohup python -m pkg.tool",
+            "uv run time python -m pkg.tool",
+            "python -um pkg.tool",
+            "python -Om pkg.tool",
+            "python -mpkg.tool",
+            "python -X dev -m pkg.tool",
+            "python -Xdev -m pkg.tool",
+            "python --check-hash-based-pycs never -m pkg.tool",
+            "pypy3 -m pkg.tool",
+            "pypy3.10 -m pkg.tool",
+        ] {
+            assert_eq!(targets(command), ["run pkg.tool"], "{command}");
+        }
+        assert_eq!(
+            targets("uv run --no-sync pdm run python pkg/gen.py"),
+            ["script pkg/gen.py"]
+        );
+        assert_eq!(targets("python -- pkg/gen.py"), ["script pkg/gen.py"]);
+        assert_eq!(
+            targets("python -W ignore pkg/gen.py"),
+            ["script pkg/gen.py"]
+        );
+        assert_eq!(binaries("python -um pytest"), ["pytest"]);
+        assert_eq!(binaries("pypy3 -m pytest"), ["pytest"]);
     }
 
     fn binaries(command: &str) -> Vec<String> {
@@ -1688,10 +2143,16 @@ mod tests {
         assert_eq!(segments("echo \"a\\\"b\" c"), [["echo", "a\"b", "c"]]);
         assert_eq!(
             segments("echo \"x$(a \"b c\")y\" z"),
-            [["echo", "x$(a \"b c\")y", "z"]]
+            [vec!["a", "b c"], vec!["echo", "x$(a \"b c\")y", "z"]]
         );
-        assert_eq!(segments("X=`a b` c"), [["X=`a b`", "c"]]);
-        assert_eq!(segments("X=$(a b) c ${d e}"), [["X=$(a b)", "c", "${d e}"]]);
+        assert_eq!(
+            segments("X=`a b` c"),
+            [vec!["a", "b"], vec!["X=`a b`", "c"]]
+        );
+        assert_eq!(
+            segments("X=$(a b) c ${d e}"),
+            [vec!["a", "b"], vec!["X=$(a b)", "c", "${d e}"]]
+        );
     }
 
     /// Scripts nested past [`MAX_SHELL_NESTING`] stay one opaque word.
