@@ -1,18 +1,18 @@
 //! Copies of the root-relative path normalizers (sync-checked).
 
-/// Normalize a user-supplied path for graph lookup.
-pub fn normalize_trace_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_owned()
-}
-
-/// `\` to `/`, then strip every leading `./` (`././src/app.py` is `src/app.py`).
-pub fn normalize_entry_path(path: &str) -> String {
+/// A path the user typed, in the `/`-separated form discovered paths use.
+/// Used for both `entry` and `--trace` targets.
+pub fn normalize_user_path(path: &str) -> String {
     let path = path.replace('\\', "/");
-    let mut rest = path.as_str();
-    while let Some(stripped) = rest.strip_prefix("./") {
-        rest = stripped.trim_start_matches('/');
+    let rest = path.trim_start_matches('/');
+    let mut out = path[..path.len() - rest.len()].to_owned();
+    for part in rest.split('/').filter(|part| !matches!(*part, "" | ".")) {
+        if !out.is_empty() && !out.ends_with('/') {
+            out.push('/');
+        }
+        out.push_str(part);
     }
-    rest.to_owned()
+    out
 }
 
 /// `./src/`, `src` and `src/` all name `src`; `.` names the root.

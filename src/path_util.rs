@@ -124,6 +124,25 @@ pub(crate) fn parent_rel(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(dir, _)| dir)
 }
 
+/// A path the user typed, in the `/`-separated form discovered paths use:
+/// `\` becomes `/`, and empty and `.` segments are dropped, since POSIX and
+/// Windows resolve `a//b` and `a/./b` to `a/b` (#1443, #1444). Leading `/`s
+/// are kept as typed so an absolute (or UNC) path stays one; `..` is kept, as
+/// folding it needs the filesystem when a symlink precedes it.
+#[must_use]
+pub(crate) fn normalize_user_path(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let rest = path.trim_start_matches('/');
+    let mut out = path[..path.len() - rest.len()].to_owned();
+    for part in rest.split('/').filter(|part| !matches!(*part, "" | ".")) {
+        if !out.is_empty() && !out.ends_with('/') {
+            out.push('/');
+        }
+        out.push_str(part);
+    }
+    out
+}
+
 /// Join root-relative `/`-separated paths, where `""` is the root.
 #[must_use]
 pub(crate) fn join_rel(base: &str, rel: &str) -> String {
@@ -189,6 +208,30 @@ pub(crate) fn junction(target: &Path, link: &Path) {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn normalize_user_path_drops_empty_and_dot_segments() {
+        for (input, want) in [
+            ("src/app.py", "src/app.py"),
+            ("./src/app.py", "src/app.py"),
+            (".//src/app.py", "src/app.py"),
+            ("././src/app.py", "src/app.py"),
+            ("app//run.py", "app/run.py"),
+            ("app/./run.py", "app/run.py"),
+            ("app/run.py/", "app/run.py"),
+            (".\\src\\pkg\\mod.py", "src/pkg/mod.py"),
+            ("../x/./y.py", "../x/y.py"),
+            ("/abs//x.py", "/abs/x.py"),
+            ("/", "/"),
+            ("//.", "//"),
+            ("//server/share/x.py", "//server/share/x.py"),
+            ("C:\\p\\.\\x.py", "C:/p/x.py"),
+            (".", ""),
+            ("./", ""),
+        ] {
+            assert_eq!(normalize_user_path(input), want, "{input}");
+        }
+    }
 
     #[test]
     fn is_file_named_matches_the_spelling_on_disk() {
