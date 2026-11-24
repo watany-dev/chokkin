@@ -291,15 +291,27 @@ pub(super) fn read_pyproject_table(path: &Path) -> Result<toml::Table, PluginsEr
 }
 
 /// Parse one INI section from file contents.
+///
+/// An indented line after a key continues its value, joined with `\n` as
+/// `configparser` does (`testpaths =` then one path per line).
 pub(super) fn parse_ini_section(contents: &str, section_name: &str) -> IniSection {
     let mut in_section = false;
     let mut section = IniSection::new();
+    let mut last_key: Option<String> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             continue;
         }
+        if line.starts_with([' ', '\t'])
+            && let Some(value) = last_key.as_ref().and_then(|key| section.get_mut(key))
+        {
+            value.push('\n');
+            value.push_str(trimmed);
+            continue;
+        }
+        last_key = None;
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
             let name = trimmed[1..trimmed.len() - 1].trim();
             in_section = name == section_name;
@@ -310,6 +322,7 @@ pub(super) fn parse_ini_section(contents: &str, section_name: &str) -> IniSectio
         }
         if let Some((key, value)) = split_ini_assignment(trimmed) {
             section.insert(key.to_owned(), value.to_owned());
+            last_key = Some(key.to_owned());
         }
     }
 
@@ -354,16 +367,6 @@ pub(super) fn uvicorn_tool_from_pyproject(table: &toml::Table) -> Option<&toml::
         .and_then(Value::as_table)
         .and_then(|tool| tool.get("uvicorn"))
         .and_then(Value::as_table)
-}
-
-/// Parse a comma- or newline-separated pytest path list.
-pub(super) fn parse_path_list(value: &str) -> Vec<String> {
-    value
-        .split([',', '\n'])
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-        .collect()
 }
 
 /// Build test file glob patterns from pytest options.
@@ -821,6 +824,10 @@ mod tests {
                 Some(("functools.lru_cache", true)),
             ),
             ("@register(app.task(x))", Some(("register", true))),
+            // An open subscript is not continued like an open call, and a
+            // bracket after `#` is comment text, not the closing one.
+            ("@apps[0", None),
+            ("@apps[  # ]", None),
             ("@api.post(\"/\") if flag else f", None),
             ("@", None),
             ("x = \"@app.route('/')\"", None),
@@ -838,6 +845,14 @@ mod tests {
     }
 
     #[test]
+    fn text_decorator_line_is_the_first_matching_line() {
+        let route = |name: &str, is_call: bool| is_call && name == "app.route";
+        let contents = "import x\n@app.get\n@app.route(\"/\")\ndef f(:\n";
+        assert_eq!(text_decorator_line(contents, route), Some(3));
+        assert_eq!(text_decorator_line("@app.get\n", route), None);
+    }
+
+    #[test]
     fn parse_ini_section_reads_pytest() {
         let contents = "[pytest]\ntestpaths = integration\npython_files = test_*.py\n";
         let section = parse_ini_section(contents, "pytest");
@@ -845,6 +860,50 @@ mod tests {
             section.get("testpaths").map(String::as_str),
             Some("integration")
         );
+    }
+
+    #[test]
+    fn parse_ini_section_joins_continuation_lines() {
+        let contents = "[pytest]\naddopts =\n    -q\n\n    # note\n    --import-mode=importlib\ntestpaths = a\n  b\n[other]\nx = 1\n  y\n";
+        let section = parse_ini_section(contents, "pytest");
+        assert_eq!(
+            section.get("addopts").map(String::as_str),
+            Some("\n-q\n--import-mode=importlib")
+        );
+        assert_eq!(section.get("testpaths").map(String::as_str), Some("a\nb"));
+        assert_eq!(section.len(), 2);
+    }
+
+    #[test]
+    fn parse_ini_section_skips_comments_and_reads_bracket_values() {
+        let contents = "[pytest]\n# hash = 1\n; semi = 2\nmarkers = a[b]\naddopts = -q\n";
+        let section = parse_ini_section(contents, "pytest");
+        // A value ending in `]` is no section header.
+        assert_eq!(section.keys().collect::<Vec<_>>(), ["addopts", "markers"]);
+    }
+
+    #[test]
+    fn parse_module_symbol_needs_both_sides() {
+        assert_eq!(
+            parse_module_symbol(" pkg.app:api "),
+            Some(("pkg.app".to_owned(), "api".to_owned()))
+        );
+        assert_eq!(parse_module_symbol(":api"), None);
+        assert_eq!(parse_module_symbol("pkg.app:"), None);
+    }
+
+    #[test]
+    fn partial_fields_are_the_incomplete_scans() {
+        let scan = |complete| LiteralScan {
+            values: Vec::new(),
+            starts: Vec::new(),
+            complete,
+        };
+        let scans = BTreeMap::from([
+            ("INSTALLED_APPS".to_owned(), scan(false)),
+            ("MIDDLEWARE".to_owned(), scan(true)),
+        ]);
+        assert_eq!(partial_fields(&scans), ["INSTALLED_APPS"]);
     }
 
     #[test]
@@ -889,7 +948,15 @@ mod tests {
     #[test]
     fn settings_candidates_stop_at_depth_four_and_skip_dirs() {
         let temp = tempfile::TempDir::new().expect("tempdir");
-        for dir in ["a/b/c/d", "a/b/c/d/e", "examples/proj"] {
+        for dir in [
+            "a/b/c/d",
+            "a/b/c/d/e",
+            "examples/proj",
+            ".git/proj",
+            ".venv/proj",
+            "node_modules/proj",
+            "__pycache__/proj",
+        ] {
             let dir = temp.path().join(dir);
             std::fs::create_dir_all(&dir).expect("mkdir");
             std::fs::write(dir.join("settings.py"), "INSTALLED_APPS = []\n").expect("write");

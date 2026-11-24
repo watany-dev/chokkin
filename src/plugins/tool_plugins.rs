@@ -219,11 +219,11 @@ fn push_addopts(hits: &mut SourceHits, addopts: &str, origin: &ReferenceOrigin) 
 }
 
 /// Plugin entries are `module`, `module:function` or a file path; paths name
-/// project files rather than installed plugins and are skipped.
+/// project files rather than installed plugins and are skipped, as is any
+/// other entry that is not a dotted name (the empty ones between separators).
 fn push_mypy_plugins(hits: &mut SourceHits, plugins: &str, origin: &ReferenceOrigin) {
     for plugin in plugins.split([',', ' ', '\t', '\n']).map(str::trim) {
-        if plugin.is_empty()
-            || plugin.contains(['/', '\\'])
+        if plugin.contains(['/', '\\'])
             || std::path::Path::new(plugin)
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
@@ -464,7 +464,7 @@ mod tests {
         let mut hits = SourceHits::default();
         push_mypy_plugins(
             &mut hits,
-            "pydantic.mypy,\nmypy_django_plugin.main, custom:plugin ./tools/plugin.py",
+            "pydantic.mypy,\nmypy_django_plugin.main, custom:plugin ./tools/plugin.py checker.py",
             &origin(),
         );
         assert_eq!(hits.distributions, ["django-stubs"]);

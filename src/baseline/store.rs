@@ -446,6 +446,8 @@ mod tests {
         .expect("apply baseline");
         assert_eq!(result.suppressed, 1);
         assert_eq!(report.issues, []);
+        // A file without the key is the v0.2 draft, not an unknown schema.
+        assert_eq!(result.unknown_schema_version, None);
     }
 
     #[test]

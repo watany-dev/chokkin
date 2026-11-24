@@ -626,6 +626,12 @@ Python sourceのmodule-level pytest_plugins = "..." / [...] / (...) の文字列
 [tool.pytest] (pytest ≥ 9 の native table) または [tool.pytest.ini_options] を読む
   (ini_options 以外のキーがあれば [tool.pytest] を優先。testpaths / python_files が
    あれば上記globを上書き。testpaths の "." はrootdirとして扱う)
+pytest.ini [pytest] / setup.cfg [tool:pytest] の testpaths / python_files も同じに読む
+  (pytest.ini は [pytest] が無くても pytest が config に選ぶので、warning を出して
+   既定の glob のままにし、setup.cfg は読まない)
+testpaths / python_files / pythonpath / addopts の文字列は pytest と同じく空白で区切る
+  (`,` は名前の一部)。INI の値は configparser と同じく、key の後の字下げした行を
+  続きとして読む (#1353)
 workspace member 内の test context の file には testpaths に関係なく python_files を
   適用する (member の suite はディレクトリを明示して pytest に渡すため。airflow の
   providers/*/tests/**/example_*.py)
