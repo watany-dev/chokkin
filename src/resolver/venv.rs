@@ -355,9 +355,6 @@ fn installed_modules(contents: &str, layout: Layout) -> BTreeSet<InstalledModule
                 None => continue,
             },
         };
-        if path.contains(".dist-info/") || path.contains(".egg-info/") {
-            continue;
-        }
         if let Some(module) = installed_module(&path)
             && !module.root.starts_with('_')
         {
@@ -387,9 +384,6 @@ fn csv_first_field(line: &str) -> String {
 
 fn installed_module(path: &str) -> Option<InstalledModule> {
     let path = path.trim().trim_start_matches("./");
-    if path.is_empty() || path.starts_with('.') {
-        return None;
-    }
     let segments: Vec<&str> = path.split('/').collect();
     let (file, dirs) = segments.split_last()?;
     let Some(&root) = dirs.first() else {
