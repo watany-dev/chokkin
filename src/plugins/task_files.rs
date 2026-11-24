@@ -15,8 +15,8 @@ use crate::sources::is_dockerfile;
 use super::commands::{KnownBinary, SourceHits};
 use super::config_scan::{Heredoc, shebang_interpreter, strip_shell_comment};
 use super::config_text::{
-    PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, origin_at, read_root_file,
-    toml_words, yaml_block_body,
+    PyprojectDoc, is_yaml_block_scalar, leading_spaces, logical_lines, logical_lines_with,
+    origin_at, read_root_file, toml_words, yaml_block_body,
 };
 use super::types::ReferenceOrigin;
 
@@ -96,9 +96,20 @@ fn dockerfile_paths(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+/// Recipe lines: those starting with the recipe prefix (a tab, or the
+/// first character `.RECIPEPREFIX` sets, #1408), and the text after the `;`
+/// of a rule line (`run: ; cmd`, #1402).
 fn scan_makefile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut SourceHits) {
+    let mut recipe_prefix = '\t';
     for (index, line) in logical_lines(contents) {
-        let Some(recipe) = line.strip_prefix('\t') else {
+        let recipe = if let Some(recipe) = line.strip_prefix(recipe_prefix) {
+            recipe
+        } else if let Some(value) = recipe_prefix_value(&line) {
+            recipe_prefix = value.chars().next().unwrap_or('\t');
+            continue;
+        } else if let Some(recipe) = inline_recipe(&line) {
+            recipe
+        } else {
             continue;
         };
         let command = recipe
@@ -109,6 +120,34 @@ fn scan_makefile(rel: &str, contents: &str, known: KnownBinary<'_>, hits: &mut S
             hits.push_command(command, known, &origin_at(rel, index, "make recipe"));
         }
     }
+}
+
+/// The value of a `.RECIPEPREFIX` assignment line.
+fn recipe_prefix_value(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix(".RECIPEPREFIX")?.trim_start();
+    ["::=", ":=", "?=", "="]
+        .into_iter()
+        .find_map(|operator| rest.strip_prefix(operator))
+        .map(str::trim_start)
+}
+
+/// The recipe after the `;` of a rule line `targets: prerequisites ; recipe`.
+/// A line holding `=` before the `;` is a variable assignment
+/// (`X = a:b;c`, `target: X = a;b`), not a rule, and a `;` after a `#` or in
+/// a conditional (`ifeq (a,b:c;d)`) starts no recipe.
+fn inline_recipe(line: &str) -> Option<&str> {
+    const CONDITIONALS: [&str; 4] = ["ifeq", "ifneq", "ifdef", "ifndef"];
+    if line.starts_with([' ', '\t', '#']) {
+        return None;
+    }
+    let (head, recipe) = line.split_once(';')?;
+    let (targets, _) = head.split_once(':')?;
+    let conditional = targets
+        .split_whitespace()
+        .next()
+        .is_some_and(|word| CONDITIONALS.iter().any(|name| word.starts_with(name)));
+    let rule = !targets.trim().is_empty() && !head.contains(['=', '#']) && !conditional;
+    rule.then_some(recipe)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,7 +210,7 @@ pub(super) fn scan_dockerfile(
 ) {
     let mut heredoc: Option<Heredoc> = None;
     let mut shebang_next = false;
-    for (index, line) in logical_lines(contents) {
+    for (index, line) in logical_lines_with(contents, docker_escape(contents)) {
         if let Some(open) = &mut heredoc {
             if open.ends_at(&line) {
                 heredoc = None;
@@ -216,6 +255,29 @@ pub(super) fn scan_dockerfile(
         let command = docker_command(rest.trim());
         hits.push_deploy_command(&command, known, &origin_at(rel, index, label));
     }
+}
+
+/// The line-continuation character: `\`, or what an `# escape=` parser
+/// directive sets (`` ` `` on Windows images, #1407). Directives are the
+/// leading `# name=value` comments; any other line ends them.
+fn docker_escape(contents: &str) -> char {
+    for line in contents.lines() {
+        let Some((name, value)) = line
+            .trim()
+            .strip_prefix('#')
+            .and_then(|directive| directive.split_once('='))
+        else {
+            break;
+        };
+        let name = name.trim();
+        if !name.chars().all(|ch| ch.is_ascii_alphabetic()) || name.is_empty() {
+            break;
+        }
+        if name.eq_ignore_ascii_case("escape") && value.trim() == "`" {
+            return '`';
+        }
+    }
+    '\\'
 }
 
 /// Exec form (`["gunicorn", "app:app"]`) joined into a shell-form command.
@@ -557,6 +619,35 @@ mod tests {
                 ("gunicorn".to_owned(), Some(11))
             ]
         );
+    }
+
+    /// `target: ; recipe` (#1402) and a `.RECIPEPREFIX` (#1408) mark recipes.
+    #[test]
+    fn makefile_reads_inline_recipes_and_recipe_prefixes() {
+        let contents = "X = a:b;pytest\nt: x # a; mypy\nifeq (a,b:c;mypy)\nendif\nrun: deps ; pytest -q\n.RECIPEPREFIX = >\nlint:\n> mypy .\n\tcelery\n.RECIPEPREFIX :=\ncov:\n\tcoverage run\n";
+        assert_eq!(
+            scanned(scan_makefile, contents),
+            [
+                ("pytest".to_owned(), Some(5)),
+                ("mypy".to_owned(), Some(8)),
+                ("coverage".to_owned(), Some(12)),
+            ]
+        );
+    }
+
+    /// `` # escape=` `` makes the backtick the continuation character (#1407).
+    #[test]
+    fn dockerfile_escape_directive_sets_the_continuation() {
+        let contents = "# escape=`\nFROM x\nRUN echo a `\n    && pytest\nRUN dir C:\\\nRUN mypy\n";
+        assert_eq!(
+            scanned(scan_dockerfile, contents),
+            [("pytest".to_owned(), Some(3)), ("mypy".to_owned(), Some(6))]
+        );
+        assert_eq!(
+            docker_escape("# syntax=docker/dockerfile:1\n# escape=`\n"),
+            '`'
+        );
+        assert_eq!(docker_escape("FROM x\n# escape=`\n"), '\\');
     }
 
     #[test]
