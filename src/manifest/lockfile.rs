@@ -9,7 +9,7 @@ use crate::path_util::{is_file_named, rel_to_root};
 
 use super::error::ManifestError;
 use super::pdm_lock::extract_pdm_lock;
-use super::pep508_util::normalize_distribution_name;
+use super::pep508_util::{leading_name_token, normalize_distribution_name};
 use super::poetry_lock::extract_poetry_lock;
 use super::pylock::extract_pylock;
 use super::types::{LockfileGraph, LockfileKind, LockfileSource};
@@ -187,6 +187,50 @@ pub(super) fn array_tables<'a>(
         .into_iter()
         .flatten()
         .filter_map(Value::as_table)
+}
+
+/// The extras in the `[...]` after a requirement's name (`uvicorn[standard]
+/// (>=0.12)`, `requests[socks]==2.31`), normalized. Brackets that do not
+/// close give none, as if the requirement named no extra: an extra the
+/// graph lacks only leaves what it adds to the base edges, as before
+/// extras were read (#1376).
+pub(super) fn requirement_extras(spec: &str) -> Vec<String> {
+    let spec = spec.trim_start();
+    let rest = spec[leading_name_token(spec).len()..].trim_start();
+    rest.strip_prefix('[')
+        .and_then(|rest| rest.split_once(']'))
+        .map(|(extras, _)| {
+            extras
+                .split(',')
+                .map(str::trim)
+                .filter(|extra| !extra.is_empty())
+                .map(normalize_distribution_name)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Add what `package`'s `extra` adds (`(name, extras)` pairs) to the graph.
+pub(super) fn merge_extra(
+    graph: &mut LockfileGraph,
+    package: &str,
+    extra: &str,
+    deps: &[(String, Vec<String>)],
+) {
+    let package = normalize_distribution_name(package);
+    let extra = normalize_distribution_name(extra);
+    graph.add_edge_extras(&package, &extra, deps);
+    let added = graph
+        .extras
+        .entry(package)
+        .or_default()
+        .entry(extra)
+        .or_default();
+    for (dep, _) in deps {
+        if !added.contains(dep) {
+            added.push(dep.clone());
+        }
+    }
 }
 
 /// Add `name -> deps`, merging with an earlier entry for the same package

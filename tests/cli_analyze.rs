@@ -12084,3 +12084,56 @@ fn lockfile_closure_follows_an_edge_extra() {
         [finding("CHK004", "pysocks-x", "certain")]
     );
 }
+
+const PSYCOPG_ONLY_PYPROJECT: &str = concat!(
+    "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+    "dependencies = [\"psycopg[pool]\"]\n",
+);
+
+/// poetry.lock and pdm.lock say what a declared `p[e]` adds as uv.lock does
+/// (#1376): Poetry's optional edge and PDM's merged extras entry are no
+/// longer the only evidence, and Poetry 2's omitted edge is not needed.
+#[test]
+fn lockfile_extras_are_read_from_poetry_and_pdm_locks() {
+    let poetry_package = |deps: &str| {
+        format!(
+            "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\noptional = false\npython-versions = \">=3.8\"\nfiles = []\n\n{deps}[package.extras]\npool = [\"psycopg-pool (>=3)\"]\n\n[[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\noptional = false\npython-versions = \">=3.8\"\nfiles = []\n\n[package.dependencies]\ntyping-extensions = \"*\"\n\n[[package]]\nname = \"typing-extensions\"\nversion = \"4\"\noptional = false\npython-versions = \">=3.8\"\nfiles = []\n\n[metadata]\nlock-version = \"2.1\"\npython-versions = \">=3.11\"\ncontent-hash = \"0\"\n"
+        )
+    };
+    let locks = [
+        (
+            "poetry.lock",
+            poetry_package(
+                "[package.dependencies]\npsycopg-pool = {version = \"*\", optional = true}\n\n",
+            ),
+        ),
+        // Poetry 2 leaves out the edge of an extra nothing requests.
+        ("poetry.lock", poetry_package("")),
+        (
+            "pdm.lock",
+            concat!(
+                "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n\n",
+                "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\nextras = [\"pool\"]\n",
+                "dependencies = [\"psycopg==3.2.0\", \"psycopg-pool\"]\n\n",
+                "[[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\ndependencies = [\"typing-extensions\"]\n\n",
+                "[[package]]\nname = \"typing-extensions\"\nversion = \"4\"\n",
+            )
+            .to_owned(),
+        ),
+    ];
+    for (file, lock) in locks {
+        let project = write_project(&[
+            ("pyproject.toml", PSYCOPG_ONLY_PYPROJECT),
+            (
+                "main.py",
+                "import psycopg\nimport psycopg_pool\nimport typing_extensions\n",
+            ),
+            (file, &lock),
+        ]);
+        assert_eq!(
+            dependency_findings(project.path(), &[]),
+            [finding("CHK004", "typing-extensions", "certain")],
+            "{lock}"
+        );
+    }
+}

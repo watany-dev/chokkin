@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde::de::IgnoredAny;
 
 use super::error::ManifestError;
+use super::lockfile::merge_extra;
 use super::pep508_util::normalize_distribution_name;
 use super::types::LockfileGraph;
 
@@ -67,18 +68,7 @@ fn lock_graph(lock: UvLock) -> LockfileGraph {
             continue;
         };
         for (extra, deps) in package.optional_dependencies {
-            let extra = normalized(extra);
-            let deps = dependencies(deps);
-            graph.add_edge_extras(&name, &extra, &deps);
-            merge_names(
-                graph
-                    .extras
-                    .entry(name.clone())
-                    .or_default()
-                    .entry(extra)
-                    .or_default(),
-                deps,
-            );
+            merge_extra(&mut graph, &name, &extra, &dependencies(deps));
         }
         let deps = dependencies(package.dependencies);
         graph.add_edge_extras(&name, "", &deps);

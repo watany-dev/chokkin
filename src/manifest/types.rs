@@ -214,7 +214,7 @@ pub struct LockfileGraph {
     /// Package name to direct dependency names.
     pub edges: BTreeMap<String, Vec<String>>,
     /// Package name to extra name to the distributions that extra adds.
-    /// Only `uv.lock` records extras.
+    /// `pylock.toml` records none.
     #[serde(default)]
     pub extras: BTreeMap<String, BTreeMap<String, Vec<String>>>,
     /// Extras an edge turns on (`{ name = "requests", extra = ["socks"] }`):
