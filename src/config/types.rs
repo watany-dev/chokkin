@@ -639,11 +639,9 @@ mod tests {
                     prop_assert!(!spec.path.starts_with("./"));
                     prop_assert!(!spec.path.contains('\\'));
                     // #1443: no empty or `.` segment past the leading `/`s.
+                    let rest = spec.path.trim_start_matches('/');
                     prop_assert!(
-                        spec.path
-                            .trim_start_matches('/')
-                            .split('/')
-                            .all(|part| !matches!(part, "" | "."))
+                        rest.is_empty() || rest.split('/').all(|part| !matches!(part, "" | "."))
                     );
                     if let Some(symbol) = &spec.symbol {
                         prop_assert!(!symbol.is_empty());

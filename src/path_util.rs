@@ -222,6 +222,8 @@ mod tests {
             (".\\src\\pkg\\mod.py", "src/pkg/mod.py"),
             ("../x/./y.py", "../x/y.py"),
             ("/abs//x.py", "/abs/x.py"),
+            ("/", "/"),
+            ("//.", "//"),
             ("//server/share/x.py", "//server/share/x.py"),
             ("C:\\p\\.\\x.py", "C:/p/x.py"),
             (".", ""),
