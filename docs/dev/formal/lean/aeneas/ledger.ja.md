@@ -9,6 +9,8 @@
 | A1 | #1443 | `config/types.rs` `normalize_entry_path` | POSIX XBD 4.16 (連続 `/` は 1 つ、`.` は同じ directory) | `app//run.py`、`app/./run.py` が正規化されない | entry が skipped になり、到達できる file が CHK001 likely、使う dependency が CHK002 likely (FP)。#1168 は先頭の `./` と `\` だけを直した |
 | A2 | #1444 | `pipeline/trace.rs` `normalize_trace_path` | 同上 | `.//src/app.py` → `/src/app.py` | `--trace` が root の外と誤報する。`a//b` や `a/./b` は #1157 の `Path` 経由の再検索で救われるので、見えるのは `.//` 始まりだけ |
 
+A1 / A2 は #1451 で 1 つの `path_util::normalize_user_path` にまとめて直した。`extract/` の copy と `dump` もその関数に替え、`lake exe check` の照合対象は `normalize_user_path` になる。
+
 ## 仕様と食い違うが起票していないもの
 
 | ID | 対象 | 反例 (最短) | 起票しない理由 |

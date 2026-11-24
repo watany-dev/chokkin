@@ -15,11 +15,11 @@ namespace Check.Strings
 /-- `none` when `output` is what the specification allows for `input`,
     else the expected value. -/
 def expected (fn input output : String) : Option String :=
-  if ["normalize_trace_path", "normalize_entry_path", "normalize_dir", "normalize_path",
+  if ["normalize_user_path", "normalize_dir", "normalize_path",
       "normalize_relative_path"].contains fn then
     -- `entry` and `--trace` name a file: neither the root nor, by XBD 4.16,
     -- a pathname with a trailing separator (it must be a directory).
-    let names_file := fn == "normalize_entry_path" || fn == "normalize_trace_path"
+    let names_file := fn == "normalize_user_path"
     let not_a_file := Spec.Path.canonical input == "" ||
       (input.toList.getLast?.map Spec.Path.isSep).getD false ||
       ((input.toList.splitBy (fun a b => !Spec.Path.isSep a && !Spec.Path.isSep b)).getLast?

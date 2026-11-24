@@ -298,7 +298,7 @@ CHK006 = "info"
 CHK002 = "error"
 ```
 
-`entry` / `project` / `exclude` / `vendored` と `workspaces.<id>` の `path` / `entry` / `project` は root 相対で書く。絶対パスに加え、`..` を字面で畳んで root の外に出る path（`../shared/**`）も設定の検証エラー（exit 2）にする (#981)。root の外は走査しないので、黙って何にも一致しない設定になるのを防ぐ。`entry` は `\` を `/` に揃えて先頭の `./` を落とし、下の path glob も先頭の `./` を落としてから照合する (#1168)。走査が見つけるパスは `./` を持たないので、`./src/app.py` を skipped entry に、`./legacy/**` を黙って何にも一致しない設定にしないため。`--trace` や workspace の `path` と同じ扱いにそろえる。
+`entry` / `project` / `exclude` / `vendored` と `workspaces.<id>` の `path` / `entry` / `project` は root 相対で書く。絶対パスに加え、`..` を字面で畳んで root の外に出る path（`../shared/**`）も設定の検証エラー（exit 2）にする (#981)。root の外は走査しないので、黙って何にも一致しない設定になるのを防ぐ。`entry` と `--trace` の path は `\` を `/` に揃え、空の segment と `.` の segment を落とし（`./app//run.py` は `app/run.py`。POSIX でも Windows でも同じ file を指す。先頭の `/` は絶対 path の印なので残し、`..` は symlink を挟むと字面で畳めないので残す。#1443 / #1444）、下の path glob も先頭の `./` を落としてから照合する (#1168)。走査が見つけるパスは `./` を持たないので、`./src/app.py` を skipped entry に、`./legacy/**` を黙って何にも一致しない設定にしないため。workspace の `path` と同じ扱いにそろえる。
 
 設定の path glob（`project` / `exclude` / `vendored`、`[tool.chokkin.ignore]` の path pattern、pytest の `testpaths`、wheel target の path）の `\` は OS によらずパス区切りとして読み、`/` と同じに扱う (#1165)。globset の既定では Windows で区切り、それ以外でエスケープになり、Windows で書いた `legacy\**` が Linux の CI で黙って何にも一致しなくなるため。workspace member の path と揃える。glob 記号そのものに一致させたいときは `[*]` のように文字クラスで書く。
 
