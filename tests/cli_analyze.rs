@@ -11986,3 +11986,64 @@ fn binary_subtree_requirements_declare_their_own_sources() {
         "{issues:#?}"
     );
 }
+
+/// `(code, distribution or binary, confidence)` of each CHK00x finding.
+fn dependency_findings(root: &Path, extra: &[&str]) -> Vec<(String, String, String)> {
+    let mut args = vec!["--no-cache"];
+    args.extend_from_slice(extra);
+    let mut found: Vec<_> = json_issues(root, &args)
+        .iter()
+        .filter(|issue| issue["code"].as_str().is_some_and(|code| code.starts_with("CHK0")))
+        .map(|issue| {
+            let subject = issue["distribution"]
+                .as_str()
+                .or_else(|| issue["binary"].as_str())
+                .unwrap_or_default();
+            (
+                issue["code"].as_str().unwrap_or_default().to_owned(),
+                subject.to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn finding(code: &str, subject: &str, confidence: &str) -> (String, String, String) {
+    (code.to_owned(), subject.to_owned(), confidence.to_owned())
+}
+
+const PSYCOPG_POOL_UV_LOCK: &str = concat!(
+    "version = 1\nrequires-python = \">=3.11\"\n\n",
+    "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n",
+    "source = { registry = \"https://pypi.org/simple\" }\n\n",
+    "[package.optional-dependencies]\npool = [\n    { name = \"psycopg-pool\" },\n]\n\n",
+    "[[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\n",
+    "source = { registry = \"https://pypi.org/simple\" }\n",
+    "dependencies = [\n    { name = \"typing-extensions\" },\n]\n\n",
+    "[[package]]\nname = \"typing-extensions\"\nversion = \"4.12.0\"\n",
+    "source = { registry = \"https://pypi.org/simple\" }\n",
+);
+
+const PSYCOPG_POOL_PYPROJECT: &str = concat!(
+    "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+    "dependencies = [\"psycopg[pool]\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+);
+
+/// The walk keeps going past what a declared `p[e]` adds (#1374).
+#[test]
+fn lockfile_closure_follows_the_dependencies_of_a_declared_extra() {
+    let project = write_project(&[
+        ("pyproject.toml", PSYCOPG_POOL_PYPROJECT),
+        (
+            "main.py",
+            "import psycopg\nimport psycopg_pool\nimport typing_extensions\n",
+        ),
+        ("uv.lock", PSYCOPG_POOL_UV_LOCK),
+    ]);
+    assert_eq!(
+        dependency_findings(project.path(), &[]),
+        [finding("CHK004", "typing-extensions", "certain")]
+    );
+}

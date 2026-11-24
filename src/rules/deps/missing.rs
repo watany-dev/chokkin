@@ -1,6 +1,6 @@
 //! CHK003 missing and CHK004 transitive dependency detection.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::ptr;
 
 use crate::config::{ChokkinConfig, Confidence};
@@ -456,29 +456,20 @@ pub(super) fn is_transitive_only(
     lock_closure(declared, transitive, Some(distribution)).contains(distribution)
 }
 
-/// Every name the lock edges reach from the declarations, `except` left out
-/// of the seeds (but not of what the others reach).
+/// Every name the lock reaches from the declarations, extras included,
+/// `except` left out of the seeds (but not of what the others reach).
 fn lock_closure<'g>(
     declared: &'g DeclaredIndex<'_>,
     lock: &'g LockfileGraph,
     except: Option<&str>,
 ) -> HashSet<&'g str> {
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-    for dep in declared.values().flatten() {
-        let name = dep.name.as_str();
-        if Some(name) != except && visited.insert(name) {
-            queue.push_back(name);
-        }
-    }
-    while let Some(current) = queue.pop_front() {
-        for child in lock.edges.get(current).into_iter().flatten() {
-            if visited.insert(child.as_str()) {
-                queue.push_back(child.as_str());
-            }
-        }
-    }
-    visited
+    lock.closure(
+        declared
+            .values()
+            .flatten()
+            .filter(|dep| Some(dep.name.as_str()) != except)
+            .map(|dep| (dep.name.as_str(), dep.extras.as_slice())),
+    )
 }
 
 /// One issue per distribution and `import` statement; a config reference keys

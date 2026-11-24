@@ -1,12 +1,13 @@
 //! Manifest extraction types.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::UvWorkspaceHint;
 use crate::discovery::ProjectRoot;
 
+use super::pep508_util::normalize_distribution_name;
 use super::warnings::ManifestWarning;
 
 /// Where a dependency was declared (manifest stage).
@@ -216,6 +217,65 @@ pub struct LockfileGraph {
     /// Only `uv.lock` records extras.
     #[serde(default)]
     pub extras: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+}
+
+impl LockfileGraph {
+    /// Every name the lock reaches from `seeds`, each a declared name with
+    /// the extras it requests. The walk is over `(package, extra)` nodes: a
+    /// declared `p[e]` reaches `p`'s base dependencies and what extra `e`
+    /// adds, and keeps walking from both (#1374). A seed the lock does not
+    /// list reaches nothing, not even itself.
+    pub(crate) fn closure<'s, S: AsRef<str> + 's>(
+        &self,
+        seeds: impl IntoIterator<Item = (&'s str, &'s [S])>,
+    ) -> HashSet<&str> {
+        let mut walk = LockWalk::default();
+        for (name, extras) in seeds {
+            let Some((name, _)) = self.edges.get_key_value(name) else {
+                continue;
+            };
+            walk.visit(name, None);
+            for extra in extras {
+                let extra = normalize_distribution_name(extra.as_ref());
+                walk.visit(name, self.extra_key(name, &extra));
+            }
+        }
+        while let Some((package, extra)) = walk.queue.pop_front() {
+            let deps = match extra {
+                None => self.edges.get(package),
+                Some(extra) => self.extras.get(package).and_then(|extras| extras.get(extra)),
+            };
+            for dep in deps.into_iter().flatten() {
+                walk.visit(dep, None);
+            }
+        }
+        walk.nodes.into_iter().map(|(name, _)| name).collect()
+    }
+
+    /// `extra` of `package` as the lock spells it, when the lock lists it;
+    /// `None` (the base node, already visited) otherwise.
+    fn extra_key(&self, package: &str, extra: &str) -> Option<&str> {
+        self.extras
+            .get(package)?
+            .get_key_value(extra)
+            .map(|(extra, _)| extra.as_str())
+    }
+}
+
+/// `(package, extra)` nodes of a [`LockfileGraph::closure`] walk; `None` is
+/// the package's base dependencies.
+#[derive(Default)]
+struct LockWalk<'g> {
+    nodes: HashSet<(&'g str, Option<&'g str>)>,
+    queue: VecDeque<(&'g str, Option<&'g str>)>,
+}
+
+impl<'g> LockWalk<'g> {
+    fn visit(&mut self, package: &'g str, extra: Option<&'g str>) {
+        if self.nodes.insert((package, extra)) {
+            self.queue.push_back((package, extra));
+        }
+    }
 }
 
 /// Lockfile formats read into `LockfileGraph`.
