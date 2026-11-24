@@ -2639,6 +2639,11 @@ fn stored_and_deleted_attributes_are_not_reads() {
             &[("main.py", "import pkg.m\npkg.m.target += 1\n")],
             false,
         ),
+        (
+            "deleting an item reads its container",
+            &[("main.py", "import pkg.m\ndel pkg.m.target.cache[0]\n")],
+            false,
+        ),
     ]);
 }
 
