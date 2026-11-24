@@ -41,7 +41,7 @@ pytest 9.2 の `fnmatch_ex`。仕様側の誤りが 2 つ見つかり、どち�
   `*` は通常の `*`」に反して `a**/b` が `ab` や `ax/y/b` に一致する。chokkin も git と
   違う動きをしており P11 として起票した。
 
-VALIDATION_RESULT
+直した後の `validate_spec.py 1200` (fnmatch 6,000 件、pytest 1,200 件、tox 約 3,600 件、glob・setuptools・gitignore 各約 300 件) は全件一致した。
 
 ## 差分 (`harness/diff_chokkin.py`)
 
@@ -72,8 +72,9 @@ VALIDATION_RESULT
 | P10 | #1435 | 見逃し | hatch `exclude` を読まない |
 | P11 | #1437 | 誤検知 (CHK001) | `.gitignore` の `a**/b.py` (文字の直後の `**/`) を git のように読まない |
 | P12 | #1447 | 見逃し | `.gitignore` の否定クラス `[!x]` / `[^x]` が `/` に一致する |
+| P13 | #1448 | member の取り違え | uv workspace の `members` を globset で読む (`{a,b}`、`[^a]`)。uv 0.13.9 の `uv lock` と照合 (Lean の仕様は使っていない) |
 
-計 12 件。
+計 13 件。
 
 ## 当たらなかったもの・対象外
 
@@ -91,7 +92,7 @@ VALIDATION_RESULT
 ```sh
 # Lean 4.15 (lean-toolchain) と lake
 lake build                                   # 仕様・証明・例の検査と oracle のビルド
-VENV/bin/python -I harness/validate_spec.py 400   # tox / setuptools / pytest を入れた venv
+VENV/bin/python -I harness/validate_spec.py 1200   # tox / setuptools / pytest を入れた venv
 cargo build --release                        # repo root で
 python3 harness/diff_chokkin.py gitignore 1500 7  # family と件数と seed
 ```

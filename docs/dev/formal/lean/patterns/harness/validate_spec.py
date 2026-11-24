@@ -83,7 +83,8 @@ GLOB_COMP = ["*", "a", "b", "?", "**", ".h", ".*", "t{1,2}", "t[12]", "[!a]", "[
 for _ in range(N // 4):
     dirs, files = rand_tree()
     pat = "/".join(rng.choice(GLOB_COMP) for _ in range(rng.randint(1, 3)))
-    if not pat.strip("/"):
+    # an absolute pattern would glob the real file system
+    if not pat.strip("/") or pat.startswith("/"):
         continue
     root = tempfile.mkdtemp()
     try:
