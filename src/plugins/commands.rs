@@ -1882,6 +1882,8 @@ mod tests {
             assert_eq!(binaries(command), ["pytest"], "{command}");
         }
         assert_eq!(binaries("pytest -q 2>&1 | tee log"), ["pytest"]);
+        // `&>` stays in the segment it redirects.
+        assert_eq!(segments("pytest &>log -q"), [["pytest", "&>log", "-q"]]);
         // A quoted `>` is no redirection: the `&` after it is a separator.
         assert_eq!(binaries("echo \">\"& pytest"), ["pytest"]);
     }
