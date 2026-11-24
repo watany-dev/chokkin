@@ -31,7 +31,7 @@ pub use dynamic::apply_module_loaders;
 pub(crate) use dynamic::module_ref_name;
 pub(crate) use encoding::decode_python_source;
 pub(crate) use error::ParseError;
-pub(crate) use ignores::extract_ignores_with;
+pub(crate) use ignores::{comment_ranges, extract_ignores_with};
 pub(crate) use import_check::apply_import_checks;
 pub(crate) use lines::LineIndex;
 pub(crate) use module_guard::{guarded_roots, predicate_name_module};

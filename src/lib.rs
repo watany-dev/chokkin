@@ -96,10 +96,15 @@ pub mod internals {
         ProjectLayout, PublicSurface, SourcesError, SourcesWarning, discover_sources,
     };
 
-    /// `# chokkin: ignore[…]` directives in `source`, as the parser reads them.
+    /// `# chokkin: ignore[…]` directives in `source`, as the parser reads
+    /// them; a source that does not parse has none.
     pub fn extract_ignores(source: &str) -> Vec<crate::parser::IgnoreDirective> {
+        let Ok(parsed) = ruff_python_parser::parse_module(source) else {
+            return Vec::new();
+        };
         let lines = crate::parser::LineIndex::new(source);
-        crate::parser::extract_ignores_with(source, &lines, &mut Vec::new())
+        let comments = crate::parser::comment_ranges(parsed.tokens());
+        crate::parser::extract_ignores_with(source, &comments, &lines, &mut Vec::new())
     }
 
     /// Case count for a proptest block tuned to `tuned` cases.

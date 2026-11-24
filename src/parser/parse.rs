@@ -18,7 +18,7 @@ use crate::sources::{DiscoveredFile, DiscoveredSources, FileKind, LayoutInfo};
 use super::depth::{MAX_AST_DEPTH, Unwalkable, parse_walkable_module};
 use super::encoding::decode_python_source;
 use super::error::ParseError;
-use super::ignores::extract_ignores_with;
+use super::ignores::{comment_ranges, extract_ignores_with};
 use super::ipython::PythonCell;
 use super::lines::LineIndex;
 use super::types::{
@@ -95,12 +95,18 @@ fn parse_python_source(
         });
         return parsed;
     }
-    let mut parsed = match parse_walkable_module(source) {
+    match parse_walkable_module(source) {
         Ok(module) => {
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &lines);
             visitor.visit_module(source, module.suite());
             let mut parsed = visitor.into_parsed();
             note_unsupported_syntax(target, module.suite(), &mut parsed.diagnostics);
+            parsed.ignores = extract_ignores_with(
+                source,
+                &comment_ranges(module.tokens()),
+                &lines,
+                &mut parsed.diagnostics,
+            );
             parsed
         },
         // Nothing was read past the error, so the module's imports are as
@@ -111,12 +117,9 @@ fn parse_python_source(
             parsed
                 .diagnostics
                 .push(unwalkable_diagnostic(&lines, &unwalkable));
-            return parsed;
+            parsed
         },
-    };
-
-    parsed.ignores = extract_ignores_with(source, &lines, &mut parsed.diagnostics);
-    parsed
+    }
 }
 
 fn parse_notebook_file(
