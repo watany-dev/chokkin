@@ -86,11 +86,9 @@ enum Codec {
 }
 
 /// Whether a declared coding `name` is UTF-8, by `CPython`'s rules: the
-/// tokenizer maps `utf-8` and `utf-8-*` itself, and `encodings` has the
-/// other aliases.
+/// tokenizer maps `utf-8-*` itself, and `encodings` has the aliases.
 fn is_utf8(name: &str) -> bool {
-    name == "utf-8"
-        || name.starts_with("utf-8-")
+    name.starts_with("utf-8-")
         || matches!(
             name.replace(['-', '.'], "_").as_str(),
             "utf_8" | "utf8" | "u8" | "utf" | "utf8_ucs2" | "utf8_ucs4" | "cp65001"
@@ -533,6 +531,7 @@ mod tests {
             ("utf-8", Some("import m\u{ea}\n".to_owned())),
             ("utf8", Some("import m\u{ea}\n".to_owned())),
             ("u8", Some("import m\u{ea}\n".to_owned())),
+            ("utf-8-unix", Some("import m\u{ea}\n".to_owned())),
             ("koi8-r", None),
             ("utf-16", None),
             ("no-such-codec", None),
