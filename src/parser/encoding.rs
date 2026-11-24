@@ -2,22 +2,40 @@
 
 /// Decode `bytes` as Python would, for the encodings chokkin supports.
 ///
-/// Valid UTF-8 is used as is, minus a leading BOM as Python drops it.
-/// Otherwise the PEP 263 declaration decides: latin-1, cp1252 and the CJK
-/// multibyte codecs (#1150) are decoded, anything else (or no declaration)
-/// is `None` so the caller can skip the file instead of guessing.
+/// The PEP 263 declaration decides, even when the bytes happen to be valid
+/// UTF-8 (#1441): latin-1, cp1252 and the CJK multibyte codecs (#1150) are
+/// decoded, and UTF-8 is used as is, minus a leading BOM as Python drops it.
+/// Without a declaration only UTF-8 is read. Anything else is `None` so the
+/// caller can skip the file instead of guessing, except that an ASCII-only
+/// file reads the same in every ASCII-compatible codec and is used as is.
 #[must_use]
 pub(crate) fn decode_python_source(bytes: Vec<u8>) -> Option<String> {
+    const BOM: &[u8] = b"\xef\xbb\xbf";
+    let bom = bytes.starts_with(BOM);
+    let declared = declared_coding(bytes.strip_prefix(BOM).unwrap_or(&bytes));
+    let declared_utf8 = declared.as_deref().is_none_or(is_utf8);
+    if bom && !declared_utf8 {
+        // Python rejects a BOM under a declaration of another codec.
+        return None;
+    }
     let bytes = match String::from_utf8(bytes) {
-        Ok(text) => {
+        Ok(text) if declared_utf8 => {
             return Some(match text.strip_prefix('\u{feff}') {
                 Some(rest) => rest.to_owned(),
                 None => text,
             });
         },
+        Ok(text) => text.into_bytes(),
         Err(error) => error.into_bytes(),
     };
-    match codec(&declared_coding(&bytes)?)? {
+    let Some(codec) = codec(&declared?) else {
+        return if bytes.is_ascii() {
+            String::from_utf8(bytes).ok()
+        } else {
+            None
+        };
+    };
+    match codec {
         Codec::Latin1 => Some(bytes.iter().copied().map(char::from).collect()),
         Codec::Cp1252 => bytes.iter().copied().map(cp1252_char).collect(),
         Codec::Multibyte(encoding) => encoding
@@ -65,6 +83,18 @@ enum Codec {
     /// where WHATWG (HKSCS) has other characters, letters among them: a
     /// file using them is `None` rather than read with other identifiers.
     Big5,
+}
+
+/// Whether a declared coding `name` is UTF-8, by `CPython`'s rules: the
+/// tokenizer maps `utf-8` and `utf-8-*` itself, and `encodings` has the
+/// other aliases.
+fn is_utf8(name: &str) -> bool {
+    name == "utf-8"
+        || name.starts_with("utf-8-")
+        || matches!(
+            name.replace(['-', '.'], "_").as_str(),
+            "utf_8" | "utf8" | "u8" | "utf" | "utf8_ucs2" | "utf8_ucs4" | "cp65001"
+        )
 }
 
 /// The codec a declared coding `name` selects, by `CPython`'s rules: the
@@ -491,6 +521,39 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    /// Issue #1441: valid UTF-8 bytes still decode by the declaration.
+    #[test]
+    fn declaration_decides_even_for_valid_utf8() {
+        let mojibake = "import m\u{c3}\u{aa}\n";
+        for (name, expected) in [
+            ("latin-1", Some(mojibake.to_owned())),
+            ("cp1252", Some(mojibake.to_owned())),
+            ("utf-8", Some("import m\u{ea}\n".to_owned())),
+            ("utf8", Some("import m\u{ea}\n".to_owned())),
+            ("u8", Some("import m\u{ea}\n".to_owned())),
+            ("koi8-r", None),
+            ("utf-16", None),
+            ("no-such-codec", None),
+        ] {
+            let source = format!("# -*- coding: {name} -*-\nimport m\u{ea}\n");
+            let decoded = decode_python_source(source.into_bytes());
+            let body = decoded.and_then(|text| Some(text.split_once('\n')?.1.to_owned()));
+            assert_eq!(body, expected, "{name}");
+        }
+        assert_eq!(
+            decode_python_source(b"# coding: koi8-r\nimport os\n".to_vec()).as_deref(),
+            Some("# coding: koi8-r\nimport os\n")
+        );
+        assert_eq!(
+            decode_python_source(b"\xef\xbb\xbf# coding: latin-1\nimport os\n".to_vec()),
+            None
+        );
+        assert_eq!(
+            decode_python_source(b"\xef\xbb\xbf# coding: utf-8\nimport os\n".to_vec()).as_deref(),
+            Some("# coding: utf-8\nimport os\n")
+        );
     }
 
     #[test]
