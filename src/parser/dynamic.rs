@@ -121,18 +121,18 @@ pub(super) enum LiteralTarget {
 /// Literal module name passed to a loader call, positionally or by keyword,
 /// made absolute the way `loader` resolves it.
 ///
-/// `current_package` is the `__package__` of the calling module. Returns
-/// `None` when the name is not a literal.
+/// `caller` tells what the calling module's names hold. Returns `None` when
+/// the name is not a literal.
 #[must_use]
-pub(super) fn literal_target(
-    call: &ExprCall,
+pub(super) fn literal_target<'c>(
+    call: &'c ExprCall,
     loader: Loader,
-    current_package: impl FnOnce() -> Option<String>,
+    caller: &Caller<'c, impl Fn() -> Option<String>>,
 ) -> Option<LiteralTarget> {
-    let name = str_constant(module_argument(call, loader)?)?;
+    let name = caller.str_value(module_argument(call, loader)?)?;
     let module = match loader {
-        Loader::ImportModule => import_module_name(call, name, current_package),
-        Loader::DunderImport => dunder_import_name(call, name, current_package),
+        Loader::ImportModule => import_module_name(call, name, caller),
+        Loader::DunderImport => dunder_import_name(call, name, &caller.package),
         // `runpy` refuses a relative name; its leading dot leaves an empty segment.
         Loader::RunModule => Ok(name.to_owned()),
     };
@@ -147,19 +147,55 @@ pub(super) fn literal_target(
     })
 }
 
+/// What a loader call's arguments may name besides literals, in the
+/// calling module.
+pub(super) struct Caller<'c, P> {
+    /// The module's `__package__`.
+    pub(super) package: P,
+    /// The module is a package's `__init__`, whose `__name__` is the
+    /// package (#1423).
+    pub(super) is_package_init: bool,
+    /// The string a name holds: a module-level name bound once to a
+    /// literal (#1425).
+    pub(super) constant: &'c dyn Fn(&str) -> Option<&'c str>,
+}
+
+impl<'c, P> Caller<'c, P> {
+    /// A caller that names nothing but literals.
+    #[cfg(test)]
+    pub(super) fn literal(package: P) -> Self {
+        Self {
+            package,
+            is_package_init: false,
+            constant: &|_| None,
+        }
+    }
+
+    /// The string `expr` is: a literal, or a name [`Self::constant`] knows.
+    pub(super) fn str_value(&self, expr: &'c Expr) -> Option<&'c str> {
+        match expr {
+            Expr::Name(name) => (self.constant)(name.id.as_str()),
+            _ => str_constant(expr),
+        }
+    }
+}
+
 /// `name` made absolute against `package=`, as `importlib.util.resolve_name` does.
-fn import_module_name(
-    call: &ExprCall,
+fn import_module_name<'c>(
+    call: &'c ExprCall,
     name: &str,
-    current_package: impl FnOnce() -> Option<String>,
+    caller: &Caller<'c, impl Fn() -> Option<String>>,
 ) -> Result<String, LiteralTarget> {
     if !name.starts_with('.') {
         return Ok(name.to_owned());
     }
     let package = match argument(call, 1, "package") {
         None | Some(Expr::NoneLiteral(_)) => return Err(LiteralTarget::Nothing),
-        Some(Expr::Name(name)) if name.id.as_str() == "__package__" => current_package(),
-        Some(expr) => str_constant(expr).map(str::to_owned),
+        Some(Expr::Name(name)) if name.id.as_str() == "__package__" => (caller.package)(),
+        Some(Expr::Name(name)) if name.id.as_str() == "__name__" && caller.is_package_init => {
+            (caller.package)()
+        },
+        Some(expr) => caller.str_value(expr).map(str::to_owned),
     };
     let package = package.ok_or(LiteralTarget::Opaque)?;
     resolve_relative_name(name, &package).ok_or(LiteralTarget::Nothing)
@@ -171,7 +207,7 @@ fn import_module_name(
 fn dunder_import_name(
     call: &ExprCall,
     name: &str,
-    current_package: impl FnOnce() -> Option<String>,
+    current_package: impl Fn() -> Option<String>,
 ) -> Result<String, LiteralTarget> {
     let level = match argument(call, 4, "level") {
         None => 0,
@@ -573,7 +609,11 @@ mod tests {
         let Expr::Call(call) = expr(source) else {
             panic!("expected a call");
         };
-        literal_target(&call, loader, || Some("acme.core".to_owned()))
+        literal_target(
+            &call,
+            loader,
+            &super::Caller::literal(|| Some("acme.core".to_owned())),
+        )
     }
 
     /// A whole dotted name, with or without `python:`, is a module reference,
@@ -996,7 +1036,7 @@ mod tests {
                     Package::Dunder(current) => current.clone(),
                     _ => None,
                 };
-                let got = match literal_target(&call, Loader::ImportModule, || current) {
+                let got = match literal_target(&call, Loader::ImportModule, &super::super::Caller::literal(|| current.clone())) {
                     Some(LiteralTarget::Module(module)) => Outcome::Module(module),
                     Some(LiteralTarget::Opaque) => Outcome::Opaque,
                     Some(LiteralTarget::Nothing) => Outcome::Nothing,

@@ -426,6 +426,11 @@ pub struct ParsedModule {
     /// Names bound by an import and read in this module (`from .x import f; f()`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub used_import_bindings: Vec<String>,
+    /// In a module with a star import, the names it reads that it binds
+    /// neither by definition nor by a named import: what the star imports
+    /// may bind (#1413).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub star_reads: Vec<String>,
     /// Extracted ignore directives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<IgnoreDirective>,

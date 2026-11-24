@@ -2317,3 +2317,413 @@ fn symbols_under_an_examples_dir_are_info() {
         "{report:?}"
     );
 }
+
+/// Whether `pkg.m:target` is CHK006 in the Lean binding oracle's demo
+/// project (`docs/dev/formal/lean/binding`): `main.py` is the entry, and
+/// `files` adds to or replaces `pkg/m.py` and an empty `pkg/__init__.py`.
+fn oracle_target_unused(files: &[(&str, &str)]) -> bool {
+    let mut all: BTreeMap<&str, &str> = BTreeMap::from([
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+        ),
+        ("pkg/__init__.py", ""),
+        ("pkg/m.py", "def target():\n    pass\n"),
+    ]);
+    all.extend(files.iter().copied());
+    let files: Vec<_> = all.into_iter().collect();
+    let report = analyze_generated(&files);
+    has_symbol_rule(&report, RuleId::Chk006, "pkg.m", "target")
+}
+
+/// A label, the files the case adds, and whether `target` stays unused.
+type OracleCase<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
+
+fn assert_oracle_cases(cases: &[OracleCase<'_>]) {
+    for &(label, files, unused) in cases {
+        assert_eq!(oracle_target_unused(files), unused, "{label}");
+    }
+}
+
+/// `from m import *` binds `m`'s public names in the importer, so reading
+/// one reads `m`'s (#1413).
+#[test]
+fn names_a_star_import_binds_are_read_from_their_module() {
+    assert_oracle_cases(&[
+        (
+            "star read",
+            &[("main.py", "from pkg.m import *\ntarget()\n")],
+            false,
+        ),
+        (
+            "star read in a function",
+            &[(
+                "main.py",
+                "from pkg.m import *\n\ndef run():\n    target()\n\nrun()\n",
+            )],
+            false,
+        ),
+        (
+            "star chain",
+            &[
+                ("pkg/mid.py", "from pkg.m import *\n"),
+                ("main.py", "from pkg.mid import *\ntarget()\n"),
+            ],
+            false,
+        ),
+        (
+            "private name left out without __all__",
+            &[
+                (
+                    "pkg/m.py",
+                    "def target():\n    pass\n\ndef _target():\n    pass\n",
+                ),
+                ("main.py", "from pkg.m import *\n_target()\n"),
+            ],
+            true,
+        ),
+        (
+            "star import alone is no read",
+            &[("main.py", "from pkg.m import *\n")],
+            true,
+        ),
+    ]);
+    // The re-export a star import hands on is read too.
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+        ),
+        ("pkg/__init__.py", "from .m import target\n"),
+        ("pkg/m.py", "def target():\n    pass\n"),
+        ("main.py", "from pkg import *\ntarget()\n"),
+    ]);
+    assert!(!has_symbol_rule(&report, RuleId::Chk007, "pkg", "target"));
+    assert!(!has_symbol_rule(&report, RuleId::Chk006, "pkg.m", "target"));
+}
+
+/// An attribute chain from an import binding through a submodule or a name
+/// another module bound to a module reads that module (#1414, #1417, #1421).
+#[test]
+fn attribute_chains_through_submodules_and_module_bindings_are_read() {
+    assert_oracle_cases(&[
+        (
+            "submodule attribute of a package import",
+            &[
+                ("pkg/__init__.py", "from . import m\n"),
+                ("main.py", "import pkg\npkg.m.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "module a from-imported package bound",
+            &[
+                ("pkg/sub/__init__.py", "from pkg import m\n"),
+                ("main.py", "from pkg import sub\nsub.m.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "alias another module bound",
+            &[
+                ("pkg/user.py", "import pkg.m as mod\n"),
+                (
+                    "main.py",
+                    "import pkg.user\nfrom pkg.user import mod\nmod.target()\n",
+                ),
+            ],
+            false,
+        ),
+        (
+            "from import another module bound",
+            &[
+                ("pkg/user.py", "from pkg import m\n"),
+                ("main.py", "import pkg.user\npkg.user.m.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "package alias for a submodule",
+            &[
+                ("pkg/__init__.py", "from . import m as mod\n"),
+                ("main.py", "import pkg\npkg.mod.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "submodule a package's __all__ lists",
+            &[
+                ("pkg/__init__.py", "__all__ = [\"m\"]\n"),
+                ("main.py", "from pkg import *\nm.target()\nimport pkg.m\n"),
+            ],
+            false,
+        ),
+        (
+            "unrelated chain",
+            &[("main.py", "import pkg.m\npkg.other.target()\n")],
+            true,
+        ),
+    ]);
+}
+
+/// A name assigned a module object reads that module through its
+/// attributes, in nested scopes too (#1415, #1416).
+#[test]
+fn names_bound_to_module_objects_are_receivers() {
+    assert_oracle_cases(&[
+        (
+            "plain alias",
+            &[("main.py", "import pkg.m\nf = pkg.m\nf.target()\n")],
+            false,
+        ),
+        (
+            "alias of an alias",
+            &[("main.py", "from pkg import m\nf = m\ng = f\ng.target()\n")],
+            false,
+        ),
+        (
+            "annotated alias",
+            &[("main.py", "import pkg.m\nf: object = pkg.m\nf.target()\n")],
+            false,
+        ),
+        (
+            "walrus",
+            &[("main.py", "import pkg.m\n(f := pkg.m)\nf.target()\n")],
+            false,
+        ),
+        (
+            "tuple unpacking",
+            &[("main.py", "import pkg.m\na, f = 0, pkg.m\nf.target()\n")],
+            false,
+        ),
+        (
+            "alias read in a function",
+            &[(
+                "main.py",
+                "import pkg.m\nf = pkg.m\n\ndef run():\n    f.target()\n\nrun()\n",
+            )],
+            false,
+        ),
+        (
+            "import_module result read in a function",
+            &[(
+                "main.py",
+                "import importlib\nf = importlib.import_module(\"pkg.m\")\n\ndef run():\n    f.target()\n\nrun()\n",
+            )],
+            false,
+        ),
+        (
+            "import_module result read in a class body",
+            &[(
+                "main.py",
+                "import importlib\nf = importlib.import_module(\"pkg.m\")\n\nclass C:\n    x = f.target\n",
+            )],
+            false,
+        ),
+        (
+            "rebound alias",
+            &[("main.py", "import pkg.m\nf = pkg.m\nf = None\nf.target()\n")],
+            true,
+        ),
+        (
+            "lambda parameter shadows the alias",
+            &[(
+                "main.py",
+                "import pkg.m\nf = pkg.m\ng = lambda f: f.target\n",
+            )],
+            true,
+        ),
+        (
+            "local shadows the alias",
+            &[(
+                "main.py",
+                "import pkg.m\nf = pkg.m\n\ndef run(f):\n    f.target()\n",
+            )],
+            true,
+        ),
+    ]);
+}
+
+/// A name a scope binds itself is not the import of the same name (#1429);
+/// an attribute that is assigned or deleted is not read (#1431).
+#[test]
+fn shadowed_receivers_are_not_the_import() {
+    assert_oracle_cases(&[
+        (
+            "parameter",
+            &[(
+                "main.py",
+                "import pkg.m\n\ndef f(pkg):\n    return pkg.m.target()\n",
+            )],
+            true,
+        ),
+        (
+            "local assignment",
+            &[(
+                "main.py",
+                "import pkg.m\n\ndef f():\n    pkg = None\n    return pkg.m.target()\n",
+            )],
+            true,
+        ),
+        (
+            "comprehension variable",
+            &[(
+                "main.py",
+                "import pkg.m\nxs = []\nys = [pkg.m.target for pkg in xs]\n",
+            )],
+            true,
+        ),
+        (
+            "lambda parameter",
+            &[("main.py", "import pkg.m\nf = lambda pkg: pkg.m.target\n")],
+            true,
+        ),
+        (
+            "except name",
+            &[(
+                "main.py",
+                "import pkg.m\n\ndef f():\n    try:\n        pass\n    except Exception as pkg:\n        pkg.m.target()\n",
+            )],
+            true,
+        ),
+        (
+            "outer function local read by a nested one",
+            &[(
+                "main.py",
+                "import pkg.m\n\ndef f():\n    pkg = None\n    def g():\n        return pkg.m.target()\n    return g\n",
+            )],
+            true,
+        ),
+        (
+            "global declaration reads the import",
+            &[(
+                "main.py",
+                "import pkg.m\n\ndef f():\n    global pkg\n    pkg = pkg\n    return pkg.m.target()\n\nf()\n",
+            )],
+            false,
+        ),
+        (
+            "local import is the import",
+            &[(
+                "main.py",
+                "def f():\n    import pkg.m\n    return pkg.m.target()\n\nf()\n",
+            )],
+            false,
+        ),
+        (
+            "comprehension iterable is the outer scope",
+            &[(
+                "main.py",
+                "import pkg.m\nys = [x for pkg in pkg.m.target()]\n",
+            )],
+            false,
+        ),
+    ]);
+}
+
+#[test]
+fn stored_and_deleted_attributes_are_not_reads() {
+    assert_oracle_cases(&[
+        (
+            "assignment",
+            &[("main.py", "import pkg.m\npkg.m.target = None\n")],
+            true,
+        ),
+        (
+            "deletion",
+            &[("main.py", "import pkg.m\ndel pkg.m.target\n")],
+            true,
+        ),
+        (
+            "augmented assignment reads",
+            &[("main.py", "import pkg.m\npkg.m.target += 1\n")],
+            false,
+        ),
+    ]);
+}
+
+/// Literal module names reach the module through `__import__`,
+/// `sys.modules`, `__name__` in a package and module-level string constants
+/// (#1418, #1420, #1423, #1425).
+#[test]
+fn dynamic_module_lookups_read_their_literal_module() {
+    assert_oracle_cases(&[
+        (
+            "__import__ with fromlist",
+            &[(
+                "main.py",
+                "mod = __import__(\"pkg.m\", fromlist=[\"target\"])\nmod.target()\n",
+            )],
+            false,
+        ),
+        (
+            "__import__ with fromlist, called directly",
+            &[(
+                "main.py",
+                "__import__(\"pkg.m\", fromlist=[\"target\"]).target()\n",
+            )],
+            false,
+        ),
+        (
+            "__import__ without fromlist returns the top package",
+            &[("main.py", "__import__(\"pkg.m\").m.target()\n")],
+            false,
+        ),
+        (
+            "__import__ without fromlist is not the submodule",
+            &[("main.py", "__import__(\"pkg.m\").target()\n")],
+            true,
+        ),
+        (
+            "sys.modules",
+            &[(
+                "main.py",
+                "import sys\nimport pkg.m\nsys.modules[\"pkg.m\"].target()\n",
+            )],
+            false,
+        ),
+        (
+            "constant module name",
+            &[(
+                "main.py",
+                "import importlib\nNAME = \"pkg.m\"\nimportlib.import_module(NAME).target()\n",
+            )],
+            false,
+        ),
+        (
+            "constant attribute name",
+            &[(
+                "main.py",
+                "import pkg.m\nname = \"target\"\ngetattr(pkg.m, name)()\n",
+            )],
+            false,
+        ),
+        (
+            "rebound constant is not read",
+            &[(
+                "main.py",
+                "import pkg.m\nname = \"target\"\nname = \"other\"\ngetattr(pkg.m, name)()\n",
+            )],
+            true,
+        ),
+    ]);
+    // `__name__` in a package's `__init__` is the package (#1423).
+    let report = analyze_generated(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\nversion = \"0.0.0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+        ),
+        (
+            "pkg/__init__.py",
+            "import importlib\nimportlib.import_module(\".m\", __name__)\n",
+        ),
+        ("pkg/m.py", "def target():\n    pass\n"),
+        ("main.py", "import pkg\n"),
+    ]);
+    assert!(
+        !report
+            .iter()
+            .any(|candidate| candidate.rule == RuleId::Chk001),
+        "{report:?}"
+    );
+}

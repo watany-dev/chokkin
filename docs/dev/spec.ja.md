@@ -1143,8 +1143,30 @@ import acme.utils; acme.utils.helper() # likely（attribute access）
 
 `import module; module.name` 形式は parser が同一 file 内の attribute access を収集し、
 symbol usage analysis が `module.name` を外部参照として扱う。`from pkg import module` (alias、
-`from . import module` を含む) で既知の first-party submodule を束縛した場合も同様に扱う (#411)。chain access や動的 attribute
-は v0.2 では追跡しない。
+`from . import module` を含む) で既知の first-party submodule を束縛した場合も同様に扱う (#411)。
+
+属性の鎖は import の束縛から辿る (#1414、#1417、#1421)。`import pkg` の後の `pkg.m.name` は、`pkg.m` が first-party の
+submodule なら `pkg.m.name` の参照になる (その file が `pkg.m` を import していなくても、どこかの import が `pkg` の名前空間に
+束縛しうるため)。鎖の各段は、その module が import で束縛した名前 (`pkg/__init__.py` の `from . import m as mod` の後の
+`pkg.mod.name`、`pkg/user.py` の `import pkg.m as mod` の後の `from pkg.user import mod; mod.name`)、submodule、star import が
+渡す名前 (package の `__all__` が submodule `m` を挙げていれば `from pkg import *` の後の `m.name`) の順に引く。引けない段で
+鎖は止まり、参照にならない。
+
+名前の束縛は Language Reference の scope 規則に従う (#1429)。関数・lambda・内包表記・class 本体が自分で束縛する名前
+(引数、代入、`for` / `with` / `except` / `match` の束縛、walrus、PEP 695 の型引数) は、その scope と入れ子の関数の中で module の
+import を隠す。class 本体の名前は入れ子の scope からは見えず、`global` 宣言した名前は module の束縛を読む。同じ scope が import
+でも束縛する名前 (`except ImportError: yaml = None`) は隠さない。属性への代入と削除 (`pkg.m.name = x`、`del pkg.m.name`) は
+読み取りではないので参照にならない (#1431)。累算代入 (`pkg.m.name += 1`) は読む。
+
+module object を名前に代入した別名 (`f = pkg.m`、`f: T = pkg.m`、`(f := pkg.m)`、`a, f = 0, pkg.m`、別名の別名) の属性は
+module の属性として読む (#1415)。別名と `importlib.import_module("pkg.m")` の結果を束縛した名前は、その名前を束縛しない入れ子の
+関数・class 本体からも見える (#1416)。`__import__("pkg.m", fromlist=[...])` は `pkg.m` を、`fromlist` が無いか空なら `pkg` を
+返す (#1418)。`sys.modules["pkg.m"]` は `pkg.m` を返す (#1420)。module の top-level で一度だけ文字列 literal を束縛した名前は、
+loader の module 名、`package=` 引数、`getattr` の属性名、`sys.modules` の key で literal と同じに読む (#1425)。package の
+`__init__.py` の `__name__` は package 自身なので、`import_module(".m", __name__)` は `__package__` と同じに解く (#1423)。
+
+関数の戻り値・引数、container、class / instance 属性、`for` / `match` を通った module object の属性 (#1427) と、他の
+束縛 (`for f in ...`) で上書きされた別名はまだ追わない。
 
 参照先の module が `from m import *` で名前を取り込んでいる場合、その参照は `m` の同名 symbol にも届くとみなす (#576)。
 `pkg/__init__.py` が `from .sub.impl import *` するとき、`import pkg; pkg.name` と `from pkg import name` は
@@ -1155,6 +1177,9 @@ module (Partial / Unknown) はどの名前も渡しうるとみなし、`_` で�
 同名を自身で定義していれば、そちらが優先され star 先には届かない。外部参照かどうかは
 元の importer で判定するので、定義元 module 自身が package 経由で自分の名前を読んでも外部参照にはならない。
 star import 文そのもの (`pkg/__init__.py` の `from .sub.impl import *`) は従来どおり参照にならない。
+star import した module 自身が、自分で束縛していない名前を読めば、star 先がその名前を渡す限り star 先 (と連鎖の先) の
+参照になる (`from pkg.m import *; target()`、#1413)。どの名前を自分で束縛しているかは module の top-level の定義と import
+だけで見るので、関数の局所変数と同名の読み取りも star 先の参照に数える。
 
 import 先の名前がどの module 名でもなく、importer と同じディレクトリに同名の file があれば、その file の module の参照とみなす (#977)。
 `python path/to/script.py` は script のディレクトリを `sys.path` 先頭に置くので、airflow `scripts/` の

@@ -20,6 +20,7 @@ mod parse;
 mod platform_guard;
 mod registry;
 mod relative;
+mod scopes;
 mod server_app;
 mod type_checking;
 mod types;

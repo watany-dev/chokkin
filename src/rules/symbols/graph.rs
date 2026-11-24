@@ -1,5 +1,7 @@
 //! Symbol identity and registry for usage analysis.
 
+use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -7,7 +9,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::parser::{Exports, ImportKind, ParsedModule, SymbolDef};
 use crate::sources::{LayoutInfo, SymlinkModules};
 
-use super::public::StarChain;
+use super::public::{StarChain, star_imports};
 
 /// Rules-local symbol identifier (distinct from graph `SymbolId` if added later).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -123,19 +125,14 @@ impl ReferenceIndex {
         let symlinks = SymlinkModules::new(layout);
         let known_modules: FxHashSet<&str> = module_names.values().map(String::as_str).collect();
         let stars = StarImports::build(modules, module_names);
+        let bindings =
+            ModuleBindings::build(modules, module_names, &known_modules, &symlinks, &stars);
 
         let partials = crate::parallel::fold_per_worker(
             modules,
             || (Self::default(), StarCache::new()),
             |(index, cache), _, module| {
-                index.add_module(
-                    module,
-                    module_names,
-                    &known_modules,
-                    &symlinks,
-                    &stars,
-                    cache,
-                );
+                index.add_module(module, &bindings, &stars, cache);
             },
         );
         let mut index = Self::merge(partials.into_iter().map(|(index, _)| index).collect());
@@ -162,18 +159,19 @@ impl ReferenceIndex {
 
     /// The references in one importing module.
     #[expect(
-        clippy::too_many_arguments,
-        reason = "takes the per-pass indexes and star-import cache its caller builds once"
+        clippy::too_many_lines,
+        reason = "one short pass per kind of reference, all sharing the dedup set"
     )]
     fn add_module<'m, 'a>(
         &mut self,
         module: &'m ParsedModule,
-        module_names: &'m HashMap<&str, String>,
-        known_modules: &FxHashSet<&'m str>,
-        symlinks: &SymlinkModules,
+        bindings: &ModuleBindings<'m, '_>,
         stars: &StarImports<'a>,
         cache: &mut StarCache<'a>,
     ) {
+        let module_names = bindings.module_names;
+        let known_modules = bindings.known_modules;
+        let symlinks = bindings.symlinks;
         let importer = module_names
             .get(module.path.as_str())
             .map_or(module.path.as_str(), String::as_str);
@@ -235,6 +233,28 @@ impl ReferenceIndex {
                         }
                     }
                 },
+            }
+        }
+        // `pkg.m.name` after `import pkg`, `mod.name` through the `mod` another
+        // module bound, `m.name` after a star import that binds `m`
+        // (#1414, #1417, #1421).
+        let own = bindings.of_importer(module);
+        let stars_of_module: Vec<&str> = star_imports(module).collect();
+        for (&receiver, names) in &names_by_receiver {
+            let Some(target) = bindings.resolve(&own, &stars_of_module, receiver) else {
+                continue;
+            };
+            for &name in names {
+                record(target, name);
+            }
+        }
+        // `from m import *` binds `m`'s public names, so reading one reads
+        // `m`'s (#1413).
+        for &target in &stars_of_module {
+            for name in &module.star_reads {
+                if stars.chain.hands_on(target, name) {
+                    record(target, name);
+                }
             }
         }
         // `import_module("pkg.m").f` reads `f` from `pkg.m` (#1144).
@@ -424,6 +444,172 @@ impl<'a> StarImports<'a> {
             .copied()
             .filter(|binder| carried.contains(binder))
             .collect()
+    }
+}
+
+/// What a module binds by an import statement, before following it.
+#[derive(Clone, Copy, Debug)]
+enum Bound<'m> {
+    /// `import a.b as c` binds `c` to `a.b`; `import a.b` binds `a` to `a`.
+    Module(&'m str),
+    /// `from p import n` binds `n` to `p`'s `n`.
+    Member(&'m str, &'m str),
+}
+
+/// The names each module binds by import, to follow an attribute chain
+/// such as `pkg.mod.name` through a submodule or a name some module bound
+/// to a module (#1414, #1417, #1421).
+struct ModuleBindings<'m, 's> {
+    by_module: FxHashMap<&'m str, FxHashMap<&'m str, Bound<'m>>>,
+    module_names: &'m HashMap<&'m str, String>,
+    known_modules: &'s FxHashSet<&'m str>,
+    symlinks: &'s SymlinkModules,
+    stars: &'s StarImports<'m>,
+}
+
+/// How many module members one receiver may look up: re-export cycles and
+/// star imports that fan out end there.
+const MAX_MEMBER_LOOKUPS: u32 = 64;
+
+impl<'m, 's> ModuleBindings<'m, 's> {
+    fn build(
+        modules: &[&'m ParsedModule],
+        module_names: &'m HashMap<&'m str, String>,
+        known_modules: &'s FxHashSet<&'m str>,
+        symlinks: &'s SymlinkModules,
+        stars: &'s StarImports<'m>,
+    ) -> Self {
+        let mut bindings = Self {
+            by_module: FxHashMap::default(),
+            module_names,
+            known_modules,
+            symlinks,
+            stars,
+        };
+        for &module in modules {
+            if let Some(name) = module_names.get(module.path.as_str()) {
+                let own = bindings.of(module);
+                if !own.is_empty() {
+                    bindings.by_module.insert(name.as_str(), own);
+                }
+            }
+        }
+        bindings
+    }
+
+    /// [`Self::of`], kept from [`Self::build`] for a named module.
+    fn of_importer(&self, module: &'m ParsedModule) -> Cow<'_, FxHashMap<&'m str, Bound<'m>>> {
+        match self
+            .module_names
+            .get(module.path.as_str())
+            .and_then(|name| self.by_module.get(name.as_str()))
+        {
+            Some(own) => Cow::Borrowed(own),
+            None => Cow::Owned(self.of(module)),
+        }
+    }
+
+    /// What `module`'s imports bind, a name bound twice to its last import.
+    fn of(&self, module: &'m ParsedModule) -> FxHashMap<&'m str, Bound<'m>> {
+        let sibling = |name: &'m str| {
+            sibling_module(&module.path, name, self.known_modules, self.module_names)
+                .unwrap_or(name)
+        };
+        let mut own = FxHashMap::default();
+        for import in &module.imports {
+            if import.module.is_empty() {
+                continue;
+            }
+            let Some(binding) = import.bound_name() else {
+                continue;
+            };
+            let bound = match (import.kind, &import.alias) {
+                (ImportKind::Import, Some(_)) => Bound::Module(sibling(&import.module)),
+                (ImportKind::Import, None) => Bound::Module(sibling(binding)),
+                (ImportKind::ImportFrom, _) => {
+                    let Some((package, name)) = import.import_target() else {
+                        continue;
+                    };
+                    let package = sibling(package);
+                    // `from . import m` binds the submodule, which most
+                    // chains pass through.
+                    match self.known(&format!("{package}.{name}")) {
+                        Some(submodule) => Bound::Module(submodule),
+                        None => Bound::Member(package, name),
+                    }
+                },
+            };
+            own.insert(binding, bound);
+        }
+        own
+    }
+
+    /// The known module `receiver` names in a module that binds `own` and
+    /// star-imports `stars_of_module`.
+    fn resolve(
+        &self,
+        own: &FxHashMap<&'m str, Bound<'m>>,
+        stars_of_module: &[&'m str],
+        receiver: &str,
+    ) -> Option<&'m str> {
+        let lookups = Cell::new(MAX_MEMBER_LOOKUPS);
+        let mut segments = receiver.split('.');
+        let root = segments.next()?;
+        let mut module = match own.get(root) {
+            Some(&bound) => self.follow(bound, &lookups)?,
+            None => self.through_stars(stars_of_module, root, &lookups)?,
+        };
+        for segment in segments {
+            module = self.member(&module, segment, &lookups)?;
+        }
+        self.known(&module)
+    }
+
+    fn known(&self, module: &str) -> Option<&'m str> {
+        self.known_modules
+            .get(&*self.symlinks.canonical(module))
+            .copied()
+    }
+
+    fn follow(&self, bound: Bound<'m>, lookups: &Cell<u32>) -> Option<String> {
+        match bound {
+            Bound::Module(module) => Some(module.to_owned()),
+            Bound::Member(package, name) => self.member(package, name, lookups),
+        }
+    }
+
+    /// The module `module.name` is: a name the module bound by import, its
+    /// submodule, or a module one of its star imports hands on.
+    fn member(&self, module: &str, name: &str, lookups: &Cell<u32>) -> Option<String> {
+        lookups.set(lookups.get().checked_sub(1)?);
+        if let Some(&bound) = self
+            .by_module
+            .get(module)
+            .and_then(|bindings| bindings.get(name))
+            && let Some(found) = self.follow(bound, lookups)
+        {
+            return Some(found);
+        }
+        let submodule = format!("{module}.{name}");
+        if self.known(&submodule).is_some() {
+            return Some(submodule);
+        }
+        let stars = self
+            .stars
+            .children
+            .get(module)
+            .map_or(&[][..], Vec::as_slice);
+        self.through_stars(stars, name, lookups)
+    }
+
+    /// The module `name` is in a module that star-imports `stars`: what
+    /// one of them hands on under it (`__all__ = ["m"]` in a package hands
+    /// on its submodule `m`).
+    fn through_stars(&self, stars: &[&'m str], name: &str, lookups: &Cell<u32>) -> Option<String> {
+        stars
+            .iter()
+            .filter(|&&star| self.stars.chain.hands_on(star, name))
+            .find_map(|star| self.member(star, name, lookups))
     }
 }
 
