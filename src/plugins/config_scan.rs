@@ -1977,6 +1977,9 @@ mod tests {
         assert!(!ends_in_quote("echo \"a\\\"\" b"));
         assert!(!ends_in_quote("echo a\\'b"));
         assert!(!ends_in_quote("x=1 # don't"));
+        // A `#` inside a word starts no comment; a plain `'...'` has no escapes.
+        assert!(ends_in_quote("echo a#'b"));
+        assert!(!ends_in_quote("echo 'a\\' b"));
         assert!(!ends_in_quote("echo $'it\\'s done'"));
         assert!(ends_in_quote("echo $'it\\'s"));
     }

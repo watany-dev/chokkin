@@ -648,6 +648,11 @@ mod tests {
             '`'
         );
         assert_eq!(docker_escape("FROM x\n# escape=`\n"), '\\');
+        // A comment that is no `name=value` directive ends the directives.
+        assert_eq!(docker_escape("# a b=c\n# escape=`\n"), '\\');
+        assert_eq!(docker_escape("# =c\n# escape=`\n"), '\\');
+        assert_eq!(docker_escape("# escape=\\\n"), '\\');
+        assert_eq!(docker_escape("# syntax=`\n"), '\\');
     }
 
     #[test]
