@@ -2,13 +2,16 @@
 
 use std::collections::BTreeSet;
 
-use globset::{Glob, GlobMatcher};
+use globset::GlobMatcher;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
+use crate::fnmatch::Fnmatch;
 use crate::manifest::{PackageFind, WheelTargets};
 use crate::path_util::join_rel;
 
 use super::glob::{check_braces, path_glob};
 use super::types::{DiscoveredFile, LayoutInfo};
+use super::wildmatch::git_rules;
 
 /// Discovered files a wheel ships, resolved from `WheelTargets`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -36,12 +39,20 @@ impl PublicSurface {
             .iter()
             .map(|find| FindTarget::new(find, files))
             .collect();
+        let include = gitignore_patterns(&targets.include);
+        let exclude = gitignore_patterns(&targets.exclude);
         let files: BTreeSet<String> = files
             .iter()
             .map(|file| file.path.as_str())
             .filter(|path| {
-                paths.iter().any(|target| target.matches(path))
+                (paths.iter().any(|target| target.matches(path))
                     || finds.iter().any(|target| target.matches(path))
+                    || include
+                        .as_ref()
+                        .is_some_and(|set| matches_pattern(set, path)))
+                    && !exclude
+                        .as_ref()
+                        .is_some_and(|set| matches_pattern(set, path))
             })
             .map(str::to_owned)
             .collect();
@@ -53,13 +64,12 @@ impl PublicSurface {
     #[must_use]
     pub(crate) fn from_layout(layout: &LayoutInfo, files: &[DiscoveredFile]) -> Option<Self> {
         let targets = WheelTargets {
-            source: "layout".to_owned(),
             paths: layout
                 .packages
                 .iter()
                 .map(|package| layout.package_dir(package))
                 .collect(),
-            find: Vec::new(),
+            ..WheelTargets::default()
         };
         Self::resolve(Some(&targets), files)
     }
@@ -121,20 +131,18 @@ impl PathTarget {
 /// setuptools `find_packages` / `find_namespace_packages` over discovered files.
 struct FindTarget {
     where_dirs: Vec<String>,
-    include: Vec<GlobMatcher>,
-    exclude: Vec<GlobMatcher>,
+    include: Vec<Fnmatch>,
+    exclude: Vec<Fnmatch>,
     /// Package directories holding an `__init__.py`; `None` for namespace search.
     regular_packages: Option<BTreeSet<String>>,
 }
 
 impl FindTarget {
     fn new(find: &PackageFind, files: &[DiscoveredFile]) -> Self {
-        let compile = |patterns: &[String]| -> Vec<GlobMatcher> {
+        let compile = |patterns: &[String]| {
             patterns
                 .iter()
-                .filter(|pattern| check_braces(pattern).is_ok())
-                .filter_map(|pattern| Glob::new(pattern).ok())
-                .map(|glob| glob.compile_matcher())
+                .map(|pattern| Fnmatch::new(pattern))
                 .collect()
         };
         let regular_packages = (!find.namespaces).then(|| {
@@ -158,12 +166,18 @@ impl FindTarget {
             .any(|base| self.matches_in(base, file))
     }
 
-    /// `find` only returns packages, so a module directly in `where` is not shipped.
+    /// `find` only returns packages, so a module directly in `where` is not
+    /// shipped, nor anything below a directory whose name holds `.`, which
+    /// `find` skips with its subtree (#1426). Names are matched as setuptools
+    /// does, with `fnmatchcase` (#1424).
     fn matches_in(&self, base: &str, file: &str) -> bool {
         let Some((package_dir, _)) = relative_to(base, file).and_then(|rel| rel.rsplit_once('/'))
         else {
             return false;
         };
+        if package_dir.contains('.') {
+            return false;
+        }
         let regular = self.regular_packages.as_ref().is_none_or(|regular| {
             std::iter::once(package_dir)
                 .chain(parent_dirs(package_dir))
@@ -174,6 +188,30 @@ impl FindTarget {
             && self.include.iter().any(|glob| glob.is_match(&package))
             && !self.exclude.iter().any(|glob| glob.is_match(&package))
     }
+}
+
+/// hatch `include` / `exclude` patterns, gitignore style as `pathspec`
+/// reads them; `None` without any. A pattern `ignore` cannot compile ships
+/// nothing and excludes nothing.
+fn gitignore_patterns(patterns: &[String]) -> Option<Gitignore> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let mut builder = GitignoreBuilder::new(".");
+    for pattern in patterns {
+        for rule in git_rules(pattern) {
+            let _ = builder.add_line(None, &rule);
+        }
+    }
+    builder.build().ok()
+}
+
+/// Whether `path` or a directory above it matches, as hatch selects a whole
+/// directory by its name.
+fn matches_pattern(patterns: &Gitignore, path: &str) -> bool {
+    patterns
+        .matched_path_or_any_parents(path, false)
+        .is_ignore()
 }
 
 fn relative_to<'a>(base: &str, file: &'a str) -> Option<&'a str> {
@@ -224,8 +262,55 @@ mod tests {
         WheelTargets {
             source: "test".to_owned(),
             paths: paths.iter().map(|path| (*path).to_owned()).collect(),
-            find: Vec::new(),
+            ..WheelTargets::default()
         }
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|item| (*item).to_owned()).collect()
+    }
+
+    /// hatch `include` is gitignore style: a name without `/` matches at
+    /// any depth, and `*` stays within a directory (#1434).
+    #[test]
+    fn hatch_include_matches_gitignore_style() {
+        let all = [
+            "acme/__init__.py",
+            "acme/core.py",
+            "acme/sub/__init__.py",
+            "acme/sub/x.py",
+        ];
+        for include in [&["acme/__init__.py", "acme/core.py", "x.py"][..], &["sub"]] {
+            let targets = WheelTargets {
+                include: strings(include),
+                ..path_targets(&[])
+            };
+            let surface = surface(&targets, &all).expect("surface");
+            assert!(surface.contains("acme/sub/x.py"), "include {include:?}");
+        }
+        let targets = WheelTargets {
+            include: strings(&["acme/*.py"]),
+            ..path_targets(&[])
+        };
+        let surface = surface(&targets, &all).expect("surface");
+        assert!(surface.contains("acme/core.py"));
+        assert!(!surface.contains("acme/sub/x.py"));
+    }
+
+    /// hatch `exclude` drops what it matches from every other target (#1435).
+    #[test]
+    fn hatch_exclude_drops_files() {
+        let targets = WheelTargets {
+            exclude: strings(&["acme/sub"]),
+            ..path_targets(&["acme"])
+        };
+        let surface = surface(
+            &targets,
+            &["acme/__init__.py", "acme/sub/__init__.py", "acme/sub/x.py"],
+        )
+        .expect("surface");
+        assert!(surface.contains("acme/__init__.py"));
+        assert!(!surface.contains("acme/sub/x.py"));
     }
 
     #[test]
@@ -298,6 +383,7 @@ mod tests {
                 exclude: vec!["acme.tests*".to_owned()],
                 namespaces: true,
             }],
+            ..WheelTargets::default()
         };
         let surface = surface(
             &targets,
@@ -328,6 +414,7 @@ mod tests {
                 exclude: Vec::new(),
                 namespaces: false,
             }],
+            ..WheelTargets::default()
         };
         let surface = surface(
             &targets,
@@ -342,5 +429,65 @@ mod tests {
         assert!(surface.contains("acme/a.py"));
         assert!(!surface.contains("acme/nsdir/b.py"));
         assert!(!surface.contains("scripts/run.py"));
+    }
+
+    /// `include` / `exclude` are `fnmatchcase` patterns: `[^c]` is the class
+    /// of `^` and `c`, and braces are literal (#1424).
+    #[test]
+    fn find_patterns_are_fnmatch() {
+        let all = [
+            "acme/__init__.py",
+            "acme/core.py",
+            "acme/internal/__init__.py",
+            "acme/internal/x.py",
+        ];
+        for exclude in ["acme.[^c]*", "acme.{internal,priv}*"] {
+            let targets = WheelTargets {
+                source: "test".to_owned(),
+                paths: Vec::new(),
+                find: vec![PackageFind {
+                    where_dirs: vec![String::new()],
+                    include: vec!["acme*".to_owned()],
+                    exclude: vec![exclude.to_owned()],
+                    namespaces: false,
+                }],
+                ..WheelTargets::default()
+            };
+            let surface = surface(&targets, &all).expect("surface");
+            assert!(surface.contains("acme/internal/x.py"), "exclude {exclude}");
+        }
+    }
+
+    /// `find` skips a directory whose name holds `.`, and all below it (#1426).
+    #[test]
+    fn find_skips_dotted_directories() {
+        for namespaces in [false, true] {
+            let targets = WheelTargets {
+                source: "test".to_owned(),
+                paths: Vec::new(),
+                find: vec![PackageFind {
+                    where_dirs: vec![String::new()],
+                    include: vec!["acme*".to_owned()],
+                    exclude: Vec::new(),
+                    namespaces,
+                }],
+                ..WheelTargets::default()
+            };
+            let surface = surface(
+                &targets,
+                &[
+                    "acme/__init__.py",
+                    "acme/core.py",
+                    "acme/v1.0/__init__.py",
+                    "acme/v1.0/x.py",
+                    "acme/v1.0/sub/__init__.py",
+                    "acme/v1.0/sub/y.py",
+                ],
+            )
+            .expect("surface");
+            assert!(surface.contains("acme/core.py"));
+            assert!(!surface.contains("acme/v1.0/x.py"));
+            assert!(!surface.contains("acme/v1.0/sub/y.py"));
+        }
     }
 }

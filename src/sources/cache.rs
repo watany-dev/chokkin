@@ -10,7 +10,6 @@
 //! `Ignore::matched` for the options [`super::walk`] sets (git ignore +
 //! exclude, parents, no global or `.ignore` files, `require_git`).
 
-use std::borrow::Cow;
 use std::ffi::OsString;
 use std::fs::{self, File, FileType};
 use std::io::{BufRead, BufReader};
@@ -24,7 +23,12 @@ use ignore::overrides::{Override, OverrideBuilder};
 use rustc_hash::FxHashMap as HashMap;
 
 use super::error::SourcesError;
-use super::glob::{build_glob_set, check_braces};
+use super::glob::{build_glob_set_within, check_braces};
+use super::wildmatch::git_rules;
+
+/// The patterns of a glob set and those of them compiled within one path
+/// component.
+type GlobKey = (Vec<String>, Vec<String>);
 
 /// Parsed ignore state shared by every [`super::discover_sources_cached`] call
 /// that gets a clone of it.
@@ -39,7 +43,7 @@ struct Inner {
     chains: Mutex<HashMap<PathBuf, HashMap<PathBuf, Arc<DirChain>>>>,
     /// Compiled rules by ignore file content, rooted at `.`.
     rules: Mutex<HashMap<Vec<u8>, Arc<Gitignore>>>,
-    globs: Mutex<HashMap<Vec<String>, Arc<GlobSet>>>,
+    globs: Mutex<HashMap<GlobKey, Arc<GlobSet>>>,
     overrides: Mutex<HashMap<Vec<String>, Arc<Override>>>,
 }
 
@@ -92,11 +96,21 @@ pub(super) struct Ancestors {
 impl SourcesCache {
     /// Glob set for `patterns`, built once per distinct list.
     pub(super) fn glob_set(&self, patterns: &[String]) -> Result<Arc<GlobSet>, SourcesError> {
-        if let Some(set) = lock(&self.0.globs).get(patterns) {
+        self.glob_set_within(patterns, &[])
+    }
+
+    /// [`build_glob_set_within`], built once per distinct pair of lists.
+    pub(super) fn glob_set_within(
+        &self,
+        patterns: &[String],
+        within_component: &[String],
+    ) -> Result<Arc<GlobSet>, SourcesError> {
+        let key = (patterns.to_vec(), within_component.to_vec());
+        if let Some(set) = lock(&self.0.globs).get(&key) {
             return Ok(Arc::clone(set));
         }
-        let set = Arc::new(build_glob_set(patterns)?);
-        lock(&self.0.globs).insert(patterns.to_vec(), Arc::clone(&set));
+        let set = Arc::new(build_glob_set_within(patterns, within_component)?);
+        lock(&self.0.globs).insert(key, Arc::clone(&set));
         Ok(set)
     }
 
@@ -371,60 +385,15 @@ fn compile(content: &[u8]) -> Option<Gitignore> {
         } else {
             &line
         };
-        builder.add_line(None, &literal_braces(line)).ok()?;
+        for rule in git_rules(line) {
+            builder.add_line(None, &rule).ok()?;
+        }
     }
     builder.build().ok()
 }
 
-/// `line` with each `{` and `}` that `globset` would read as alternation
-/// escaped: git's wildmatch has no brace expansion, so `*.{py,pyc}` names a
-/// file literally called that and `{}` matches nothing (#1149). Escapes and
-/// character classes are copied as `globset` tokenizes them, so every other
-/// character keeps the meaning `ignore` gives it.
-fn literal_braces(line: &str) -> Cow<'_, str> {
-    if !line.contains(['{', '}']) {
-        return Cow::Borrowed(line);
-    }
-    let mut out = String::with_capacity(line.len() + 2);
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => {
-                out.push(c);
-                out.extend(chars.next());
-            },
-            '{' | '}' => {
-                out.push('\\');
-                out.push(c);
-            },
-            '[' => {
-                out.push(c);
-                // `ignore` allows unclosed classes: that `[` is a literal,
-                // and so is every later one, as no `]` follows them either.
-                if let Some(close) = class_close(chars.as_str()) {
-                    out.push_str(&chars.as_str()[..close]);
-                    chars = chars.as_str()[close..].chars();
-                }
-            },
-            c => out.push(c),
-        }
-    }
-    Cow::Owned(out)
-}
-
-/// Byte offset in `rest`, the text after a class's `[`, of the `]` that
-/// closes it, as `globset`'s `parse_class` reads it: an optional `!` or `^`,
-/// a leading `]` taken literally, no escapes. `None` when it never closes.
-fn class_close(rest: &str) -> Option<usize> {
-    let skipped = usize::from(rest.starts_with(['!', '^']));
-    let body = &rest[skipped..];
-    let first = body.strip_prefix(']').map_or(0, |_| 1);
-    let close = body[first..].find(']')?;
-    Some(skipped + first + close)
-}
-
-/// `GitignoreBuilder::add` for `path`, with each line through
-/// [`literal_braces`] and parse errors naming the line as written.
+/// `GitignoreBuilder::add` for `path`, with each line through [`git_rules`]
+/// and parse errors naming the line as written.
 fn add_file(builder: &mut GitignoreBuilder, path: &Path) -> Option<ignore::Error> {
     let tagged = |err: ignore::Error, line: u64| ignore::Error::WithPath {
         path: path.to_path_buf(),
@@ -457,7 +426,10 @@ fn add_file(builder: &mut GitignoreBuilder, path: &Path) -> Option<ignore::Error
         } else {
             &line
         };
-        if let Err(err) = builder.add_line(Some(path.to_path_buf()), &literal_braces(line)) {
+        let failed = git_rules(line)
+            .iter()
+            .find_map(|rule| builder.add_line(Some(path.to_path_buf()), rule).err());
+        if let Some(err) = failed {
             let err = match err {
                 ignore::Error::Glob { glob, err } => ignore::Error::Glob {
                     glob: glob.map(|_| {
@@ -684,28 +656,6 @@ mod tests {
             assert!(!from_inner.skips(&inner.join("b/y"), false));
             assert!(from_inner.skips(&inner.join("b/x"), false));
             assert!(!from_inner.skips(&outer.join("y"), false));
-        }
-    }
-
-    #[test]
-    fn literal_braces_escapes_only_alternation() {
-        for (line, expected) in [
-            ("*.py", "*.py"),
-            ("{}", "\\{\\}"),
-            ("*.{py,pyc}", "*.\\{py,pyc\\}"),
-            ("\\{a}", "\\{a\\}"),
-            ("a\\\\{b}", "a\\\\\\{b\\}"),
-            ("[{]x}", "[{]x\\}"),
-            ("[!{}]", "[!{}]"),
-            ("[]{]}", "[]{]\\}"),
-            ("[{x", "[\\{x"),
-            ("[{x[}]", "[{x[}]"),
-            ("[!]{]x}", "[!]{]x\\}"),
-            ("[!{]}", "[!{]\\}"),
-            ("[x{", "[x\\{"),
-            ("{\\", "\\{\\"),
-        ] {
-            assert_eq!(literal_braces(line), expected, "line {line}");
         }
     }
 

@@ -5,12 +5,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::GlobSet;
 use ignore::{WalkBuilder, WalkState};
 
 use crate::discovery::ProjectRoot;
+use crate::fnmatch::Fnmatch;
 use crate::manifest::builds_distribution;
-use crate::sources::{SourcesCache, WalkIgnore, build_glob_set, check_braces};
+use crate::sources::{SourcesCache, WalkIgnore, build_glob_set};
 
 use super::error::ConfigError;
 use super::types::{ChokkinConfig, ResolvedWorkspaceMember, UvWorkspaceHint};
@@ -109,35 +110,80 @@ fn resolve_uv_members(
     let mut paths = BTreeSet::new();
     for member_dir in find_pyprojects(root, &PyprojectScan::UV)? {
         let rel = relative_path(root, &member_dir)?;
-        if members.is_match(&rel) && !exclude.is_match(&rel) {
+        if members.iter().any(|pattern| pattern.is_match(&rel))
+            && !exclude.iter().any(|pattern| pattern.is_match(&rel))
+        {
             paths.insert(rel);
         }
     }
     Ok(members_with_unique_ids(paths))
 }
 
-/// uv expands workspace patterns one path component at a time: `packages/*`
-/// never reaches `packages/foo/tests/fixture/`.
-fn uv_member_globs(root: &Path, patterns: &[String], field: &str) -> Result<GlobSet, ConfigError> {
-    let invalid = |source: globset::Error| ConfigError::Validation {
-        path: root.join("pyproject.toml"),
-        field: format!("tool.uv.workspace.{field}"),
-        message: source.to_string(),
-    };
-    let mut builder = GlobSetBuilder::new();
-    for pattern in patterns {
-        check_braces(pattern).map_err(|message| ConfigError::Validation {
-            path: root.join("pyproject.toml"),
-            field: format!("tool.uv.workspace.{field}"),
-            message,
-        })?;
-        let glob = GlobBuilder::new(&normalize_relative_path(pattern))
-            .literal_separator(true)
-            .build()
-            .map_err(invalid)?;
-        builder.add(glob);
+/// One `[tool.uv.workspace]` `members` / `exclude` pattern. uv expands them
+/// with the `glob` crate one path component at a time, so `packages/*` never
+/// reaches `packages/foo/tests/fixture/`, and each component is matched in
+/// that crate's dialect: no brace alternation, and `[^a]` is the class of `^`
+/// and `a` (negation is `[!a]`), as in `fnmatch` (#1448). `**` as a whole
+/// component spans directories, as before.
+struct MemberPattern(Vec<MemberPart>);
+
+enum MemberPart {
+    AnyDirs,
+    Name(Fnmatch),
+}
+
+impl MemberPattern {
+    fn is_match(&self, rel: &str) -> bool {
+        let parts: Vec<&str> = rel.split('/').filter(|part| !part.is_empty()).collect();
+        match_parts(&self.0, &parts)
     }
-    builder.build().map_err(invalid)
+}
+
+/// A trailing `**` takes at least one component, any other at least none.
+fn match_parts(pattern: &[MemberPart], parts: &[&str]) -> bool {
+    match pattern.split_first() {
+        None => parts.is_empty(),
+        Some((MemberPart::AnyDirs, [])) => !parts.is_empty(),
+        Some((MemberPart::AnyDirs, rest)) => {
+            (0..=parts.len()).any(|skip| match_parts(rest, &parts[skip..]))
+        },
+        Some((MemberPart::Name(name), rest)) => parts
+            .split_first()
+            .is_some_and(|(part, after)| name.is_match(part) && match_parts(rest, after)),
+    }
+}
+
+/// The patterns of `field`; a `[` left unclosed is rejected, as the `glob`
+/// crate rejects it and uv with it.
+fn uv_member_globs(
+    root: &Path,
+    patterns: &[String],
+    field: &str,
+) -> Result<Vec<MemberPattern>, ConfigError> {
+    patterns
+        .iter()
+        .map(|pattern| {
+            let parts = normalize_relative_path(pattern)
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .map(|part| {
+                    if part == "**" {
+                        return Ok(MemberPart::AnyDirs);
+                    }
+                    let name = Fnmatch::new(part);
+                    if name.has_unclosed_class() {
+                        return Err(ConfigError::Validation {
+                            path: root.join("pyproject.toml"),
+                            field: format!("tool.uv.workspace.{field}"),
+                            message: format!("unclosed character class in `{pattern}`"),
+                        });
+                    }
+                    Ok(MemberPart::Name(name))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(MemberPattern(parts))
+        })
+        .collect()
 }
 
 /// Members named after their directory; a shared basename falls back to the
@@ -394,7 +440,7 @@ fn normalize_relative_path(path: &str) -> String {
 mod tests {
     use std::fs;
 
-    use globset::Glob;
+    use globset::{Glob, GlobSetBuilder};
 
     use super::*;
     use crate::config::{WorkspaceOverride, default_config};
@@ -488,6 +534,43 @@ mod tests {
         assert_eq!(
             uv_members(temp.path(), &["packages/*"]),
             [("api".to_owned(), "packages/api".to_owned())]
+        );
+    }
+
+    /// Components read as the `glob` crate reads them: braces literal, `^`
+    /// a class member and `!` the negation (#1448).
+    #[test]
+    fn uv_member_components_use_the_glob_crate_dialect() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let project = "[project]\nname = \"pkg\"\n";
+        for dir in ["pk/pa", "pk/pb", "pk/p{a,b}", "pk/^a"] {
+            write(temp.path(), &format!("{dir}/pyproject.toml"), project);
+        }
+        let paths = |patterns: &[&str]| -> Vec<String> {
+            uv_members(temp.path(), patterns)
+                .into_iter()
+                .map(|(_, path)| path)
+                .collect()
+        };
+        assert_eq!(paths(&["pk/p{a,b}"]), ["pk/p{a,b}"]);
+        assert_eq!(paths(&["pk/[^a]a"]), ["pk/^a"]);
+        assert_eq!(paths(&["pk/[!^]?"]), ["pk/pa", "pk/pb"]);
+        assert_eq!(paths(&["**/p?"]), ["pk/pa", "pk/pb"]);
+        assert_eq!(paths(&["pk/**"]).len(), 4);
+        let error = resolve_workspace_members(
+            &root(temp.path()),
+            &default_config(),
+            Some(&UvWorkspaceHint {
+                members: vec!["pk/p[a".to_owned()],
+                exclude: Vec::new(),
+            }),
+            &BTreeMap::new(),
+            false,
+        )
+        .expect_err("unclosed class");
+        assert!(
+            error.to_string().contains("tool.uv.workspace.members"),
+            "{error}"
         );
     }
 

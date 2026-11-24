@@ -565,6 +565,7 @@ mod tests {
             root: graph_root(),
             layout: crate::sources::LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         }

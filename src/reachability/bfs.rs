@@ -668,6 +668,7 @@ mod tests {
             root: root.clone(),
             layout: layout(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: PATHS
                 .iter()
                 .map(|path| DiscoveredFile {

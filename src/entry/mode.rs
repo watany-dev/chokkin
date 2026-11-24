@@ -229,6 +229,7 @@ mod tests {
             },
             layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: vec![DiscoveredFile {
                 path: "src/acme/__init__.py".to_owned(),
                 kind: FileKind::Python,
@@ -394,6 +395,7 @@ mod tests {
             source: "setup.py".to_owned(),
             paths: vec!["six.py".to_owned()],
             find: Vec::new(),
+            ..crate::manifest::WheelTargets::default()
         });
         assert_eq!(
             resolve_project_mode(&config, &manifest, &sources, &[]),
@@ -552,6 +554,7 @@ mod tests {
             source: "tool.hatch.build.targets.wheel".to_owned(),
             paths: Vec::new(),
             find: Vec::new(),
+            ..crate::manifest::WheelTargets::default()
         });
         manifest.dependencies = vec![
             requirement(

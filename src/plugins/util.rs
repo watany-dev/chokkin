@@ -369,37 +369,6 @@ pub(super) fn uvicorn_tool_from_pyproject(table: &toml::Table) -> Option<&toml::
         .and_then(Value::as_table)
 }
 
-/// Build test file glob patterns from pytest options.
-pub(super) fn pytest_test_globs(testpaths: &[String], python_files: &[String]) -> Vec<String> {
-    let file_patterns = if python_files.is_empty() {
-        vec!["test_*.py".to_owned(), "*_test.py".to_owned()]
-    } else {
-        python_files.to_vec()
-    };
-
-    // Without `testpaths` pytest collects from the rootdir down, which is how
-    // in-package suites (`acme/tests/`) are found.
-    let roots = if testpaths.is_empty() {
-        vec![String::new()]
-    } else {
-        testpaths.to_vec()
-    };
-
-    let mut globs = Vec::new();
-    for root in roots {
-        let normalized = root.trim_start_matches("./").trim_end_matches('/');
-        let prefix = if normalized.is_empty() || normalized == "." {
-            String::new()
-        } else {
-            format!("{normalized}/")
-        };
-        for pattern in &file_patterns {
-            globs.push(format!("{prefix}**/{pattern}"));
-        }
-    }
-    globs
-}
-
 /// `rel` appended to root-relative `base`, with `.` and `..` folded; `None`
 /// when it climbs out of the root or is absolute (`/x`, `\\x`, `C:...`),
 /// which names no place under it. Either separator is read, as a Windows
@@ -998,6 +967,7 @@ mod tests {
                 ..LayoutInfo::default()
             },
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: files
                 .iter()
                 .map(|(path, context)| DiscoveredFile {

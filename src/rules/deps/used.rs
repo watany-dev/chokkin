@@ -597,6 +597,7 @@ mod tests {
             root: graph.root.clone(),
             layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -924,6 +925,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: members
                 .iter()
                 .map(|(name, _)| python_file(&format!("{name}/src/{name}pkg/__init__.py")))
@@ -983,6 +985,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: names
                 .iter()
                 .filter(|name| **name != "omega")
@@ -1048,6 +1051,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("lib", vec!["streamlit".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1099,6 +1103,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
