@@ -72,14 +72,15 @@ impl Fnmatch {
     pub(crate) fn is_match(&self, name: &str) -> bool {
         let text: Vec<char> = name.chars().collect();
         let (mut p, mut t) = (0, 0);
-        // The last `*` seen and the text position it resumes from: every
+        // The last `*` seen and the text position it was reached at: every
         // other token takes exactly one character, so one backtrack point
-        // suffices.
+        // suffices. Backtracking returns to the `*`, which records the next
+        // position.
         let mut star: Option<(usize, usize)> = None;
         while t < text.len() {
             match self.tokens.get(p) {
                 Some(Token::Star) => {
-                    star = Some((p + 1, t));
+                    star = Some((p, t));
                     p += 1;
                 },
                 Some(token) if hits(token, text[t]) => {
@@ -87,10 +88,9 @@ impl Fnmatch {
                     t += 1;
                 },
                 _ => match star {
-                    Some((after, from)) => {
-                        p = after;
+                    Some((at, from)) => {
+                        p = at;
                         t = from + 1;
-                        star = Some((after, from + 1));
                     },
                     None => return false,
                 },
@@ -170,7 +170,9 @@ fn push_class(
     if negated && component && !members.iter().any(|member| member == "/") {
         members.push("/".to_owned());
     }
-    // A positive class must not lead with `!` / `^`, which would negate it.
+    // A positive class must not lead with `!` / `^`, which would negate it:
+    // lead with another member, or with `-`.
+    let mut lead_dash = false;
     if !negated && !close {
         match members
             .iter()
@@ -180,13 +182,10 @@ fn push_class(
                 let lead = members.remove(index);
                 members.insert(0, lead);
             },
-            // `[^]` is the literal `^`, `[-]` the literal `-`.
-            None if members.len() == 1 && !dash && members[0].chars().count() == 1 => {
+            None if dash => lead_dash = true,
+            // `[^]` is the literal `^`.
+            None if members.len() == 1 && members[0].chars().count() == 1 => {
                 out.push_str(&members[0]);
-                return Some(());
-            },
-            None if members.is_empty() && dash => {
-                out.push('-');
                 return Some(());
             },
             None => return None,
@@ -199,8 +198,11 @@ fn push_class(
     if close {
         out.push(']');
     }
+    if lead_dash {
+        out.push('-');
+    }
     out.push_str(&members.concat());
-    if dash {
+    if dash && !lead_dash {
         out.push('-');
     }
     out.push(']');
@@ -309,8 +311,10 @@ mod tests {
             ("a[]x-]", "a[]x-]"),
             ("a[!a-c]", "a[!a-c/]"),
             ("a[", "a[[]"),
-            ("a[-]", "a-"),
+            ("a[-]", "a[-]"),
             ("a[^-bx]", "a[x^-b]"),
+            ("a[^-]", "a[-^]"),
+            ("a[]^]", "a[]^]"),
         ];
         for (pattern, glob) in cases {
             assert_eq!(
@@ -322,6 +326,10 @@ mod tests {
         assert_eq!(
             Fnmatch::new("a[!x]").to_glob(false).as_deref(),
             Some("a[!x]")
+        );
+        assert_eq!(
+            Fnmatch::new("a[!^]").to_glob(false).as_deref(),
+            Some("a[!^]")
         );
         assert_eq!(Fnmatch::new("[^!]").to_glob(true), None);
         assert_eq!(Fnmatch::new("x[^-a]").to_glob(true), None);
