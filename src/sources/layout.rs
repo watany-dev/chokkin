@@ -1257,7 +1257,7 @@ mod tests {
         let temp = tree(&["weblate", "weblate/addons"]);
         fs::write(
             temp.path().join("pyproject.toml"),
-            "[tool.pytest.ini_options]\npython_files = [\"test_*.py\", \"tests.py\", \"check_[a.py\"]\n",
+            "[tool.pytest.ini_options]\npython_files = [\"test_*.py\", \"tests.py\", \"check_[a.py\", \"tests.py\"]\n",
         )
         .expect("write");
         let (layout, _) = infer_layout(

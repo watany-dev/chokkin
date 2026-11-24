@@ -201,7 +201,7 @@ fn render(tokens: &[Token<'_>]) -> String {
                     // otherwise start a range.
                     let body = &text[..text.len() - 1];
                     match body.strip_suffix('-') {
-                        Some(head) if head.len() > 2 => {
+                        Some(head) => {
                             out.push_str(head);
                             out.push_str("/-]");
                         },
@@ -292,6 +292,8 @@ mod tests {
         assert_eq!(rendered("***/b.py"), ["**/b.py"]);
         assert_eq!(rendered("a/***"), ["a/**"]);
         assert_eq!(rendered("x***y"), ["x*y"]);
+        assert_eq!(rendered("a/*/b"), ["a/*/b"]);
+        assert_eq!(rendered("*"), ["*"]);
         let gitignore = matcher(&["***/b.py"]);
         for path in ["b.py", "a/b.py", "c/d/b.py"] {
             assert!(ignored(&gitignore, path), "{path}");
@@ -322,6 +324,7 @@ mod tests {
     fn negated_classes_skip_slash() {
         assert_eq!(rendered("a[!x]b"), ["a[!x/]b"]);
         assert_eq!(rendered("a[^x-]b"), ["a[^x/-]b"]);
+        assert_eq!(rendered("a[!-]b"), ["a[!/-]b"]);
         for line in ["a[!x]b", "a[^x]b", "a[!x]b/"] {
             let gitignore = matcher(&[line]);
             assert!(!ignored(&gitignore, "a/b/m.py"), "{line}");
