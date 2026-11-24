@@ -104,7 +104,7 @@ pub(super) fn include_path_details(dep: &DeclaredDependency) -> Vec<String> {
 
 /// Whether a declaration satisfies usage in the given context.
 #[must_use]
-fn declaration_matches_usage(
+pub(super) fn declaration_matches_usage(
     dep: &DeclaredDependency,
     usage: UsageContext,
     groups: &DependencyGroupsConfig,

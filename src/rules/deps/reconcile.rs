@@ -25,8 +25,9 @@ use super::script::{detect_script_dependency_issues, is_script_third_party};
 use super::unused::{UnusedEvidenceContext, detect_unused_dependencies};
 use super::used::{
     DeclaredIndex, build_declared_index, build_import_declared_index, collect_used_distributions,
-    has_lockfile, mark_pytest_plugin_distributions, mark_self_referential_distribution,
-    mark_workspace_source_distributions, reachable_paths, usage_paths, used_third_party_modules,
+    has_lockfile, mark_extra_distributions, mark_pytest_plugin_distributions,
+    mark_self_referential_distribution, mark_workspace_source_distributions, reachable_paths,
+    usage_paths, used_third_party_modules,
 };
 
 /// Reconcile declared dependencies against imports, plugins, and binaries (§10).
@@ -110,6 +111,7 @@ fn reconcile_project(
         &mut used,
     );
 
+    mark_extra_distributions(manifest, &mut used);
     mark_companion_distributions(
         &declared,
         &used_third_party_modules(context, &usage),

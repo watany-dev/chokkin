@@ -1,44 +1,90 @@
 //! `poetry.lock` graph extraction.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use toml::Value;
 
 use super::error::ManifestError;
-use super::lockfile::{array_tables, merge_package, read_lock_table};
-use super::pep508_util::normalize_distribution_name;
+use super::lockfile::{
+    array_tables, merge_extra, merge_package, read_lock_table, requirement_extras,
+};
+use super::pep508_util::{is_strict_pep508_name, leading_name_token, normalize_distribution_name};
 use super::types::LockfileGraph;
 
 /// Parse `poetry.lock` (lock-version 1.x and 2.x) into a dependency name graph.
 ///
 /// `[package.dependencies]` keys are the dependency names whatever the value
 /// shape (version string, table, or array of marker-split tables), and
-/// `[metadata.files]` from 1.x is ignored.
+/// `[metadata.files]` from 1.x is ignored. `[package.extras]` maps an extra
+/// to requirement strings (`"psycopg-pool (>=3)"`), and a dependency table's
+/// `extras` to what the edge turns on (#1376). An extras entry whose head is
+/// no name is dropped: its package stays reachable through the base edge
+/// Poetry also writes for it, as before extras were read.
 pub(super) fn extract_poetry_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
     let table = read_lock_table(path)?;
-    let mut edges = BTreeMap::new();
+    let mut graph = LockfileGraph::default();
     for package in array_tables(&table, "package") {
         let Some(name) = package.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let deps = package
+        let deps: Vec<(String, Vec<String>)> = package
             .get("dependencies")
             .and_then(Value::as_table)
             .into_iter()
-            .flat_map(toml::Table::keys)
-            .map(String::as_str)
-            .map(normalize_distribution_name);
-        merge_package(&mut edges, name, deps);
+            .flatten()
+            .map(|(dep, spec)| (normalize_distribution_name(dep), table_extras(spec)))
+            .collect();
+        graph.add_edge_extras(&normalize_distribution_name(name), "", &deps);
+        merge_package(&mut graph.edges, name, deps.into_iter().map(|(dep, _)| dep));
+        for (extra, requirements) in package
+            .get("extras")
+            .and_then(Value::as_table)
+            .into_iter()
+            .flatten()
+        {
+            let added: Vec<(String, Vec<String>)> = requirements
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(|spec| {
+                    let head = leading_name_token(spec.trim_start());
+                    is_strict_pep508_name(head)
+                        .then(|| (normalize_distribution_name(head), requirement_extras(spec)))
+                })
+                .collect();
+            merge_extra(&mut graph, name, extra, &added);
+        }
     }
-    Ok(LockfileGraph {
-        edges,
-        ..LockfileGraph::default()
-    })
+    Ok(graph)
+}
+
+/// The `extras` of a dependency's table, or of each marker-split table.
+fn table_extras(spec: &Value) -> Vec<String> {
+    let tables: Vec<&toml::Table> = match spec {
+        Value::Table(table) => vec![table],
+        Value::Array(items) => items.iter().filter_map(Value::as_table).collect(),
+        _ => Vec::new(),
+    };
+    let mut extras: Vec<String> = Vec::new();
+    for extra in tables
+        .into_iter()
+        .filter_map(|table| table.get("extras")?.as_array())
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(normalize_distribution_name)
+    {
+        if !extras.contains(&extra) {
+            extras.push(extra);
+        }
+    }
+    extras
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn parse(contents: &str) -> Result<LockfileGraph, ManifestError> {
@@ -147,6 +193,47 @@ content-hash = "def"
             vec!["blinker", "colorama", "importlib-metadata", "werkzeug"]
         );
         assert_eq!(sorted_deps(&graph, "werkzeug"), Vec::<String>::new());
+    }
+
+    /// `[package.extras]` and a dependency table's `extras` (#1376).
+    #[test]
+    fn extracts_extras_and_edge_extras() {
+        let graph = parse(concat!(
+            "[[package]]\nname = \"FastAPI\"\nversion = \"0.115\"\n\n",
+            "[package.dependencies]\nstarlette = \">=0.40\"\n",
+            "uvicorn = {version = \">=0.12\", optional = true, extras = [\"Standard\"]}\n",
+            "httpx = [{version = \"*\", markers = \"x\", extras = [\"http2\"]}, {version = \"*\", extras = [\"http2\", \"brotli\"]}]\n\n",
+            "[package.extras]\nall = [\"uvicorn[standard] (>=0.12)\", \"email-validator (>=2)\", \"(bad)\"]\nnone = []\n",
+        ))
+        .expect("valid poetry.lock");
+        assert_eq!(
+            graph.extras.get("fastapi"),
+            Some(&BTreeMap::from([
+                (
+                    "all".to_owned(),
+                    vec!["uvicorn".to_owned(), "email-validator".to_owned()]
+                ),
+                ("none".to_owned(), Vec::new()),
+            ]))
+        );
+        let edge_extras = graph.edge_extras.get("fastapi").expect("edge extras");
+        assert_eq!(
+            edge_extras.get(""),
+            Some(&BTreeMap::from([
+                (
+                    "httpx".to_owned(),
+                    vec!["http2".to_owned(), "brotli".to_owned()]
+                ),
+                ("uvicorn".to_owned(), vec!["standard".to_owned()]),
+            ]))
+        );
+        assert_eq!(
+            edge_extras.get("all"),
+            Some(&BTreeMap::from([(
+                "uvicorn".to_owned(),
+                vec!["standard".to_owned()]
+            )]))
+        );
     }
 
     #[test]
