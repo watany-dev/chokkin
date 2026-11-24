@@ -130,8 +130,7 @@ fn file_inline_script(root: &Path, path: &str) -> (Option<InlineScript>, Vec<Man
 }
 
 fn read_script_block(text: &str) -> Result<Option<ScriptBlock>, String> {
-    // `str::lines` drops a trailing `\r`, so CRLF files match the same rules.
-    let lines: Vec<&str> = text.lines().collect();
+    let lines = universal_lines(text);
     let mut blocks = metadata_blocks(&lines)
         .into_iter()
         .filter(|block| block.kind == "script");
@@ -156,6 +155,24 @@ fn read_script_block(text: &str) -> Result<Option<ScriptBlock>, String> {
         content,
         table,
     }))
+}
+
+/// Lines ending at `\n`, `\r\n` or a lone `\r`: the PEP 723 reference
+/// reads the text Python decoded with universal newlines, so a classic-Mac
+/// file has its block too (#1440).
+fn universal_lines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let end = rest.find(['\n', '\r']).unwrap_or(rest.len());
+        let (line, tail) = rest.split_at(end);
+        lines.push(line);
+        rest = tail
+            .strip_prefix("\r\n")
+            .or_else(|| tail.get(1..))
+            .unwrap_or_default();
+    }
+    lines
 }
 
 fn metadata_blocks<'a>(lines: &[&'a str]) -> Vec<MetadataBlock<'a>> {
@@ -412,6 +429,19 @@ mod tests {
         let (crlf_script, warnings) = parse(&crlf);
         assert_eq!(warnings, []);
         assert_eq!(crlf_script, lf_script);
+    }
+
+    /// Issue #1440: a lone `\r` ends a line, alone or mixed with `\n`.
+    #[test]
+    fn cr_block_matches_lf_block() {
+        let (lf_script, _) = parse(SPEC_EXAMPLE);
+        let cr = SPEC_EXAMPLE.replace('\n', "\r");
+        let mixed = SPEC_EXAMPLE.replacen('\n', "\r", 2);
+        for text in [cr, mixed] {
+            let (script, warnings) = parse(&text);
+            assert_eq!(warnings, [], "{text:?}");
+            assert_eq!(script, lf_script, "{text:?}");
+        }
     }
 
     #[test]
