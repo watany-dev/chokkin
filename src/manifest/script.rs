@@ -436,20 +436,7 @@ mod tests {
     fn cr_block_matches_lf_block() {
         let (lf_script, _) = parse(SPEC_EXAMPLE);
         let cr = SPEC_EXAMPLE.replace('\n', "\r");
-        let mut flip = false;
-        let mixed: String = SPEC_EXAMPLE
-            .chars()
-            .flat_map(|ch| {
-                let mut out = vec![ch];
-                if ch == '\n' {
-                    flip = !flip;
-                    if flip {
-                        out = vec!['\r'];
-                    }
-                }
-                out
-            })
-            .collect();
+        let mixed = SPEC_EXAMPLE.replacen('\n', "\r", 2);
         for text in [cr, mixed] {
             let (script, warnings) = parse(&text);
             assert_eq!(warnings, [], "{text:?}");

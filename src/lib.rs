@@ -103,8 +103,7 @@ pub mod internals {
             return Vec::new();
         };
         let lines = crate::parser::LineIndex::new(source);
-        let comments = crate::parser::comment_ranges(parsed.tokens());
-        crate::parser::extract_ignores_with(source, &comments, &lines, &mut Vec::new())
+        crate::parser::extract_ignores_with(source, parsed.tokens(), &lines, &mut Vec::new())
     }
 
     /// Case count for a proptest block tuned to `tuned` cases.

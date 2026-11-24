@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use ruff_python_ast::token::{TokenKind, Tokens};
-use ruff_text_size::{Ranged, TextRange, TextSize};
+use ruff_text_size::{Ranged, TextSize};
 
 use super::lines::LineIndex;
 use super::types::{IgnoreDirective, ParseDiagnostic, ParseSeverity};
@@ -35,8 +35,9 @@ const UNKNOWN_CODE: &str = "`# chokkin:` directive names a rule code that is not
 const LATE_FILE_IGNORE: &str = "`# chokkin: file-ignore[…]` after the first statement suppresses nothing; move it above the code";
 const EARLY_IGNORE: &str = "`# chokkin: ignore[…]` before the first statement is on no code line and suppresses nothing; use `file-ignore[…]` for the whole file";
 
-/// Extract chokkin ignore directives from the `comments` of `source` (the
-/// lexer's comment tokens), whose line index the parser already built, adding to `diagnostics` a warning for each
+/// Extract chokkin ignore directives from the comment tokens among the
+/// lexer's `tokens` for `source`, whose line index the parser already built,
+/// adding to `diagnostics` a warning for each
 /// `# chokkin:` comment that suppresses nothing, so a user who wrote one
 /// knows (ADR 0005, #1132). No other spelling is accepted: the syntax is
 /// frozen as a draft (spec §18), so lower case or a space before `[` stays
@@ -46,7 +47,7 @@ const EARLY_IGNORE: &str = "`# chokkin: ignore[…]` before the first statement 
 /// scan runs only in a file that names chokkin, which most files never do.
 pub(crate) fn extract_ignores_with(
     source: &str,
-    comments: &[TextRange],
+    tokens: &Tokens,
     lines: &LineIndex,
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) -> Vec<IgnoreDirective> {
@@ -65,14 +66,7 @@ pub(crate) fn extract_ignores_with(
         });
     };
     let mut read = BTreeSet::new();
-    let comment_texts = || {
-        comments.iter().filter_map(|range| {
-            let start = usize::from(range.start());
-            source
-                .get(start..usize::from(range.end()))
-                .map(|text| (start, text))
-        })
-    };
+    let comment_texts = || comments(source, tokens);
 
     for (start, caps) in comment_texts()
         .flat_map(|(start, text)| IGNORE_RE.captures_iter(text).map(move |caps| (start, caps)))
@@ -137,13 +131,17 @@ pub(crate) fn extract_ignores_with(
     directives
 }
 
-/// The ranges of the comment tokens in `tokens`, for [`extract_ignores_with`].
-pub(crate) fn comment_ranges(tokens: &Tokens) -> Vec<TextRange> {
+/// Each comment token's start offset and text.
+fn comments<'s>(source: &'s str, tokens: &'s Tokens) -> impl Iterator<Item = (usize, &'s str)> {
     tokens
         .iter()
         .filter(|token| token.kind() == TokenKind::Comment)
-        .map(Ranged::range)
-        .collect()
+        .filter_map(|token| {
+            let start = usize::from(token.start());
+            source
+                .get(start..usize::from(token.end()))
+                .map(|text| (start, text))
+        })
 }
 
 fn is_valid_code(code: &str) -> bool {
@@ -166,19 +164,19 @@ fn first_statement_offset(source: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        EARLY_IGNORE, LATE_FILE_IGNORE, UNKNOWN_CODE, UNRECOGNIZED, comment_ranges,
-        extract_ignores_with,
-    };
+    use super::{EARLY_IGNORE, LATE_FILE_IGNORE, UNKNOWN_CODE, UNRECOGNIZED, extract_ignores_with};
     use crate::internals::extract_ignores;
     use crate::parser::LineIndex;
 
     fn warnings(source: &str) -> (usize, Vec<(u32, String)>) {
         let mut diagnostics = Vec::new();
         let parsed = ruff_python_parser::parse_module(source).expect("test source parses");
-        let comments = comment_ranges(parsed.tokens());
-        let directives =
-            extract_ignores_with(source, &comments, &LineIndex::new(source), &mut diagnostics);
+        let directives = extract_ignores_with(
+            source,
+            parsed.tokens(),
+            &LineIndex::new(source),
+            &mut diagnostics,
+        );
         let warnings = diagnostics
             .into_iter()
             .map(|diagnostic| (diagnostic.line, diagnostic.message))
