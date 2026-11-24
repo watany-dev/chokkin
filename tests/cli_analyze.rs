@@ -12188,3 +12188,58 @@ fn lockfile_closure_of_a_runtime_import_skips_dev_groups() {
         "{strict:?}"
     );
 }
+
+/// CHK008 walks the same lock closure as CHK004: a declared extra's binary
+/// and one two hops down are installed (#1378).
+#[test]
+fn lockfile_closure_provides_binaries_through_extras_and_hops() {
+    let lock = |black_reached: bool| {
+        format!(
+            concat!(
+                "version = 1\nrequires-python = \">=3.11\"\n\n",
+                "[[package]]\nname = \"fastapi\"\nversion = \"0.115.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+                "dependencies = [\n    {{ name = \"starlette\" }},\n]\n\n",
+                "[package.optional-dependencies]\nstandard = [\n    {{ name = \"uvicorn\", extra = [\"standard\"] }},\n]\n\n",
+                "[[package]]\nname = \"oq-meta\"\nversion = \"1.0.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+                "dependencies = [\n    {{ name = \"oq-mid\" }},\n]\n\n",
+                "[[package]]\nname = \"oq-mid\"\nversion = \"1.0.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+                "dependencies = [\n    {{ name = \"{}\" }},\n]\n\n",
+                "[[package]]\nname = \"starlette\"\nversion = \"0.40.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n\n",
+                "[[package]]\nname = \"uvicorn\"\nversion = \"0.30.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n\n",
+                "[[package]]\nname = \"black\"\nversion = \"24.0.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+            ),
+            if black_reached { "black" } else { "starlette" }
+        )
+    };
+    for black_reached in [true, false] {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                concat!(
+                    "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                    "dependencies = [\"fastapi[standard]\", \"oq-meta\"]\n\n",
+                    "[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+                ),
+            ),
+            ("main.py", "import fastapi\nimport oq_meta\n"),
+            ("ci.sh", "#!/bin/sh\nblack .\nuvicorn main:app\n"),
+            ("uv.lock", &lock(black_reached)),
+        ]);
+        let binaries: Vec<_> = dependency_findings(project.path(), &[])
+            .into_iter()
+            .filter(|(code, _, _)| code == "CHK008")
+            .collect();
+        let expected = if black_reached {
+            Vec::new()
+        } else {
+            vec![finding("CHK008", "black", "certain")]
+        };
+        assert_eq!(binaries, expected, "black reached: {black_reached}");
+    }
+}
