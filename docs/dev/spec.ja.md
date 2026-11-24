@@ -942,7 +942,8 @@ PEP 723 inline script metadata (v0.5, R-02) は script 単位の dependency scop
 
 ```text
 検出   : probe (step 4) で source の .py を file text から走査する (AST は使わない)
-         `# /// script` 〜 最後の `# ///` を TOML として読む。CRLF 可
+         `# /// script` 〜 最後の `# ///` を TOML として読む。LF / CRLF / 単独の CR
+         のどれでも行が終わる (universal newlines、#1440)
          block が 2 つ以上 / TOML が壊れている / 型が違う -> warning、通常 source 扱い
 entry  : script file 自体を entry root (origin: script) にする。script から到達する
          first-party file は CHK001 にならない。--production では production context の
