@@ -786,8 +786,8 @@ fn tox_alternatives(condition: &str) -> Vec<&str> {
     let (mut start, mut in_group) = (0, false);
     for (index, ch) in condition.char_indices() {
         match ch {
-            '{' if !in_group => in_group = tox_group(&condition[index + 1..]).is_some(),
-            '}' if in_group => in_group = false,
+            '{' => in_group = tox_group(&condition[index + 1..]).is_some(),
+            '}' => in_group = false,
             ',' if !in_group => {
                 alternatives.push(&condition[start..index]);
                 start = index + 1;
@@ -2209,10 +2209,23 @@ mod tests {
             ("py 38: a", "py 38: a"),
             ("!: a", "!: a"),
             ("é: x", "x"),
+            ("{py38,py39}: x", "x"),
+            ("py{38,39}, lint: x", "x"),
+            ("py{}: x", "py{}: x"),
+            ("py{38: x", "py{38: x"),
             ("éa:b", "éa:b"),
         ] {
             assert_eq!(strip_tox_factors(line), value, "line {line}");
         }
+        // Variants count across alternatives, up to 256.
+        let group = |count: usize| {
+            let members: Vec<String> = (0..count).map(|n| n.to_string()).collect();
+            format!("py{{{}}}", members.join(","))
+        };
+        let at_limit = format!("{}, {}: x", group(128), group(128));
+        assert_eq!(strip_tox_factors(&at_limit), "x");
+        let over = format!("{}, {}: x", group(200), group(200));
+        assert_eq!(strip_tox_factors(&over), over);
         let result = scan_files(&[(
             "tox.ini",
             "[testenv]\ndeps =\n    py{38,39}: black\n    py38, py39: isort\n    lint : ruff\n",
