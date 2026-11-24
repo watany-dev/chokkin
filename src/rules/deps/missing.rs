@@ -438,14 +438,10 @@ impl<'c> Seeds<'c> {
         self,
         declared: &'d DeclaredIndex<'a>,
     ) -> impl Iterator<Item = &'a DeclaredDependency> + use<'c, 'd, 'a> {
-        declared
-            .values()
-            .flatten()
-            .copied()
-            .filter(move |dep| {
-                self.usage
-                    .is_none_or(|usage| declaration_matches_usage(dep, usage, self.groups))
-            })
+        declared.values().flatten().copied().filter(move |dep| {
+            self.usage
+                .is_none_or(|usage| declaration_matches_usage(dep, usage, self.groups))
+        })
     }
 }
 
