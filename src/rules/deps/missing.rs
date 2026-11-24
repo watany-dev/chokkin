@@ -1,9 +1,9 @@
 //! CHK003 missing and CHK004 transitive dependency detection.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::ptr;
 
-use crate::config::{ChokkinConfig, Confidence};
+use crate::config::{ChokkinConfig, Confidence, DependencyGroupsConfig};
 use crate::graph::ModuleOrigin;
 use crate::manifest::{DeclaredDependency, LockfileGraph};
 use crate::parser::ParseSummary;
@@ -14,7 +14,9 @@ use crate::rules::types::{
 };
 use crate::rules::{DependencyRuleContext, RuleContext};
 
-use super::context::{UsageContext, is_directly_declared, usage_context_for_import};
+use super::context::{
+    UsageContext, declaration_matches_usage, is_directly_declared, usage_context_for_import,
+};
 use super::used::DeclaredIndex;
 
 /// Precomputed declaration index for a workspace member manifest.
@@ -118,6 +120,13 @@ pub(super) fn detect_missing_dependencies(
             distribution,
             &scopes,
             &mut closures,
+            Seeds {
+                // A conditional import keeps every declaration as a seed: a
+                // lock edge from any of them is what keeps it CHK004 (#1276),
+                // and the corpus labels those findings `tp`.
+                usage: (!optional).then_some(usage),
+                groups: &config.dependencies,
+            },
             optional,
             strict,
         ));
@@ -136,10 +145,11 @@ fn undeclared_candidate<'i>(
     distribution: &str,
     scopes: &[Option<LockScope<'i, '_>>],
     closures: &mut LockClosures<'i>,
+    seeds: Seeds<'_>,
     optional: bool,
     strict: bool,
 ) -> IssueCandidate {
-    let evidence = lock_evidence(distribution, scopes, closures);
+    let evidence = lock_evidence(distribution, scopes, closures, seeds);
     // A lock edge proves a transitive dependency, so wrapping the import in
     // `try:` must not hide CHK004; a lock entry without an edge is too weak
     // to override the optional relaxation (#504).
@@ -168,11 +178,12 @@ fn lock_evidence<'i>(
     distribution: &str,
     scopes: &[Option<LockScope<'i, '_>>],
     closures: &mut LockClosures<'i>,
+    seeds: Seeds<'_>,
 ) -> Option<LockEvidence> {
     let mut scopes = scopes.iter().flatten();
     if scopes
         .clone()
-        .any(|&(declared, lock)| closures.is_transitive_only(distribution, declared, lock))
+        .any(|&(declared, lock)| closures.is_transitive_only(distribution, declared, lock, seeds))
     {
         return Some(LockEvidence::TransitiveEdge);
     }
@@ -412,12 +423,34 @@ fn missing_candidate(
     }
 }
 
-/// Lock closures of each declaration set, walked once per scope instead of
-/// once per import (#972). Keyed by address: a scope's declarations and
-/// lockfile are borrowed for the whole detection pass.
+/// The declarations a lock walk starts from: those that satisfy the import's
+/// usage context, or all of them for `None`. A dependency group is not
+/// installed with the project (PEP 735), so what only a dev group's lock
+/// edges reach is not on the runtime path of a runtime import (#1377).
+#[derive(Clone, Copy)]
+pub(super) struct Seeds<'c> {
+    pub(super) usage: Option<UsageContext>,
+    pub(super) groups: &'c DependencyGroupsConfig,
+}
+
+impl<'c> Seeds<'c> {
+    fn of<'d, 'a>(
+        self,
+        declared: &'d DeclaredIndex<'a>,
+    ) -> impl Iterator<Item = &'a DeclaredDependency> + use<'c, 'd, 'a> {
+        declared.values().flatten().copied().filter(move |dep| {
+            self.usage
+                .is_none_or(|usage| declaration_matches_usage(dep, usage, self.groups))
+        })
+    }
+}
+
+/// Lock closures of each declaration set, walked once per scope and usage
+/// context instead of once per import (#972). Keyed by address: a scope's
+/// declarations and lockfile are borrowed for the whole detection pass.
 #[derive(Default)]
 struct LockClosures<'i> {
-    by_scope: HashMap<(usize, usize), HashSet<&'i str>>,
+    by_scope: HashMap<(usize, usize, Option<UsageContext>), HashSet<&'i str>>,
 }
 
 impl<'i> LockClosures<'i> {
@@ -426,19 +459,20 @@ impl<'i> LockClosures<'i> {
         distribution: &str,
         declared: &'i DeclaredIndex<'_>,
         lock: &'i LockfileGraph,
+        seeds: Seeds<'_>,
     ) -> bool {
         // A seed's own closure excludes it, so it cannot share the cache.
-        if declared
-            .values()
-            .flatten()
-            .any(|dep| dep.name == distribution)
-        {
-            return is_transitive_only(distribution, declared, lock);
+        if seeds.of(declared).any(|dep| dep.name == distribution) {
+            return is_transitive_only(distribution, declared, lock, seeds);
         }
-        let key = (ptr::from_ref(declared).addr(), ptr::from_ref(lock).addr());
+        let key = (
+            ptr::from_ref(declared).addr(),
+            ptr::from_ref(lock).addr(),
+            seeds.usage,
+        );
         self.by_scope
             .entry(key)
-            .or_insert_with(|| lock_closure(declared, lock, None))
+            .or_insert_with(|| lock_closure(seeds.of(declared), lock, None))
             .contains(distribution)
     }
 }
@@ -450,35 +484,25 @@ pub(super) fn is_transitive_only(
     distribution: &str,
     declared: &DeclaredIndex<'_>,
     transitive: &LockfileGraph,
+    seeds: Seeds<'_>,
 ) -> bool {
     // Seeding with `distribution` itself would make any directly declared
     // dependency look transitive before a single edge is walked.
-    lock_closure(declared, transitive, Some(distribution)).contains(distribution)
+    lock_closure(seeds.of(declared), transitive, Some(distribution)).contains(distribution)
 }
 
-/// Every name the lock edges reach from the declarations, `except` left out
-/// of the seeds (but not of what the others reach).
-fn lock_closure<'g>(
-    declared: &'g DeclaredIndex<'_>,
+/// Every name the lock reaches from `seeds`, extras included, `except` left
+/// out of the seeds (but not of what the others reach).
+fn lock_closure<'s, 'g>(
+    seeds: impl Iterator<Item = &'s DeclaredDependency>,
     lock: &'g LockfileGraph,
     except: Option<&str>,
 ) -> HashSet<&'g str> {
-    let mut visited = HashSet::new();
-    let mut queue = VecDeque::new();
-    for dep in declared.values().flatten() {
-        let name = dep.name.as_str();
-        if Some(name) != except && visited.insert(name) {
-            queue.push_back(name);
-        }
-    }
-    while let Some(current) = queue.pop_front() {
-        for child in lock.edges.get(current).into_iter().flatten() {
-            if visited.insert(child.as_str()) {
-                queue.push_back(child.as_str());
-            }
-        }
-    }
-    visited
+    lock.closure(
+        seeds
+            .filter(|dep| Some(dep.name.as_str()) != except)
+            .map(|dep| (dep.name.as_str(), dep.extras.as_slice())),
+    )
 }
 
 /// One issue per distribution and `import` statement; a config reference keys
@@ -535,6 +559,13 @@ mod tests {
     use crate::resolver::ResolutionIndex;
 
     const FILE: &str = "src/app.py";
+
+    fn runtime(groups: &DependencyGroupsConfig) -> Seeds<'_> {
+        Seeds {
+            usage: Some(UsageContext::Runtime),
+            groups,
+        }
+    }
 
     fn declared_dep(name: &str) -> DeclaredDependency {
         declared_dep_in(name, DependencyContext::Runtime)
@@ -743,6 +774,7 @@ mod tests {
 
     #[test]
     fn finds_transitive_dependency_in_lockfile_closure() {
+        let groups = default_config().dependencies;
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
@@ -750,8 +782,18 @@ mod tests {
             edges: BTreeMap::from([("requests".to_owned(), vec!["urllib3".to_owned()])]),
             ..LockfileGraph::default()
         };
-        assert!(is_transitive_only("urllib3", &index, &transitive));
-        assert!(!is_transitive_only("certifi", &index, &transitive));
+        assert!(is_transitive_only(
+            "urllib3",
+            &index,
+            &transitive,
+            runtime(&groups)
+        ));
+        assert!(!is_transitive_only(
+            "certifi",
+            &index,
+            &transitive,
+            runtime(&groups)
+        ));
     }
 
     #[test]
@@ -788,6 +830,7 @@ mod tests {
 
     #[test]
     fn cached_closure_agrees_with_a_fresh_walk() {
+        let groups = default_config().dependencies;
         let requests = declared_dep("requests");
         let urllib3 = declared_dep("urllib3");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
@@ -809,8 +852,8 @@ mod tests {
         // `urllib3` and `requests` are seeds: their answer excludes themselves.
         for name in ["idna", "brotli", "urllib3", "requests", "certifi", "absent"] {
             assert_eq!(
-                closures.is_transitive_only(name, &index, &lock),
-                is_transitive_only(name, &index, &lock),
+                closures.is_transitive_only(name, &index, &lock, runtime(&groups)),
+                is_transitive_only(name, &index, &lock, runtime(&groups)),
                 "{name}"
             );
         }
@@ -822,6 +865,7 @@ mod tests {
     #[test]
     #[ignore = "stress: run manually with --release"]
     fn large_lock_with_many_imports_walks_the_closure_once() {
+        let groups = default_config().dependencies;
         let root = declared_dep("pkg-0");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("pkg-0".to_owned(), vec![&root]);
@@ -835,7 +879,14 @@ mod tests {
         let started = std::time::Instant::now();
         let mut closures = LockClosures::default();
         let reached = (0..200_000)
-            .filter(|i| closures.is_transitive_only(&format!("pkg-{}", i * 2 + 1), &index, &lock))
+            .filter(|i| {
+                closures.is_transitive_only(
+                    &format!("pkg-{}", i * 2 + 1),
+                    &index,
+                    &lock,
+                    runtime(&groups),
+                )
+            })
             .count();
         assert_eq!(reached, 150_000);
         assert!(
@@ -847,13 +898,15 @@ mod tests {
 
     #[test]
     fn declared_distribution_is_never_transitive_only() {
+        let groups = default_config().dependencies;
         let requests = declared_dep("requests");
         let mut index: DeclaredIndex<'_> = BTreeMap::new();
         index.insert("requests".to_owned(), vec![&requests]);
         assert!(!is_transitive_only(
             "requests",
             &index,
-            &LockfileGraph::default()
+            &LockfileGraph::default(),
+            runtime(&groups)
         ));
     }
 
