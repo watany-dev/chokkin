@@ -1,0 +1,11 @@
+[package]
+name = "chokkin_extract"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not part of chokkin's build: a crate of verbatim copies for Charon/Aeneas.
+[workspace]
+
+[lib]
+path = "src/lib.rs"
