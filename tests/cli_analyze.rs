@@ -11986,3 +11986,220 @@ fn binary_subtree_requirements_declare_their_own_sources() {
         "{issues:#?}"
     );
 }
+
+const SITE: &str = ".venv/lib/python3.12/site-packages";
+
+/// An app declaring `dependencies`, importing from `main.py`, with `files`
+/// under site-packages; returns the (code, target) of each issue.
+fn venv_issues(dependencies: &[&str], main: &str, files: &[(&str, &str)]) -> Vec<(String, String)> {
+    let declared = dependencies
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let pyproject = format!(
+        "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [{declared}]\n\
+         [tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n"
+    );
+    let site: Vec<(String, &str)> = files
+        .iter()
+        .map(|(path, text)| (format!("{SITE}/{path}"), *text))
+        .collect();
+    let mut all: Vec<(&str, &str)> = vec![("pyproject.toml", &pyproject), ("main.py", main)];
+    all.extend(site.iter().map(|(path, text)| (path.as_str(), *text)));
+    let project = write_project(&all);
+    issue_keys(&json_issues(project.path(), &["--no-cache"]))
+}
+
+fn chk002(target: &str) -> (String, String) {
+    ("CHK002".to_owned(), target.to_owned())
+}
+
+/// `import acme.billing` uses the distribution owning
+/// `acme/billing/__init__.py`, not the first one sharing the `acme`
+/// namespace, whether RECORD or PEP 794 says so (#1391).
+#[test]
+fn namespace_portion_import_uses_the_portion_owner() {
+    for (auth, billing) in [
+        ("acme/auth/__init__.py,,\n", "acme/billing/__init__.py,,\n"),
+        ("", ""),
+    ] {
+        let pep794 = auth.is_empty();
+        let metadata = |name: &str, portion: &str| {
+            if pep794 {
+                format!(
+                    "Metadata-Version: 2.5\nName: {name}\nImport-Name: acme.{portion}\nImport-Namespace: acme\n"
+                )
+            } else {
+                format!("Metadata-Version: 2.1\nName: {name}\n")
+            }
+        };
+        let auth_metadata = metadata("acme-auth-lib", "auth");
+        let billing_metadata = metadata("acme-billing-client", "billing");
+        let issues = venv_issues(
+            &["acme-auth-lib", "acme-billing-client"],
+            "import acme.billing\n",
+            &[
+                ("acme/auth/__init__.py", ""),
+                ("acme/billing/__init__.py", ""),
+                ("acme_auth_lib-1.0.dist-info/METADATA", &auth_metadata),
+                ("acme_auth_lib-1.0.dist-info/RECORD", auth),
+                (
+                    "acme_billing_client-1.0.dist-info/METADATA",
+                    &billing_metadata,
+                ),
+                ("acme_billing_client-1.0.dist-info/RECORD", billing),
+            ],
+        );
+        assert_eq!(issues, [chk002("acme-auth-lib")], "pep794: {pep794}");
+    }
+}
+
+/// A METADATA description quoting `Import-Name:` credits nothing (#1395).
+#[test]
+fn metadata_description_is_no_header() {
+    let issues = venv_issues(
+        &["widget-core", "docs-helper"],
+        "import widget\n",
+        &[
+            ("widget/__init__.py", ""),
+            ("docs_helper/__init__.py", ""),
+            (
+                "widget_core-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: widget-core\n",
+            ),
+            ("widget_core-1.0.dist-info/RECORD", "widget/__init__.py,,\n"),
+            (
+                "docs_helper-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: docs-helper\n\nExample METADATA:\n\nImport-Name: widget\n",
+            ),
+            (
+                "docs_helper-1.0.dist-info/RECORD",
+                "docs_helper/__init__.py,,\n",
+            ),
+        ],
+    );
+    assert_eq!(issues, [chk002("docs-helper")]);
+}
+
+/// Each installed distribution names its import in a form the plain
+/// first-segment reading missed: an editable install's PEP 794 value with
+/// `; private` or a dotted name (#1398), a top-level extension module
+/// (#1401), a quoted RECORD path (#1404), an egg-info (#1406).
+#[test]
+fn installed_import_names_in_every_spelling_resolve() {
+    let cases: [(&str, &str, &[(&str, &str)]); 6] = [
+        (
+            "acme-a",
+            "import acmealpha\n",
+            &[
+                (
+                    "acme_a-1.0.dist-info/METADATA",
+                    "Name: acme-a\nImport-Name: acmealpha; private\n",
+                ),
+                (
+                    "acme_a-1.0.dist-info/RECORD",
+                    "__editable__.acme_a-1.0.pth,,\n",
+                ),
+            ],
+        ),
+        (
+            "acme-b",
+            "import acmeb.core\n",
+            &[
+                (
+                    "acme_b-1.0.dist-info/METADATA",
+                    "Name: acme-b\nImport-Name: acmeb.core\n",
+                ),
+                (
+                    "acme_b-1.0.dist-info/RECORD",
+                    "__editable__.acme_b-1.0.pth,,\n",
+                ),
+            ],
+        ),
+        (
+            "acme-ext",
+            "import acmeext\n",
+            &[
+                ("acmeext.cpython-312-x86_64-linux-gnu.so", ""),
+                ("acme_ext-1.0.dist-info/METADATA", "Name: acme-ext\n"),
+                (
+                    "acme_ext-1.0.dist-info/RECORD",
+                    "acmeext.cpython-312-x86_64-linux-gnu.so,,\n",
+                ),
+            ],
+        ),
+        (
+            "acme-win",
+            "import acmewin\n",
+            &[
+                ("acme_win-1.0.dist-info/METADATA", "Name: acme-win\n"),
+                (
+                    "acme_win-1.0.dist-info/RECORD",
+                    "acmewin.cp312-win_amd64.pyd,,\n",
+                ),
+            ],
+        ),
+        (
+            "acme-core",
+            "import acme\n",
+            &[
+                ("acme/__init__.py", ""),
+                ("acme_core-1.0.dist-info/METADATA", "Name: acme-core\n"),
+                (
+                    "acme_core-1.0.dist-info/RECORD",
+                    "\"acme/__init__.py\",sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0\n",
+                ),
+            ],
+        ),
+        (
+            "acme-img",
+            "import acmeimg\n",
+            &[
+                ("acmeimg/__init__.py", ""),
+                (
+                    "acme_img-1.0-py3.12.egg-info/PKG-INFO",
+                    "Metadata-Version: 1.1\nName: acme-img\n",
+                ),
+                (
+                    "acme_img-1.0-py3.12.egg-info/installed-files.txt",
+                    "../acmeimg/__init__.py\nPKG-INFO\n",
+                ),
+            ],
+        ),
+    ];
+    for (distribution, main, files) in cases {
+        assert_eq!(
+            venv_issues(&[distribution], main, files),
+            [],
+            "{distribution}"
+        );
+    }
+}
+
+/// An egg-info with no file list leaves its import names unknown, which is
+/// said rather than read as "provides nothing" (#1406).
+#[test]
+fn egg_info_without_a_file_list_is_reported() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"app\"\nversion = \"0\"\ndependencies = [\"acme-img\"]\n",
+        ),
+        ("app/__init__.py", "import acmeimg\n"),
+        (
+            ".venv/lib/python3.12/site-packages/acme_img-1.0-py3.12.egg-info",
+            "Metadata-Version: 1.1\nName: acme-img\n",
+        ),
+    ]);
+    let output = Command::new(env!("CARGO_BIN_EXE_chokkin"))
+        .args(["--no-cache", "--reporter", "json"])
+        .arg(project.path())
+        .output()
+        .expect("run chokkin");
+    let stderr = String::from_utf8(output.stderr).expect("utf8");
+    let line = "resolve: could not read the import names of \
+                `.venv/lib/python3.12/site-packages/acme_img-1.0-py3.12.egg-info`; \
+                its imports resolve as without a virtualenv";
+    assert!(stderr.lines().any(|seen| seen == line), "{stderr}");
+}

@@ -133,6 +133,7 @@ pub(crate) fn resolve_imports_with_pytest(
         owners: MemberOwners::new(local.members()),
         import_map: &import_map,
         venv_imports: &venv_index.imports,
+        venv_modules: &venv_index.modules,
         scoped,
         pytest_paths: &pytest_paths,
         local_modules: &local_modules,
@@ -221,6 +222,7 @@ struct Resolver<'a> {
     owners: MemberOwners<'a>,
     import_map: &'a ImportMap,
     venv_imports: &'a BTreeMap<String, Vec<String>>,
+    venv_modules: &'a BTreeMap<String, Vec<String>>,
     scoped: &'a ScopedDeclarations,
     pytest_paths: &'a PytestImportPaths,
     local_modules: &'a std::collections::HashMap<String, bool>,
@@ -579,6 +581,7 @@ impl Resolver<'_> {
             local,
             import_map,
             venv_imports,
+            venv_modules,
             scoped,
             pytest_paths,
             local_modules,
@@ -638,14 +641,19 @@ impl Resolver<'_> {
             let core = core.clone();
             match (core.origin, import_map.namespace_candidates(imported)) {
                 // The cache holds the root's first candidate; the pick is per site.
-                (ModuleOrigin::ThirdParty, None) => declared_portion(
-                    imported, file, member, scoped, declared,
-                )
-                .unwrap_or_else(|| RootResolution {
-                    distribution: root_candidates(&root_name, venv_imports, import_map)
-                        .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
-                    ..core
-                }),
+                // Under a root several installed distributions share, the owner
+                // of the file the import loads is the one used (#1391).
+                (ModuleOrigin::ThirdParty, None) => venv_module_owners(imported, venv_modules)
+                    .map(|owners| RootResolution {
+                        distribution: pick(owners),
+                        ..core.clone()
+                    })
+                    .or_else(|| declared_portion(imported, file, member, scoped, declared))
+                    .unwrap_or_else(|| RootResolution {
+                        distribution: root_candidates(&root_name, venv_imports, import_map)
+                            .map_or(core.distribution, |(candidates, _)| pick(&candidates)),
+                        ..core
+                    }),
                 (ModuleOrigin::Stdlib, _) | (_, None) => core,
                 // A local root may share its namespace with a distribution
                 // (`poetry` and `poetry.core`); the local tree wins when it has the
@@ -1073,6 +1081,26 @@ impl<'a> MemberOwners<'a> {
             dir = &dir[..dir.rfind('/')?];
         }
     }
+}
+
+/// Owners of the deepest module of `imported` (2 segments or more) whose file
+/// the virtualenv records: `import acme.billing` loads `acme/billing/__init__.py`,
+/// not the `acme` namespace another portion shares.
+fn venv_module_owners<'v>(
+    imported: &str,
+    venv_modules: &'v BTreeMap<String, Vec<String>>,
+) -> Option<&'v [String]> {
+    if venv_modules.is_empty() {
+        return None;
+    }
+    let mut module = imported;
+    while let Some((parent, _)) = module.rsplit_once('.') {
+        if let Some(owners) = venv_modules.get(module) {
+            return Some(owners);
+        }
+        module = parent;
+    }
+    None
 }
 
 /// Distributions the environment, then the maps, say provide `root_name`;

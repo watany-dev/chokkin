@@ -97,6 +97,12 @@ pub enum ResolveWarning {
         /// The `Name:` field, or the directory name when METADATA has none.
         name: String,
     },
+    /// A `.venv` egg-info lists neither its files nor its top-level names, so
+    /// its imports resolve as without a virtualenv (#1406).
+    VenvDistributionUnread {
+        /// Root-relative egg-info path.
+        path: String,
+    },
     /// A POSIX `.venv` holds several `lib/<interpreter>/site-packages` and
     /// `pyvenv.cfg` does not pick one, so the highest version is read (#1169).
     VenvSitePackagesAmbiguous {
