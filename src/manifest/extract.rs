@@ -304,7 +304,7 @@ pub fn extract_manifest(
         });
     }
 
-    if let Some((source, graph)) = extract_lockfile(root_path, &mut warnings)? {
+    if let Some((source, graph)) = extract_lockfile(root_path, &mut warnings) {
         lockfile = graph;
         sources.uv_lock = source.kind == LockfileKind::Uv;
         sources.lockfile = Some(source);

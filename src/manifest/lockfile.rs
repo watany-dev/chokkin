@@ -39,20 +39,21 @@ pub(crate) fn lockfile_candidates(root: &Path) -> Vec<(LockfileKind, PathBuf)> {
 }
 
 /// Read the highest-priority usable lockfile under `root`, if any. One over
-/// the size limits, or one that lists no package (textual's 52-byte stub
-/// `uv.lock` beside a full `poetry.lock`, #976), is skipped with a warning
+/// the size limits, one that lists no package (textual's 52-byte stub
+/// `uv.lock` beside a full `poetry.lock`, #976), or one that does not parse
+/// (a merge conflict left in `poetry.lock`, #1380) is skipped with a warning
 /// for the next candidate. With none left, the lock counts as absent:
 /// CHK003 then stands for CHK004 too, both asking for the same declaration,
 /// so nothing is lowered.
 pub(super) fn extract_lockfile(
     root: &Path,
     warnings: &mut Vec<ManifestWarning>,
-) -> Result<Option<(LockfileSource, LockfileGraph)>, ManifestError> {
+) -> Option<(LockfileSource, LockfileGraph)> {
     let mut skipped: Vec<(String, String)> = Vec::new();
     let mut used = None;
     for (kind, path) in lockfile_candidates(root) {
         let file = rel_to_root(root, &path);
-        match read_candidate(kind, &path)? {
+        match read_candidate(kind, &path) {
             Ok(graph) => {
                 used = Some((LockfileSource { kind, path: file }, graph));
                 break;
@@ -72,35 +73,47 @@ pub(super) fn extract_lockfile(
                 reason: format!("{cause}; {consequence}"),
             }),
     );
-    Ok(used)
+    used
 }
 
 /// The lock's graph, or why it is not used.
-fn read_candidate(
-    kind: LockfileKind,
-    path: &Path,
-) -> Result<Result<LockfileGraph, String>, ManifestError> {
+fn read_candidate(kind: LockfileKind, path: &Path) -> Result<LockfileGraph, String> {
     let bytes = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
     if let Some(cause) = over_limit(bytes, None) {
-        return Ok(Err(cause));
+        return Err(cause);
     }
     let graph = match kind {
-        LockfileKind::Uv => extract_uv_lock(path)?,
-        LockfileKind::Pylock => extract_pylock(path)?,
-        LockfileKind::Poetry => extract_poetry_lock(path)?,
-        LockfileKind::Pdm => extract_pdm_lock(path)?,
-    };
+        LockfileKind::Uv => extract_uv_lock(path),
+        LockfileKind::Pylock => extract_pylock(path),
+        LockfileKind::Poetry => extract_poetry_lock(path),
+        LockfileKind::Pdm => extract_pdm_lock(path),
+    }
+    .map_err(|error| unreadable_cause(&error))?;
     if let Some(cause) = over_limit(bytes, Some(graph.edges.len())) {
-        return Ok(Err(cause));
+        return Err(cause);
     }
     // A uv lock always lists the project, so an empty one is a placeholder.
     // An empty Poetry or PDM lock may be a project without dependencies, but
     // then CHK003 standing for CHK004 lowers nothing either, so it is skipped
     // the same way.
     if graph.edges.is_empty() {
-        return Ok(Err("it lists no packages".to_owned()));
+        return Err("it lists no packages".to_owned());
     }
-    Ok(Ok(graph))
+    Ok(graph)
+}
+
+/// Why a lockfile that failed to read is skipped. The warning already names
+/// the file, so only the parser's headline is kept, not its source excerpt.
+fn unreadable_cause(error: &ManifestError) -> String {
+    match error {
+        ManifestError::InvalidUvLock { message, .. }
+        | ManifestError::InvalidLockfile { message, .. } => format!(
+            "it is not valid TOML ({})",
+            message.lines().next().unwrap_or_default().trim()
+        ),
+        ManifestError::Io { source, .. } => format!("it could not be read ({source})"),
+        other => other.to_string(),
+    }
 }
 
 /// Why a lockfile of `bytes` and `packages` is too large.
@@ -247,9 +260,8 @@ mod tests {
             "[[package]]\nname = \"requests\"\ndependencies = [\"urllib3<3\"]\n",
         )
         .expect("write");
-        let (source, graph) = extract_lockfile(temp.path(), &mut Vec::new())
-            .expect("valid pdm.lock")
-            .expect("lockfile present");
+        let (source, graph) =
+            extract_lockfile(temp.path(), &mut Vec::new()).expect("lockfile present");
         assert_eq!(source.kind, LockfileKind::Pdm);
         assert_eq!(source.path, "pdm.lock");
         assert_eq!(
@@ -261,11 +273,7 @@ mod tests {
     #[test]
     fn no_lockfile_yields_none() {
         let temp = tempfile::tempdir().expect("tempdir");
-        assert!(
-            extract_lockfile(temp.path(), &mut Vec::new())
-                .expect("ok")
-                .is_none()
-        );
+        assert!(extract_lockfile(temp.path(), &mut Vec::new()).is_none());
     }
 
     #[test]
@@ -289,11 +297,7 @@ mod tests {
         let lock = std::fs::File::create(temp.path().join("uv.lock")).expect("create");
         lock.set_len(MAX_LOCKFILE_BYTES + 1).expect("set_len");
         let mut warnings = Vec::new();
-        assert!(
-            extract_lockfile(temp.path(), &mut warnings)
-                .expect("ok")
-                .is_none()
-        );
+        assert!(extract_lockfile(temp.path(), &mut warnings).is_none());
         assert!(
             matches!(&warnings[..], [ManifestWarning::LockfileSkipped { reason, .. }] if reason.contains("byte limit")),
             "{warnings:?}"
@@ -311,11 +315,7 @@ mod tests {
         }
         std::fs::write(temp.path().join("pdm.lock"), lock).expect("write");
         let mut warnings = Vec::new();
-        assert!(
-            extract_lockfile(temp.path(), &mut warnings)
-                .expect("ok")
-                .is_none()
-        );
+        assert!(extract_lockfile(temp.path(), &mut warnings).is_none());
         assert!(
             matches!(
                 warnings.as_slice(),
@@ -341,9 +341,8 @@ mod tests {
         )
         .expect("write");
         let mut warnings = Vec::new();
-        let (source, graph) = extract_lockfile(temp.path(), &mut warnings)
-            .expect("ok")
-            .expect("poetry.lock used");
+        let (source, graph) =
+            extract_lockfile(temp.path(), &mut warnings).expect("poetry.lock used");
         assert_eq!(source.kind, LockfileKind::Poetry);
         assert_eq!(
             graph.edges.get("rich"),
@@ -358,16 +357,63 @@ mod tests {
         );
     }
 
+    /// A merge conflict left in `poetry.lock` must not stop the analysis
+    /// when a usable `pdm.lock` follows it (#1380).
+    #[test]
+    fn an_unparsable_lockfile_falls_back_to_the_next_with_a_warning() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("poetry.lock"),
+            "[[package]]\nname = \"requests\"\nversion = \"2\"\n<<<<<<< HEAD\n[package.dependencies]\nurllib3 = \"*\"\n=======\n>>>>>>> branch\n",
+        )
+        .expect("write");
+        std::fs::write(
+            temp.path().join("pdm.lock"),
+            "[[package]]\nname = \"requests\"\nversion = \"2\"\ndependencies = [\"urllib3\"]\n",
+        )
+        .expect("write");
+        let mut warnings = Vec::new();
+        let (source, graph) = extract_lockfile(temp.path(), &mut warnings).expect("pdm.lock used");
+        assert_eq!(source.kind, LockfileKind::Pdm);
+        assert_eq!(
+            graph.edges.get("requests"),
+            Some(&vec!["urllib3".to_owned()])
+        );
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [ManifestWarning::LockfileSkipped { file, reason }]
+                    if file == "poetry.lock"
+                        && reason.starts_with("it is not valid TOML (")
+                        && reason.ends_with("; using `pdm.lock` instead")
+                        && !reason.contains('\n')
+            ),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn a_lone_unparsable_uv_lock_counts_as_absent_with_a_warning() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("uv.lock"), "[[package]\nname = \"x\"\n").expect("write");
+        let mut warnings = Vec::new();
+        assert!(extract_lockfile(temp.path(), &mut warnings).is_none());
+        assert!(
+            matches!(
+                warnings.as_slice(),
+                [ManifestWarning::LockfileSkipped { file, reason }]
+                    if file == "uv.lock" && reason.contains("not valid TOML") && reason.contains("CHK004")
+            ),
+            "{warnings:?}"
+        );
+    }
+
     #[test]
     fn a_lone_empty_lockfile_counts_as_absent_with_a_warning() {
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::write(temp.path().join("uv.lock"), "version = 1\n").expect("write");
         let mut warnings = Vec::new();
-        assert!(
-            extract_lockfile(temp.path(), &mut warnings)
-                .expect("ok")
-                .is_none()
-        );
+        assert!(extract_lockfile(temp.path(), &mut warnings).is_none());
         assert_eq!(
             warnings,
             [ManifestWarning::LockfileSkipped {
@@ -500,7 +546,6 @@ mod tests {
                     let temp = tempfile::tempdir().expect("tempdir");
                     std::fs::write(temp.path().join(file), &text).expect("write lock");
                     let (source, graph) = extract_lockfile(temp.path(), &mut Vec::new())
-                        .expect("valid lock")
                         .expect("lock present");
                     prop_assert_eq!(source.kind, kind);
                     prop_assert_eq!(edge_sets(&graph), expected.clone(), "{}", text);
