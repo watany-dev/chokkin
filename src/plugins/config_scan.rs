@@ -758,14 +758,14 @@ fn valid_tox_condition(condition: &str) -> bool {
         if alternative.is_empty() {
             continue;
         }
-        let Some(expanded) = expand_tox_groups(alternative.trim()) else {
+        let Some(expanded) = expand_tox_groups(alternative.trim(), MAX_TOX_VARIANTS - variants)
+        else {
             return false;
         };
         variants += expanded.len();
-        if variants > MAX_TOX_VARIANTS
-            || !expanded
-                .iter()
-                .all(|variant| variant.split('-').all(valid_tox_factor))
+        if !expanded
+            .iter()
+            .all(|variant| variant.split('-').all(valid_tox_factor))
         {
             return false;
         }
@@ -780,13 +780,15 @@ fn tox_group(rest: &str) -> Option<&str> {
     (!inner.is_empty()).then_some(inner)
 }
 
-/// `condition` split at the commas outside a `{...}` group.
+/// `condition` split at the commas outside a `{...}` group. A `{` that no
+/// `}` closes keeps the rest in one alternative: it is no factor character,
+/// so that alternative fails either way.
 fn tox_alternatives(condition: &str) -> Vec<&str> {
     let mut alternatives = Vec::new();
     let (mut start, mut in_group) = (0, false);
     for (index, ch) in condition.char_indices() {
         match ch {
-            '{' => in_group = tox_group(&condition[index + 1..]).is_some(),
+            '{' => in_group = true,
             '}' => in_group = false,
             ',' if !in_group => {
                 alternatives.push(&condition[start..index]);
@@ -800,8 +802,11 @@ fn tox_alternatives(condition: &str) -> Vec<&str> {
 }
 
 /// Every variant of `alternative`: each literal run and each group member
-/// trimmed, one member per group. `None` past [`MAX_TOX_VARIANTS`].
-fn expand_tox_groups(alternative: &str) -> Option<Vec<String>> {
+/// trimmed, one member per group. `None` past `budget` variants.
+fn expand_tox_groups(alternative: &str, budget: usize) -> Option<Vec<String>> {
+    if budget == 0 {
+        return None;
+    }
     let mut variants = vec![String::new()];
     let mut literal = String::new();
     let mut rest = alternative;
@@ -814,7 +819,7 @@ fn expand_tox_groups(alternative: &str) -> Option<Vec<String>> {
         };
         rest = &rest[inner.len() + 1..];
         let members: Vec<&str> = inner.split(',').map(str::trim).collect();
-        if variants.len() * members.len() > MAX_TOX_VARIANTS {
+        if variants.len() * members.len() > budget {
             return None;
         }
         let prefix = std::mem::take(&mut literal);
@@ -2209,6 +2214,7 @@ mod tests {
             ("py 38: a", "py 38: a"),
             ("!: a", "!: a"),
             ("é: x", "x"),
+            ("py_38: x", "x"),
             ("{py38,py39}: x", "x"),
             ("py{38,39}, lint: x", "x"),
             ("py{}: x", "py{}: x"),
@@ -2224,6 +2230,8 @@ mod tests {
         };
         let at_limit = format!("{}, {}: x", group(128), group(128));
         assert_eq!(strip_tox_factors(&at_limit), "x");
+        let full = format!("{}, {}, lint: x", group(128), group(128));
+        assert_eq!(strip_tox_factors(&full), full);
         let over = format!("{}, {}: x", group(200), group(200));
         assert_eq!(strip_tox_factors(&over), over);
         let result = scan_files(&[(

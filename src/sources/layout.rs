@@ -2135,15 +2135,19 @@ mod tests {
     #[test]
     fn declared_namespace_directory_with_modules_is_a_package() {
         // locust's `include = ["locust", "pytest_locust"]`: the second ships
-        // `plugin.py` with no `__init__.py`, a PEP 420 namespace (#977).
+        // `plugin.py` with no `__init__.py`, a PEP 420 namespace (#977). A
+        // negated pattern names no path.
         let temp = tree(&["locust"]);
         fs::create_dir_all(temp.path().join("pytest_locust")).expect("create dir");
         fs::write(temp.path().join("pytest_locust/plugin.py"), "").expect("write");
         let metadata = ProjectMetadata {
             wheel_targets: Some(WheelTargets {
                 source: "tool.hatch.build.targets.wheel".to_owned(),
-                paths: vec!["locust".to_owned(), "pytest_locust".to_owned()],
-                find: Vec::new(),
+                include: vec![
+                    "/locust/".to_owned(),
+                    "pytest_locust".to_owned(),
+                    "!locust".to_owned(),
+                ],
                 ..WheelTargets::default()
             }),
             ..metadata("locust")
