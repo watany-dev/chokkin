@@ -177,15 +177,25 @@ pub(super) fn cell_to_python(cell: &str, extensions: bool) -> Result<PythonCell,
 
 /// Whether a cell loads an extension that is not `IPython`'s own (#992).
 pub(super) fn loads_extension<'c>(cells: impl IntoIterator<Item = &'c str>) -> bool {
-    cells.into_iter().flat_map(str::lines).any(|line| {
-        let Some(magic) = line.trim_start().strip_prefix('%') else {
-            return false;
-        };
-        let (name, module) = split_magic(magic.trim_start());
-        matches!(name, "load_ext" | "reload_ext")
-            && !BUILTIN_EXTENSIONS.contains(&module)
-            && is_dotted_identifier(module)
+    cells.into_iter().any(|cell| {
+        let cell = cell.replace("\r\n", "\n").replace('\r', "\n");
+        let lines: Vec<&str> = cell.split_inclusive('\n').collect();
+        lines
+            .iter()
+            .zip(statement_starts(&lines))
+            .any(|(line, starts)| starts && loads_extension_line(line))
     })
+}
+
+/// Whether `line` is a `%load_ext` of an extension chokkin does not know.
+fn loads_extension_line(line: &str) -> bool {
+    let Some(magic) = line.trim_start().strip_prefix('%') else {
+        return false;
+    };
+    let (name, module) = split_magic(magic.trim_start().trim_end());
+    matches!(name, "load_ext" | "reload_ext")
+        && !BUILTIN_EXTENSIONS.contains(&module)
+        && is_dotted_identifier(module)
 }
 
 enum CellBody {
@@ -850,6 +860,9 @@ mod tests {
         assert!(loads_extension(["  %reload_ext sql"]));
         assert!(!loads_extension(["%load_ext autoreload\n%autoreload 2\n"]));
         assert!(!loads_extension(["%load_ext $name\n", "x = 1\n"]));
+        // #1442: only a line that starts a statement is a magic.
+        assert!(!loads_extension(["s = \"\"\"\n%load_ext myext\n\"\"\"\n"]));
+        assert!(!loads_extension(["f(1,\n  %load_ext myext\n)\n"]));
     }
 
     /// Each install magic and shell escape reports what it installs at its
