@@ -85,4 +85,7 @@ exclude_re = [
     # A name star imports reach by several paths fails the same way on each:
     # visiting it again only spends the lookup budget.
     "replace Lookups::first_visit -> bool with true",
+    # Once the lookup budget is spent each `member` call fails on its own
+    # first spend: stopping the scan of star imports only saves the calls.
+    "replace > with >= in ModuleBindings<'m, 's>::through_stars",
 ]
