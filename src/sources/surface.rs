@@ -64,7 +64,6 @@ impl PublicSurface {
     #[must_use]
     pub(crate) fn from_layout(layout: &LayoutInfo, files: &[DiscoveredFile]) -> Option<Self> {
         let targets = WheelTargets {
-            source: "layout".to_owned(),
             paths: layout
                 .packages
                 .iter()

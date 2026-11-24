@@ -34,14 +34,15 @@ enum Token<'a> {
 
 /// The rules `ignore` should compile for one `.gitignore` line.
 pub(crate) fn git_rules(line: &str) -> Vec<Cow<'_, str>> {
-    if line.is_empty() || line.starts_with('#') {
+    if line.starts_with('#') {
         return vec![Cow::Borrowed(line)];
     }
     let (negation, body) = match line.strip_prefix('!') {
         Some(rest) => ("!", rest),
         None => ("", line),
     };
-    if !negation.is_empty() && trim_trailing_spaces(body).is_empty() {
+    // git drops unescaped trailing spaces, so only spaces leave nothing.
+    if !negation.is_empty() && body.bytes().all(|byte| byte == b' ') {
         return Vec::new();
     }
     if !body.contains(['{', '}', '*', '[']) {
@@ -87,20 +88,6 @@ fn anchored(rule: String) -> String {
     } else {
         format!("/{rule}")
     }
-}
-
-/// `body` without the trailing spaces git drops (an escaped one stays).
-fn trim_trailing_spaces(body: &str) -> &str {
-    let mut end = body.len();
-    while body[..end].ends_with(' ') {
-        let before = &body[..end - 1];
-        let backslashes = before.len() - before.trim_end_matches('\\').len();
-        if backslashes % 2 == 1 {
-            break;
-        }
-        end -= 1;
-    }
-    &body[..end]
 }
 
 fn tokenize(body: &str) -> Vec<Token<'_>> {
@@ -278,6 +265,10 @@ mod tests {
         assert!(git_rules("!").is_empty());
         assert!(git_rules("!   ").is_empty());
         assert_eq!(rendered("!\\ "), ["!\\ "]);
+        assert_eq!(rendered("!\t"), ["!\t"]);
+        // A comment is left alone, whatever it holds.
+        assert_eq!(rendered("#a**/b"), ["#a**/b"]);
+        assert_eq!(rendered(""), [""]);
         let gitignore = matcher(&["*.py", "!", "! "]);
         assert!(ignored(&gitignore, "b.py"));
         assert!(ignored(&gitignore, "a/b.py"));
