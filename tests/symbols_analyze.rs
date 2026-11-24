@@ -2829,6 +2829,10 @@ fn module_objects_carried_through_globals_are_receivers() {
             "import pkg.m\npkg = other.thing\npkg.m.target()\n",
         ),
         (
+            "a call read again after what it returns is rebound",
+            "import pkg.m\nh = None\n\ndef get():\n    return h\n\nget().other\nh = pkg.m\nget().target()\n",
+        ),
+        (
             "a later generator's iterable",
             "import pkg.m\n[0 for a in [0] for b in pkg.m.target]\n",
         ),
@@ -2964,6 +2968,46 @@ fn module_objects_carried_across_modules_are_receivers() {
                 ("pkg/a.py", "import pkg.m\nalias = pkg.m\n"),
                 ("pkg/b.py", "from pkg.a import *\n"),
                 ("main.py", "from pkg.b import alias\nalias.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "global a later function sets from a first-party call",
+            &[
+                (
+                    "pkg/factory.py",
+                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
+                ),
+                (
+                    "main.py",
+                    "from pkg import factory\nf = None\n\ndef use():\n    f.target()\n\ndef set_f():\n    global f\n    f = factory.make()\n",
+                ),
+            ],
+            false,
+        ),
+        (
+            "function returning a first-party call",
+            &[
+                (
+                    "pkg/factory.py",
+                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
+                ),
+                (
+                    "pkg/util.py",
+                    "from pkg import factory\n\ndef get():\n    return factory.make()\n",
+                ),
+                ("main.py", "from pkg.util import get\nget().target()\n"),
+            ],
+            false,
+        ),
+        (
+            "function returning its module's function's call",
+            &[
+                (
+                    "pkg/util.py",
+                    "import pkg.m\n\ndef helper():\n    return pkg.m\n\ndef get():\n    return helper()\n",
+                ),
+                ("main.py", "from pkg.util import get\nget().target()\n"),
             ],
             false,
         ),

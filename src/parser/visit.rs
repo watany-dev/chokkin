@@ -976,9 +976,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let mut stores: Vec<(&'ast str, Values<'ast>)> = Vec::new();
         let module = |_: &str| None;
         let free = |_: &str| Lookup::Free;
+        // Not knowing which imports are first-party either, follow every
+        // call: a third-party one yields a name no module resolves.
+        let first_party = |_: &str| true;
         for (_, def) in self.program.functions() {
             let (calls, nesting) = budget();
-            let first_party = |root: &str| self.import_root(root) == Some(true);
             stores.extend(
                 Evaluator {
                     program: &self.program,

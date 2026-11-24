@@ -1300,29 +1300,40 @@ mod tests {
     /// The dotted names the module's last expression evaluates to, every
     /// free name read as itself.
     fn eval(source: &str) -> Vec<String> {
+        eval_each(source).pop().expect("no expression")
+    }
+
+    /// [`eval`] for each top-level expression in turn, each on its own
+    /// budget and all on one memo.
+    fn eval_each(source: &str) -> Vec<Vec<String>> {
         let module = Box::leak(Box::new(
             ruff_python_parser::parse_module(source).expect("parse"),
         ));
         let stmts = module.suite();
         let program = Box::leak(Box::new(Program::build(stmts)));
-        let Some(Stmt::Expr(last)) = stmts.last() else {
-            panic!("no expression last");
-        };
-        let (calls, nesting) = budget();
-        let values = Evaluator {
-            program,
-            here: &|_| Lookup::Free,
-            module: &|_| None,
-            stores: &FxHashMap::default(),
-            calls: &calls,
-            nesting: &nesting,
-            memo: &Memo::default(),
-            first_party: &|_| true,
+        let memo = Memo::default();
+        let mut each = Vec::new();
+        for stmt in stmts {
+            let Stmt::Expr(expr) = stmt else {
+                continue;
+            };
+            let (calls, nesting) = budget();
+            let values = Evaluator {
+                program,
+                here: &|_| Lookup::Free,
+                module: &|_| None,
+                stores: &FxHashMap::default(),
+                calls: &calls,
+                nesting: &nesting,
+                memo: &memo,
+                first_party: &|_| true,
+            }
+            .eval(&expr.value);
+            let mut out: Vec<String> = dotted(&values).map(str::to_owned).collect();
+            out.sort();
+            each.push(out);
         }
-        .eval(&last.value);
-        let mut out: Vec<String> = dotted(&values).map(str::to_owned).collect();
-        out.sort();
-        out
+        each
     }
 
     fn names(names: &[&str]) -> Vec<String> {
@@ -1456,7 +1467,13 @@ mod tests {
         let assigns = "def f@I():\n    x = @NEXT\n    return x\n\n";
         let defaults = "def f@I(x=@NEXT):\n    return x\n\n";
         let keywords = "def f@I(*, x=@NEXT):\n    return x\n\n";
-        for step in [returns, assigns, defaults, keywords] {
+        let annotated = "def f@I():\n    x: T = @NEXT\n    return x\n\n";
+        let loops = "def f@I():\n    for x in [@NEXT]:\n        pass\n    return x\n\n";
+        let matches =
+            "def f@I():\n    match @NEXT:\n        case x:\n            pass\n    return x\n\n";
+        for step in [
+            returns, assigns, defaults, keywords, annotated, loops, matches,
+        ] {
             assert_eq!(eval(&chain(2, step)), names(&["p"]), "{step}");
             assert_eq!(eval(&chain(6, step)), names(&[]), "{step}");
         }
@@ -1492,5 +1509,114 @@ mod tests {
         let program = Program::build(module.suite());
         assert!(program.defines("f") && program.defines("C"));
         assert!(!program.defines("g"));
+    }
+
+    #[test]
+    fn calls_are_cached_per_arguments() {
+        let identity = "def f(x):\n    return x\n\n";
+        assert_eq!(eval(&format!("{identity}(f(p), f(q))[1]\n")), names(&["q"]));
+        assert_eq!(eval(&format!("{identity}(f(p), f(p))[1]\n")), names(&["p"]));
+    }
+
+    /// A call cut short anywhere below it is not cached: a later evaluation
+    /// with budget to spare follows it again.
+    #[test]
+    fn calls_cut_short_below_are_not_cached() {
+        let mut source = String::new();
+        for index in 0..70 {
+            let _ = write!(source, "def a{index}():\n    return 0\n\n");
+        }
+        source.push_str(
+            "def f():\n    return g()\n\ndef g():\n    return h()\n\ndef h():\n    return p\n\n",
+        );
+        let fillers: Vec<String> = (0..FILLERS).map(|index| format!("a{index}()")).collect();
+        let _ = write!(source, "({}, f())[{FILLERS}]\nf()\n", fillers.join(", "));
+        assert_eq!(eval_each(&source), [names(&[]), names(&["p"])]);
+    }
+
+    /// Enough calls before `f()` that `f` and `g` are followed but `h` is not.
+    const FILLERS: u32 = MAX_CALLS - 2;
+
+    #[test]
+    fn decorators_other_than_staticmethod_keep_the_instance() {
+        let class = |decorator: &str| {
+            format!(
+                "class C:\n    @{decorator}\n    def m(x, y=None):\n        return x\n\nC().m(p)\n"
+            )
+        };
+        assert_eq!(eval(&class("staticmethod")), names(&["p"]));
+        assert_eq!(eval(&class("deco")), names(&[]));
+    }
+
+    #[test]
+    fn instance_attributes_read_other_instance_attributes() {
+        assert_eq!(
+            eval(
+                "class C:\n    def __init__(self):\n        self.a = p\n        self.b = self.a\n\nC().b\n"
+            ),
+            names(&["p"])
+        );
+    }
+
+    #[test]
+    fn spines_follow_the_parts_the_evaluator_reads() {
+        let reaches = |source: &str| {
+            let parsed = ruff_python_parser::parse_expression(source).expect("parse");
+            may_evaluate_to_module(parsed.expr(), &|name| name == "m")
+        };
+        for source in [
+            "m",
+            "m.a",
+            "m()",
+            "m[0]",
+            "[*m]",
+            "(x := m)",
+            "m if c else x",
+            "x if c else m",
+            "x or m",
+            "[x, m]",
+            "(x, m)",
+            "[m for x in y]",
+            "[y for x in m]",
+            "{m for x in y}",
+            "{y for x in m}",
+            "(m for x in y)",
+            "(y for x in m)",
+            "lambda: x",
+        ] {
+            assert!(reaches(source), "{source}");
+        }
+        for source in [
+            "x",
+            "x.m",
+            "x(m)",
+            "x[m]",
+            "{y for m in x}",
+            "(y for m in x)",
+            "1",
+        ] {
+            assert!(!reaches(source), "{source}");
+        }
+        let nested = |depth: usize| format!("m{}", ".a".repeat(depth));
+        let max = MAX_NESTING as usize;
+        assert!(reaches(&nested(max)));
+        assert!(!reaches(&nested(max + 1)));
+    }
+
+    #[test]
+    fn functions_may_return_what_their_returns_reach() {
+        let may = |source: &str| {
+            let parsed = ruff_python_parser::parse_module(source).expect("parse");
+            let Some(Stmt::FunctionDef(def)) = parsed.suite().first() else {
+                panic!("no function first");
+            };
+            may_return(def, &|name| name == "m")
+        };
+        assert!(may("def f():\n    return m.a\n"));
+        assert!(may("def f():\n    x = m\n    return x\n"));
+        assert!(may("def f(x=m):\n    return x\n"));
+        assert!(!may("def f():\n    x = 1\n    return x\n"));
+        assert!(!may("def f():\n    return 1\n"));
+        assert!(!may("def f():\n    m.a\n"));
     }
 }

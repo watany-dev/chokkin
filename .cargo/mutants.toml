@@ -63,4 +63,18 @@ exclude_re = [
     # the used check drops: it reads a member's own imports only when the
     # root ships its tree (#1342). The guard only skips the parse.
     "replace is_local_source_member -> bool with true",
+    # Tracking a receiver only skips evaluating it: an untracked root
+    # evaluates to itself when an import binds it and to nothing otherwise,
+    # which no import reads either way (#1427).
+    "replace && with \\|\\| in ModuleVisitor<'a, 'ast>::receiver_site",
+    "replace ModuleVisitor<'a, 'ast>::reads_store -> bool with true",
+    # With no string constant there is nothing for the binding count to drop:
+    # the guard only skips counting.
+    "delete ! in string_constants",
+    # Dropping aliases from an empty map changes nothing: the guard only
+    # skips the walk over the targets.
+    "delete ! in ModuleVisitor<'a, 'ast>::bind_values",
+    # Keeping a value no definition or import roots only keeps a name no
+    # module resolves: the filter only trims what is carried (#1427).
+    "replace ModuleVisitor<'a, 'ast>::may_hold_module -> bool with true",
 ]
