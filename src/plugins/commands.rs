@@ -1924,6 +1924,7 @@ mod tests {
             "ls | xargs -I {} pytest {}",
             "timeout 600 pytest",
             "timeout -s KILL 10m pytest",
+            "timeout -- 10 pytest",
             "taskset -c 0 pytest",
             "flock /tmp/lock pytest",
             "flock -w 5 /tmp/lock pytest",
