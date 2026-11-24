@@ -12243,3 +12243,23 @@ fn lockfile_closure_provides_binaries_through_extras_and_hops() {
         assert_eq!(binaries, expected, "black reached: {black_reached}");
     }
 }
+
+/// A declared `p[e]` whose code imports only what the extra adds is used:
+/// CHK002 agrees with CHK003, which credits the import to it (#1379).
+#[test]
+fn lockfile_extra_use_counts_as_use_of_its_declaration() {
+    let project = write_project(&[
+        ("pyproject.toml", PSYCOPG_POOL_PYPROJECT),
+        ("main.py", "import psycopg_pool\n"),
+        ("uv.lock", PSYCOPG_POOL_UV_LOCK),
+    ]);
+    assert_eq!(dependency_findings(project.path(), &[]), []);
+    let unused = write_project(&[
+        ("pyproject.toml", PSYCOPG_POOL_PYPROJECT),
+        ("main.py", "import typing_extensions\n"),
+        ("uv.lock", PSYCOPG_POOL_UV_LOCK),
+    ]);
+    assert!(
+        dependency_findings(unused.path(), &[]).contains(&finding("CHK002", "psycopg", "certain"))
+    );
+}

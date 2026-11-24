@@ -785,6 +785,9 @@ extra指定 (例: psycopg[pool])
   -> lockfileでextraが追加する配布物 (psycopg-pool) は、その宣言と同じcontextで
      宣言済みとみなす (CHK003/CHK004にしない)。extraはユーザーが明示的に要求したため (#516)
   -> extraを付けていない宣言 (psycopg) からは従来どおりCHK003/CHK004
+  -> extraが追加する配布物の使用は、その宣言の使用として数える (psycopg_pool だけを
+     import しても psycopg[pool] を CHK002 にしない)。CHK003 がその import をこの宣言で
+     満たされたとみなすので、CHK002 と --fix が宣言を消すと import が壊れるため (#1379)
   -> extraの展開は uv.lock / poetry.lock / pdm.lock から読む (#1376)。pylock.toml は
      extraの対応を持たないので展開しない。lockfileがない場合も展開しない
 
