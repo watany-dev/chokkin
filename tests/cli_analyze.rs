@@ -6180,6 +6180,9 @@ fn binary_dot_slash_and_backslash_config_paths_match_discovered_files() {
     for (entry, exclude) in [
         ("./src/app.py", "./legacy/**"),
         (r"src\app.py", "legacy/**"),
+        // #1443: inner empty and `.` segments too.
+        ("src//app.py", "legacy/**"),
+        ("src/./app.py", "legacy/**"),
     ] {
         let pyproject = format!(
             "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = ['{entry}']\nexclude = ['{exclude}']\n"
@@ -9096,6 +9099,14 @@ fn binary_trace_accepts_absolute_and_cwd_relative_paths() {
         expected
     );
     assert_eq!(trace_stderr_from(&acme, "../acme/util.py"), expected);
+    // #1444: `.//` is `./`, not the start of an absolute path.
+    for target in [
+        ".//src/acme/util.py",
+        "src//acme/util.py",
+        "src/./acme/util.py",
+    ] {
+        assert_eq!(trace_stderr(target), expected, "{target}");
+    }
 }
 
 #[test]
@@ -12205,4 +12216,292 @@ fn egg_info_without_a_file_list_is_reported() {
                 `.venv/lib/python3.12/site-packages/acme_img-1.0-py3.12.egg-info`; \
                 its imports resolve as without a virtualenv";
     assert!(stderr.lines().any(|seen| seen == line), "{stderr}");
+}
+
+/// `(code, distribution or binary, confidence)` of each dependency finding.
+fn dependency_findings(root: &Path, extra: &[&str]) -> Vec<(String, String, String)> {
+    let mut args = vec!["--no-cache"];
+    args.extend_from_slice(extra);
+    let mut found: Vec<_> = json_issues(root, &args)
+        .iter()
+        .filter(|issue| {
+            issue["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("CHK0"))
+        })
+        .map(|issue| {
+            let subject = issue["distribution"]
+                .as_str()
+                .or_else(|| issue["binary"].as_str())
+                .unwrap_or_default();
+            (
+                issue["code"].as_str().unwrap_or_default().to_owned(),
+                subject.to_owned(),
+                issue["confidence"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn finding(code: &str, subject: &str, confidence: &str) -> (String, String, String) {
+    (code.to_owned(), subject.to_owned(), confidence.to_owned())
+}
+
+const PSYCOPG_POOL_UV_LOCK: &str = concat!(
+    "version = 1\nrequires-python = \">=3.11\"\n\n",
+    "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n",
+    "source = { registry = \"https://pypi.org/simple\" }\n\n",
+    "[package.optional-dependencies]\npool = [\n    { name = \"psycopg-pool\" },\n]\n\n",
+    "[[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\n",
+    "source = { registry = \"https://pypi.org/simple\" }\n",
+    "dependencies = [\n    { name = \"typing-extensions\" },\n]\n\n",
+    "[[package]]\nname = \"typing-extensions\"\nversion = \"4.12.0\"\n",
+    "source = { registry = \"https://pypi.org/simple\" }\n",
+);
+
+const PSYCOPG_POOL_PYPROJECT: &str = concat!(
+    "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+    "dependencies = [\"psycopg[pool]\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+);
+
+/// The walk keeps going past what a declared `p[e]` adds (#1374).
+#[test]
+fn lockfile_closure_follows_the_dependencies_of_a_declared_extra() {
+    let project = write_project(&[
+        ("pyproject.toml", PSYCOPG_POOL_PYPROJECT),
+        (
+            "main.py",
+            "import psycopg\nimport psycopg_pool\nimport typing_extensions\n",
+        ),
+        ("uv.lock", PSYCOPG_POOL_UV_LOCK),
+    ]);
+    assert_eq!(
+        dependency_findings(project.path(), &[]),
+        [finding("CHK004", "typing-extensions", "certain")]
+    );
+}
+
+/// A lock edge's `extra = [...]` reaches what that extra adds (#1375).
+#[test]
+fn lockfile_closure_follows_an_edge_extra() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            concat!(
+                "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                "dependencies = [\"b\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+            ),
+        ),
+        ("main.py", "import b\nimport pysocks_x\n"),
+        (
+            "uv.lock",
+            concat!(
+                "version = 1\nrequires-python = \">=3.11\"\n\n",
+                "[[package]]\nname = \"b\"\nversion = \"1.0.0\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+                "dependencies = [\n    { name = \"requests\", extra = [\"socks\"] },\n]\n\n",
+                "[[package]]\nname = \"requests\"\nversion = \"2.0.0\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n\n",
+                "[package.optional-dependencies]\nsocks = [\n    { name = \"pysocks-x\" },\n]\n\n",
+                "[[package]]\nname = \"pysocks-x\"\nversion = \"1.0.0\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+            ),
+        ),
+    ]);
+    assert_eq!(
+        dependency_findings(project.path(), &[]),
+        [finding("CHK004", "pysocks-x", "certain")]
+    );
+}
+
+const PSYCOPG_ONLY_PYPROJECT: &str = concat!(
+    "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+    "dependencies = [\"psycopg[pool]\"]\n",
+);
+
+/// poetry.lock and pdm.lock say what a declared `p[e]` adds as uv.lock does
+/// (#1376): Poetry's optional edge and PDM's merged extras entry are no
+/// longer the only evidence, and Poetry 2's omitted edge is not needed.
+#[test]
+fn lockfile_extras_are_read_from_poetry_and_pdm_locks() {
+    let poetry_package = |deps: &str| {
+        format!(
+            "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\noptional = false\npython-versions = \">=3.8\"\nfiles = []\n\n{deps}[package.extras]\npool = [\"psycopg-pool (>=3)\"]\n\n[[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\noptional = false\npython-versions = \">=3.8\"\nfiles = []\n\n[package.dependencies]\ntyping-extensions = \"*\"\n\n[[package]]\nname = \"typing-extensions\"\nversion = \"4\"\noptional = false\npython-versions = \">=3.8\"\nfiles = []\n\n[metadata]\nlock-version = \"2.1\"\npython-versions = \">=3.11\"\ncontent-hash = \"0\"\n"
+        )
+    };
+    let locks = [
+        (
+            "poetry.lock",
+            poetry_package(
+                "[package.dependencies]\npsycopg-pool = {version = \"*\", optional = true}\n\n",
+            ),
+        ),
+        // Poetry 2 leaves out the edge of an extra nothing requests.
+        ("poetry.lock", poetry_package("")),
+        (
+            "pdm.lock",
+            concat!(
+                "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n\n",
+                "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\nextras = [\"pool\"]\n",
+                "dependencies = [\"psycopg==3.2.0\", \"psycopg-pool\"]\n\n",
+                "[[package]]\nname = \"psycopg-pool\"\nversion = \"3.2.0\"\ndependencies = [\"typing-extensions\"]\n\n",
+                "[[package]]\nname = \"typing-extensions\"\nversion = \"4\"\n",
+            )
+            .to_owned(),
+        ),
+    ];
+    for (file, lock) in locks {
+        let project = write_project(&[
+            ("pyproject.toml", PSYCOPG_ONLY_PYPROJECT),
+            (
+                "main.py",
+                "import psycopg\nimport psycopg_pool\nimport typing_extensions\n",
+            ),
+            (file, &lock),
+        ]);
+        assert_eq!(
+            dependency_findings(project.path(), &[]),
+            [finding("CHK004", "typing-extensions", "certain")],
+            "{lock}"
+        );
+    }
+}
+
+/// A runtime import's lock walk starts from the runtime declarations only:
+/// a dependency group is not installed with the project (#1377). A test
+/// import under `--strict` still walks from the dev group.
+#[test]
+fn lockfile_closure_of_a_runtime_import_skips_dev_groups() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            concat!(
+                "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                "dependencies = []\n\n[dependency-groups]\ndev = [\"pytest\"]\n\n",
+                "[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+            ),
+        ),
+        ("main.py", "import pluggy\n"),
+        ("tests/test_app.py", "import pytest\nimport pluggy\n"),
+        (
+            "uv.lock",
+            concat!(
+                "version = 1\nrequires-python = \">=3.11\"\n\n",
+                "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n\n",
+                "[package.dev-dependencies]\ndev = [\n    { name = \"pytest\" },\n]\n\n",
+                "[[package]]\nname = \"pytest\"\nversion = \"8\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+                "dependencies = [\n    { name = \"pluggy\" },\n]\n\n",
+                "[[package]]\nname = \"pluggy\"\nversion = \"1\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+            ),
+        ),
+    ]);
+    for extra in [&[][..], &["--production"]] {
+        assert_eq!(
+            dependency_findings(project.path(), extra),
+            [finding("CHK004", "pluggy", "likely")],
+            "{extra:?}"
+        );
+    }
+    let strict: Vec<_> = dependency_findings(project.path(), &["--strict"])
+        .into_iter()
+        .filter(|(_, subject, _)| subject == "pluggy")
+        .collect();
+    assert!(
+        strict.contains(&finding("CHK004", "pluggy", "likely")),
+        "{strict:?}"
+    );
+    assert!(
+        strict.contains(&finding("CHK004", "pluggy", "certain")),
+        "{strict:?}"
+    );
+    // A conditional import keeps the dev group's edge as CHK004 evidence
+    // (#1276): which declarations seed it is a separate question.
+    fs::write(
+        project.path().join("main.py"),
+        "try:\n    import pluggy\nexcept ImportError:\n    pluggy = None\n",
+    )
+    .expect("write main.py");
+    assert_eq!(
+        dependency_findings(project.path(), &[]),
+        [finding("CHK004", "pluggy", "certain")]
+    );
+}
+
+/// CHK008 walks the same lock closure as CHK004: a declared extra's binary
+/// and one two hops down are installed (#1378).
+#[test]
+fn lockfile_closure_provides_binaries_through_extras_and_hops() {
+    let lock = |black_reached: bool| {
+        format!(
+            concat!(
+                "version = 1\nrequires-python = \">=3.11\"\n\n",
+                "[[package]]\nname = \"fastapi\"\nversion = \"0.115.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+                "dependencies = [\n    {{ name = \"starlette\" }},\n]\n\n",
+                "[package.optional-dependencies]\nstandard = [\n    {{ name = \"uvicorn\", extra = [\"standard\"] }},\n]\n\n",
+                "[[package]]\nname = \"oq-meta\"\nversion = \"1.0.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+                "dependencies = [\n    {{ name = \"oq-mid\" }},\n]\n\n",
+                "[[package]]\nname = \"oq-mid\"\nversion = \"1.0.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+                "dependencies = [\n    {{ name = \"{}\" }},\n]\n\n",
+                "[[package]]\nname = \"starlette\"\nversion = \"0.40.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n\n",
+                "[[package]]\nname = \"uvicorn\"\nversion = \"0.30.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n\n",
+                "[[package]]\nname = \"black\"\nversion = \"24.0.0\"\n",
+                "source = {{ registry = \"https://pypi.org/simple\" }}\n",
+            ),
+            if black_reached { "black" } else { "starlette" }
+        )
+    };
+    for black_reached in [true, false] {
+        let project = write_project(&[
+            (
+                "pyproject.toml",
+                concat!(
+                    "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                    "dependencies = [\"fastapi[standard]\", \"oq-meta\"]\n\n",
+                    "[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+                ),
+            ),
+            ("main.py", "import fastapi\nimport oq_meta\n"),
+            ("ci.sh", "#!/bin/sh\nblack .\nuvicorn main:app\n"),
+            ("uv.lock", &lock(black_reached)),
+        ]);
+        let binaries: Vec<_> = dependency_findings(project.path(), &[])
+            .into_iter()
+            .filter(|(code, _, _)| code == "CHK008")
+            .collect();
+        let expected = if black_reached {
+            Vec::new()
+        } else {
+            vec![finding("CHK008", "black", "certain")]
+        };
+        assert_eq!(binaries, expected, "black reached: {black_reached}");
+    }
+}
+
+/// A declared `p[e]` whose code imports only what the extra adds is used:
+/// CHK002 agrees with CHK003, which credits the import to it (#1379).
+#[test]
+fn lockfile_extra_use_counts_as_use_of_its_declaration() {
+    let project = write_project(&[
+        ("pyproject.toml", PSYCOPG_POOL_PYPROJECT),
+        ("main.py", "import psycopg_pool\n"),
+        ("uv.lock", PSYCOPG_POOL_UV_LOCK),
+    ]);
+    assert_eq!(dependency_findings(project.path(), &[]), []);
+    let unused = write_project(&[
+        ("pyproject.toml", PSYCOPG_POOL_PYPROJECT),
+        ("main.py", "import typing_extensions\n"),
+        ("uv.lock", PSYCOPG_POOL_UV_LOCK),
+    ]);
+    assert!(
+        dependency_findings(unused.path(), &[]).contains(&finding("CHK002", "psycopg", "certain"))
+    );
 }

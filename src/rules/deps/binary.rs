@@ -90,10 +90,22 @@ impl<'a> BinaryProviders<'a> {
             distributions.extend(member.dependencies.iter().map(|dep| dep.name.as_str()));
             distributions.extend(member.sources.extra_requirements.iter().map(String::as_str));
         }
-        let transitive: Vec<&'a str> = distributions
-            .iter()
-            .flat_map(|name| manifest.lockfile.edges.get(*name).into_iter().flatten())
-            .map(String::as_str)
+        // What the lock installs from any of them, walked like CHK004's
+        // closure: through declared extras and past the first hop (#1378).
+        let no_extras: &[String] = &[];
+        let declarations = declared.values().flatten().copied().chain(
+            workspace_boundaries
+                .iter()
+                .flat_map(|boundary| &boundary.manifest.dependencies),
+        );
+        let transitive: Vec<&'a str> = manifest
+            .lockfile
+            .closure(
+                declarations
+                    .map(|dep| (dep.name.as_str(), dep.extras.as_slice()))
+                    .chain(distributions.iter().map(|name| (*name, no_extras))),
+            )
+            .into_iter()
             .chain(
                 WRAPPER_PROVIDERS
                     .iter()

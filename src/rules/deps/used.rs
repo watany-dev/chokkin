@@ -465,6 +465,30 @@ pub(super) fn mark_self_referential_distribution(
     }
 }
 
+/// A declared `pkg[extra]` is used when a distribution its extras add is:
+/// [`build_import_declared_index`] has that import satisfied by this very
+/// declaration, so removing it would uninstall what the code imports
+/// (#1379).
+pub(super) fn mark_extra_distributions(manifest: &LoadedManifest, used: &mut IndexSet<String>) {
+    let users: Vec<String> = manifest
+        .dependencies
+        .iter()
+        .filter(|dep| !used.contains(&dep.name))
+        .filter(|dep| {
+            let Some(extras) = manifest.lockfile.extras.get(&dep.name) else {
+                return false;
+            };
+            dep.extras
+                .iter()
+                .filter_map(|extra| extras.get(&normalize_distribution_name(extra)))
+                .flatten()
+                .any(|added| used.contains(added))
+        })
+        .map(|dep| dep.name.clone())
+        .collect();
+    used.extend(users);
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -573,6 +597,7 @@ mod tests {
             root: graph.root.clone(),
             layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -900,6 +925,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: members
                 .iter()
                 .map(|(name, _)| python_file(&format!("{name}/src/{name}pkg/__init__.py")))
@@ -959,6 +985,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("src", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: names
                 .iter()
                 .filter(|name| **name != "omega")
@@ -1024,6 +1051,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("lib", vec!["streamlit".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1075,6 +1103,7 @@ mod tests {
             root: manifest.root.clone(),
             layout: crate::sources::LayoutInfo::new("", Vec::new()),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };

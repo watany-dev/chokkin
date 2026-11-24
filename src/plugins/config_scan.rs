@@ -18,8 +18,8 @@ use super::config_text::{
 };
 use super::context::PluginContext;
 use super::types::{
-    BinaryUsage, CommandTargetRef, ModuleReference, ReferenceOrigin, RequirementsRef,
-    ScriptReference, SymbolReference, ToolConfigRef,
+    BinaryUsage, CommandTarget, CommandTargetRef, ModuleReference, ReferenceOrigin,
+    RequirementsRef, ScriptReference, SymbolReference, ToolConfigRef,
 };
 use super::{ci_installs, script_entries, task_files, tool_plugins};
 
@@ -716,35 +716,278 @@ fn scan_tox_commands(
             }
             key_value.map_or("", |(_, value)| value.trim())
         };
-        push_command(
-            result,
-            seen,
-            &expand_tox_substitutions(strip_tox_factors(command)),
-            known,
-            &origin_at(rel, line_offset + index, "tox commands"),
-        );
+        let origin = origin_at(rel, line_offset + index, "tox commands");
+        match expand_tox_references(strip_tox_factors(command), contents, 0) {
+            Ok(commands) => {
+                for command in commands {
+                    // `-cmd` and `- cmd` ignore the exit code (#1403).
+                    let command = strip_tox_factors(&command).trim_start_matches('-');
+                    push_command(
+                        result,
+                        seen,
+                        &expand_tox_substitutions(command),
+                        known,
+                        &origin,
+                    );
+                }
+            },
+            // An unread reference may run any project file (ADR 0005); the
+            // rest of the command is still read.
+            Err(reference) => {
+                result.command_targets.push(CommandTargetRef {
+                    target: CommandTarget::Opaque { text: reference },
+                    origin: origin.clone(),
+                    deploy: false,
+                });
+                let command = strip_tox_factors(command).trim_start_matches('-');
+                push_command(
+                    result,
+                    seen,
+                    &expand_tox_substitutions(command),
+                    known,
+                    &origin,
+                );
+            },
+        }
     }
 }
 
-/// The command after a factor condition (`py38,!pypy: pytest` → `pytest`).
-fn strip_tox_factors(command: &str) -> &str {
-    match command.split_once(':') {
-        Some((factors, rest))
-            if !factors.is_empty()
-                && factors.chars().all(|ch| {
-                    ch.is_ascii_alphanumeric() || matches!(ch, ',' | '!' | '-' | '_' | '.')
-                }) =>
-        {
-            rest.trim_start()
-        },
-        _ => command,
+/// How deep `{[section]key}` references are followed inside one another.
+const MAX_TOX_REFERENCE_DEPTH: usize = 4;
+
+/// `command` with each `{[section]key}` replaced by that key's value in the
+/// same INI text (#1405): a command that is only a reference becomes the
+/// value's lines, one inside other text becomes them joined by spaces.
+/// `Err` holds a reference that names no key there, or nests too deep.
+fn expand_tox_references(
+    command: &str,
+    contents: &str,
+    depth: usize,
+) -> Result<Vec<String>, String> {
+    let trimmed = command.trim();
+    if trimmed.starts_with("{[") && trimmed.find('}') == Some(trimmed.len() - 1) {
+        let mut commands = Vec::new();
+        for line in tox_reference_lines(trimmed, contents, depth)? {
+            commands.extend(expand_tox_references(&line, contents, depth + 1)?);
+        }
+        return Ok(commands);
     }
+    Ok(vec![expand_inline_tox_references(
+        command, contents, depth,
+    )?])
+}
+
+/// [`expand_tox_references`] for references inside other text; references
+/// side by side are at the same depth.
+fn expand_inline_tox_references(
+    text: &str,
+    contents: &str,
+    depth: usize,
+) -> Result<String, String> {
+    let Some(start) = text.find("{[") else {
+        return Ok(text.to_owned());
+    };
+    let Some(end) = text[start..].find('}').map(|end| start + end) else {
+        return Ok(text.to_owned());
+    };
+    let mut values = Vec::new();
+    for line in tox_reference_lines(&text[start..=end], contents, depth)? {
+        values.push(expand_inline_tox_references(&line, contents, depth + 1)?);
+    }
+    let rest = expand_inline_tox_references(&text[end + 1..], contents, depth)?;
+    Ok(format!("{}{}{rest}", &text[..start], values.join(" ")))
+}
+
+/// The command lines of the value `reference` (`{[section]key}`) names.
+fn tox_reference_lines(
+    reference: &str,
+    contents: &str,
+    depth: usize,
+) -> Result<Vec<String>, String> {
+    let value = reference
+        .strip_prefix("{[")
+        .and_then(|inner| inner.strip_suffix('}'))
+        .and_then(|inner| inner.split_once(']'))
+        .filter(|_| depth < MAX_TOX_REFERENCE_DEPTH)
+        .and_then(|(section, key)| ini_value(contents, section.trim(), key.trim()))
+        .ok_or_else(|| reference.to_owned())?;
+    Ok(value
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The value of `key` in `[section]` of INI `contents`, its indented
+/// continuation lines joined by newlines.
+fn ini_value(contents: &str, section: &str, key: &str) -> Option<String> {
+    let mut in_section = false;
+    let mut value: Option<String> = None;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = &mut value {
+            if line.starts_with([' ', '\t']) || trimmed.is_empty() {
+                value.push('\n');
+                value.push_str(trimmed);
+                continue;
+            }
+            break;
+        }
+        if let Some(name) = trimmed
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            in_section = name.trim() == section;
+        } else if in_section
+            && !line.starts_with([' ', '\t'])
+            && let Some((name, rest)) = trimmed.split_once(['=', ':'])
+            && name.trim() == key
+        {
+            value = Some(rest.trim().to_owned());
+        }
+    }
+    value
+}
+
+/// The value after a tox 4 factor condition (`py38,!pypy: pytest` →
+/// `pytest`), read as tox's `expand_factors` does (#1422): the condition
+/// ends at the first `:` followed by whitespace or the end of the line, its
+/// `{a,b}` groups expand, and spaces around alternatives and group members
+/// are dropped, so `py{38,39}: black` and `py38, py39: black` both give
+/// `black` while `py38:black` is no condition. When the text before the `:`
+/// is not a valid condition, tox takes the whole line as the value, and so
+/// does this. The specification is
+/// `docs/dev/formal/lean/patterns/Patterns/Tox.lean`.
+fn strip_tox_factors(line: &str) -> &str {
+    let marker = line.match_indices(':').find_map(|(index, _)| {
+        let after = line[index + 1..].chars().next();
+        after.is_none_or(char::is_whitespace).then_some(index)
+    });
+    match marker {
+        Some(index) if valid_tox_condition(line[..index].trim()) => line[index + 1..].trim(),
+        _ => line,
+    }
+}
+
+/// Most variants a condition's `{...}` groups may expand to before it is
+/// taken as no condition; real conditions have a handful.
+const MAX_TOX_VARIANTS: usize = 256;
+
+/// Whether every alternative of `condition`, with its groups expanded and
+/// split at `-`, is a list of valid factors.
+fn valid_tox_condition(condition: &str) -> bool {
+    let mut variants = 0;
+    for alternative in tox_alternatives(condition) {
+        if alternative.is_empty() {
+            continue;
+        }
+        let Some(expanded) = expand_tox_groups(alternative.trim(), MAX_TOX_VARIANTS - variants)
+        else {
+            return false;
+        };
+        variants += expanded.len();
+        if !expanded
+            .iter()
+            .all(|variant| variant.split('-').all(valid_tox_factor))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// The `{...}` group opening just after `rest`'s start, as tox finds it:
+/// the text up to the next `}`, `None` when none follows or it is empty.
+fn tox_group(rest: &str) -> Option<&str> {
+    let inner = &rest[..rest.find('}')?];
+    (!inner.is_empty()).then_some(inner)
+}
+
+/// `condition` split at the commas outside a `{...}` group. A `{` that no
+/// `}` closes keeps the rest in one alternative: it is no factor character,
+/// so that alternative fails either way.
+fn tox_alternatives(condition: &str) -> Vec<&str> {
+    let mut alternatives = Vec::new();
+    let (mut start, mut in_group) = (0, false);
+    for (index, ch) in condition.char_indices() {
+        match ch {
+            '{' => in_group = true,
+            '}' => in_group = false,
+            ',' if !in_group => {
+                alternatives.push(&condition[start..index]);
+                start = index + 1;
+            },
+            _ => {},
+        }
+    }
+    alternatives.push(&condition[start..]);
+    alternatives
+}
+
+/// Every variant of `alternative`: each literal run and each group member
+/// trimmed, one member per group. `None` past `budget` variants.
+fn expand_tox_groups(alternative: &str, budget: usize) -> Option<Vec<String>> {
+    if budget == 0 {
+        return None;
+    }
+    let mut variants = vec![String::new()];
+    let mut literal = String::new();
+    let mut rest = alternative;
+    while let Some(ch) = rest.chars().next() {
+        rest = &rest[ch.len_utf8()..];
+        let group = if ch == '{' { tox_group(rest) } else { None };
+        let Some(inner) = group else {
+            literal.push(ch);
+            continue;
+        };
+        rest = &rest[inner.len() + 1..];
+        let members: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if variants.len() * members.len() > budget {
+            return None;
+        }
+        let prefix = std::mem::take(&mut literal);
+        variants = variants
+            .iter()
+            .flat_map(|variant| {
+                let base = format!("{variant}{}", prefix.trim());
+                members.iter().map(move |member| format!("{base}{member}"))
+            })
+            .collect();
+    }
+    for variant in &mut variants {
+        variant.push_str(literal.trim());
+    }
+    Some(variants)
+}
+
+/// tox's `_FACTOR_RE`: empty, or an optional `!` then word characters, `.`,
+/// and the glob characters `*`, `?`, `[`, `[!`, `]`.
+fn valid_tox_factor(factor: &str) -> bool {
+    if factor.is_empty() {
+        return true;
+    }
+    let body = factor.strip_prefix('!').unwrap_or(factor);
+    let mut chars = body.chars().peekable();
+    if chars.peek().is_none() {
+        return false;
+    }
+    while let Some(ch) = chars.next() {
+        let word = ch.is_alphanumeric() || ch == '_' || !ch.is_ascii();
+        if ch == '[' && chars.peek() == Some(&'!') {
+            chars.next();
+        } else if !(word || matches!(ch, '.' | '*' | '?' | '[' | ']')) {
+            return false;
+        }
+    }
+    true
 }
 
 /// `{envpython}` runs the env's interpreter and `{envbindir}/x` its scripts;
 /// every other `{...}` substitution (`{posargs}`, `{toxinidir}`, `{env:X}`)
 /// is dropped so it is never read as a command word.
 fn expand_tox_substitutions(command: &str) -> String {
+    let command = expand_posargs_default(command);
     let command = command
         .replace("{envpython}", "python")
         .replace("{env_python}", "python")
@@ -763,6 +1006,28 @@ fn expand_tox_substitutions(command: &str) -> String {
         }
     }
     expanded
+}
+
+/// `{posargs:DEFAULT}` is DEFAULT when tox runs without arguments (#1409).
+fn expand_posargs_default(command: &str) -> String {
+    let Some(start) = command.find("{posargs:") else {
+        return command.to_owned();
+    };
+    let body = start + "{posargs:".len();
+    let mut depth = 1usize;
+    let end = command[body..].char_indices().find_map(|(at, ch)| {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            _ => {},
+        }
+        (depth == 0).then_some(body + at)
+    });
+    let Some(end) = end else {
+        return command.to_owned();
+    };
+    let rest = expand_posargs_default(&command[end + 1..]);
+    format!("{}{}{rest}", &command[..start], &command[body..end])
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1025,11 +1290,22 @@ fn scan_shell_scripts(
 }
 
 /// The commands of a shell script, by line index: logical lines without
-/// comments, leaving out here-document bodies a shell does not run.
+/// comments, leaving out here-document bodies a shell does not run. A line
+/// ending inside a quote goes on into the next one, which is more of the
+/// same word, not a command (#1384).
 pub(super) fn shell_script_commands(contents: &str) -> Vec<(usize, String)> {
     let mut commands = Vec::new();
     let mut heredoc: Option<Heredoc> = None;
+    let mut quoted: Option<(usize, String)> = None;
     for (index, line) in logical_lines(contents) {
+        let (index, line) = match quoted.take() {
+            Some((start, text)) => (start, format!("{text}\n{line}")),
+            None => (index, line),
+        };
+        if heredoc.is_none() && ends_in_quote(&line) {
+            quoted = Some((index, line));
+            continue;
+        }
         if let Some(open) = &heredoc {
             if open.ends_at(&line) {
                 heredoc = None;
@@ -1043,7 +1319,36 @@ pub(super) fn shell_script_commands(contents: &str) -> Vec<(usize, String)> {
         heredoc = heredoc.or_else(|| Heredoc::opened_by(command));
         commands.push((index, command.to_owned()));
     }
+    if let Some((index, line)) = quoted {
+        commands.push((index, strip_shell_comment(&line).to_owned()));
+    }
     commands
+}
+
+/// Whether a shell line ends inside a `'...'` or `"..."`. A `#` starting a
+/// word outside quotes starts a comment, which holds no quote.
+fn ends_in_quote(line: &str) -> bool {
+    let mut quote: Option<char> = None;
+    let mut word_start = true;
+    let mut chars = line.chars();
+    let mut previous = ' ';
+    while let Some(ch) = chars.next() {
+        match (quote, ch) {
+            // `$'...'` escapes with a backslash, as `"..."` does.
+            (None | Some('"' | '$'), '\\') => {
+                chars.next();
+            },
+            (None, '#') if word_start => return false,
+            (None, '\'') if previous == '$' => quote = Some('$'),
+            (None, '\'' | '"') => quote = Some(ch),
+            (Some('$'), '\'') => quote = None,
+            (Some(open), _) if open == ch => quote = None,
+            _ => {},
+        }
+        previous = ch;
+        word_start = quote.is_none() && (ch.is_whitespace() || matches!(ch, ';' | '&' | '|' | '('));
+    }
+    quote.is_some()
 }
 
 /// A here-document a script line opens (#1341): its body is the input of
@@ -1324,6 +1629,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1394,6 +1700,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1436,6 +1743,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1526,6 +1834,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1590,6 +1899,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1707,6 +2017,113 @@ mod tests {
             ]
         );
         assert!(!result.used_distributions.contains(&"sphinx".to_owned()));
+    }
+
+    /// `-cmd` (#1403), `{[section]key}` (#1405) and `{posargs:DEFAULT}`
+    /// (#1409) run the command they stand for; a reference to no key is
+    /// an opaque target (ADR 0005).
+    #[test]
+    fn tox_commands_follow_ignore_prefix_references_and_posargs_defaults() {
+        let result = scan_files(&[(
+            "tox.ini",
+            "[base]\ncmds =\n    ruff check .\n    {[lint]cmds}\n[lint]\ncmds = mypy src\n\
+                 [testenv]\ncommands =\n    -black .\n    {[base]cmds}\n    {posargs:pytest -q}\n    \
+                 coverage {[missing]key}\n",
+        )]);
+        let found: Vec<(String, Option<u32>)> = usages(&result)
+            .into_iter()
+            .map(|(binary, _, line)| (binary, line))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("tox".to_owned(), None),
+                ("black".to_owned(), Some(9)),
+                ("ruff".to_owned(), Some(10)),
+                ("mypy".to_owned(), Some(10)),
+                ("pytest".to_owned(), Some(11)),
+                ("coverage".to_owned(), Some(12)),
+            ]
+        );
+        // References side by side are not nested.
+        assert_eq!(
+            expand_tox_references("a {[s]k} {[s]k} {[s]k} {[s]k} {[s]k} b", "[s]\nk = x\n", 0),
+            Ok(vec!["a x x x x x b".to_owned()])
+        );
+        assert_eq!(
+            expand_tox_references("{[s]k}", "[s]\nk = {[s]k}\n", 0),
+            Err("{[s]k}".to_owned())
+        );
+        assert_eq!(
+            expand_tox_references("a {[s]k}", "[s]\nk = x {[s]k}\n", 0),
+            Err("{[s]k}".to_owned())
+        );
+        // Four nested references are followed, a fifth is not.
+        let chain = "[s]\na = {[s]b}\nb = {[s]c}\nc = {[s]d}\nd = pytest\ne = {[s]a}\n";
+        assert_eq!(
+            expand_tox_references("{[s]a}", chain, 0),
+            Ok(vec!["pytest".to_owned()])
+        );
+        assert_eq!(
+            expand_tox_references("{[s]e}", chain, 0),
+            Err("{[s]d}".to_owned())
+        );
+        // Blank and comment lines of a value are no commands.
+        assert_eq!(
+            expand_tox_references("{[s]k}", "[s]\nk =\n    pytest\n    # c\n", 0),
+            Ok(vec!["pytest".to_owned()])
+        );
+        let opaque: Vec<&str> = result
+            .command_targets
+            .iter()
+            .filter_map(|target| match &target.target {
+                CommandTarget::Opaque { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(opaque, ["{[missing]key}"]);
+    }
+
+    #[test]
+    fn expand_posargs_default_keeps_nested_substitutions() {
+        assert_eq!(
+            expand_posargs_default("pytest {posargs:{toxinidir}/tests -q} x"),
+            "pytest {toxinidir}/tests -q x"
+        );
+        assert_eq!(
+            expand_posargs_default("pytest {posargs}"),
+            "pytest {posargs}"
+        );
+        assert_eq!(
+            expand_posargs_default("pytest {posargs:x"),
+            "pytest {posargs:x"
+        );
+    }
+
+    /// A newline inside quotes is part of the word (#1384).
+    #[test]
+    fn shell_script_lines_continue_inside_quotes() {
+        let commands = shell_script_commands(
+            "echo \"usage:\nblack .\"\necho 'a\nruff check'\npytest # it's\nmypy\n",
+        );
+        assert_eq!(
+            commands,
+            [
+                (0, "echo \"usage:\nblack .\"".to_owned()),
+                (2, "echo 'a\nruff check'".to_owned()),
+                (4, "pytest ".to_owned()),
+                (5, "mypy".to_owned()),
+            ]
+        );
+        assert!(ends_in_quote("echo \"a"));
+        assert!(!ends_in_quote("echo \"a\\\"\" b"));
+        assert!(!ends_in_quote("echo a\\'b"));
+        assert!(!ends_in_quote("x=1 # don't"));
+        // A `#` inside a word starts no comment; a plain `'...'` has no escapes.
+        assert!(ends_in_quote("echo a#'b"));
+        assert!(!ends_in_quote("echo 'a\\' b"));
+        assert!(!ends_in_quote("echo $'it\\'s done'"));
+        assert!(ends_in_quote("echo $'it\\'s"));
     }
 
     #[test]
@@ -2070,5 +2487,51 @@ mod tests {
             .map(|reference| reference.origin.line)
             .collect();
         assert_eq!(lines, [Some(6), Some(10), Some(13)]);
+    }
+
+    /// Factor conditions as tox 4 reads them (#1422).
+    #[test]
+    fn tox_factor_conditions_follow_tox() {
+        for (line, value) in [
+            ("py{38,39}: black", "black"),
+            ("py38, py39: black", "black"),
+            ("lint : black", "black"),
+            ("py38,!pypy: coverage report", "coverage report"),
+            ("py3{8, 9}-django{40,41}: x", "x"),
+            ("py*: x", "x"),
+            ("py[!2]: x", "x"),
+            (": x", "x"),
+            ("py38:black", "py38:black"),
+            ("https://example.com/x.whl", "https://example.com/x.whl"),
+            ("py3!8: a", "py3!8: a"),
+            ("echo \"a: b\"", "echo \"a: b\""),
+            ("py 38: a", "py 38: a"),
+            ("!: a", "!: a"),
+            ("é: x", "x"),
+            ("py_38: x", "x"),
+            ("{py38,py39}: x", "x"),
+            ("py{38,39}, lint: x", "x"),
+            ("py{}: x", "py{}: x"),
+            ("py{38: x", "py{38: x"),
+            ("éa:b", "éa:b"),
+        ] {
+            assert_eq!(strip_tox_factors(line), value, "line {line}");
+        }
+        // Variants count across alternatives, up to 256.
+        let group = |count: usize| {
+            let members: Vec<String> = (0..count).map(|n| n.to_string()).collect();
+            format!("py{{{}}}", members.join(","))
+        };
+        let at_limit = format!("{}, {}: x", group(128), group(128));
+        assert_eq!(strip_tox_factors(&at_limit), "x");
+        let full = format!("{}, {}, lint: x", group(128), group(128));
+        assert_eq!(strip_tox_factors(&full), full);
+        let over = format!("{}, {}: x", group(200), group(200));
+        assert_eq!(strip_tox_factors(&over), over);
+        let result = scan_files(&[(
+            "tox.ini",
+            "[testenv]\ndeps =\n    py{38,39}: black\n    py38, py39: isort\n    lint : ruff\n",
+        )]);
+        assert_eq!(result.declared_distributions, ["black", "isort", "ruff"]);
     }
 }

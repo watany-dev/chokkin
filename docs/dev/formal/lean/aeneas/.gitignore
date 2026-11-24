@@ -1,0 +1,4 @@
+.lake/
+extract/target/
+extract/*.llbc
+extract/dump.tsv

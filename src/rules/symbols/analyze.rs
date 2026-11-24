@@ -699,6 +699,7 @@ mod tests {
             root,
             layout: crate::sources::LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: files
                 .iter()
                 .map(|&(path, context)| crate::sources::DiscoveredFile {

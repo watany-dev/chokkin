@@ -95,12 +95,14 @@ fn parse_python_source(
         });
         return parsed;
     }
-    let mut parsed = match parse_walkable_module(source) {
+    match parse_walkable_module(source) {
         Ok(module) => {
             let mut visitor = ModuleVisitor::new(path, layout, file_context, &lines);
             visitor.visit_module(source, module.suite());
             let mut parsed = visitor.into_parsed();
             note_unsupported_syntax(target, module.suite(), &mut parsed.diagnostics);
+            parsed.ignores =
+                extract_ignores_with(source, module.tokens(), &lines, &mut parsed.diagnostics);
             parsed
         },
         // Nothing was read past the error, so the module's imports are as
@@ -111,12 +113,9 @@ fn parse_python_source(
             parsed
                 .diagnostics
                 .push(unwalkable_diagnostic(&lines, &unwalkable));
-            return parsed;
+            parsed
         },
-    };
-
-    parsed.ignores = extract_ignores_with(source, &lines, &mut parsed.diagnostics);
-    parsed
+    }
 }
 
 fn parse_notebook_file(
@@ -986,6 +985,7 @@ mod tests {
             root: root.clone(),
             layout: empty_layout(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files,
             warnings: Vec::new(),
         };
@@ -1024,6 +1024,7 @@ mod tests {
             root: root.clone(),
             layout: empty_layout(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files,
             warnings: Vec::new(),
         };
