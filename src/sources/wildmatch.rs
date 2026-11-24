@@ -200,15 +200,12 @@ fn render(tokens: &[Token<'_>]) -> String {
                     // `[!x]` → `[!x/]`; before a trailing `-`, which would
                     // otherwise start a range.
                     let body = &text[..text.len() - 1];
-                    match body.strip_suffix('-') {
-                        Some(head) => {
-                            out.push_str(head);
-                            out.push_str("/-]");
-                        },
-                        _ => {
-                            out.push_str(body);
-                            out.push_str("/]");
-                        },
+                    if let Some(head) = body.strip_suffix('-') {
+                        out.push_str(head);
+                        out.push_str("/-]");
+                    } else {
+                        out.push_str(body);
+                        out.push_str("/]");
                     }
                 } else {
                     out.push_str(text);
