@@ -1931,6 +1931,25 @@ mod tests {
             expand_tox_references("{[s]k}", "[s]\nk = {[s]k}\n", 0),
             Err("{[s]k}".to_owned())
         );
+        assert_eq!(
+            expand_tox_references("a {[s]k}", "[s]\nk = x {[s]k}\n", 0),
+            Err("{[s]k}".to_owned())
+        );
+        // Four nested references are followed, a fifth is not.
+        let chain = "[s]\na = {[s]b}\nb = {[s]c}\nc = {[s]d}\nd = pytest\ne = {[s]a}\n";
+        assert_eq!(
+            expand_tox_references("{[s]a}", chain, 0),
+            Ok(vec!["pytest".to_owned()])
+        );
+        assert_eq!(
+            expand_tox_references("{[s]e}", chain, 0),
+            Err("{[s]d}".to_owned())
+        );
+        // Blank and comment lines of a value are no commands.
+        assert_eq!(
+            expand_tox_references("{[s]k}", "[s]\nk =\n    pytest\n    # c\n", 0),
+            Ok(vec!["pytest".to_owned()])
+        );
         let opaque: Vec<&str> = result
             .command_targets
             .iter()
