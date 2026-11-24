@@ -2727,3 +2727,253 @@ fn dynamic_module_lookups_read_their_literal_module() {
         "{report:?}"
     );
 }
+
+/// Asserts that `target` is read in every `main.py` of `cases`.
+fn assert_module_carried(cases: &[(&str, &str)]) {
+    for (label, body) in cases {
+        assert!(
+            !oracle_target_unused(&[("main.py", body), ("pkg/reg.py", "")]),
+            "{label}"
+        );
+    }
+}
+
+/// A module object carried through a call the oracle follows reads the
+/// module through its attributes (#1427).
+#[test]
+fn module_objects_carried_by_calls_are_receivers() {
+    assert_module_carried(&[
+        (
+            "return",
+            "import pkg.m\n\ndef get():\n    return pkg.m\n\nget().target()\n",
+        ),
+        (
+            "argument",
+            "import pkg.m\n\ndef ident(x):\n    return x\n\nident(pkg.m).target()\n",
+        ),
+        (
+            "keyword argument",
+            "import pkg.m\n\ndef ident(x):\n    return x\n\nident(x=pkg.m).target()\n",
+        ),
+        (
+            "default",
+            "import pkg.m\n\ndef get(x=pkg.m):\n    return x\n\nget().target()\n",
+        ),
+        (
+            "lambda",
+            "import pkg.m\nget = lambda: pkg.m\nget().target()\n",
+        ),
+        (
+            "lambda called in place",
+            "import pkg.m\n(lambda: pkg.m)().target()\n",
+        ),
+        (
+            "decorated",
+            "import functools\nimport pkg.m\n\n@functools.cache\ndef get():\n    return pkg.m\n\nget().target()\n",
+        ),
+        (
+            "local in the function",
+            "import pkg.m\n\ndef get():\n    f = pkg.m\n    return f\n\nget().target()\n",
+        ),
+        (
+            "global",
+            "import pkg.m\nf = None\n\ndef set_f():\n    global f\n    f = pkg.m\n\nset_f()\nf.target()\n",
+        ),
+        (
+            "member that reads itself",
+            "import pkg.m\n\nclass C:\n    def reset(self):\n        self.a = self.a or [pkg.m]\n\nC().a[0].target()\n",
+        ),
+        (
+            "overloaded",
+            "import pkg.m\nfrom typing import overload\n\n@overload\ndef get(x: int) -> None: ...\ndef get(x=0):\n    return pkg.m\n\nget().target()\n",
+        ),
+        (
+            "defined in both branches",
+            "import sys\nimport pkg.m\nif sys.platform == 'win32':\n    def get():\n        return pkg.m\nelse:\n    def get():\n        return None\n\nget().target()\n",
+        ),
+        (
+            "cached_property",
+            "import functools\nimport pkg.m\n\nclass H:\n    @functools.cached_property\n    def m(self):\n        return pkg.m\n\nH().m.target()\n",
+        ),
+    ]);
+}
+
+/// A module object a function assigns through `global` is read wherever
+/// the module-level name is, before or after that function (#1427).
+#[test]
+fn module_objects_carried_through_globals_are_receivers() {
+    assert_module_carried(&[
+        (
+            "global set by a later function",
+            "import pkg.m\nf = None\n\ndef use():\n    f.target()\n\ndef set_f():\n    global f\n    f = pkg.m\n",
+        ),
+        (
+            "global over an alias",
+            "import pkg.m\nimport pkg.reg\nf = pkg.reg\n\ndef set_f():\n    global f\n    f = pkg.m\n\nset_f()\nf.target()\n",
+        ),
+        (
+            "import reassigned through global",
+            "import pkg.m as m\n\ndef reset():\n    global m\n    m = None\n\nm.target()\n",
+        ),
+    ]);
+}
+
+/// A module object carried through a container, binding or attribute the
+/// oracle follows reads the module through its attributes (#1427).
+#[test]
+fn module_objects_carried_by_values_are_receivers() {
+    assert_module_carried(&[
+        ("list index", "import pkg.m\n[pkg.m][0].target()\n"),
+        ("tuple index", "import pkg.m\n(0, pkg.m)[1].target()\n"),
+        (
+            "negative index",
+            "import pkg.m\nxs = (0, pkg.m)\nxs[-1].target()\n",
+        ),
+        (
+            "starred rest",
+            "import pkg.m\na, *rest = 0, pkg.m\nrest[0].target()\n",
+        ),
+        (
+            "comprehension",
+            "import pkg.m\n[x for x in [pkg.m]][0].target()\n",
+        ),
+        (
+            "class attribute",
+            "import pkg.m\n\nclass Holder:\n    m = pkg.m\n\nHolder.m.target()\n",
+        ),
+        (
+            "instance attribute",
+            "import pkg.m\n\nclass Holder:\n    def __init__(self):\n        self.m = pkg.m\n\nHolder().m.target()\n",
+        ),
+        (
+            "method",
+            "import pkg.m\n\nclass Holder:\n    def get(self):\n        return pkg.m\n\nHolder().get().target()\n",
+        ),
+        (
+            "staticmethod",
+            "import pkg.m\n\nclass Holder:\n    @staticmethod\n    def get():\n        return pkg.m\n\nHolder.get().target()\n",
+        ),
+        (
+            "property",
+            "import pkg.m\n\nclass Holder:\n    @property\n    def m(self):\n        return pkg.m\n\nHolder().m.target()\n",
+        ),
+        ("for", "import pkg.m\nfor f in [pkg.m]:\n    f.target()\n"),
+        (
+            "match capture",
+            "import pkg.m\nmatch pkg.m:\n    case f:\n        f.target()\n",
+        ),
+        (
+            "match as",
+            "import pkg.m\nmatch pkg.m:\n    case object() as f:\n        f.target()\n",
+        ),
+        (
+            "match sequence",
+            "import pkg.m\nmatch (0, pkg.m):\n    case (a, f):\n        f.target()\n",
+        ),
+        (
+            "if expression",
+            "import pkg.m\nc = True\nf = pkg.m if c else None\nf.target()\n",
+        ),
+        ("or", "import pkg.m\nf = None or pkg.m\nf.target()\n"),
+        (
+            "after a starred element",
+            "import pkg.m\nxs = []\n[*xs, pkg.m][0].target()\n",
+        ),
+        (
+            "unpacked after a starred element",
+            "import pkg.m\nxs = []\na, b = *xs, pkg.m, 0\na.target()\n",
+        ),
+        (
+            "unpacked comprehension",
+            "import pkg.m\na, b = [x for x in (pkg.m, 0)]\na.target()\n",
+        ),
+        (
+            "comprehension over the name it binds",
+            "import pkg.m\nx = [pkg.m]\n[x.target() for x in x]\n",
+        ),
+        (
+            "attribute store",
+            "import pkg.m\nimport pkg.reg\npkg.reg.h = pkg.m\npkg.reg.h.target()\n",
+        ),
+    ]);
+}
+
+/// A value no flow carries the module in reads nothing (#1427).
+#[test]
+fn values_not_carrying_the_module_are_not_receivers() {
+    for (label, body) in [
+        ("other element", "import pkg.m\n(pkg.m, 0)[1].target\n"),
+        (
+            "function returning something else",
+            "import pkg.m\n\ndef get():\n    return None\n\nget().target\n",
+        ),
+        (
+            "parameter not passed the module",
+            "import pkg.m\n\ndef ident(x):\n    return x\n\nident(0).target\n",
+        ),
+    ] {
+        assert!(oracle_target_unused(&[("main.py", body)]), "{label}");
+    }
+}
+
+/// Module objects that cross modules through a function's return value or
+/// a module-level name another module assigned (#1427, #1417).
+#[test]
+fn module_objects_carried_across_modules_are_receivers() {
+    assert_oracle_cases(&[
+        (
+            "other module's function return",
+            &[
+                (
+                    "pkg/util.py",
+                    "import pkg.m\n\ndef get():\n    return pkg.m\n",
+                ),
+                ("main.py", "from pkg.util import get\nget().target()\n"),
+            ],
+            false,
+        ),
+        (
+            "other module's function through its module",
+            &[
+                (
+                    "pkg/util.py",
+                    "import pkg.m\n\ndef get():\n    return pkg.m\n",
+                ),
+                ("main.py", "import pkg.util\npkg.util.get().target()\n"),
+            ],
+            false,
+        ),
+        (
+            "other module's global",
+            &[
+                ("pkg/user.py", "import pkg.m\nmod = pkg.m\n"),
+                ("main.py", "from pkg.user import mod\nmod.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "other module's global read from a third",
+            &[
+                ("pkg/a.py", "import pkg.m\nalias = pkg.m\n"),
+                ("pkg/b.py", "from pkg import a\nmod = a.alias\n"),
+                ("main.py", "from pkg.b import mod\nmod.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "attribute another module stored",
+            &[
+                ("pkg/reg.py", ""),
+                (
+                    "pkg/setup.py",
+                    "import pkg.m\nimport pkg.reg\npkg.reg.h = pkg.m\n",
+                ),
+                (
+                    "main.py",
+                    "import pkg.setup\nimport pkg.reg\npkg.reg.h.target()\n",
+                ),
+            ],
+            false,
+        ),
+    ]);
+}

@@ -461,6 +461,9 @@ enum Bound<'m> {
 /// to a module (#1414, #1417, #1421).
 struct ModuleBindings<'m, 's> {
     by_module: FxHashMap<&'m str, FxHashMap<&'m str, Bound<'m>>>,
+    /// What each module's functions may return, as the module reads it
+    /// (#1427).
+    returns: FxHashMap<&'m str, FxHashMap<&'m str, Vec<&'m str>>>,
     module_names: &'m HashMap<&'m str, String>,
     known_modules: &'s FxHashSet<&'m str>,
     symlinks: &'s SymlinkModules,
@@ -470,6 +473,8 @@ struct ModuleBindings<'m, 's> {
 /// How many module members one receiver may look up: re-export cycles and
 /// star imports that fan out end there.
 const MAX_MEMBER_LOOKUPS: u32 = 64;
+/// How many modules deep one module-level assignment may read another's.
+const MAX_ASSIGNMENT_ROUNDS: usize = 4;
 
 impl<'m, 's> ModuleBindings<'m, 's> {
     fn build(
@@ -481,6 +486,7 @@ impl<'m, 's> ModuleBindings<'m, 's> {
     ) -> Self {
         let mut bindings = Self {
             by_module: FxHashMap::default(),
+            returns: FxHashMap::default(),
             module_names,
             known_modules,
             symlinks,
@@ -492,9 +498,72 @@ impl<'m, 's> ModuleBindings<'m, 's> {
                 if !own.is_empty() {
                     bindings.by_module.insert(name.as_str(), own);
                 }
+                for (function, text) in &module.function_returns {
+                    bindings
+                        .returns
+                        .entry(name.as_str())
+                        .or_default()
+                        .entry(function.as_str())
+                        .or_default()
+                        .push(text.as_str());
+                }
+            }
+        }
+        // A module-level `mod = pkg.m` binds `mod` like an import, and
+        // `pkg.reg.h = pkg.m` binds `h` in `pkg.reg` (#1427). A value that
+        // reads another module's assignment (`mod = a.alias`) resolves in a
+        // later round, up to a few modules deep.
+        let mut pending: Vec<(&'m str, &'m str, &'m str)> = modules
+            .iter()
+            .filter_map(|&module| {
+                let name = module_names.get(module.path.as_str())?;
+                Some((name, module))
+            })
+            .flat_map(|(name, module)| {
+                module
+                    .module_values
+                    .iter()
+                    .map(move |(target, value)| (name.as_str(), target.as_str(), value.as_str()))
+            })
+            .collect();
+        for _ in 0..MAX_ASSIGNMENT_ROUNDS {
+            let mut assigned = Vec::new();
+            pending.retain(|&(name, target, value)| {
+                let empty = FxHashMap::default();
+                let own = bindings.by_module.get(name).unwrap_or(&empty);
+                let stars = bindings.stars_of(name);
+                let Some(held) = bindings.resolve(own, stars, value) else {
+                    return true;
+                };
+                match target.rsplit_once('.') {
+                    None => assigned.push((name, target, held)),
+                    Some((holder, attribute)) => match bindings.resolve(own, stars, holder) {
+                        Some(holder) => assigned.push((holder, attribute, held)),
+                        None => return true,
+                    },
+                }
+                false
+            });
+            if assigned.is_empty() {
+                break;
+            }
+            for (holder, attribute, held) in assigned {
+                bindings
+                    .by_module
+                    .entry(holder)
+                    .or_default()
+                    .entry(attribute)
+                    .or_insert(Bound::Module(held));
             }
         }
         bindings
+    }
+
+    fn stars_of(&self, module: &str) -> &[&'m str] {
+        self.stars
+            .children
+            .get(module)
+            .map_or(&[][..], Vec::as_slice)
     }
 
     /// [`Self::of`], kept from [`Self::build`] for a named module.
@@ -552,17 +621,75 @@ impl<'m, 's> ModuleBindings<'m, 's> {
         stars_of_module: &[&'m str],
         receiver: &str,
     ) -> Option<&'m str> {
-        let lookups = Cell::new(MAX_MEMBER_LOOKUPS);
-        let mut segments = receiver.split('.');
-        let root = segments.next()?;
-        let mut module = match own.get(root) {
-            Some(&bound) => self.follow(bound, &lookups)?,
-            None => self.through_stars(stars_of_module, root, &lookups)?,
-        };
-        for segment in segments {
-            module = self.member(&module, segment, &lookups)?;
-        }
+        let module = self.resolve_within(
+            own,
+            stars_of_module,
+            receiver,
+            &Cell::new(MAX_MEMBER_LOOKUPS),
+        )?;
         self.known(&module)
+    }
+
+    /// [`Self::resolve`] on a shared lookup budget, before the module is
+    /// checked to be known. A `.()` segment is what calling the name before
+    /// it returns (#1427).
+    fn resolve_within(
+        &self,
+        own: &FxHashMap<&'m str, Bound<'m>>,
+        stars_of_module: &[&'m str],
+        receiver: &str,
+        lookups: &Cell<u32>,
+    ) -> Option<String> {
+        let segments: Vec<&str> = receiver.split('.').collect();
+        let (&root, rest) = segments.split_first()?;
+        let mut index = 0;
+        let mut module = if rest.first() == Some(&"()") {
+            index = 1;
+            match own.get(root) {
+                Some(&Bound::Member(package, function)) => {
+                    self.returned(package, function, lookups)?
+                },
+                _ => return None,
+            }
+        } else {
+            match own.get(root) {
+                Some(&bound) => self.follow(bound, lookups)?,
+                None => self.through_stars(stars_of_module, root, lookups)?,
+            }
+        };
+        while let Some(&segment) = rest.get(index) {
+            if rest.get(index + 1) == Some(&"()") {
+                module = self.returned(&module, segment, lookups)?;
+                index += 2;
+            } else {
+                module = self.member(&module, segment, lookups)?;
+                index += 1;
+            }
+        }
+        Some(module)
+    }
+
+    /// The module calling `module.function` returns, or `None`.
+    fn returned(&self, module: &str, function: &str, lookups: &Cell<u32>) -> Option<String> {
+        lookups.set(lookups.get().checked_sub(1)?);
+        let empty = FxHashMap::default();
+        let own = self.by_module.get(module).unwrap_or(&empty);
+        for text in self
+            .returns
+            .get(module)
+            .and_then(|returns| returns.get(function))
+            .into_iter()
+            .flatten()
+        {
+            if let Some(found) = self.resolve_within(own, self.stars_of(module), text, lookups) {
+                return Some(found);
+            }
+        }
+        // `from .impl import get` re-exports `get`.
+        match own.get(function) {
+            Some(&Bound::Member(package, name)) => self.returned(package, name, lookups),
+            _ => None,
+        }
     }
 
     fn known(&self, module: &str) -> Option<&'m str> {
@@ -594,12 +721,7 @@ impl<'m, 's> ModuleBindings<'m, 's> {
         if self.known(&submodule).is_some() {
             return Some(submodule);
         }
-        let stars = self
-            .stars
-            .children
-            .get(module)
-            .map_or(&[][..], Vec::as_slice);
-        self.through_stars(stars, name, lookups)
+        self.through_stars(self.stars_of(module), name, lookups)
     }
 
     /// The module `name` is in a module that star-imports `stars`: what

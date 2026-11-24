@@ -431,6 +431,16 @@ pub struct ParsedModule {
     /// may bind (#1413).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub star_reads: Vec<String>,
+    /// What module-level names and dotted attributes were assigned, as
+    /// dotted names the module reads them as: `mod = pkg.m` is
+    /// `("mod", "pkg.m")`, `pkg.reg.h = pkg.m` is `("pkg.reg.h", "pkg.m")`
+    /// (#1427).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub module_values: Vec<(String, String)>,
+    /// What module-level functions may return, as dotted names the module
+    /// reads them as (#1427).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub function_returns: Vec<(String, String)>,
     /// Extracted ignore directives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignores: Vec<IgnoreDirective>,

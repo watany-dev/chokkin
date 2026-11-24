@@ -65,6 +65,11 @@ impl<'ast> Scope<'ast> {
     pub(super) fn binds(&self, name: &str) -> bool {
         self.locals.contains(name)
     }
+
+    /// Whether a `global` statement in the scope names `name`.
+    pub(super) fn declares_global(&self, name: &str) -> bool {
+        self.globals.contains(name)
+    }
 }
 
 /// Whether `name` read in the innermost of `scopes` is a name one of them
@@ -233,6 +238,39 @@ mod tests {
             "def f():\n    try:\n        import yaml\n    except ImportError:\n        yaml = None\n",
         );
         assert!(!fallback.binds("yaml"));
+    }
+
+    #[test]
+    fn binds_classes_mapping_rests_and_walruses_in_comprehensions_only() {
+        let scope = function_scope(
+            "def f():\n    from m import fimp\n    class K: pass\n    match z:\n        case {**rest}: pass\n    [l for l in x if (w := l)]\n    g = lambda: (q := 1)\n",
+        );
+        for name in ["K", "rest", "w", "g"] {
+            assert!(scope.binds(name), "{name}");
+        }
+        for name in ["fimp", "l", "q"] {
+            assert!(!scope.binds(name), "{name}");
+        }
+        let fallback = function_scope(
+            "def f():\n    try:\n        from m import yaml\n    except ImportError:\n        yaml = None\n",
+        );
+        assert!(!fallback.binds("yaml"));
+    }
+
+    #[test]
+    fn comprehension_targets_unpack() {
+        let module =
+            ruff_python_parser::parse_module("[0 for (a, [b, *c]) in x]\n").expect("parse");
+        let Stmt::Expr(stmt) = &module.suite()[0] else {
+            panic!("not an expression");
+        };
+        let Expr::ListComp(comp) = &*stmt.value else {
+            panic!("not a comprehension");
+        };
+        let scope = Scope::comprehension(&comp.generators);
+        for name in ["a", "b", "c"] {
+            assert!(scope.binds(name), "{name}");
+        }
     }
 
     #[test]

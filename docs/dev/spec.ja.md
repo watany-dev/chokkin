@@ -1165,8 +1165,21 @@ module の属性として読む (#1415)。別名と `importlib.import_module("pk
 loader の module 名、`package=` 引数、`getattr` の属性名、`sys.modules` の key で literal と同じに読む (#1425)。package の
 `__init__.py` の `__name__` は package 自身なので、`import_module(".m", __name__)` は `__package__` と同じに解く (#1423)。
 
-関数の戻り値・引数、container、class / instance 属性、`for` / `match` を通った module object の属性 (#1427) と、他の
-束縛 (`for f in ...`) で上書きされた別名はまだ追わない。
+module object を運ぶ値の流れも追う (#1427)。parser は式を「取りうる値の集合」(import の dotted 名、class の instance、
+method、lambda、tuple / list の要素列) で評価し、属性を読んだ受け手の値に module が含まれれば、その属性を module の属性として
+読む。追う流れは、同じ file の関数・lambda・method・`staticmethod` / `classmethod` / `property` / `cached_property` の戻り値
+(位置・keyword・default 引数を束縛して本体を評価する。decorator は `staticmethod` などを除き素通しとみなす。top-level の
+`if` / `try` の各分岐で定義した同名の関数はどれも呼ばれうるとみなし、method と class は最後の定義を使う)、`global` 宣言した
+関数内の代入 (その関数の前後どちらで読んでも、関数が実行済みとみなす)、tuple / list の整数 index (負数を含む) と starred の
+残り、内包表記 (要素の位置は分からないので、index と unpack はどの要素も返す。starred 要素を含む display も同じ)、class 属性と `self.x = ...` で束縛した instance 属性、
+`for` / `match` の捕獲、条件式と `or` / `and`、`pkg.reg.h = pkg.m` のような属性への代入である。module の top-level の名前と
+関数の戻り値は file をまたいで渡し、`from pkg.util import get; get().name` や別 module が束縛した名前の属性も読む
+(`mod = a.alias` のように別 module の束縛を読む束縛は 4 段まで辿る)。
+評価は may 解析なので、分岐のどちらかで module になりうる値は module とみなす (外れても参照が増えるだけで CHK006 の偽陽性には
+ならない)。値の集合は 16 個、呼び出しの深さは 4 段、1 回の評価で辿る関数本体と class member は 64 個、式の入れ子は 64 段で打ち切り、打ち切った
+値は何も運ばない (ADR 0005: 読めない流れは参照を足さず、従来どおり CHK006 が出うる)。他の module の関数に渡した引数、他の
+module の class の属性、`nonlocal` で書き換えた値、内包表記の中の walrus、継承した属性はまだ追わない。他の束縛
+(`for f in ...`) で上書きされた別名も消さない。
 
 参照先の module が `from m import *` で名前を取り込んでいる場合、その参照は `m` の同名 symbol にも届くとみなす (#576)。
 `pkg/__init__.py` が `from .sub.impl import *` するとき、`import pkg; pkg.name` と `from pkg import name` は

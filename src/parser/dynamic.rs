@@ -107,7 +107,7 @@ impl LoaderNames {
 }
 
 /// What a loader call with a literal module name loads.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum LiteralTarget {
     /// This absolute module.
     Module(String),
@@ -614,6 +614,43 @@ mod tests {
             loader,
             &super::Caller::literal(|| Some("acme.core".to_owned())),
         )
+    }
+
+    /// A name bound once to a literal reads as the literal, and `__name__`
+    /// as `package=` is the package only in the package's `__init__`
+    /// (#1423, #1425).
+    #[test]
+    fn loader_names_read_constants_and_dunder_name() {
+        let constant = |name: &str| match name {
+            "NAME" => Some("acme.m"),
+            "PKG" => Some("acme"),
+            _ => None,
+        };
+        let target = |source: &str, is_package_init: bool| {
+            let Expr::Call(call) = &*Box::leak(Box::new(expr(source))) else {
+                panic!("expected a call");
+            };
+            let caller = super::Caller {
+                package: || Some("acme.core".to_owned()),
+                is_package_init,
+                constant: &constant,
+            };
+            literal_target(call, Loader::ImportModule, &caller)
+        };
+        let module = |name: &str| Some(LiteralTarget::Module(name.to_owned()));
+        assert_eq!(target("import_module(NAME)", false), module("acme.m"));
+        assert_eq!(
+            target(r#"import_module(".m", __name__)"#, true),
+            module("acme.core.m")
+        );
+        assert_eq!(
+            target(r#"import_module(".m", __name__)"#, false),
+            Some(LiteralTarget::Opaque)
+        );
+        assert_eq!(
+            target(r#"import_module(".m", PKG)"#, true),
+            module("acme.m")
+        );
     }
 
     /// A whole dotted name, with or without `python:`, is a module reference,

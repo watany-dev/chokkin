@@ -48,6 +48,10 @@ use super::types::{
     ImportRef, ModuleRef, NamedLoad, ParsedModule, ServerApp, SymbolDef, SymbolKind,
     import_context_for_file,
 };
+use super::values::{
+    Evaluator, Lookup, Program, Value, Values, bind_pattern, budget, destructure, dotted,
+    dotted_text, elements, extend,
+};
 use super::version_guard::{self, ALL_MINORS, Minors, VersionNames};
 
 /// Whether the module edits `sys.path`, and its path-like literals (#719).
@@ -177,7 +181,18 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// that name as written, an alias's own alias spelled out; scoped as
     /// `literal_modules`. Whether the name is a module is decided with the
     /// rest of [`Self::attribute_sites`] (#1415).
-    module_aliases: FxHashMap<String, String>,
+    module_aliases: FxHashMap<String, Values<'ast>>,
+    /// What each module-level name holds, also as assigned from a function
+    /// through `global` (#1427): what a function body reads it as.
+    global_aliases: FxHashMap<String, Values<'ast>>,
+    /// What module-level functions assign through `global`, whenever they
+    /// run: kept across a module-level rebinding (#1427).
+    global_stores: FxHashMap<String, Values<'ast>>,
+    /// What each dotted attribute was assigned (`pkg.reg.h = pkg.m`, #1427).
+    attribute_stores: FxHashMap<String, Values<'ast>>,
+    /// The module-level functions and classes a value may flow through
+    /// (#1427).
+    program: Program<'ast>,
     /// Module-level names bound once to a string literal (#1425).
     string_constants: FxHashMap<&'ast str, &'ast str>,
     /// The enclosing function, class, lambda and comprehension scopes,
@@ -267,6 +282,10 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             prefix_modules: FxHashMap::default(),
             literal_modules: FxHashMap::default(),
             module_aliases: FxHashMap::default(),
+            global_aliases: FxHashMap::default(),
+            global_stores: FxHashMap::default(),
+            attribute_stores: FxHashMap::default(),
+            program: Program::default(),
             string_constants: FxHashMap::default(),
             scopes: Vec::new(),
             command_words: BTreeSet::new(),
@@ -293,6 +312,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     #[must_use]
     pub(super) fn into_parsed(mut self) -> ParsedModule {
         self.parsed.attribute_accesses = self.import_attribute_accesses();
+        self.export_values();
         self.mark_guarded_private_imports();
         let runs_commands = self
             .parsed
@@ -371,6 +391,49 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         self.parsed.path_refs.sort_unstable();
         self.parsed.path_refs.dedup();
         self.parsed
+    }
+
+    /// What other modules may read through this one's names, attributes
+    /// and functions (#1427).
+    fn export_values(&mut self) {
+        let mut values: Vec<(String, String)> = self
+            .global_aliases
+            .iter()
+            .chain(&self.attribute_stores)
+            .flat_map(|(target, held)| {
+                dotted(held)
+                    .filter(move |text| text != target)
+                    .map(|text| (target.clone(), text.to_owned()))
+            })
+            .collect();
+        values.sort_unstable();
+        let module_level = |name: &str| {
+            self.global_aliases
+                .get(name)
+                .map_or(Lookup::Free, |values| Lookup::Bound(values.clone()))
+        };
+        let mut returns: Vec<(String, String)> = Vec::new();
+        for (name, def) in self.program.functions() {
+            let module = |name: &str| self.global_aliases.get(name).cloned();
+            let (calls, nesting) = budget();
+            let held = Evaluator {
+                program: &self.program,
+                here: &module_level,
+                module: &module,
+                stores: &self.attribute_stores,
+                calls: &calls,
+                nesting: &nesting,
+            }
+            .returns(def);
+            returns.extend(
+                dotted(&held)
+                    .filter(|text| self.may_hold_module(&Value::Dotted((*text).to_owned())))
+                    .map(|text| (name.to_owned(), text.to_owned())),
+            );
+        }
+        returns.sort_unstable();
+        self.parsed.module_values = values;
+        self.parsed.function_returns = returns;
     }
 
     fn has_star_import(&self) -> bool {
@@ -478,6 +541,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             .collect();
         self.parsed.import_checks = import_checks(stmts);
         self.string_constants = string_constants(stmts);
+        self.program = Program::build(stmts);
+        self.collect_global_stores();
         self.async_library_names = self.scope_async_library_names(None, stmts);
         // Without a plain `sys.platform`-style mention, only an aliased
         // import (`import sys as s`) can make a platform test, so most
@@ -798,7 +863,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// `literal_modules` and `module_aliases` hold stay bound there but for
     /// the ones that scope binds itself (#1416). Returns the outer maps for
     /// [`Self::leave_bindings`].
-    fn enter_bindings(&mut self) -> (FxHashMap<String, String>, FxHashMap<String, String>) {
+    fn enter_bindings(&mut self) -> OuterBindings<'ast> {
         let outer = (self.literal_modules.clone(), self.module_aliases.clone());
         if let Some(scope) = self.scopes.last() {
             self.literal_modules.retain(|name, _| !scope.binds(name));
@@ -807,78 +872,234 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         outer
     }
 
-    fn leave_bindings(&mut self, outer: (FxHashMap<String, String>, FxHashMap<String, String>)) {
+    fn leave_bindings(&mut self, outer: OuterBindings<'ast>) {
         (self.literal_modules, self.module_aliases) = outer;
     }
 
-    /// Track `f = pkg.m` for a later `f.name`, pairwise through
-    /// `a, f = 0, pkg.m`; any other value drops the name (#1415).
-    fn bind_module_alias(&mut self, target: &Expr, value: &Expr) {
-        match (target, value) {
-            (Expr::Name(name), _) => match self.module_alias(value) {
-                Some(alias) => {
-                    self.module_aliases.insert(name.id.to_string(), alias);
-                },
-                None => {
-                    self.module_aliases.remove(name.id.as_str());
-                },
-            },
-            (
-                Expr::Tuple(ExprTuple { elts: targets, .. })
-                | Expr::List(ExprList { elts: targets, .. }),
-                Expr::Tuple(ExprTuple { elts: values, .. })
-                | Expr::List(ExprList { elts: values, .. }),
-            ) if targets.len() == values.len()
-                && !targets.iter().chain(values).any(Expr::is_starred_expr) =>
-            {
-                for (target, value) in targets.iter().zip(values) {
-                    self.bind_module_alias(target, value);
-                }
-            },
-            _ => {},
+    /// Track `f = pkg.m`, `f = get()`, `a, f = 0, pkg.m` and the like for
+    /// a later `f.name` (#1415, #1427).
+    fn bind_module_alias(&mut self, target: &'ast Expr, value: &'ast Expr) {
+        let values = self.eval_here(value);
+        self.bind_values(target, values);
+    }
+
+    fn bind_values(&mut self, target: &'ast Expr, values: Values<'ast>) {
+        let mut bound = Vec::new();
+        destructure(target, values, &mut |name, values| {
+            bound.push((name, values));
+        });
+        for (name, values) in bound {
+            self.bind_name(name, values);
         }
     }
 
-    /// `expr` as a dotted name with an alias at its root spelled out, unless
-    /// its root is a name the current scope binds otherwise.
-    fn module_alias(&self, expr: &Expr) -> Option<String> {
-        let mut text = String::new();
-        if !write_receiver(expr, &mut text) {
-            return None;
-        }
-        let (root, rest) = text.split_once('.').unwrap_or((&text, ""));
-        if let Some(alias) = self.module_aliases.get(root) {
-            return Some(if rest.is_empty() {
-                alias.clone()
+    /// Bind `name` in the current scope; at module level, or declared
+    /// `global`, in the module's too. Values that cannot reach a module are
+    /// dropped first.
+    fn bind_name(&mut self, name: &str, mut values: Values<'ast>) {
+        values.retain(|value| self.may_hold_module(value));
+        let at_module = self.scopes.is_empty();
+        if at_module {
+            let mut held = values.clone();
+            extend(
+                &mut held,
+                self.global_stores.get(name).cloned().unwrap_or_default(),
+            );
+            if held.is_empty() {
+                self.global_aliases.remove(name);
             } else {
-                format!("{alias}.{rest}")
-            });
+                self.global_aliases.insert(name.to_owned(), held);
+            }
+        } else if !values.is_empty()
+            && self
+                .scopes
+                .last()
+                .is_some_and(|scope| scope.declares_global(name))
+        {
+            self.add_global(name, values.clone());
         }
-        (!is_shadowed(&self.scopes, root)).then_some(text)
+        if values.is_empty() {
+            self.module_aliases.remove(name);
+        } else {
+            self.module_aliases.insert(name.to_owned(), values);
+        }
+    }
+
+    /// Adds what a function assigns to the module-level `name` through
+    /// `global` to what it holds, which until then is the name as written
+    /// (an import's binding, say).
+    fn add_global(&mut self, name: &str, values: Values<'ast>) {
+        let held = self
+            .global_aliases
+            .entry(name.to_owned())
+            .or_insert_with(|| vec![Value::Dotted(name.to_owned())]);
+        extend(held, values);
+    }
+
+    /// What the module-level functions assign through `global`, so that a
+    /// function defined before the one assigning reads it too. The imports
+    /// are not known yet, so nothing is filtered: a value no import roots
+    /// reads nothing when the receivers are resolved.
+    fn collect_global_stores(&mut self) {
+        let mut stores: Vec<(&'ast str, Values<'ast>)> = Vec::new();
+        let module = |_: &str| None;
+        let free = |_: &str| Lookup::Free;
+        for (_, def) in self.program.functions() {
+            let (calls, nesting) = budget();
+            stores.extend(
+                Evaluator {
+                    program: &self.program,
+                    here: &free,
+                    module: &module,
+                    stores: &self.attribute_stores,
+                    calls: &calls,
+                    nesting: &nesting,
+                }
+                .global_stores(def),
+            );
+        }
+        for (name, values) in stores {
+            if values.is_empty() {
+                continue;
+            }
+            extend(
+                self.global_stores.entry(name.to_owned()).or_default(),
+                values.clone(),
+            );
+            self.add_global(name, values);
+        }
+    }
+
+    /// Whether `value` may be or hold a module: a dotted name rooted at an
+    /// import binding, or anything made of the module's own code.
+    fn may_hold_module(&self, value: &Value<'ast>) -> bool {
+        match value {
+            Value::Dotted(text) => {
+                let root = text.split('.').next().unwrap_or(text);
+                self.program.defines(root)
+                    || self
+                        .parsed
+                        .imports
+                        .iter()
+                        .any(|import| import.bound_name() == Some(root))
+                    || self.parsed.imports.iter().any(|import| {
+                        import.kind == ImportKind::Import
+                            && import.module.split('.').next() == Some(root)
+                    })
+            },
+            Value::Seq(elts) => elts
+                .iter()
+                .flatten()
+                .any(|value| self.may_hold_module(value)),
+            Value::Bag(elts) => elts.iter().any(|value| self.may_hold_module(value)),
+            Value::Instance(_) | Value::Method(..) | Value::Lambda(_) => true,
+        }
+    }
+
+    /// What `expr` may evaluate to where the walk is (#1427).
+    fn eval_here(&self, expr: &'ast Expr) -> Values<'ast> {
+        let here = |name: &str| {
+            // At module level, what functions assign through `global` adds
+            // to the module's own aliases.
+            let aliases = if self.scopes.is_empty() {
+                &self.global_aliases
+            } else {
+                &self.module_aliases
+            };
+            if let Some(values) = aliases.get(name) {
+                return Lookup::Bound(values.clone());
+            }
+            if is_shadowed(&self.scopes, name) {
+                return Lookup::Local;
+            }
+            self.global_aliases
+                .get(name)
+                .map_or(Lookup::Free, |values| Lookup::Bound(values.clone()))
+        };
+        self.evaluate(&here, expr)
+    }
+
+    fn evaluate(&self, here: &dyn Fn(&str) -> Lookup<'ast>, expr: &'ast Expr) -> Values<'ast> {
+        let module = |name: &str| self.global_aliases.get(name).cloned();
+        let (calls, nesting) = budget();
+        Evaluator {
+            program: &self.program,
+            here,
+            module: &module,
+            stores: &self.attribute_stores,
+            calls: &calls,
+            nesting: &nesting,
+        }
+        .eval(expr)
+    }
+
+    /// `pkg.reg.h = value` keeps what `value` holds for a later
+    /// `pkg.reg.h.name` (#1427).
+    fn record_attribute_store(&mut self, target: &'ast Expr, value: &'ast Expr) {
+        let Some(text) = dotted_text(target) else {
+            return;
+        };
+        let root = text.split('.').next().unwrap_or(&text);
+        if is_shadowed(&self.scopes, root) {
+            return;
+        }
+        let mut values = self.eval_here(value);
+        values.retain(|value| self.may_hold_module(value));
+        if values.is_empty() {
+            return;
+        }
+        let entry = self.attribute_stores.entry(text).or_default();
+        for value in values {
+            if !entry.contains(&value) {
+                entry.push(value);
+            }
+        }
     }
 
     /// Where a read of `receiver.name` goes: kept for
-    /// [`Self::import_attribute_accesses`] as written, with a module alias
-    /// at its root spelled out, or not at all when its root is a name the
+    /// [`Self::import_attribute_accesses`] as written, as the dotted names
+    /// the receiver may evaluate to (an alias, a call, a container, a class
+    /// attribute, #1415, #1427), or not at all when its root is a name the
     /// scope binds itself and not an import's (#1429).
-    fn receiver_site(&self, receiver: &Expr) -> ReceiverSite {
+    fn receiver_site(&self, receiver: &'ast Expr) -> ReceiverSite {
         let mut root = receiver;
         while let Expr::Attribute(attribute) = root {
             root = &attribute.value;
         }
-        let Expr::Name(root) = root else {
-            return ReceiverSite::AsWritten;
-        };
-        if self.module_aliases.contains_key(root.id.as_str()) {
-            return self
-                .module_alias(receiver)
-                .map_or(ReceiverSite::Shadowed, ReceiverSite::Aliased);
+        if let Expr::Name(root) = root {
+            let name = root.id.as_str();
+            let shadowed = is_shadowed(&self.scopes, name);
+            let tracked = self.module_aliases.contains_key(name)
+                || (!shadowed
+                    && (self.global_aliases.contains_key(name) || self.program.defines(name)))
+                || (!self.attribute_stores.is_empty() && self.reads_store(receiver));
+            if !tracked {
+                return if shadowed {
+                    ReceiverSite::Shadowed
+                } else {
+                    ReceiverSite::AsWritten
+                };
+            }
         }
-        if is_shadowed(&self.scopes, root.id.as_str()) {
+        let receivers: Vec<String> = dotted(&self.eval_here(receiver))
+            .map(str::to_owned)
+            .collect();
+        if receivers.is_empty() {
             ReceiverSite::Shadowed
         } else {
-            ReceiverSite::AsWritten
+            ReceiverSite::Aliased(receivers)
         }
+    }
+
+    /// Whether the dotted `receiver` passes through an attribute some
+    /// assignment stored a value in.
+    fn reads_store(&self, receiver: &Expr) -> bool {
+        dotted_text(receiver).is_some_and(|text| {
+            self.attribute_stores.contains_key(&text)
+                || text
+                    .match_indices('.')
+                    .any(|(index, _)| self.attribute_stores.contains_key(&text[..index]))
+        })
     }
 
     /// Track `name = import_module("pkg." + x)` for a later
@@ -1053,13 +1274,17 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             return;
         };
         self.visit_expr(&first.iter);
+        // The first iterable is read in the enclosing scope.
+        let mut items = elements(&self.eval_here(&first.iter));
         self.scopes.push(Scope::comprehension(generators));
         let outer = self.enter_bindings();
         for (index, generator) in generators.iter().enumerate() {
             self.visit_expr(&generator.target);
             if index > 0 {
                 self.visit_expr(&generator.iter);
+                items = elements(&self.eval_here(&generator.iter));
             }
+            self.bind_values(&generator.target, std::mem::take(&mut items));
             for condition in &generator.ifs {
                 self.visit_expr(condition);
             }
@@ -1093,10 +1318,12 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn record_attribute_read(&mut self, attribute: &'ast ExprAttribute) {
         match self.receiver_site(&attribute.value) {
             ReceiverSite::AsWritten => self.attribute_sites.push(attribute),
-            ReceiverSite::Aliased(receiver) => {
+            ReceiverSite::Aliased(receivers) => {
                 let line = self.line_number(attribute);
-                self.aliased_attribute_sites
-                    .push((receiver, attribute.attr.as_str(), line));
+                for receiver in receivers {
+                    self.aliased_attribute_sites
+                        .push((receiver, attribute.attr.as_str(), line));
+                }
             },
             ReceiverSite::Shadowed => {},
         }
@@ -1149,7 +1376,11 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let line = self.line_number(call);
         match self.receiver_site(receiver) {
             ReceiverSite::AsWritten => self.literal_getattr_sites.push((receiver, name, line)),
-            ReceiverSite::Aliased(alias) => self.aliased_attribute_sites.push((alias, name, line)),
+            ReceiverSite::Aliased(receivers) => {
+                for receiver in receivers {
+                    self.aliased_attribute_sites.push((receiver, name, line));
+                }
+            },
             ReceiverSite::Shadowed => {},
         }
         if let Some(module) = self.loaded_module(receiver) {
@@ -1621,7 +1852,15 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// does not grow (#1173).
     fn visit_match(&mut self, match_stmt: &'ast StmtMatch) {
         self.visit_expr(&match_stmt.subject);
+        let subject = self.eval_here(&match_stmt.subject);
         for case in &match_stmt.cases {
+            let mut bound = Vec::new();
+            bind_pattern(&case.pattern, subject.clone(), &mut |name, values| {
+                bound.push((name, values));
+            });
+            for (name, values) in bound {
+                self.bind_name(name, values);
+            }
             // `case m.CONST:` and `case Point(x=0):` read the names in their
             // value and class patterns (#1141).
             self.visit_pattern(&case.pattern);
@@ -1780,6 +2019,9 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
                 for target in &assign.targets {
                     self.bind_prefix_module(target, &assign.value, index);
                     self.bind_module_alias(target, &assign.value);
+                    if matches!(target, Expr::Attribute(_)) {
+                        self.record_attribute_store(target, &assign.value);
+                    }
                 }
             },
             Stmt::AnnAssign(ann_assign) => {
@@ -1919,6 +2161,8 @@ impl<'ast> Visitor<'ast> for ModuleVisitor<'_, 'ast> {
             Stmt::Match(match_stmt) => self.visit_match(match_stmt),
             Stmt::For(for_stmt) => {
                 self.visit_expr(&for_stmt.iter);
+                let items = elements(&self.eval_here(&for_stmt.iter));
+                self.bind_values(&for_stmt.target, items);
                 self.visit_body(&for_stmt.body);
                 self.visit_body(&for_stmt.orelse);
             },
@@ -2061,10 +2305,13 @@ fn string_constants(stmts: &[Stmt]) -> FxHashMap<&str, &str> {
     constants
 }
 
+/// The outer `literal_modules` and `module_aliases` a nested scope restores.
+type OuterBindings<'ast> = (FxHashMap<String, String>, FxHashMap<String, Values<'ast>>);
+
 /// Where [`ModuleVisitor::receiver_site`] keeps a read.
 enum ReceiverSite {
     AsWritten,
-    Aliased(String),
+    Aliased(Vec<String>),
     Shadowed,
 }
 

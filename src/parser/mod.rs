@@ -24,6 +24,7 @@ mod scopes;
 mod server_app;
 mod type_checking;
 mod types;
+mod values;
 mod version_guard;
 mod visit;
 
