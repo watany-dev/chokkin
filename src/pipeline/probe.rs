@@ -1417,6 +1417,7 @@ mod tests {
             },
             layout,
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         }

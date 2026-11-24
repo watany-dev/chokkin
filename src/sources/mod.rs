@@ -14,6 +14,7 @@ mod walk;
 #[cfg(test)]
 mod walk_fixtures;
 mod warnings;
+mod wildmatch;
 
 pub(crate) use cache::{SourcesCache, WalkIgnore};
 pub(crate) use context::{
@@ -27,8 +28,8 @@ pub(crate) use discover::{
 };
 pub use error::SourcesError;
 pub(crate) use glob::{build_glob_set, check_braces, path_glob};
-pub(crate) use layout::unpackaged_module_dirs;
 pub(crate) use layout::{ROOT_ENTRY_NAMES, SymlinkModules, module_path, path_to_module, shadows};
+pub(crate) use layout::{expand_testpath, unpackaged_module_dirs};
 pub use local::LocalTrees;
 pub(crate) use local::importable_modules;
 pub use surface::PublicSurface;

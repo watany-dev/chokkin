@@ -46,6 +46,16 @@ pub(crate) fn path_glob(pattern: &str) -> Result<Glob, globset::Error> {
 
 /// Build a glob matcher from pattern strings.
 pub(crate) fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesError> {
+    build_glob_set_within(patterns, &[])
+}
+
+/// [`build_glob_set`], compiling the patterns also listed in
+/// `within_component` so `*` and `?` never match `/`: the globs of pytest
+/// `python_files`, which `fnmatch` matches against a basename (#1419).
+pub(crate) fn build_glob_set_within(
+    patterns: &[String],
+    within_component: &[String],
+) -> Result<GlobSet, SourcesError> {
     let mut builder = GlobSetBuilder::new();
     let mut compiled = Vec::with_capacity(patterns.len());
     for pattern in patterns {
@@ -54,7 +64,15 @@ pub(crate) fn build_glob_set(patterns: &[String]) -> Result<GlobSet, SourcesErro
             reason,
         };
         check_braces(pattern).map_err(invalid)?;
-        let glob = path_glob(pattern).map_err(|error| invalid(error.to_string()))?;
+        let glob = if within_component.contains(pattern) {
+            GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .backslash_escape(false)
+                .build()
+        } else {
+            path_glob(pattern)
+        }
+        .map_err(|error| invalid(error.to_string()))?;
         builder.add(glob);
         compiled.push(pattern.clone());
     }

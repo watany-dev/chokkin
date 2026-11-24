@@ -986,6 +986,7 @@ mod tests {
             root: root.clone(),
             layout: empty_layout(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files,
             warnings: Vec::new(),
         };
@@ -1024,6 +1025,7 @@ mod tests {
             root: root.clone(),
             layout: empty_layout(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files,
             warnings: Vec::new(),
         };

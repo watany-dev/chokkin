@@ -5,8 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use globset::Glob;
-
+use crate::fnmatch::{Fnmatch, fnmatch};
 use crate::manifest::{
     PackageFind, ProjectMetadata, UvSourceKind, UvToolSettings, WheelTargets,
     normalize_distribution_name,
@@ -15,7 +14,7 @@ use crate::path_util::{join_rel, strip_py_suffix};
 use crate::plugins::{PytestImportSettings, pytest_import_settings};
 
 use super::dirs::{TASKS_DIR, default_scanned_dirs, is_non_package_dir, local_package_dirs};
-use super::glob::check_braces;
+use super::glob::build_glob_set_within;
 use super::types::{LayoutInfo, ProjectLayout};
 use super::warnings::SourcesWarning;
 
@@ -153,12 +152,21 @@ fn declared_layout(
     metadata: &ProjectMetadata,
 ) -> Option<LayoutInfo> {
     let targets = targets?;
+    // A hatch `include` pattern without glob characters names a path too
+    // (locust's `include = ["pytest_locust"]`, #977).
+    let plain_includes = targets
+        .include
+        .iter()
+        .filter(|pattern| !pattern.starts_with('!'))
+        .map(|pattern| pattern.trim().trim_matches('/').to_owned());
     let mut dirs: Vec<(String, String)> = targets
         .paths
         .iter()
-        .filter(|path| !path.is_empty() && !path.contains(['*', '?', '[', '{']))
+        .cloned()
+        .chain(plain_includes)
+        .filter(|path| !path.is_empty() && !path.contains(['*', '?', '[', '{', '\\']))
         .filter(|path| ships_modules(&root.join(path)))
-        .filter_map(|path| top_level_package(root, path))
+        .filter_map(|path| top_level_package(root, &path))
         .collect();
     for find in &targets.find {
         dirs.extend(found_packages(root, find));
@@ -272,14 +280,11 @@ fn top_level_package(root: &Path, path: &str) -> Option<(String, String)> {
 /// Top-level packages setuptools `find` reports. A root `where` counts only
 /// with an `include` naming packages (mypy's `["mypy*", "mypyc*"]`); the
 /// default `*` there would take `tests/` and `docs/`, so it is left to the
-/// heuristics, which skip non-package dirs (#1271).
+/// heuristics, which skip non-package dirs (#1271). Patterns are `fnmatch`
+/// (#1424), and a name holding `.` is no package to `find` (#1426).
 fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
-    let matches = |patterns: &[String], name: &str| {
-        patterns.iter().any(|pattern| {
-            check_braces(pattern).is_ok()
-                && Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(name))
-        })
-    };
+    let matches =
+        |patterns: &[String], name: &str| patterns.iter().any(|pattern| fnmatch(pattern, name));
     let names_packages = find.include.iter().any(|pattern| pattern != "*");
     find.where_dirs
         .iter()
@@ -287,7 +292,11 @@ fn found_packages(root: &Path, find: &PackageFind) -> Vec<(String, String)> {
         .flat_map(|base| {
             packages_with_init(&root.join(base), false)
                 .into_iter()
-                .filter(|name| matches(&find.include, name) && !matches(&find.exclude, name))
+                .filter(|name| {
+                    !name.contains('.')
+                        && matches(&find.include, name)
+                        && !matches(&find.exclude, name)
+                })
                 .map(move |name| (base.clone(), name))
         })
         .collect()
@@ -625,12 +634,17 @@ pub(super) fn pytest_testpaths(
 /// when it sets them and its whole directory otherwise (#1242). The default
 /// patterns are left out: `test_*.py` / `*_test.py` are test files by path
 /// already.
+///
+/// pytest matches a pattern without `/` against the basename with `fnmatch`
+/// (#1419): its glob is listed in `within_component` too, to be compiled
+/// with `*` and `?` kept inside one component; braces and `[^x]` are spelled
+/// so `globset` reads them as `fnmatch` does.
 pub(super) fn pytest_python_file_globs(
     root: &Path,
     layout: &LayoutInfo,
     configs: &PytestConfigs,
-) -> Vec<String> {
-    let mut globs = Vec::new();
+) -> PythonFileGlobs {
+    let mut globs = PythonFileGlobs::default();
     for dir in testpath_config_dirs(layout) {
         let patterns = configs.settings(&root.join(dir)).python_files;
         let patterns = patterns
@@ -641,23 +655,45 @@ pub(super) fn pytest_python_file_globs(
             roots.push(dir.to_owned());
         }
         for pattern in patterns {
+            let component = !pattern.contains('/');
+            // A class `globset` cannot spell gives no file test context
+            // rather than failing the analysis: its files keep the context
+            // their path gives them.
+            let Some(spelled) = Fnmatch::new(pattern).to_glob(component) else {
+                continue;
+            };
             for root in &roots {
                 let prefix = if root.is_empty() {
                     String::new()
                 } else {
                     format!("{}/", globset::escape(root))
                 };
-                let glob = format!("{prefix}**/{pattern}");
-                // A pattern globset cannot compile (`check_[a.py`) gives no
-                // file test context rather than failing the analysis: its
-                // files keep the context their path gives them.
-                if globset::Glob::new(&glob).is_ok() && !globs.contains(&glob) {
-                    globs.push(glob);
+                let glob = format!("{prefix}**/{spelled}");
+                let within: &[String] = if component {
+                    std::slice::from_ref(&glob)
+                } else {
+                    &[]
+                };
+                if build_glob_set_within(std::slice::from_ref(&glob), within).is_ok()
+                    && !globs.globs.contains(&glob)
+                {
+                    if component {
+                        globs.within_component.push(glob.clone());
+                    }
+                    globs.globs.push(glob);
                 }
             }
         }
     }
     globs
+}
+
+/// [`pytest_python_file_globs`]' result.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct PythonFileGlobs {
+    pub(super) globs: Vec<String>,
+    /// The members of `globs` to compile with `literal_separator`.
+    pub(super) within_component: Vec<String>,
 }
 
 /// Root-relative `testpaths` entries of the pytest configs
@@ -726,7 +762,7 @@ fn testpath_entries(root: &Path, dir: &str, configs: &PytestConfigs) -> Vec<Stri
 /// wildcard skips names starting with `.` unless its component does too.
 /// Braces are literal, as in Python. `**` does not descend through symlinks,
 /// so a link loop cannot hang the walk.
-fn expand_testpath(root: &Path, pattern: &str) -> Vec<String> {
+pub(crate) fn expand_testpath(root: &Path, pattern: &str) -> Vec<String> {
     let mut found = vec![String::new()];
     for component in pattern.split('/') {
         let mut next = Vec::new();
@@ -745,13 +781,10 @@ fn expand_testpath(root: &Path, pattern: &str) -> Vec<String> {
     found
 }
 
-/// Children of `base` whose name matches the one-component glob `component`.
+/// Children of `base` whose name matches `component` as `fnmatch` reads it,
+/// so `t{1,2}` and `[^a]` mean what they do in Python (#1428).
 fn matching_children(root: &Path, base: &str, component: &str) -> Vec<String> {
-    let literal_braces = component.replace('{', "[{]").replace('}', "[}]");
-    let Ok(glob) = Glob::new(&literal_braces) else {
-        return Vec::new();
-    };
-    let matcher = glob.compile_matcher();
+    let matcher = Fnmatch::new(component);
     let dot = component.starts_with('.');
     let Ok(entries) = fs::read_dir(root.join(base)) else {
         return Vec::new();
@@ -1233,10 +1266,9 @@ mod tests {
             &UvToolSettings::default(),
             &PytestConfigs::default(),
         );
-        assert_eq!(
-            pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()),
-            ["**/tests.py"]
-        );
+        let globs = pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default());
+        assert_eq!(globs.globs, ["**/tests.py", "**/check_[[]a.py"]);
+        assert_eq!(globs.within_component, globs.globs);
 
         fs::write(
             temp.path().join("pyproject.toml"),
@@ -1251,7 +1283,7 @@ mod tests {
             &PytestConfigs::default(),
         );
         assert_eq!(
-            pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()),
+            pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()).globs,
             ["t/**/check_*.py"]
         );
     }
@@ -1274,7 +1306,7 @@ mod tests {
         );
         assert_eq!(
             pytest_python_file_globs(temp.path(), &layout, &PytestConfigs::default()),
-            Vec::<String>::new()
+            PythonFileGlobs::default()
         );
     }
 
@@ -1609,6 +1641,7 @@ mod tests {
                 exclude: vec!["tests*".to_owned()],
                 namespaces: false,
             }],
+            ..WheelTargets::default()
         }
     }
 
@@ -1711,6 +1744,7 @@ mod tests {
                 source: "tool.setuptools".to_owned(),
                 paths: vec!["pkgs/acme/sub".to_owned()],
                 find: Vec::new(),
+                ..WheelTargets::default()
             }),
             ..ProjectMetadata::default()
         };
@@ -1733,6 +1767,7 @@ mod tests {
                 source: "tool.hatch.build".to_owned(),
                 paths: vec![String::new(), "pkgs/acme".to_owned()],
                 find: Vec::new(),
+                ..WheelTargets::default()
             }),
             ..ProjectMetadata::default()
         };
@@ -1753,6 +1788,7 @@ mod tests {
             source: "tool.hatch.build".to_owned(),
             paths: vec!["src/acme".to_owned(), "other/extra".to_owned()],
             find: Vec::new(),
+            ..WheelTargets::default()
         };
         let metadata = ProjectMetadata {
             wheel_targets: Some(targets.clone()),
@@ -1816,6 +1852,7 @@ mod tests {
                     "beta/three".to_owned(),
                 ],
                 find: Vec::new(),
+                ..WheelTargets::default()
             }),
             ..ProjectMetadata::default()
         };
@@ -1837,6 +1874,7 @@ mod tests {
                 source: "tool.hatch.build".to_owned(),
                 paths: vec!["src/acme".to_owned(), "tools_pkg".to_owned()],
                 find: Vec::new(),
+                ..WheelTargets::default()
             }),
             ..metadata("acme")
         };
@@ -1868,6 +1906,7 @@ mod tests {
                     exclude: Vec::new(),
                     namespaces: true,
                 }],
+                ..WheelTargets::default()
             }),
             ..metadata("acme")
         };
@@ -1905,6 +1944,7 @@ mod tests {
                     exclude: Vec::new(),
                     namespaces: false,
                 }],
+                ..WheelTargets::default()
             }),
             ..metadata("acme")
         };
@@ -2074,6 +2114,7 @@ mod tests {
                 source: "tool.hatch".to_owned(),
                 paths: vec!["src".to_owned()],
                 find: Vec::new(),
+                ..WheelTargets::default()
             }),
             ..metadata("acme")
         };
@@ -2103,6 +2144,7 @@ mod tests {
                 source: "tool.hatch.build.targets.wheel".to_owned(),
                 paths: vec!["locust".to_owned(), "pytest_locust".to_owned()],
                 find: Vec::new(),
+                ..WheelTargets::default()
             }),
             ..metadata("locust")
         };

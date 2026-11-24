@@ -335,6 +335,7 @@ mod tests {
             root: root.clone(),
             layout: crate::sources::LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -384,6 +385,7 @@ mod tests {
             root: root.clone(),
             layout: crate::sources::LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };

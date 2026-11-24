@@ -151,6 +151,13 @@ pub struct WheelTargets {
     pub paths: Vec<String>,
     /// setuptools `packages.find` specifications.
     pub find: Vec<PackageFind>,
+    /// hatch `include` patterns, gitignore style: a file one matches ships.
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// hatch `exclude` patterns, gitignore style: a file one matches does not
+    /// ship, whatever else names it.
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 /// `[tool.setuptools.packages.find]`.
