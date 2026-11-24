@@ -12137,3 +12137,54 @@ fn lockfile_extras_are_read_from_poetry_and_pdm_locks() {
         );
     }
 }
+
+/// A runtime import's lock walk starts from the runtime declarations only:
+/// a dependency group is not installed with the project (#1377). A test
+/// import under `--strict` still walks from the dev group.
+#[test]
+fn lockfile_closure_of_a_runtime_import_skips_dev_groups() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            concat!(
+                "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                "dependencies = []\n\n[dependency-groups]\ndev = [\"pytest\"]\n\n",
+                "[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+            ),
+        ),
+        ("main.py", "import pluggy\n"),
+        ("tests/test_app.py", "import pytest\nimport pluggy\n"),
+        (
+            "uv.lock",
+            concat!(
+                "version = 1\nrequires-python = \">=3.11\"\n\n",
+                "[[package]]\nname = \"app\"\nversion = \"0.1.0\"\nsource = { virtual = \".\" }\n\n",
+                "[package.dev-dependencies]\ndev = [\n    { name = \"pytest\" },\n]\n\n",
+                "[[package]]\nname = \"pytest\"\nversion = \"8\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+                "dependencies = [\n    { name = \"pluggy\" },\n]\n\n",
+                "[[package]]\nname = \"pluggy\"\nversion = \"1\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+            ),
+        ),
+    ]);
+    for extra in [&[][..], &["--production"]] {
+        assert_eq!(
+            dependency_findings(project.path(), extra),
+            [finding("CHK004", "pluggy", "likely")],
+            "{extra:?}"
+        );
+    }
+    let strict: Vec<_> = dependency_findings(project.path(), &["--strict"])
+        .into_iter()
+        .filter(|(_, subject, _)| subject == "pluggy")
+        .collect();
+    assert!(
+        strict.contains(&finding("CHK004", "pluggy", "likely")),
+        "{strict:?}"
+    );
+    assert!(
+        strict.contains(&finding("CHK004", "pluggy", "certain")),
+        "{strict:?}"
+    );
+}
