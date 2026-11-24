@@ -13,6 +13,7 @@ mod config;
 mod discovery;
 mod entry;
 mod fix;
+mod fnmatch;
 mod graph;
 mod init;
 mod manifest;
