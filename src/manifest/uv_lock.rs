@@ -31,7 +31,13 @@ struct UvPackage {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum UvDependency {
-    Table { name: String },
+    Table {
+        name: String,
+        /// `{ name = "requests", extra = ["socks"] }`: the extras of `name`
+        /// this edge turns on (#1375).
+        #[serde(default)]
+        extra: Vec<String>,
+    },
     Name(String),
     Other(IgnoredAny),
 }
@@ -60,19 +66,29 @@ fn lock_graph(lock: UvLock) -> LockfileGraph {
         let Some(name) = package.name.map(normalized) else {
             continue;
         };
-        if !package.optional_dependencies.is_empty() {
-            let extras = graph.extras.entry(name.clone()).or_default();
-            for (extra, deps) in package.optional_dependencies {
-                merge_names(extras.entry(normalized(extra)).or_default(), deps);
-            }
+        for (extra, deps) in package.optional_dependencies {
+            let extra = normalized(extra);
+            let deps = dependencies(deps);
+            graph.add_edge_extras(&name, &extra, &deps);
+            merge_names(
+                graph
+                    .extras
+                    .entry(name.clone())
+                    .or_default()
+                    .entry(extra)
+                    .or_default(),
+                deps,
+            );
         }
-        merge_names(graph.edges.entry(name).or_default(), package.dependencies);
+        let deps = dependencies(package.dependencies);
+        graph.add_edge_extras(&name, "", &deps);
+        merge_names(graph.edges.entry(name).or_default(), deps);
     }
     graph
 }
 
-fn merge_names(names: &mut Vec<String>, deps: Vec<UvDependency>) {
-    for dep in dependency_names(deps) {
+fn merge_names(names: &mut Vec<String>, deps: Vec<(String, Vec<String>)>) {
+    for (dep, _) in deps {
         if !names.contains(&dep) {
             names.push(dep);
         }
@@ -260,10 +276,24 @@ fn scan_array_item(item: &str) -> Option<UvDependency> {
         }
         return Some(UvDependency::Table {
             name: name.to_owned(),
+            extra: scan_extra(rest)?,
         });
     }
     // A `name` key after another key would still make this a named table.
     (!inner.contains("name =")).then_some(UvDependency::Other(IgnoredAny))
+}
+
+/// The `extra = ["a", "b"]` among a dependency table's keys after `name`, as
+/// uv writes it; `None` for a list spelled otherwise, so `toml` reads the
+/// file. A marker's `extra == '...'` is no key and leaves the list empty.
+fn scan_extra(rest: &str) -> Option<Vec<String>> {
+    let Some((_, list)) = rest.split_once(", extra = [") else {
+        return Some(Vec::new());
+    };
+    let (list, _) = list.split_once(']')?;
+    list.split(", ")
+        .map(|item| quoted(item).map(str::to_owned))
+        .collect()
 }
 
 /// The text after the `]` line closing a multi-line array, or the `]]` line
@@ -349,10 +379,15 @@ fn next_line<'a>(rest: &mut &'a str) -> &'a str {
     line.strip_suffix('\r').unwrap_or(line)
 }
 
-fn dependency_names(deps: Vec<UvDependency>) -> Vec<String> {
+/// Each named dependency with the extras it turns on, names normalized.
+fn dependencies(deps: Vec<UvDependency>) -> Vec<(String, Vec<String>)> {
     deps.into_iter()
         .filter_map(|dep| match dep {
-            UvDependency::Table { name } | UvDependency::Name(name) => Some(normalized(name)),
+            UvDependency::Table { name, extra } => Some((
+                normalized(name),
+                extra.into_iter().map(normalized).collect(),
+            )),
+            UvDependency::Name(name) => Some((normalized(name), Vec::new())),
             UvDependency::Other(_) => None,
         })
         .collect()
@@ -483,12 +518,49 @@ mod tests {
         }
     }
 
+    /// An edge's `extra = [...]` turns on that extra of the dependency, read
+    /// the same by the scanner and by `toml` (#1375).
+    #[test]
+    fn edge_extras_are_read_by_both_paths() {
+        let lock = concat!(
+            "version = 1\nrequires-python = \">=3.11\"\n\n",
+            "[[package]]\nname = \"b\"\nversion = \"1.0.0\"\n",
+            "dependencies = [\n    { name = \"requests\", extra = [\"socks\", \"Use_Chardet\"], marker = \"extra == 'x'\" },\n    { name = \"idna\", marker = \"extra == 'y'\" },\n]\n\n",
+            "[package.optional-dependencies]\nserver = [\n    { name = \"uvicorn\", extra = [\"standard\"] },\n]\n",
+        );
+        let scanned = scan_uv_layout(lock).expect("uv layout");
+        for graph in [lock_graph(scanned), toml_graph(lock)] {
+            assert_eq!(
+                graph.edge_extras.get("b"),
+                Some(&BTreeMap::from([
+                    (
+                        String::new(),
+                        BTreeMap::from([(
+                            "requests".to_owned(),
+                            vec!["socks".to_owned(), "use-chardet".to_owned()]
+                        )])
+                    ),
+                    (
+                        "server".to_owned(),
+                        BTreeMap::from([("uvicorn".to_owned(), vec!["standard".to_owned()])])
+                    ),
+                ]))
+            );
+            assert_eq!(
+                graph.edges.get("b"),
+                Some(&vec!["requests".to_owned(), "idna".to_owned()])
+            );
+        }
+        // A list spelled another way leaves the file to `toml`.
+        assert!(scan_array_item("{ name = \"r\", extra = [ \"socks\" ] }").is_none());
+    }
+
     /// The scanner's shape checks: a line uv would not write is refused, so
     /// `toml` reads the file instead.
     #[test]
     fn scanner_refuses_lines_uv_would_not_write() {
         let table_name = |item: &str| match scan_array_item(item) {
-            Some(UvDependency::Table { name }) => Some(name),
+            Some(UvDependency::Table { name, .. }) => Some(name),
             _ => None,
         };
         assert_eq!(table_name("{ name = \"idna\" }").as_deref(), Some("idna"));

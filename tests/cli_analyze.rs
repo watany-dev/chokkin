@@ -11993,7 +11993,11 @@ fn dependency_findings(root: &Path, extra: &[&str]) -> Vec<(String, String, Stri
     args.extend_from_slice(extra);
     let mut found: Vec<_> = json_issues(root, &args)
         .iter()
-        .filter(|issue| issue["code"].as_str().is_some_and(|code| code.starts_with("CHK0")))
+        .filter(|issue| {
+            issue["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("CHK0"))
+        })
         .map(|issue| {
             let subject = issue["distribution"]
                 .as_str()
@@ -12045,5 +12049,38 @@ fn lockfile_closure_follows_the_dependencies_of_a_declared_extra() {
     assert_eq!(
         dependency_findings(project.path(), &[]),
         [finding("CHK004", "typing-extensions", "certain")]
+    );
+}
+
+/// A lock edge's `extra = [...]` reaches what that extra adds (#1375).
+#[test]
+fn lockfile_closure_follows_an_edge_extra() {
+    let project = write_project(&[
+        (
+            "pyproject.toml",
+            concat!(
+                "[project]\nname = \"app\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n",
+                "dependencies = [\"b\"]\n\n[tool.chokkin]\nmode = \"app\"\nentry = [\"main.py\"]\n",
+            ),
+        ),
+        ("main.py", "import b\nimport pysocks_x\n"),
+        (
+            "uv.lock",
+            concat!(
+                "version = 1\nrequires-python = \">=3.11\"\n\n",
+                "[[package]]\nname = \"b\"\nversion = \"1.0.0\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+                "dependencies = [\n    { name = \"requests\", extra = [\"socks\"] },\n]\n\n",
+                "[[package]]\nname = \"requests\"\nversion = \"2.0.0\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n\n",
+                "[package.optional-dependencies]\nsocks = [\n    { name = \"pysocks-x\" },\n]\n\n",
+                "[[package]]\nname = \"pysocks-x\"\nversion = \"1.0.0\"\n",
+                "source = { registry = \"https://pypi.org/simple\" }\n",
+            ),
+        ),
+    ]);
+    assert_eq!(
+        dependency_findings(project.path(), &[]),
+        [finding("CHK004", "pysocks-x", "certain")]
     );
 }

@@ -217,6 +217,11 @@ pub struct LockfileGraph {
     /// Only `uv.lock` records extras.
     #[serde(default)]
     pub extras: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    /// Extras an edge turns on (`{ name = "requests", extra = ["socks"] }`):
+    /// package, then the extra the edge is listed under (`""` for the base
+    /// dependencies), then the dependency and its extras (#1375).
+    #[serde(default)]
+    pub edge_extras: BTreeMap<String, BTreeMap<String, BTreeMap<String, Vec<String>>>>,
 }
 
 impl LockfileGraph {
@@ -243,13 +248,52 @@ impl LockfileGraph {
         while let Some((package, extra)) = walk.queue.pop_front() {
             let deps = match extra {
                 None => self.edges.get(package),
-                Some(extra) => self.extras.get(package).and_then(|extras| extras.get(extra)),
+                Some(extra) => self
+                    .extras
+                    .get(package)
+                    .and_then(|extras| extras.get(extra)),
             };
+            let requested = self
+                .edge_extras
+                .get(package)
+                .and_then(|by_extra| by_extra.get(extra.unwrap_or_default()));
             for dep in deps.into_iter().flatten() {
                 walk.visit(dep, None);
+                for extra in requested
+                    .and_then(|deps| deps.get(dep))
+                    .into_iter()
+                    .flatten()
+                {
+                    walk.visit(dep, self.extra_key(dep, extra));
+                }
             }
         }
         walk.nodes.into_iter().map(|(name, _)| name).collect()
+    }
+
+    /// Record that `package`'s dependencies listed under `extra` (`""` for
+    /// the base ones) turn on the extras paired with each, normalized.
+    pub(super) fn add_edge_extras(
+        &mut self,
+        package: &str,
+        extra: &str,
+        deps: &[(String, Vec<String>)],
+    ) {
+        for (dep, extras) in deps.iter().filter(|(_, extras)| !extras.is_empty()) {
+            let merged = self
+                .edge_extras
+                .entry(package.to_owned())
+                .or_default()
+                .entry(extra.to_owned())
+                .or_default()
+                .entry(dep.clone())
+                .or_default();
+            for extra in extras {
+                if !merged.contains(extra) {
+                    merged.push(extra.clone());
+                }
+            }
+        }
     }
 
     /// `extra` of `package` as the lock spells it, when the lock lists it;
