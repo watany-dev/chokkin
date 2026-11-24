@@ -77,4 +77,12 @@ exclude_re = [
     # Keeping a value no definition or import roots only keeps a name no
     # module resolves: the filter only trims what is carried (#1427).
     "replace ModuleVisitor<'a, 'ast>::may_hold_module -> bool with true",
+    # Counting a from import's package as bound, or every receiver as
+    # reaching a module, only lets more expressions past the pre-check: what
+    # they evaluate to resolves the same way (#1427).
+    "replace == with != in ModuleVisitor<'a, 'ast>::import_root",
+    "replace ModuleVisitor<'a, 'ast>::may_reach_module -> bool with true",
+    # A name star imports reach by several paths fails the same way on each:
+    # visiting it again only spends the lookup budget.
+    "replace Lookups::first_visit -> bool with true",
 ]

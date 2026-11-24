@@ -2833,6 +2833,10 @@ fn module_objects_carried_through_globals_are_receivers() {
             "import pkg.m\nh = None\n\ndef get():\n    return h\n\nget().other\nh = pkg.m\nget().target()\n",
         ),
         (
+            "attribute stored on a name nothing else tracks",
+            "import pkg.m\nimport types\nns = types.SimpleNamespace()\nns.h = pkg.m\nns.h.target()\n",
+        ),
+        (
             "a later generator's iterable",
             "import pkg.m\n[0 for a in [0] for b in pkg.m.target]\n",
         ),
@@ -2972,46 +2976,6 @@ fn module_objects_carried_across_modules_are_receivers() {
             false,
         ),
         (
-            "global a later function sets from a first-party call",
-            &[
-                (
-                    "pkg/factory.py",
-                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
-                ),
-                (
-                    "main.py",
-                    "from pkg import factory\nf = None\n\ndef use():\n    f.target()\n\ndef set_f():\n    global f\n    f = factory.make()\n",
-                ),
-            ],
-            false,
-        ),
-        (
-            "function returning a first-party call",
-            &[
-                (
-                    "pkg/factory.py",
-                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
-                ),
-                (
-                    "pkg/util.py",
-                    "from pkg import factory\n\ndef get():\n    return factory.make()\n",
-                ),
-                ("main.py", "from pkg.util import get\nget().target()\n"),
-            ],
-            false,
-        ),
-        (
-            "function returning its module's function's call",
-            &[
-                (
-                    "pkg/util.py",
-                    "import pkg.m\n\ndef helper():\n    return pkg.m\n\ndef get():\n    return helper()\n",
-                ),
-                ("main.py", "from pkg.util import get\nget().target()\n"),
-            ],
-            false,
-        ),
-        (
             "re-exported function's return",
             &[
                 (
@@ -3074,6 +3038,101 @@ fn module_objects_carried_across_modules_are_receivers() {
                     "main.py",
                     "import pkg.setup\nimport pkg.reg\npkg.reg.h.target()\n",
                 ),
+            ],
+            false,
+        ),
+    ]);
+}
+
+/// Resolving one receiver across modules stops after a bounded number of
+/// lookups: a value handed through more modules than that reads nothing
+/// (ADR 0005), while a shorter chain is followed (#1427).
+#[test]
+fn receivers_resolve_across_a_bounded_number_of_modules() {
+    let chain = |hops: usize| {
+        let mut files: Vec<(String, String)> = (0..hops)
+            .map(|index| {
+                (
+                    format!("pkg/a{index}.py"),
+                    format!("from pkg.a{} import mod\n", index + 1),
+                )
+            })
+            .collect();
+        files.push((
+            format!("pkg/a{hops}.py"),
+            "import pkg.m\nmod = pkg.m\n".to_owned(),
+        ));
+        files.push((
+            "main.py".to_owned(),
+            "from pkg.a0 import mod\nmod.target()\n".to_owned(),
+        ));
+        let files: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(path, body)| (path.as_str(), body.as_str()))
+            .collect();
+        oracle_target_unused(&files)
+    };
+    assert!(!chain(4));
+    assert!(chain(80));
+}
+
+/// Module objects returned by calls into the project's own modules, from
+/// another module or the same one (#1427).
+#[test]
+fn module_objects_carried_by_first_party_calls_are_receivers() {
+    assert_oracle_cases(&[
+        (
+            "global a later function sets from a first-party call",
+            &[
+                (
+                    "pkg/factory.py",
+                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
+                ),
+                (
+                    "main.py",
+                    "from pkg import factory\nf = None\n\ndef use():\n    f.target()\n\ndef set_f():\n    global f\n    f = factory.make()\n",
+                ),
+            ],
+            false,
+        ),
+        (
+            "function returning a first-party call",
+            &[
+                (
+                    "pkg/factory.py",
+                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
+                ),
+                (
+                    "pkg/util.py",
+                    "from pkg import factory\n\ndef get():\n    return factory.make()\n",
+                ),
+                ("main.py", "from pkg.util import get\nget().target()\n"),
+            ],
+            false,
+        ),
+        (
+            "function returning a relatively imported call",
+            &[
+                (
+                    "pkg/factory.py",
+                    "import pkg.m\n\ndef make():\n    return pkg.m\n",
+                ),
+                (
+                    "pkg/util.py",
+                    "from . import factory\n\ndef get():\n    return factory.make()\n",
+                ),
+                ("main.py", "from pkg.util import get\nget().target()\n"),
+            ],
+            false,
+        ),
+        (
+            "function returning its module's function's call",
+            &[
+                (
+                    "pkg/util.py",
+                    "import pkg.m\n\ndef helper():\n    return pkg.m\n\ndef get():\n    return helper()\n",
+                ),
+                ("main.py", "from pkg.util import get\nget().target()\n"),
             ],
             false,
         ),

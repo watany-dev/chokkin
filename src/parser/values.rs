@@ -1619,4 +1619,19 @@ mod tests {
         assert!(!may("def f():\n    return 1\n"));
         assert!(!may("def f():\n    m.a\n"));
     }
+
+    /// The locals an instance attribute reads count toward the call depth.
+    #[test]
+    fn instance_attribute_locals_are_followed_only_so_deep() {
+        let returns = "def f@I():\n    return @NEXT\n\n";
+        let class = "class C:\n    def __init__(self):\n        y = f0()\n        self.x = y\n\n";
+        let at = |depth: usize| {
+            eval(&format!(
+                "{class}{}",
+                chain(depth, returns).replace("f0()\n", "C().x\n")
+            ))
+        };
+        assert_eq!(at(1), names(&["p"]));
+        assert_eq!(at(2), names(&[]));
+    }
 }
