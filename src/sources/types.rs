@@ -205,6 +205,9 @@ pub struct DiscoveredSources {
     pub layout: LayoutInfo,
     /// Globs that were effectively used (explicit or inferred).
     pub effective_globs: Vec<String>,
+    /// The members of `effective_globs` compiled so `*` and `?` stay within
+    /// one path component: pytest `python_files` basenames (#1419).
+    pub within_component: Vec<String>,
     /// Files selected for analysis, sorted by path.
     pub files: Vec<DiscoveredFile>,
     /// Non-fatal conditions.

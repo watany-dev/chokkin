@@ -619,6 +619,7 @@ mod notebooks {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: vec![DiscoveredFile {
                 path: "nb.ipynb".to_owned(),
                 kind: FileKind::Notebook,

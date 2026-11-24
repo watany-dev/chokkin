@@ -397,6 +397,7 @@ mod tests {
                 root: manifest.root.clone(),
                 layout: crate::sources::LayoutInfo::new("src", Vec::new()),
                 effective_globs: Vec::new(),
+                within_component: Vec::new(),
                 files: Vec::new(),
                 warnings: Vec::new(),
             },
@@ -559,6 +560,7 @@ mod tests {
             source: "tool.hatch.build.targets.wheel".to_owned(),
             paths: vec!["_meta/acme".to_owned()],
             find: Vec::new(),
+            ..crate::manifest::WheelTargets::default()
         });
         let resolution = ResolutionIndex::default();
         let reachability = ReachabilityReport::default();

@@ -110,10 +110,10 @@ pub fn build_entry_roots(
     }
     let mut member_warnings = Vec::new();
     // Inferred globs only: explicit `project` globs drop no member file.
-    let inferred_globs = config
-        .project
-        .is_empty()
-        .then_some(sources.effective_globs.as_slice());
+    let inferred_globs = config.project.is_empty().then_some((
+        sources.effective_globs.as_slice(),
+        sources.within_component.as_slice(),
+    ));
     collect_member_entries(
         members,
         &known_paths,
@@ -196,7 +196,7 @@ fn distributed_member_reason(member: &str, dep: &DeclaredDependency) -> String {
 fn collect_member_entries(
     members: &[MemberEntryInput<'_>],
     root_paths: &BTreeSet<String>,
-    inferred_globs: Option<&[String]>,
+    inferred_globs: Option<(&[String], &[String])>,
     production: bool,
     candidates: &mut Vec<EntryCandidate>,
     warnings: &mut Vec<EntryWarning>,
@@ -226,9 +226,9 @@ fn collect_member_entries(
             candidate.spec.path = format!("{member_path}/{}", candidate.spec.path);
             if root_paths.contains(&candidate.spec.path) {
                 candidates.push(candidate);
-            } else if !inferred_globs
-                .is_some_and(|globs| only_entry_trees_reach(globs, &candidate.spec.path))
-            {
+            } else if !inferred_globs.is_some_and(|(globs, within)| {
+                only_entry_trees_reach(globs, within, &candidate.spec.path)
+            }) {
                 // The member's own walk found the file but the root's did not
                 // (a root `exclude`): it is skipped like a root entry is (#934).
                 // One only the root's `examples/**`-style globs reach is left
@@ -900,6 +900,7 @@ mod tests {
             },
             layout,
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: paths
                 .iter()
                 .map(|path| DiscoveredFile {

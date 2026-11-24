@@ -9,7 +9,7 @@ use crate::manifest::LoadedManifest;
 
 use super::cache::SourcesCache;
 use super::error::SourcesError;
-use super::glob::{build_glob_set, effective_exclude};
+use super::glob::{build_glob_set_within, effective_exclude};
 use super::layout::{
     ENTRY_TREE_GLOBS, PytestConfigs, infer_layout, pytest_python_file_globs, pytest_testpaths,
     unmatched_testpaths,
@@ -59,26 +59,26 @@ pub(crate) fn discover_sources_cached(
     // Only inferred globs take testpaths: the parse cache keys on the globs,
     // so testpaths outside them would change file contexts unnoticed.
     let mut testpath_warnings = Vec::new();
-    let (test_globs, effective_globs) = if config.effective.project.is_empty() {
+    let (test_globs, effective_globs, within_component) = if config.effective.project.is_empty() {
         testpath_warnings = unmatched_testpaths(&root.path, &layout, &configs)
             .into_iter()
             .map(|entry| SourcesWarning::TestpathsUnmatched { entry })
             .collect();
-        let test_globs = pytest_test_globs(&root.path, &layout, &configs);
+        let (test_globs, within_component) = pytest_test_globs(&root.path, &layout, &configs);
         let mut globs = layout.inferred_globs.clone();
         let fresh = test_globs
             .iter()
             .filter(|glob| !layout.inferred_globs.contains(glob));
         globs.extend(fresh.cloned());
-        (test_globs, globs)
+        (test_globs, globs, within_component)
     } else {
-        (Vec::new(), config.effective.project.clone())
+        (Vec::new(), config.effective.project.clone(), Vec::new())
     };
 
     let exclude_patterns = effective_exclude(&config.effective.exclude);
-    let project_matcher = cache.glob_set(&effective_globs)?;
+    let project_matcher = cache.glob_set_within(&effective_globs, &within_component)?;
     let exclude_matcher = cache.glob_set(&exclude_patterns)?;
-    let test_matcher = cache.glob_set(&test_globs)?;
+    let test_matcher = cache.glob_set_within(&test_globs, &within_component)?;
 
     let gitignore_warning = config
         .effective
@@ -101,7 +101,7 @@ pub(crate) fn discover_sources_cached(
     if config.effective.project.is_empty() {
         drop_member_entry_trees(
             &mut collected,
-            &effective_globs,
+            (&effective_globs, &within_component),
             &test_matcher,
             config,
             cache,
@@ -131,6 +131,7 @@ pub(crate) fn discover_sources_cached(
             root: root.clone(),
             layout,
             effective_globs,
+            within_component,
             files,
             warnings,
         },
@@ -140,14 +141,21 @@ pub(crate) fn discover_sources_cached(
 }
 
 /// The globs of the files pytest collects as tests: its `testpaths` trees
-/// and the files its `python_files` names.
-fn pytest_test_globs(root: &Path, layout: &LayoutInfo, configs: &PytestConfigs) -> Vec<String> {
-    pytest_testpaths(root, layout, configs)
+/// and the files its `python_files` names, with those of the latter to
+/// compile within one path component.
+fn pytest_test_globs(
+    root: &Path,
+    layout: &LayoutInfo,
+    configs: &PytestConfigs,
+) -> (Vec<String>, Vec<String>) {
+    let python_files = pytest_python_file_globs(root, layout, configs);
+    let globs = pytest_testpaths(root, layout, configs)
         .iter()
         .map(|path| globset::escape(path))
         .flat_map(|path| [format!("{path}/**/*.{{py,pyi,ipynb}}"), path])
-        .chain(pytest_python_file_globs(root, layout, configs))
-        .collect()
+        .chain(python_files.globs)
+        .collect();
+    (globs, python_files.within_component)
 }
 
 /// The files at `paths` (root-relative) that discovery would collect if the
@@ -192,7 +200,7 @@ pub(crate) fn discover_named_files(
 /// since the root read them as tests before.
 fn drop_member_entry_trees(
     collected: &mut Collected,
-    effective_globs: &[String],
+    (effective_globs, within_component): (&[String], &[String]),
     test_matcher: &globset::GlobSet,
     config: &LoadedConfig,
     cache: &SourcesCache,
@@ -211,7 +219,7 @@ fn drop_member_entry_trees(
         .filter(|glob| !ENTRY_TREE_GLOBS.contains(&glob.as_str()))
         .cloned()
         .collect();
-    let own_matcher = cache.glob_set(&own_globs)?;
+    let own_matcher = cache.glob_set_within(&own_globs, within_component)?;
     let keep = |file: &DiscoveredFile| {
         matches_source(&own_matcher, &file.path)
             || matches_source(test_matcher, &file.path)
@@ -229,14 +237,20 @@ fn drop_member_entry_trees(
 /// workspace member (#1023). `effective_globs` are the root's inferred globs;
 /// with explicit `project` globs nothing is dropped and this does not apply.
 /// A member entry there is not one the root skipped (#1140).
-pub(crate) fn only_entry_trees_reach(effective_globs: &[String], path: &str) -> bool {
+pub(crate) fn only_entry_trees_reach(
+    effective_globs: &[String],
+    within_component: &[String],
+    path: &str,
+) -> bool {
     let (trees, own): (Vec<String>, Vec<String>) = effective_globs
         .iter()
         .cloned()
         .partition(|glob| ENTRY_TREE_GLOBS.contains(&glob.as_str()));
     // Discovery already compiled these globs; one that fails here reaches
     // nothing, so the entry stays a skipped one.
-    let matches = |globs: &[String]| build_glob_set(globs).is_ok_and(|set| set.is_match(path));
+    let matches = |globs: &[String]| {
+        build_glob_set_within(globs, within_component).is_ok_and(|set| set.is_match(path))
+    };
     matches(&trees) && !matches(&own)
 }
 
@@ -251,11 +265,27 @@ mod tests {
             .chain(ENTRY_TREE_GLOBS)
             .map(str::to_owned)
             .collect();
-        assert!(only_entry_trees_reach(&globs, "examples/demo/demo.py"));
-        assert!(only_entry_trees_reach(&globs, "pkgs/a/nb.ipynb"));
-        assert!(!only_entry_trees_reach(&globs, "src/lib/cli.py"));
-        assert!(!only_entry_trees_reach(&globs, "pkgs/a/cli.py"));
+        assert!(only_entry_trees_reach(&globs, &[], "examples/demo/demo.py"));
+        assert!(only_entry_trees_reach(&globs, &[], "pkgs/a/nb.ipynb"));
+        assert!(!only_entry_trees_reach(&globs, &[], "src/lib/cli.py"));
+        assert!(!only_entry_trees_reach(&globs, &[], "pkgs/a/cli.py"));
         let flat = ["**/*.{py,pyi,ipynb}".to_owned()];
-        assert!(!only_entry_trees_reach(&flat, "examples/demo/demo.py"));
+        assert!(!only_entry_trees_reach(&flat, &[], "examples/demo/demo.py"));
+        // A `python_files` glob reaches what discovery compiled it to reach.
+        let pytest: Vec<String> = std::iter::once("**/check_*.py")
+            .chain(ENTRY_TREE_GLOBS)
+            .map(str::to_owned)
+            .collect();
+        let within = ["**/check_*.py".to_owned()];
+        assert!(only_entry_trees_reach(
+            &pytest,
+            &within,
+            "examples/check_x/helper.py"
+        ));
+        assert!(!only_entry_trees_reach(
+            &pytest,
+            &[],
+            "examples/check_x/helper.py"
+        ));
     }
 }

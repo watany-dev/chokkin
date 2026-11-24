@@ -821,6 +821,7 @@ mod tests {
             },
             layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: paths
                 .iter()
                 .map(|path| DiscoveredFile {

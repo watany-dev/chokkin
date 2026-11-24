@@ -850,19 +850,137 @@ fn ini_value(contents: &str, section: &str, key: &str) -> Option<String> {
     value
 }
 
-/// The command after a factor condition (`py38,!pypy: pytest` → `pytest`).
-fn strip_tox_factors(command: &str) -> &str {
-    match command.split_once(':') {
-        Some((factors, rest))
-            if !factors.is_empty()
-                && factors.chars().all(|ch| {
-                    ch.is_ascii_alphanumeric() || matches!(ch, ',' | '!' | '-' | '_' | '.')
-                }) =>
-        {
-            rest.trim_start()
-        },
-        _ => command,
+/// The value after a tox 4 factor condition (`py38,!pypy: pytest` →
+/// `pytest`), read as tox's `expand_factors` does (#1422): the condition
+/// ends at the first `:` followed by whitespace or the end of the line, its
+/// `{a,b}` groups expand, and spaces around alternatives and group members
+/// are dropped, so `py{38,39}: black` and `py38, py39: black` both give
+/// `black` while `py38:black` is no condition. When the text before the `:`
+/// is not a valid condition, tox takes the whole line as the value, and so
+/// does this. The specification is
+/// `docs/dev/formal/lean/patterns/Patterns/Tox.lean`.
+fn strip_tox_factors(line: &str) -> &str {
+    let marker = line.match_indices(':').find_map(|(index, _)| {
+        let after = line[index + 1..].chars().next();
+        after.is_none_or(char::is_whitespace).then_some(index)
+    });
+    match marker {
+        Some(index) if valid_tox_condition(line[..index].trim()) => line[index + 1..].trim(),
+        _ => line,
     }
+}
+
+/// Most variants a condition's `{...}` groups may expand to before it is
+/// taken as no condition; real conditions have a handful.
+const MAX_TOX_VARIANTS: usize = 256;
+
+/// Whether every alternative of `condition`, with its groups expanded and
+/// split at `-`, is a list of valid factors.
+fn valid_tox_condition(condition: &str) -> bool {
+    let mut variants = 0;
+    for alternative in tox_alternatives(condition) {
+        if alternative.is_empty() {
+            continue;
+        }
+        let Some(expanded) = expand_tox_groups(alternative.trim(), MAX_TOX_VARIANTS - variants)
+        else {
+            return false;
+        };
+        variants += expanded.len();
+        if !expanded
+            .iter()
+            .all(|variant| variant.split('-').all(valid_tox_factor))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// The `{...}` group opening just after `rest`'s start, as tox finds it:
+/// the text up to the next `}`, `None` when none follows or it is empty.
+fn tox_group(rest: &str) -> Option<&str> {
+    let inner = &rest[..rest.find('}')?];
+    (!inner.is_empty()).then_some(inner)
+}
+
+/// `condition` split at the commas outside a `{...}` group. A `{` that no
+/// `}` closes keeps the rest in one alternative: it is no factor character,
+/// so that alternative fails either way.
+fn tox_alternatives(condition: &str) -> Vec<&str> {
+    let mut alternatives = Vec::new();
+    let (mut start, mut in_group) = (0, false);
+    for (index, ch) in condition.char_indices() {
+        match ch {
+            '{' => in_group = true,
+            '}' => in_group = false,
+            ',' if !in_group => {
+                alternatives.push(&condition[start..index]);
+                start = index + 1;
+            },
+            _ => {},
+        }
+    }
+    alternatives.push(&condition[start..]);
+    alternatives
+}
+
+/// Every variant of `alternative`: each literal run and each group member
+/// trimmed, one member per group. `None` past `budget` variants.
+fn expand_tox_groups(alternative: &str, budget: usize) -> Option<Vec<String>> {
+    if budget == 0 {
+        return None;
+    }
+    let mut variants = vec![String::new()];
+    let mut literal = String::new();
+    let mut rest = alternative;
+    while let Some(ch) = rest.chars().next() {
+        rest = &rest[ch.len_utf8()..];
+        let group = if ch == '{' { tox_group(rest) } else { None };
+        let Some(inner) = group else {
+            literal.push(ch);
+            continue;
+        };
+        rest = &rest[inner.len() + 1..];
+        let members: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if variants.len() * members.len() > budget {
+            return None;
+        }
+        let prefix = std::mem::take(&mut literal);
+        variants = variants
+            .iter()
+            .flat_map(|variant| {
+                let base = format!("{variant}{}", prefix.trim());
+                members.iter().map(move |member| format!("{base}{member}"))
+            })
+            .collect();
+    }
+    for variant in &mut variants {
+        variant.push_str(literal.trim());
+    }
+    Some(variants)
+}
+
+/// tox's `_FACTOR_RE`: empty, or an optional `!` then word characters, `.`,
+/// and the glob characters `*`, `?`, `[`, `[!`, `]`.
+fn valid_tox_factor(factor: &str) -> bool {
+    if factor.is_empty() {
+        return true;
+    }
+    let body = factor.strip_prefix('!').unwrap_or(factor);
+    let mut chars = body.chars().peekable();
+    if chars.peek().is_none() {
+        return false;
+    }
+    while let Some(ch) = chars.next() {
+        let word = ch.is_alphanumeric() || ch == '_' || !ch.is_ascii();
+        if ch == '[' && chars.peek() == Some(&'!') {
+            chars.next();
+        } else if !(word || matches!(ch, '.' | '*' | '?' | '[' | ']')) {
+            return false;
+        }
+    }
+    true
 }
 
 /// `{envpython}` runs the env's interpreter and `{envbindir}/x` its scripts;
@@ -1511,6 +1629,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1581,6 +1700,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1623,6 +1743,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1713,6 +1834,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -1777,6 +1899,7 @@ mod tests {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -2364,5 +2487,51 @@ mod tests {
             .map(|reference| reference.origin.line)
             .collect();
         assert_eq!(lines, [Some(6), Some(10), Some(13)]);
+    }
+
+    /// Factor conditions as tox 4 reads them (#1422).
+    #[test]
+    fn tox_factor_conditions_follow_tox() {
+        for (line, value) in [
+            ("py{38,39}: black", "black"),
+            ("py38, py39: black", "black"),
+            ("lint : black", "black"),
+            ("py38,!pypy: coverage report", "coverage report"),
+            ("py3{8, 9}-django{40,41}: x", "x"),
+            ("py*: x", "x"),
+            ("py[!2]: x", "x"),
+            (": x", "x"),
+            ("py38:black", "py38:black"),
+            ("https://example.com/x.whl", "https://example.com/x.whl"),
+            ("py3!8: a", "py3!8: a"),
+            ("echo \"a: b\"", "echo \"a: b\""),
+            ("py 38: a", "py 38: a"),
+            ("!: a", "!: a"),
+            ("é: x", "x"),
+            ("py_38: x", "x"),
+            ("{py38,py39}: x", "x"),
+            ("py{38,39}, lint: x", "x"),
+            ("py{}: x", "py{}: x"),
+            ("py{38: x", "py{38: x"),
+            ("éa:b", "éa:b"),
+        ] {
+            assert_eq!(strip_tox_factors(line), value, "line {line}");
+        }
+        // Variants count across alternatives, up to 256.
+        let group = |count: usize| {
+            let members: Vec<String> = (0..count).map(|n| n.to_string()).collect();
+            format!("py{{{}}}", members.join(","))
+        };
+        let at_limit = format!("{}, {}: x", group(128), group(128));
+        assert_eq!(strip_tox_factors(&at_limit), "x");
+        let full = format!("{}, {}, lint: x", group(128), group(128));
+        assert_eq!(strip_tox_factors(&full), full);
+        let over = format!("{}, {}: x", group(200), group(200));
+        assert_eq!(strip_tox_factors(&over), over);
+        let result = scan_files(&[(
+            "tox.ini",
+            "[testenv]\ndeps =\n    py{38,39}: black\n    py38, py39: isort\n    lint : ruff\n",
+        )]);
+        assert_eq!(result.declared_distributions, ["black", "isort", "ruff"]);
     }
 }
