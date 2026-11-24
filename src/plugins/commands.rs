@@ -1491,17 +1491,11 @@ fn uv_run_target(args: &[&str]) -> Option<Run> {
         } else if UV_RUN_VALUE_OPTIONS.contains(arg) {
             index += 1;
         } else if !arg.starts_with('-') {
-            let rest = args.get(index..).unwrap_or_default();
-            let mut run = if is_python_word(arg) || is_python_variable(arg) {
-                python_target(rest)?
-            } else if let Some(runner) = module_runner(arg) {
-                Run::Target(runner_target(runner, rest))
-            } else if command_name(arg) == "streamlit" && rest.first() == Some(&"run") {
-                streamlit_target(rest.get(1..)?)?
-            } else if is_python_path(arg) {
+            // `uv run app.py` runs a script; anything else (`python`, a
+            // server, another wrapper, #1400) is read as a command of its own.
+            let mut run = if is_python_path(arg) {
                 Run::Target(path_target(arg))
             } else {
-                // `uv run nohup python ...`: another wrapper runs the rest (#1400).
                 segment_target(args.get(index - 1..)?)?
             };
             if let Run::Target(PythonTarget::Script(script)) = &mut run {
@@ -1695,13 +1689,10 @@ fn prefix(words: &[&str], index: usize) -> Prefix {
         return Prefix::Skip(1 + option_width(rest, "oO", &[]));
     }
     if let Some(wrapper) = WRAPPERS.iter().find(|wrapper| wrapper.name == name) {
-        let mut width = 1 + option_width(rest, wrapper.short_values, wrapper.long_values);
-        width += wrapper.operands;
-        // `flock FILE -c 'cmd'` runs the string as `sh -c` does.
-        if name == "flock" && matches!(words.get(index + width), Some(&("-c" | "--command"))) {
-            width += 1;
-        }
-        return Prefix::Skip(width);
+        // `flock FILE -c 'cmd'`: the `-c` after the operand is skipped as an
+        // option, and the string is split as `sh -c` scripts are.
+        let options = option_width(rest, wrapper.short_values, wrapper.long_values);
+        return Prefix::Skip(1 + options + wrapper.operands);
     }
     if next == Some("run") {
         let options = rest.get(1..).unwrap_or_default();
@@ -1853,6 +1844,9 @@ mod tests {
             assert_eq!(binaries(command), Vec::<String>::new(), "{command}");
         }
         assert_eq!(targets("out=$(python -m pkg.tool)"), ["run pkg.tool"]);
+        // Substitutions nest to MAX_SHELL_NESTING.
+        assert_eq!(binaries("echo $($($($(pytest))))"), ["pytest"]);
+        assert_eq!(binaries("echo $($($($($(pytest)))))"), Vec::<String>::new());
         // A `cd` inside a substitution moves no later script.
         assert_eq!(
             targets("python gen.py --rev $(cd vendor && git rev-parse HEAD)"),
@@ -1914,6 +1908,7 @@ mod tests {
             "exec -a name pytest",
             "sh -o pipefail -c 'pytest -q'",
             "bash -euo pipefail -c 'pytest'",
+            "bash -o pipefail pytest",
             "uv run -p 3.12 pytest",
             "nice -n 10 pytest",
             "nice -10 pytest",
