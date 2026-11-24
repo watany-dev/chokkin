@@ -1,8 +1,9 @@
 //! Symbol identity and registry for usage analysis.
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -130,12 +131,12 @@ impl ReferenceIndex {
 
         let partials = crate::parallel::fold_per_worker(
             modules,
-            || (Self::default(), StarCache::new()),
-            |(index, cache), _, module| {
-                index.add_module(module, &bindings, &stars, cache);
+            || (Self::default(), StarCache::new(), Roots::default()),
+            |(index, cache, roots), _, module| {
+                index.add_module(module, &bindings, &stars, (cache, roots));
             },
         );
-        let mut index = Self::merge(partials.into_iter().map(|(index, _)| index).collect());
+        let mut index = Self::merge(partials.into_iter().map(|(index, ..)| index).collect());
         index.opaque = OpaqueStars {
             modules: stars.opaque.iter().map(|&module| module.into()).collect(),
             chain: stars.chain.above(&stars.opaque),
@@ -167,7 +168,7 @@ impl ReferenceIndex {
         module: &'m ParsedModule,
         bindings: &ModuleBindings<'m, '_>,
         stars: &StarImports<'a>,
-        cache: &mut StarCache<'a>,
+        (cache, roots): (&mut StarCache<'a>, &mut Roots<'m>),
     ) {
         let module_names = bindings.module_names;
         let known_modules = bindings.known_modules;
@@ -241,7 +242,8 @@ impl ReferenceIndex {
         let own = bindings.of_importer(module);
         let stars_of_module: Vec<&str> = star_imports(module).collect();
         for (&receiver, names) in &names_by_receiver {
-            let Some(target) = bindings.resolve(&own, &stars_of_module, receiver) else {
+            let Some(target) = bindings.resolve(&own, &stars_of_module, receiver, Some(roots))
+            else {
                 continue;
             };
             for &name in names {
@@ -448,7 +450,7 @@ impl<'a> StarImports<'a> {
 }
 
 /// What a module binds by an import statement, before following it.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Bound<'m> {
     /// `import a.b as c` binds `c` to `a.b`; `import a.b` binds `a` to `a`.
     Module(&'m str),
@@ -473,6 +475,42 @@ struct ModuleBindings<'m, 's> {
 /// How many module members one receiver may look up: re-export cycles and
 /// star imports that fan out end there.
 const MAX_MEMBER_LOOKUPS: u32 = 64;
+/// What a module binds by import, and the modules it star-imports.
+type Importer<'x, 'm> = (&'x FxHashMap<&'m str, Bound<'m>>, &'x [&'m str]);
+
+/// The budget of one receiver's module lookups, and the members it
+/// looked up.
+struct Lookups {
+    left: Cell<u32>,
+    seen: RefCell<FxHashSet<u64>>,
+}
+
+impl Default for Lookups {
+    fn default() -> Self {
+        Self {
+            left: Cell::new(MAX_MEMBER_LOOKUPS),
+            seen: RefCell::default(),
+        }
+    }
+}
+
+impl Lookups {
+    fn spend(&self) -> Option<()> {
+        self.left.set(self.left.get().checked_sub(1)?);
+        Some(())
+    }
+
+    fn first_visit(&self, module: &str, name: &str) -> bool {
+        let mut hasher = rustc_hash::FxHasher::default();
+        (module, name).hash(&mut hasher);
+        self.seen.borrow_mut().insert(hasher.finish())
+    }
+}
+
+/// What each receiver root of one module resolved to: the name, and
+/// whether it is called (`get.()`).
+type Roots<'m> = FxHashMap<(Bound<'m>, bool), Option<String>>;
+
 /// How many modules deep one module-level assignment may read another's.
 const MAX_ASSIGNMENT_ROUNDS: usize = 4;
 
@@ -532,12 +570,12 @@ impl<'m, 's> ModuleBindings<'m, 's> {
                 let empty = FxHashMap::default();
                 let own = bindings.by_module.get(name).unwrap_or(&empty);
                 let stars = bindings.stars_of(name);
-                let Some(held) = bindings.resolve(own, stars, value) else {
+                let Some(held) = bindings.resolve(own, stars, value, None) else {
                     return true;
                 };
                 match target.rsplit_once('.') {
                     None => assigned.push((name, target, held)),
-                    Some((holder, attribute)) => match bindings.resolve(own, stars, holder) {
+                    Some((holder, attribute)) => match bindings.resolve(own, stars, holder, None) {
                         Some(holder) => assigned.push((holder, attribute, held)),
                         None => return true,
                     },
@@ -620,13 +658,10 @@ impl<'m, 's> ModuleBindings<'m, 's> {
         own: &FxHashMap<&'m str, Bound<'m>>,
         stars_of_module: &[&'m str],
         receiver: &str,
+        roots: Option<&mut Roots<'m>>,
     ) -> Option<&'m str> {
-        let module = self.resolve_within(
-            own,
-            stars_of_module,
-            receiver,
-            &Cell::new(MAX_MEMBER_LOOKUPS),
-        )?;
+        let module =
+            self.resolve_within((own, stars_of_module), receiver, &Lookups::default(), roots)?;
         self.known(&module)
     }
 
@@ -635,28 +670,50 @@ impl<'m, 's> ModuleBindings<'m, 's> {
     /// it returns (#1427).
     fn resolve_within(
         &self,
-        own: &FxHashMap<&'m str, Bound<'m>>,
-        stars_of_module: &[&'m str],
+        (own, stars_of_module): Importer<'_, 'm>,
         receiver: &str,
-        lookups: &Cell<u32>,
+        lookups: &Lookups,
+        roots: Option<&mut Roots<'m>>,
     ) -> Option<String> {
         let segments: Vec<&str> = receiver.split('.').collect();
         let (&root, rest) = segments.split_first()?;
-        let mut index = 0;
-        let mut module = if rest.first() == Some(&"()") {
-            index = 1;
-            match own.get(root) {
-                Some(&Bound::Member(package, function)) => {
-                    self.returned(package, function, lookups)?
-                },
-                _ => return None,
+        let called = rest.first() == Some(&"()");
+        let index = usize::from(called);
+        let Some(&bound) = own.get(root) else {
+            if called {
+                return None;
             }
-        } else {
-            match own.get(root) {
-                Some(&bound) => self.follow(bound, lookups)?,
-                None => self.through_stars(stars_of_module, root, lookups)?,
+            let module = self.through_stars(stars_of_module, root, lookups)?;
+            return self.resolve_rest(module, &rest[index..], lookups);
+        };
+        // The root resolves on a budget of its own, so that a remembered
+        // root leaves the rest the same lookups as a fresh one.
+        let resolve_root = || {
+            let lookups = &Lookups::default();
+            match (bound, called) {
+                (Bound::Member(package, function), true) => {
+                    self.returned(package, function, lookups)
+                },
+                (_, true) => None,
+                (bound, false) => self.follow(bound, lookups),
             }
         };
+        let module = match roots {
+            // Receivers share their roots, which resolve the same from any
+            // importer, and a root that names no module (a class) costs the
+            // whole lookup budget.
+            Some(roots) => roots
+                .entry((bound, called))
+                .or_insert_with(resolve_root)
+                .clone(),
+            None => resolve_root(),
+        }?;
+        self.resolve_rest(module, &rest[index..], lookups)
+    }
+
+    /// The module the segments after a receiver's root lead to from `module`.
+    fn resolve_rest(&self, mut module: String, rest: &[&str], lookups: &Lookups) -> Option<String> {
+        let mut index = 0;
         while let Some(&segment) = rest.get(index) {
             if rest.get(index + 1) == Some(&"()") {
                 module = self.returned(&module, segment, lookups)?;
@@ -670,8 +727,8 @@ impl<'m, 's> ModuleBindings<'m, 's> {
     }
 
     /// The module calling `module.function` returns, or `None`.
-    fn returned(&self, module: &str, function: &str, lookups: &Cell<u32>) -> Option<String> {
-        lookups.set(lookups.get().checked_sub(1)?);
+    fn returned(&self, module: &str, function: &str, lookups: &Lookups) -> Option<String> {
+        lookups.spend()?;
         let empty = FxHashMap::default();
         let own = self.by_module.get(module).unwrap_or(&empty);
         for text in self
@@ -681,7 +738,9 @@ impl<'m, 's> ModuleBindings<'m, 's> {
             .into_iter()
             .flatten()
         {
-            if let Some(found) = self.resolve_within(own, self.stars_of(module), text, lookups) {
+            if let Some(found) =
+                self.resolve_within((own, self.stars_of(module)), text, lookups, None)
+            {
                 return Some(found);
             }
         }
@@ -698,7 +757,7 @@ impl<'m, 's> ModuleBindings<'m, 's> {
             .copied()
     }
 
-    fn follow(&self, bound: Bound<'m>, lookups: &Cell<u32>) -> Option<String> {
+    fn follow(&self, bound: Bound<'m>, lookups: &Lookups) -> Option<String> {
         match bound {
             Bound::Module(module) => Some(module.to_owned()),
             Bound::Member(package, name) => self.member(package, name, lookups),
@@ -707,8 +766,13 @@ impl<'m, 's> ModuleBindings<'m, 's> {
 
     /// The module `module.name` is: a name the module bound by import, its
     /// submodule, or a module one of its star imports hands on.
-    fn member(&self, module: &str, name: &str, lookups: &Cell<u32>) -> Option<String> {
-        lookups.set(lookups.get().checked_sub(1)?);
+    fn member(&self, module: &str, name: &str, lookups: &Lookups) -> Option<String> {
+        lookups.spend()?;
+        // A name star imports reach by several paths fails the same way on
+        // each: look it up once.
+        if !lookups.first_visit(module, name) {
+            return None;
+        }
         if let Some(&bound) = self
             .by_module
             .get(module)
@@ -727,9 +791,12 @@ impl<'m, 's> ModuleBindings<'m, 's> {
     /// The module `name` is in a module that star-imports `stars`: what
     /// one of them hands on under it (`__all__ = ["m"]` in a package hands
     /// on its submodule `m`).
-    fn through_stars(&self, stars: &[&'m str], name: &str, lookups: &Cell<u32>) -> Option<String> {
+    fn through_stars(&self, stars: &[&'m str], name: &str, lookups: &Lookups) -> Option<String> {
         stars
             .iter()
+            // A package star-importing hundreds of modules is not scanned
+            // past the budget.
+            .take_while(|_| lookups.left.get() > 0)
             .filter(|&&star| self.stars.chain.hands_on(star, name))
             .find_map(|star| self.member(star, name, lookups))
     }

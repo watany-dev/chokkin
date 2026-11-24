@@ -2820,6 +2820,18 @@ fn module_objects_carried_through_globals_are_receivers() {
             "import reassigned through global",
             "import pkg.m as m\n\ndef reset():\n    global m\n    m = None\n\nm.target()\n",
         ),
+        (
+            "global set by a nested function",
+            "import pkg.m\nf = None\n\ndef outer():\n    def inner():\n        global f\n        f = pkg.m\n    inner()\n\nouter()\nf.target()\n",
+        ),
+        (
+            "an import rebound to an unknown value is read as written",
+            "import pkg.m\npkg = other.thing\npkg.m.target()\n",
+        ),
+        (
+            "a later generator's iterable",
+            "import pkg.m\n[0 for a in [0] for b in pkg.m.target]\n",
+        ),
     ]);
 }
 
@@ -2916,6 +2928,26 @@ fn values_not_carrying_the_module_are_not_receivers() {
             "parameter not passed the module",
             "import pkg.m\n\ndef ident(x):\n    return x\n\nident(0).target\n",
         ),
+        (
+            "a function's local of the same name as a global",
+            "import pkg.m\nf = None\n\ndef g():\n    f = pkg.m\n\nf.target()\n",
+        ),
+        (
+            "a function's local outside it",
+            "import pkg.m\n\ndef f():\n    x = pkg.m\n\nx.target()\n",
+        ),
+        (
+            "a subscript of something other than sys.modules",
+            "import pkg.m\nd = {}\nd[\"pkg.m\"].target()\n",
+        ),
+        (
+            "a dict comprehension's own name",
+            "import pkg.m\n{0: pkg.m.target for pkg in [0]}\n",
+        ),
+        (
+            "locals bound to each other",
+            "import pkg.m\n\ndef get():\n    a = b.x\n    b = a.y\n    a = b.z\n    return a\n\nget().target\n",
+        ),
     ] {
         assert!(oracle_target_unused(&[("main.py", body)]), "{label}");
     }
@@ -2926,6 +2958,27 @@ fn values_not_carrying_the_module_are_not_receivers() {
 #[test]
 fn module_objects_carried_across_modules_are_receivers() {
     assert_oracle_cases(&[
+        (
+            "global handed on by a star import",
+            &[
+                ("pkg/a.py", "import pkg.m\nalias = pkg.m\n"),
+                ("pkg/b.py", "from pkg.a import *\n"),
+                ("main.py", "from pkg.b import alias\nalias.target()\n"),
+            ],
+            false,
+        ),
+        (
+            "re-exported function's return",
+            &[
+                (
+                    "pkg/util.py",
+                    "import pkg.m\n\ndef get():\n    return pkg.m\n",
+                ),
+                ("pkg/__init__.py", "from .util import get\n"),
+                ("main.py", "import pkg\npkg.get().target()\n"),
+            ],
+            false,
+        ),
         (
             "other module's function return",
             &[

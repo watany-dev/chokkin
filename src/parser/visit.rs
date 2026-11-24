@@ -1,5 +1,6 @@
 //! AST visitor for imports, symbols, and dynamic references.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -49,8 +50,8 @@ use super::types::{
     import_context_for_file,
 };
 use super::values::{
-    Evaluator, Lookup, Program, Value, Values, bind_pattern, budget, destructure, dotted,
-    dotted_text, elements, extend,
+    Evaluator, Lookup, Memo, Program, Value, Values, bind_pattern, budget, destructure, dotted,
+    dotted_text, elements, extend, may_evaluate_to_module, may_return,
 };
 use super::version_guard::{self, ALL_MINORS, Minors, VersionNames};
 
@@ -193,6 +194,12 @@ pub(super) struct ModuleVisitor<'a, 'ast> {
     /// The module-level functions and classes a value may flow through
     /// (#1427).
     program: Program<'ast>,
+    /// What calls and members evaluated to while module-level names held
+    /// the same (#1427).
+    memo: Memo<'ast>,
+    /// The names imports bind, kept up to the imports seen so far, and
+    /// whether one of them is a first-party module's (#1427).
+    import_roots: RefCell<(usize, FxHashMap<String, bool>)>,
     /// Module-level names bound once to a string literal (#1425).
     string_constants: FxHashMap<&'ast str, &'ast str>,
     /// The enclosing function, class, lambda and comprehension scopes,
@@ -284,6 +291,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             module_aliases: FxHashMap::default(),
             global_aliases: FxHashMap::default(),
             global_stores: FxHashMap::default(),
+            memo: Memo::default(),
+            import_roots: RefCell::default(),
             attribute_stores: FxHashMap::default(),
             program: Program::default(),
             string_constants: FxHashMap::default(),
@@ -413,9 +422,18 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 .map_or(Lookup::Free, |values| Lookup::Bound(values.clone()))
         };
         let mut returns: Vec<(String, String)> = Vec::new();
+        let reaches = |name: &str| {
+            self.global_aliases.contains_key(name)
+                || self.program.defines(name)
+                || self.is_import_root(name)
+        };
         for (name, def) in self.program.functions() {
+            if !may_return(def, &reaches) {
+                continue;
+            }
             let module = |name: &str| self.global_aliases.get(name).cloned();
             let (calls, nesting) = budget();
+            let first_party = |root: &str| self.import_root(root) == Some(true);
             let held = Evaluator {
                 program: &self.program,
                 here: &module_level,
@@ -423,6 +441,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                 stores: &self.attribute_stores,
                 calls: &calls,
                 nesting: &nesting,
+                memo: &self.memo,
+                first_party: &first_party,
             }
             .returns(def);
             returns.extend(
@@ -884,6 +904,16 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     }
 
     fn bind_values(&mut self, target: &'ast Expr, values: Values<'ast>) {
+        if values.is_empty() && !self.scopes.is_empty() {
+            // Most assignments in a function hold nothing tracked: they only
+            // drop an alias of the same name.
+            if !self.module_aliases.is_empty() {
+                destructure(target, Vec::new(), &mut |name, _| {
+                    self.module_aliases.remove(name);
+                });
+            }
+            return;
+        }
         let mut bound = Vec::new();
         destructure(target, values, &mut |name, values| {
             bound.push((name, values));
@@ -900,6 +930,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         values.retain(|value| self.may_hold_module(value));
         let at_module = self.scopes.is_empty();
         if at_module {
+            self.memo.clear();
             let mut held = values.clone();
             extend(
                 &mut held,
@@ -929,6 +960,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     /// `global` to what it holds, which until then is the name as written
     /// (an import's binding, say).
     fn add_global(&mut self, name: &str, values: Values<'ast>) {
+        self.memo.clear();
         let held = self
             .global_aliases
             .entry(name.to_owned())
@@ -946,6 +978,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         let free = |_: &str| Lookup::Free;
         for (_, def) in self.program.functions() {
             let (calls, nesting) = budget();
+            let first_party = |root: &str| self.import_root(root) == Some(true);
             stores.extend(
                 Evaluator {
                     program: &self.program,
@@ -954,6 +987,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
                     stores: &self.attribute_stores,
                     calls: &calls,
                     nesting: &nesting,
+                    memo: &self.memo,
+                    first_party: &first_party,
                 }
                 .global_stores(def),
             );
@@ -976,16 +1011,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         match value {
             Value::Dotted(text) => {
                 let root = text.split('.').next().unwrap_or(text);
-                self.program.defines(root)
-                    || self
-                        .parsed
-                        .imports
-                        .iter()
-                        .any(|import| import.bound_name() == Some(root))
-                    || self.parsed.imports.iter().any(|import| {
-                        import.kind == ImportKind::Import
-                            && import.module.split('.').next() == Some(root)
-                    })
+                self.program.defines(root) || self.is_import_root(root)
             },
             Value::Seq(elts) => elts
                 .iter()
@@ -996,8 +1022,64 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         }
     }
 
+    /// Whether `name` is bound by an import (`import pkg.m` binds `pkg`).
+    fn is_import_root(&self, name: &str) -> bool {
+        self.import_root(name).is_some()
+    }
+
+    /// Whether an import binds `name`, and if so whether one that does
+    /// imports from the project's own packages (or relatively).
+    fn import_root(&self, name: &str) -> Option<bool> {
+        let mut roots = self.import_roots.borrow_mut();
+        let (seen, names) = &mut *roots;
+        for import in &self.parsed.imports[*seen..] {
+            let top = import.module.split('.').next().unwrap_or_default();
+            let first_party = import.relative_level > 0
+                || self
+                    .layout
+                    .packages
+                    .iter()
+                    .chain(&self.layout.local_packages)
+                    .chain(
+                        self.layout
+                            .members
+                            .iter()
+                            .flat_map(|member| &member.layout.packages),
+                    )
+                    .any(|package| package == top);
+            let bound = import
+                .bound_name()
+                .into_iter()
+                .chain((import.kind == ImportKind::Import).then_some(top));
+            for bound in bound {
+                *names.entry(bound.to_owned()).or_default() |= first_party;
+            }
+        }
+        *seen = self.parsed.imports.len();
+        names.get(name).copied()
+    }
+
+    /// Whether `expr` may evaluate to something [`Self::may_hold_module`]
+    /// keeps, from a name the walk tracks, an import's or a module-level
+    /// definition.
+    fn may_reach_module(&self, expr: &'ast Expr) -> bool {
+        may_evaluate_to_module(expr, &|name| {
+            self.module_aliases.contains_key(name)
+                || self.global_aliases.contains_key(name)
+                || self.program.defines(name)
+                || self.is_import_root(name)
+                || self
+                    .attribute_stores
+                    .keys()
+                    .any(|stored| stored.split('.').next() == Some(name))
+        })
+    }
+
     /// What `expr` may evaluate to where the walk is (#1427).
     fn eval_here(&self, expr: &'ast Expr) -> Values<'ast> {
+        if !self.may_reach_module(expr) {
+            return Vec::new();
+        }
         let here = |name: &str| {
             // At module level, what functions assign through `global` adds
             // to the module's own aliases.
@@ -1022,6 +1104,7 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
     fn evaluate(&self, here: &dyn Fn(&str) -> Lookup<'ast>, expr: &'ast Expr) -> Values<'ast> {
         let module = |name: &str| self.global_aliases.get(name).cloned();
         let (calls, nesting) = budget();
+        let first_party = |root: &str| self.import_root(root) == Some(true);
         Evaluator {
             program: &self.program,
             here,
@@ -1029,6 +1112,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
             stores: &self.attribute_stores,
             calls: &calls,
             nesting: &nesting,
+            memo: &self.memo,
+            first_party: &first_party,
         }
         .eval(expr)
     }
@@ -1048,12 +1133,8 @@ impl<'a, 'ast> ModuleVisitor<'a, 'ast> {
         if values.is_empty() {
             return;
         }
-        let entry = self.attribute_stores.entry(text).or_default();
-        for value in values {
-            if !entry.contains(&value) {
-                entry.push(value);
-            }
-        }
+        self.memo.clear();
+        extend(self.attribute_stores.entry(text).or_default(), values);
     }
 
     /// Where a read of `receiver.name` goes: kept for

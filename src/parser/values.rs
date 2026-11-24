@@ -4,13 +4,14 @@
 //! a flow can carry is kept, and a flow it does not follow carries nothing,
 //! so a module read through it is not a reference.
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell, RefCell};
 
+use ruff_python_ast::visitor::{Visitor, walk_expr};
 use ruff_python_ast::{
     Comprehension, Expr, ExprCall, ExprLambda, ExprNumberLiteral, Number, Parameters, Pattern,
     Stmt, StmtFunctionDef, UnaryOp,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::attributes::write_receiver;
 
@@ -284,7 +285,9 @@ pub(super) struct Program<'ast> {
     /// Every definition of each name: one in each branch of a top-level
     /// `if` or `try` may be the one bound.
     functions: FxHashMap<&'ast str, Vec<&'ast StmtFunctionDef>>,
-    classes: FxHashMap<&'ast str, Class<'ast>>,
+    /// Each class's body, read into a [`Class`] on its first lookup: most
+    /// modules never look one up.
+    classes: FxHashMap<&'ast str, (&'ast [Stmt], OnceCell<Class<'ast>>)>,
 }
 
 impl<'ast> Program<'ast> {
@@ -302,12 +305,17 @@ impl<'ast> Program<'ast> {
                 Stmt::ClassDef(class) => {
                     program
                         .classes
-                        .insert(class.name.as_str(), Class::build(&class.body));
+                        .insert(class.name.as_str(), (&class.body, OnceCell::new()));
                 },
                 _ => {},
             }
         }
         program
+    }
+
+    fn class(&self, name: &str) -> Option<&Class<'ast>> {
+        let (body, class) = self.classes.get(name)?;
+        Some(class.get_or_init(|| Class::build(body)))
     }
 
     /// Whether `name` is a module-level function or class.
@@ -416,7 +424,7 @@ pub(super) enum Lookup<'ast> {
 type Frame<'ast> = FxHashMap<&'ast str, Values<'ast>>;
 
 /// What a call passes: the bound instance or class, then its arguments.
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq)]
 struct Args<'ast> {
     this: Option<Value<'ast>>,
     positional: Vec<Values<'ast>>,
@@ -439,6 +447,31 @@ impl<'ast> Args<'ast> {
     }
 }
 
+type CallMemo<'ast> = (Args<'ast>, Option<Values<'ast>>);
+/// A class, its member's name, and whether it is read from an instance.
+type MemberKey<'ast> = (&'ast str, String, bool);
+
+/// What a call or a class member evaluated to (`None` while it is being
+/// evaluated, which a recursive call reads as nothing). Kept across the
+/// evaluations of one module, which clears it whenever a module-level name
+/// or a stored attribute it reads changes; a result cut short by the
+/// budget is not kept.
+#[derive(Default)]
+pub(super) struct Memo<'ast> {
+    /// By the function's address, each set of arguments it was called with.
+    calls: RefCell<FxHashMap<usize, Vec<CallMemo<'ast>>>>,
+    members: RefCell<FxHashMap<MemberKey<'ast>, Option<Values<'ast>>>>,
+    /// Whether the evaluation running ran out of budget somewhere.
+    truncated: Cell<bool>,
+}
+
+impl Memo<'_> {
+    pub(super) fn clear(&self) {
+        self.calls.borrow_mut().clear();
+        self.members.borrow_mut().clear();
+    }
+}
+
 /// Evaluates expressions in the module the walk is in.
 pub(super) struct Evaluator<'e, 'ast> {
     pub(super) program: &'e Program<'ast>,
@@ -452,6 +485,10 @@ pub(super) struct Evaluator<'e, 'ast> {
     pub(super) calls: &'e Cell<u32>,
     /// How many more expressions may nest inside the one evaluated.
     pub(super) nesting: &'e Cell<u32>,
+    pub(super) memo: &'e Memo<'ast>,
+    /// Whether a name outside the module's own definitions may be a
+    /// first-party function or module, whose calls the graph follows.
+    pub(super) first_party: &'e dyn Fn(&str) -> bool,
 }
 
 impl<'ast> Evaluator<'_, 'ast> {
@@ -477,7 +514,7 @@ impl<'ast> Evaluator<'_, 'ast> {
         if declared.is_empty() {
             return Vec::new();
         }
-        let mut frame = self.frame(def, &Args::default(), 0);
+        let mut frame = self.frame(def, &Args::default(), 0, declared.iter().copied().collect());
         declared
             .into_iter()
             .filter_map(|name| Some((name, frame.remove(name)?)))
@@ -491,6 +528,7 @@ impl<'ast> Evaluator<'_, 'ast> {
 
     fn eval_in(&self, expr: &'ast Expr, frame: Option<&Frame<'ast>>, depth: u32) -> Values<'ast> {
         let Some(left) = self.nesting.get().checked_sub(1) else {
+            self.memo.truncated.set(true);
             return Vec::new();
         };
         self.nesting.set(left);
@@ -650,6 +688,8 @@ impl<'ast> Evaluator<'_, 'ast> {
             stores: self.stores,
             calls: self.calls,
             nesting: self.nesting,
+            memo: self.memo,
+            first_party: self.first_party,
         }
         .eval_in(expr, None, depth)
     }
@@ -687,16 +727,50 @@ impl<'ast> Evaluator<'_, 'ast> {
 
     /// `attr` of a module-level class or, with `instance`, of its instance.
     fn member(&self, class: &'ast str, attr: &str, instance: bool, depth: u32) -> Values<'ast> {
-        let mut out = Vec::new();
-        let out = &mut out;
-        let Some(info) = self.program.classes.get(class) else {
+        if !self.program.classes.contains_key(class) {
             return Vec::new();
-        };
+        }
+        let key = (class, attr.to_owned(), instance);
+        if let Some(cached) = self.memo.members.borrow().get(&key) {
+            return cached.clone().unwrap_or_default();
+        }
         // A member's value may read the member itself (`self.a = self.a or
-        // {}`), so each lookup spends the call budget.
+        // {}`): the lookup in progress reads as nothing.
         if !self.spend(depth) {
             return Vec::new();
         }
+        self.memo.members.borrow_mut().insert(key.clone(), None);
+        let (out, truncated) = self.tracking(|| self.member_values(class, attr, instance, depth));
+        let mut members = self.memo.members.borrow_mut();
+        if truncated {
+            members.remove(&key);
+        } else {
+            members.insert(key, Some(out.clone()));
+        }
+        out
+    }
+
+    /// Runs `evaluate`, telling whether it ran out of budget.
+    fn tracking(&self, evaluate: impl FnOnce() -> Values<'ast>) -> (Values<'ast>, bool) {
+        let outer = self.memo.truncated.replace(false);
+        let out = evaluate();
+        let truncated = self.memo.truncated.get();
+        self.memo.truncated.set(outer || truncated);
+        (out, truncated)
+    }
+
+    fn member_values(
+        &self,
+        class: &'ast str,
+        attr: &str,
+        instance: bool,
+        depth: u32,
+    ) -> Values<'ast> {
+        let mut out = Vec::new();
+        let out = &mut out;
+        let Some(info) = self.program.class(class) else {
+            return Vec::new();
+        };
         for value in info.attributes.get(attr).into_iter().flatten() {
             extend(out, self.eval_in(value, Some(&Frame::default()), depth + 1));
         }
@@ -716,7 +790,14 @@ impl<'ast> Evaluator<'_, 'ast> {
         }
         if instance {
             for (method, value) in info.self_attributes.get(attr).into_iter().flatten() {
-                let frame = self.frame(method, &Args::this(Value::Instance(class)), depth + 1);
+                let mut wanted = FxHashSet::default();
+                read_names(value, &mut wanted);
+                let frame = self.frame(
+                    method,
+                    &Args::this(Value::Instance(class)),
+                    depth + 1,
+                    wanted,
+                );
                 extend(out, self.eval_in(value, Some(&frame), depth + 2));
             }
         }
@@ -767,37 +848,27 @@ impl<'ast> Evaluator<'_, 'ast> {
                 } else if let Some((&class, _)) = self.program.classes.get_key_value(text.as_str())
                 {
                     vec![Value::Instance(class)]
-                } else {
+                } else if (self.first_party)(text.split('.').next().unwrap_or(&text)) {
                     vec![Value::Dotted(format!("{text}.()"))]
+                } else {
+                    // What a third-party or builtin call returns is not
+                    // followed: no first-party module flows out of it.
+                    Vec::new()
                 }
             },
             Value::Method(class, name, instance) => {
                 let Some(def) = self
                     .program
-                    .classes
-                    .get(class)
+                    .class(class)
                     .and_then(|info| info.methods.get(name))
                 else {
                     return Vec::new();
                 };
-                let decorated = |name| {
-                    def.decorator_list
-                        .iter()
-                        .any(|decorator| decorator_is(&decorator.expression, name))
-                };
-                let this = if decorated("staticmethod") {
-                    None
-                } else if decorated("classmethod") {
-                    Some(Value::Dotted(class.to_owned()))
-                } else if instance {
-                    Some(Value::Instance(class))
-                } else {
-                    None
-                };
-                self.invoke(def, &arguments(this), depth)
+                self.invoke(def, &arguments(bound_to(def, class, instance)), depth)
             },
             Value::Lambda(lambda) => {
                 if depth >= MAX_CALL_DEPTH {
+                    self.memo.truncated.set(true);
                     return Vec::new();
                 }
                 let mut inner = Frame::default();
@@ -812,16 +883,52 @@ impl<'ast> Evaluator<'_, 'ast> {
 
     /// What `def` returns when called with these arguments.
     fn invoke(&self, def: &'ast StmtFunctionDef, args: &Args<'ast>, depth: u32) -> Values<'ast> {
+        let key = std::ptr::from_ref(def) as usize;
+        let cached = self.memo.calls.borrow().get(&key).and_then(|entries| {
+            entries
+                .iter()
+                .find(|(seen, _)| seen == args)
+                .map(|(_, values)| values.clone().unwrap_or_default())
+        });
+        if let Some(values) = cached {
+            return values;
+        }
         if !self.spend(depth) {
             return Vec::new();
         }
-        let frame = self.frame(def, args, depth);
-        let mut out = Vec::new();
-        for stmt in flatten(&def.body) {
-            if let Stmt::Return(ret) = stmt
-                && let Some(value) = &ret.value
-            {
+        self.memo
+            .calls
+            .borrow_mut()
+            .entry(key)
+            .or_default()
+            .push((args.clone(), None));
+        let (out, truncated) = self.tracking(|| {
+            let returned: Vec<&'ast Expr> = flatten(&def.body)
+                .into_iter()
+                .filter_map(|stmt| match stmt {
+                    Stmt::Return(ret) => ret.value.as_deref(),
+                    _ => None,
+                })
+                .collect();
+            let mut wanted = FxHashSet::default();
+            for value in &returned {
+                read_names(value, &mut wanted);
+            }
+            let frame = self.frame(def, args, depth, wanted);
+            let mut out = Vec::new();
+            for value in returned {
                 extend(&mut out, self.eval_in(value, Some(&frame), depth + 1));
+            }
+            out
+        });
+        let mut calls = self.memo.calls.borrow_mut();
+        if let Some(entries) = calls.get_mut(&key)
+            && let Some(at) = entries.iter().position(|(seen, _)| seen == args)
+        {
+            if truncated {
+                entries.remove(at);
+            } else {
+                entries[at].1 = Some(out.clone());
             }
         }
         out
@@ -830,18 +937,26 @@ impl<'ast> Evaluator<'_, 'ast> {
     /// Takes one body from the call budget, unless it or the depth ran out.
     fn spend(&self, depth: u32) -> bool {
         if depth >= MAX_CALL_DEPTH || self.calls.get() == 0 {
+            self.memo.truncated.set(true);
             return false;
         }
         self.calls.set(self.calls.get() - 1);
         true
     }
 
-    /// The names `def`'s body sees: its parameters bound to the arguments,
-    /// then what its assignments and loops bind, in order.
-    fn frame(&self, def: &'ast StmtFunctionDef, args: &Args<'ast>, depth: u32) -> Frame<'ast> {
+    /// The names `def`'s body sees that `wanted` reads: its parameters bound
+    /// to the arguments, then what its assignments and loops bind, in order.
+    /// Statements binding only names nothing wanted reads are not evaluated.
+    fn frame(
+        &self,
+        def: &'ast StmtFunctionDef,
+        args: &Args<'ast>,
+        depth: u32,
+        wanted: FxHashSet<&'ast str>,
+    ) -> Frame<'ast> {
         let mut frame = Frame::default();
         self.bind_parameters(&def.parameters, args, &mut frame, depth);
-        for stmt in flatten(&def.body) {
+        for stmt in needed_statements(flatten(&def.body), wanted) {
             let mut bound: Vec<(&'ast str, Values<'ast>)> = Vec::new();
             let mut collect = |name, values| bound.push((name, values));
             match stmt {
@@ -936,6 +1051,221 @@ impl<'ast> Evaluator<'_, 'ast> {
     }
 }
 
+/// Whether what `def` returns may hold a module when called with nothing
+/// known of its arguments: a returned expression whose evaluated parts (as
+/// [`Evaluator`] reads them) start from a name `reaches` says may hold one,
+/// or from a local name bound to such an expression.
+pub(super) fn may_return(def: &StmtFunctionDef, reaches: &dyn Fn(&str) -> bool) -> bool {
+    let body = flatten(&def.body);
+    let mut assigned: FxHashMap<&str, Vec<&Expr>> = FxHashMap::default();
+    let mut returned = Vec::new();
+    for stmt in &body {
+        if let Stmt::Return(ret) = stmt {
+            returned.extend(ret.value.as_deref());
+            continue;
+        }
+        let (bound, reads) = statement_binding(stmt);
+        for name in bound {
+            assigned
+                .entry(name)
+                .or_default()
+                .extend(reads.iter().copied());
+        }
+    }
+    if returned.is_empty() {
+        return false;
+    }
+    for parameter in def.parameters.iter_non_variadic_params() {
+        if let Some(default) = parameter.default.as_deref() {
+            assigned
+                .entry(parameter.parameter.name.as_str())
+                .or_default()
+                .push(default);
+        }
+    }
+    let local = Spine {
+        assigned: &assigned,
+        reaches,
+        followed: RefCell::default(),
+    };
+    returned.into_iter().any(|expr| local.reaches(expr, 0))
+}
+
+/// Whether `expr` may evaluate to something holding a module: the parts
+/// [`Evaluator`] reads (a call's callee, not its arguments, unless the
+/// callee is followed) start from a name `reaches` says may hold one, or it
+/// is a lambda.
+pub(super) fn may_evaluate_to_module(expr: &Expr, reaches: &dyn Fn(&str) -> bool) -> bool {
+    Spine {
+        assigned: &FxHashMap::default(),
+        reaches,
+        followed: RefCell::default(),
+    }
+    .reaches(expr, 0)
+}
+
+/// [`may_return`]'s walk over the parts of an expression the evaluator reads.
+struct Spine<'s, 'ast> {
+    assigned: &'s FxHashMap<&'ast str, Vec<&'ast Expr>>,
+    reaches: &'s dyn Fn(&str) -> bool,
+    /// The local names already followed: `x = x.y` and names bound to each
+    /// other are followed once.
+    followed: RefCell<FxHashSet<&'ast str>>,
+}
+
+impl<'ast> Spine<'_, 'ast> {
+    fn reaches(&self, expr: &'ast Expr, depth: u32) -> bool {
+        if depth > MAX_NESTING {
+            return false;
+        }
+        let deeper = |expr: &'ast Expr| self.reaches(expr, depth + 1);
+        match expr {
+            Expr::Name(name) => {
+                let name = name.id.as_str();
+                (self.reaches)(name)
+                    || (self.followed.borrow_mut().insert(name)
+                        && self
+                            .assigned
+                            .get(name)
+                            .is_some_and(|values| values.iter().any(|value| deeper(value))))
+            },
+            Expr::Attribute(attribute) => deeper(&attribute.value),
+            Expr::Call(call) => deeper(&call.func),
+            Expr::Subscript(subscript) => deeper(&subscript.value),
+            Expr::Starred(starred) => deeper(&starred.value),
+            Expr::Named(named) => deeper(&named.value),
+            Expr::If(if_expr) => deeper(&if_expr.body) || deeper(&if_expr.orelse),
+            Expr::BoolOp(bool_op) => bool_op.values.iter().any(deeper),
+            Expr::List(list) => list.elts.iter().any(deeper),
+            Expr::Tuple(tuple) => tuple.elts.iter().any(deeper),
+            Expr::ListComp(comp) => {
+                deeper(&comp.elt) || comp.generators.iter().any(|g| deeper(&g.iter))
+            },
+            Expr::SetComp(comp) => {
+                deeper(&comp.elt) || comp.generators.iter().any(|g| deeper(&g.iter))
+            },
+            Expr::Generator(comp) => {
+                deeper(&comp.elt) || comp.generators.iter().any(|g| deeper(&g.iter))
+            },
+            Expr::Lambda(_) => true,
+            _ => false,
+        }
+    }
+}
+
+/// The statements of a body, in order, that bind a name `wanted` reads or
+/// a name such a statement reads, transitively.
+fn needed_statements<'ast>(
+    stmts: Vec<&'ast Stmt>,
+    mut wanted: FxHashSet<&'ast str>,
+) -> Vec<&'ast Stmt> {
+    let bindings: Vec<(Vec<&'ast str>, Vec<&'ast Expr>)> =
+        stmts.iter().map(|stmt| statement_binding(stmt)).collect();
+    let mut needed = vec![false; stmts.len()];
+    // A loop reads names a later statement binds: go round until nothing
+    // more is needed.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (index, (bound, reads)) in bindings.iter().enumerate().rev() {
+            if needed[index] || !bound.iter().any(|name| wanted.contains(name)) {
+                continue;
+            }
+            needed[index] = true;
+            changed = true;
+            for expr in reads {
+                read_names(expr, &mut wanted);
+            }
+        }
+    }
+    stmts
+        .into_iter()
+        .zip(needed)
+        .filter_map(|(stmt, needed)| needed.then_some(stmt))
+        .collect()
+}
+
+/// The names a statement binds in [`Evaluator::frame`] and the expressions
+/// it evaluates for them.
+fn statement_binding(stmt: &Stmt) -> (Vec<&str>, Vec<&Expr>) {
+    let mut bound = Vec::new();
+    let mut collect = |name, _| bound.push(name);
+    let reads: Vec<&Expr> = match stmt {
+        Stmt::Assign(assign) => {
+            for target in &assign.targets {
+                destructure(target, Vec::new(), &mut collect);
+            }
+            vec![&assign.value]
+        },
+        Stmt::AnnAssign(assign) => {
+            destructure(&assign.target, Vec::new(), &mut collect);
+            assign.value.as_deref().into_iter().collect()
+        },
+        Stmt::For(for_stmt) => {
+            destructure(&for_stmt.target, Vec::new(), &mut collect);
+            vec![&for_stmt.iter]
+        },
+        Stmt::Match(match_stmt) => {
+            for case in &match_stmt.cases {
+                bind_pattern(&case.pattern, Vec::new(), &mut collect);
+            }
+            vec![&match_stmt.subject]
+        },
+        Stmt::With(with_stmt) => {
+            for vars in with_stmt
+                .items
+                .iter()
+                .filter_map(|item| item.optional_vars.as_deref())
+            {
+                destructure(vars, Vec::new(), &mut collect);
+            }
+            Vec::new()
+        },
+        Stmt::FunctionDef(inner) => {
+            collect(inner.name.as_str(), Vec::new());
+            Vec::new()
+        },
+        Stmt::ClassDef(inner) => {
+            collect(inner.name.as_str(), Vec::new());
+            Vec::new()
+        },
+        _ => Vec::new(),
+    };
+    (bound, reads)
+}
+
+/// Adds the names `expr` reads, in nested scopes too, to `names`.
+fn read_names<'ast>(expr: &'ast Expr, names: &mut FxHashSet<&'ast str>) {
+    struct Reads<'n, 'ast>(&'n mut FxHashSet<&'ast str>);
+    impl<'ast> Visitor<'ast> for Reads<'_, 'ast> {
+        fn visit_expr(&mut self, expr: &'ast Expr) {
+            if let Expr::Name(name) = expr {
+                self.0.insert(name.id.as_str());
+            }
+            walk_expr(self, expr);
+        }
+    }
+    Reads(names).visit_expr(expr);
+}
+
+/// What a method of `class` binds its first parameter to when called.
+fn bound_to<'ast>(def: &StmtFunctionDef, class: &'ast str, instance: bool) -> Option<Value<'ast>> {
+    let decorated = |name| {
+        def.decorator_list
+            .iter()
+            .any(|decorator| decorator_is(&decorator.expression, name))
+    };
+    if decorated("staticmethod") {
+        None
+    } else if decorated("classmethod") {
+        Some(Value::Dotted(class.to_owned()))
+    } else if instance {
+        Some(Value::Instance(class))
+    } else {
+        None
+    }
+}
+
 /// A literal integer subscript, negative ones included.
 fn int_index(expr: &Expr) -> Option<i64> {
     match expr {
@@ -959,4 +1289,208 @@ pub(super) fn dotted_text(expr: &Expr) -> Option<String> {
 /// A fresh call and nesting budget for one top-level evaluation.
 pub(super) fn budget() -> (Cell<u32>, Cell<u32>) {
     (Cell::new(MAX_CALLS), Cell::new(MAX_NESTING))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Write as _;
+
+    use super::*;
+
+    /// The dotted names the module's last expression evaluates to, every
+    /// free name read as itself.
+    fn eval(source: &str) -> Vec<String> {
+        let module = Box::leak(Box::new(
+            ruff_python_parser::parse_module(source).expect("parse"),
+        ));
+        let stmts = module.suite();
+        let program = Box::leak(Box::new(Program::build(stmts)));
+        let Some(Stmt::Expr(last)) = stmts.last() else {
+            panic!("no expression last");
+        };
+        let (calls, nesting) = budget();
+        let values = Evaluator {
+            program,
+            here: &|_| Lookup::Free,
+            module: &|_| None,
+            stores: &FxHashMap::default(),
+            calls: &calls,
+            nesting: &nesting,
+            memo: &Memo::default(),
+            first_party: &|_| true,
+        }
+        .eval(&last.value);
+        let mut out: Vec<String> = dotted(&values).map(str::to_owned).collect();
+        out.sort();
+        out
+    }
+
+    fn names(names: &[&str]) -> Vec<String> {
+        names.iter().map(|&name| name.to_owned()).collect()
+    }
+
+    /// A chain of `depth` functions, each returning what the next returns
+    /// through `step` (`@I` is its index, `@NEXT` the next call), the last `p`.
+    fn chain(depth: usize, step: &str) -> String {
+        let mut source = String::new();
+        for index in 0..depth {
+            let next = format!("f{}()", index + 1);
+            source.push_str(
+                &step
+                    .replace("@I", &index.to_string())
+                    .replace("@NEXT", &next),
+            );
+        }
+        let _ = write!(source, "def f{depth}():\n    return p\n\nf0()\n");
+        source
+    }
+
+    #[test]
+    fn unpacking_hands_each_target_its_element() {
+        let unpack = |target: &str, value: &str, returned: &str| {
+            eval(&format!(
+                "def f():\n    {target} = {value}\n    return {returned}\n\nf()\n"
+            ))
+        };
+        assert_eq!(unpack("a, b", "(p, q)", "b"), names(&["q"]));
+        assert_eq!(unpack("[a, b]", "(p, q)", "b"), names(&["q"]));
+        assert_eq!(unpack("a, b", "(p, q, r)", "b"), names(&[]));
+        assert_eq!(unpack("a, *b, c", "(p, q, r, s)", "a"), names(&["p"]));
+        assert_eq!(unpack("a, *b, c", "(p, q, r, s)", "b[1]"), names(&["r"]));
+        assert_eq!(unpack("a, *b, c", "(p, q, r, s)", "c"), names(&["s"]));
+        assert_eq!(unpack("a, *b, c, d", "(p, q, r, s, t)", "c"), names(&["s"]));
+        assert_eq!(unpack("a, *b, c", "(p, q)", "c"), names(&["q"]));
+        assert_eq!(unpack("a, *b, c, d", "(p, q)", "a"), names(&[]));
+    }
+
+    #[test]
+    fn literal_subscripts_pick_one_element() {
+        assert_eq!(eval("(p, q)[0]\n"), names(&["p"]));
+        assert_eq!(eval("(p, q, r)[1]\n"), names(&["q"]));
+        assert_eq!(eval("(p, q, r)[-1]\n"), names(&["r"]));
+        assert_eq!(eval("(p, q)[-2]\n"), names(&["p"]));
+        assert_eq!(eval("(p, q)[~0]\n"), names(&["p", "q"]));
+        assert_eq!(eval("{x for x in (p,)}[0]\n"), names(&["p"]));
+        assert_eq!(eval("(x for x in (p,))[0]\n"), names(&["p"]));
+        assert_eq!(eval("(y := p)\n"), names(&["p"]));
+        let wide: Vec<String> = (0..70).map(|index| format!("a{index}")).collect();
+        assert_eq!(
+            eval(&format!("({})[69]\n", wide.join(", "))),
+            names(&["a69"])
+        );
+    }
+
+    #[test]
+    fn value_sets_are_capped_and_deduplicated() {
+        assert_eq!(eval("p or p\n"), names(&["p"]));
+        let many: Vec<String> = (0..20).map(|index| format!("a{index}")).collect();
+        assert_eq!(eval(&format!("{}\n", many.join(" or "))).len(), MAX_VALUES);
+    }
+
+    #[test]
+    fn function_bodies_bind_what_each_statement_binds() {
+        let body = |body: &str, returned: &str| {
+            eval(&format!("def f():\n{body}    return {returned}\n\nf()\n"))
+        };
+        assert_eq!(body("    x: T = p\n", "x"), names(&["p"]));
+        assert_eq!(
+            body("    for x in (p,):\n        pass\n", "x"),
+            names(&["p"])
+        );
+        assert_eq!(
+            body("    for y in [x for x in (p,)]:\n        pass\n", "y"),
+            names(&["p"])
+        );
+        assert_eq!(
+            body("    match p:\n        case y:\n            pass\n", "y"),
+            names(&["p"])
+        );
+        // A local the body binds to something untracked hides the module's.
+        assert_eq!(
+            body("    with ctx() as pkg:\n        pass\n", "pkg"),
+            names(&[])
+        );
+        assert_eq!(body("    def pkg():\n        pass\n", "pkg"), names(&[]));
+        assert_eq!(body("    class pkg:\n        pass\n", "pkg"), names(&[]));
+        for block in [
+            "    for _ in x:\n        return p\n",
+            "    while x:\n        return p\n",
+            "    with x:\n        return p\n",
+            "    try:\n        return p\n    except E:\n        pass\n",
+            "    match x:\n        case _:\n            return p\n",
+        ] {
+            assert_eq!(body(block, "None"), names(&["p"]), "{block}");
+        }
+    }
+
+    #[test]
+    fn methods_bind_their_instance_unless_static() {
+        assert_eq!(
+            eval("class C:\n    def get(self, x):\n        return x\n\nC().get(p)\n"),
+            names(&["p"])
+        );
+        assert_eq!(
+            eval(
+                "class C:\n    @abc.abstractmethod\n    def get(self, x):\n        return x\n\nC().get(p)\n"
+            ),
+            names(&["p"])
+        );
+        assert_eq!(
+            eval("class C:\n    def __init__(self):\n        self.m: T = p\n\nC().m\n"),
+            names(&["p"])
+        );
+        assert_eq!(
+            eval("class C:\n    m: T = p\n\nC.m\n"),
+            names(&["C.m", "p"])
+        );
+        // A static method's first parameter is not the instance.
+        assert_eq!(
+            eval("class C:\n    @staticmethod\n    def make(o):\n        o.m = p\n\nC().m\n"),
+            names(&[])
+        );
+    }
+
+    #[test]
+    fn calls_are_followed_only_so_deep() {
+        let returns = "def f@I():\n    return @NEXT\n\n";
+        let assigns = "def f@I():\n    x = @NEXT\n    return x\n\n";
+        let defaults = "def f@I(x=@NEXT):\n    return x\n\n";
+        let keywords = "def f@I(*, x=@NEXT):\n    return x\n\n";
+        for step in [returns, assigns, defaults, keywords] {
+            assert_eq!(eval(&chain(2, step)), names(&["p"]), "{step}");
+            assert_eq!(eval(&chain(6, step)), names(&[]), "{step}");
+        }
+        assert_eq!(eval("(lambda: (lambda: p)())()\n"), names(&["p"]));
+        assert_eq!(
+            eval("(lambda: (lambda: (lambda: (lambda: (lambda: p)())())())())()\n"),
+            names(&[])
+        );
+        let members = "class A:\n    m = B.m\n\nclass B:\n    m = C.m\n\nclass C:\n    m = D.m\n\nclass D:\n    m = E.m\n\nclass E:\n    m = F.m\n\nclass F:\n    m = p\n\n";
+        assert!(!eval(&format!("{members}A.m\n")).contains(&"p".to_owned()));
+        assert!(eval(&format!("{members}E.m\n")).contains(&"p".to_owned()));
+        let instances = "class A:\n    def __init__(self):\n        self.m = B().m\n\nclass B:\n    def __init__(self):\n        self.m = C().m\n\nclass C:\n    def __init__(self):\n        self.m = p\n\n";
+        assert_eq!(eval(&format!("{instances}C().m\n")), names(&["p"]));
+        assert_eq!(eval(&format!("{instances}A().m\n")), names(&[]));
+    }
+
+    #[test]
+    fn calls_spend_a_shared_budget() {
+        let mut source = String::new();
+        for index in 0..70 {
+            let _ = write!(source, "def g{index}():\n    return a{index}\n\n");
+        }
+        let calls: Vec<String> = (0..70).map(|index| format!("g{index}()")).collect();
+        let _ = write!(source, "def f():\n    return ({})\n\n", calls.join(", "));
+        assert_eq!(eval(&format!("{source}f()[0]\n")), names(&["a0"]));
+        assert_eq!(eval(&format!("{source}f()[69]\n")), names(&[]));
+    }
+
+    #[test]
+    fn programs_define_only_their_own_names() {
+        let module =
+            ruff_python_parser::parse_module("def f(): pass\nclass C: pass\n").expect("parse");
+        let program = Program::build(module.suite());
+        assert!(program.defines("f") && program.defines("C"));
+        assert!(!program.defines("g"));
+    }
 }
