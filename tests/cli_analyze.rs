@@ -12187,6 +12187,17 @@ fn lockfile_closure_of_a_runtime_import_skips_dev_groups() {
         strict.contains(&finding("CHK004", "pluggy", "certain")),
         "{strict:?}"
     );
+    // A conditional import keeps the dev group's edge as CHK004 evidence
+    // (#1276): which declarations seed it is a separate question.
+    fs::write(
+        project.path().join("main.py"),
+        "try:\n    import pluggy\nexcept ImportError:\n    pluggy = None\n",
+    )
+    .expect("write main.py");
+    assert_eq!(
+        dependency_findings(project.path(), &[]),
+        [finding("CHK004", "pluggy", "certain")]
+    );
 }
 
 /// CHK008 walks the same lock closure as CHK004: a declared extra's binary

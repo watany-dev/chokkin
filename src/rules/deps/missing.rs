@@ -121,7 +121,10 @@ pub(super) fn detect_missing_dependencies(
             &scopes,
             &mut closures,
             Seeds {
-                usage,
+                // A conditional import keeps every declaration as a seed: a
+                // lock edge from any of them is what keeps it CHK004 (#1276),
+                // and the corpus labels those findings `tp`.
+                usage: (!optional).then_some(usage),
                 groups: &config.dependencies,
             },
             optional,
@@ -421,12 +424,12 @@ fn missing_candidate(
 }
 
 /// The declarations a lock walk starts from: those that satisfy the import's
-/// usage context. A dependency group is not installed with the project
-/// (PEP 735), so what only a dev group's lock edges reach is not on the
-/// runtime path of a runtime import (#1377).
+/// usage context, or all of them for `None`. A dependency group is not
+/// installed with the project (PEP 735), so what only a dev group's lock
+/// edges reach is not on the runtime path of a runtime import (#1377).
 #[derive(Clone, Copy)]
 pub(super) struct Seeds<'c> {
-    pub(super) usage: UsageContext,
+    pub(super) usage: Option<UsageContext>,
     pub(super) groups: &'c DependencyGroupsConfig,
 }
 
@@ -439,7 +442,10 @@ impl<'c> Seeds<'c> {
             .values()
             .flatten()
             .copied()
-            .filter(move |dep| declaration_matches_usage(dep, self.usage, self.groups))
+            .filter(move |dep| {
+                self.usage
+                    .is_none_or(|usage| declaration_matches_usage(dep, usage, self.groups))
+            })
     }
 }
 
@@ -448,7 +454,7 @@ impl<'c> Seeds<'c> {
 /// declarations and lockfile are borrowed for the whole detection pass.
 #[derive(Default)]
 struct LockClosures<'i> {
-    by_scope: HashMap<(usize, usize, UsageContext), HashSet<&'i str>>,
+    by_scope: HashMap<(usize, usize, Option<UsageContext>), HashSet<&'i str>>,
 }
 
 impl<'i> LockClosures<'i> {
@@ -560,7 +566,7 @@ mod tests {
 
     fn runtime(groups: &DependencyGroupsConfig) -> Seeds<'_> {
         Seeds {
-            usage: UsageContext::Runtime,
+            usage: Some(UsageContext::Runtime),
             groups,
         }
     }
