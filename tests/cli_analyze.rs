@@ -12082,93 +12082,96 @@ fn metadata_description_is_no_header() {
     assert_eq!(issues, [chk002("docs-helper")]);
 }
 
+type SiteFiles = &'static [(&'static str, &'static str)];
+
+const INSTALLED_SPELLINGS: [(&str, &str, SiteFiles); 6] = [
+    (
+        "acme-a",
+        "import acmealpha\n",
+        &[
+            (
+                "acme_a-1.0.dist-info/METADATA",
+                "Name: acme-a\nImport-Name: acmealpha; private\n",
+            ),
+            (
+                "acme_a-1.0.dist-info/RECORD",
+                "__editable__.acme_a-1.0.pth,,\n",
+            ),
+        ],
+    ),
+    (
+        "acme-b",
+        "import acmeb.core\n",
+        &[
+            (
+                "acme_b-1.0.dist-info/METADATA",
+                "Name: acme-b\nImport-Name: acmeb.core\n",
+            ),
+            (
+                "acme_b-1.0.dist-info/RECORD",
+                "__editable__.acme_b-1.0.pth,,\n",
+            ),
+        ],
+    ),
+    (
+        "acme-ext",
+        "import acmeext\n",
+        &[
+            ("acmeext.cpython-312-x86_64-linux-gnu.so", ""),
+            ("acme_ext-1.0.dist-info/METADATA", "Name: acme-ext\n"),
+            (
+                "acme_ext-1.0.dist-info/RECORD",
+                "acmeext.cpython-312-x86_64-linux-gnu.so,,\n",
+            ),
+        ],
+    ),
+    (
+        "acme-win",
+        "import acmewin\n",
+        &[
+            ("acme_win-1.0.dist-info/METADATA", "Name: acme-win\n"),
+            (
+                "acme_win-1.0.dist-info/RECORD",
+                "acmewin.cp312-win_amd64.pyd,,\n",
+            ),
+        ],
+    ),
+    (
+        "acme-core",
+        "import acme\n",
+        &[
+            ("acme/__init__.py", ""),
+            ("acme_core-1.0.dist-info/METADATA", "Name: acme-core\n"),
+            (
+                "acme_core-1.0.dist-info/RECORD",
+                "\"acme/__init__.py\",sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0\n",
+            ),
+        ],
+    ),
+    (
+        "acme-img",
+        "import acmeimg\n",
+        &[
+            ("acmeimg/__init__.py", ""),
+            (
+                "acme_img-1.0-py3.12.egg-info/PKG-INFO",
+                "Metadata-Version: 1.1\nName: acme-img\n",
+            ),
+            (
+                "acme_img-1.0-py3.12.egg-info/installed-files.txt",
+                "../acmeimg/__init__.py\nPKG-INFO\n",
+            ),
+        ],
+    ),
+];
+
 /// Each installed distribution names its import in a form the plain
 /// first-segment reading missed: an editable install's PEP 794 value with
 /// `; private` or a dotted name (#1398), a top-level extension module
 /// (#1401), a quoted RECORD path (#1404), an egg-info (#1406).
 #[test]
 fn installed_import_names_in_every_spelling_resolve() {
-    let cases: [(&str, &str, &[(&str, &str)]); 6] = [
-        (
-            "acme-a",
-            "import acmealpha\n",
-            &[
-                (
-                    "acme_a-1.0.dist-info/METADATA",
-                    "Name: acme-a\nImport-Name: acmealpha; private\n",
-                ),
-                (
-                    "acme_a-1.0.dist-info/RECORD",
-                    "__editable__.acme_a-1.0.pth,,\n",
-                ),
-            ],
-        ),
-        (
-            "acme-b",
-            "import acmeb.core\n",
-            &[
-                (
-                    "acme_b-1.0.dist-info/METADATA",
-                    "Name: acme-b\nImport-Name: acmeb.core\n",
-                ),
-                (
-                    "acme_b-1.0.dist-info/RECORD",
-                    "__editable__.acme_b-1.0.pth,,\n",
-                ),
-            ],
-        ),
-        (
-            "acme-ext",
-            "import acmeext\n",
-            &[
-                ("acmeext.cpython-312-x86_64-linux-gnu.so", ""),
-                ("acme_ext-1.0.dist-info/METADATA", "Name: acme-ext\n"),
-                (
-                    "acme_ext-1.0.dist-info/RECORD",
-                    "acmeext.cpython-312-x86_64-linux-gnu.so,,\n",
-                ),
-            ],
-        ),
-        (
-            "acme-win",
-            "import acmewin\n",
-            &[
-                ("acme_win-1.0.dist-info/METADATA", "Name: acme-win\n"),
-                (
-                    "acme_win-1.0.dist-info/RECORD",
-                    "acmewin.cp312-win_amd64.pyd,,\n",
-                ),
-            ],
-        ),
-        (
-            "acme-core",
-            "import acme\n",
-            &[
-                ("acme/__init__.py", ""),
-                ("acme_core-1.0.dist-info/METADATA", "Name: acme-core\n"),
-                (
-                    "acme_core-1.0.dist-info/RECORD",
-                    "\"acme/__init__.py\",sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0\n",
-                ),
-            ],
-        ),
-        (
-            "acme-img",
-            "import acmeimg\n",
-            &[
-                ("acmeimg/__init__.py", ""),
-                (
-                    "acme_img-1.0-py3.12.egg-info/PKG-INFO",
-                    "Metadata-Version: 1.1\nName: acme-img\n",
-                ),
-                (
-                    "acme_img-1.0-py3.12.egg-info/installed-files.txt",
-                    "../acmeimg/__init__.py\nPKG-INFO\n",
-                ),
-            ],
-        ),
-    ];
-    for (distribution, main, files) in cases {
+    for (distribution, main, files) in INSTALLED_SPELLINGS {
         assert_eq!(
             venv_issues(&[distribution], main, files),
             [],

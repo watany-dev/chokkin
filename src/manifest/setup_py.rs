@@ -206,18 +206,36 @@ pub(super) fn extract_setup_py(
         None => call.unpacked,
     };
 
+    let lost = push_extras(root, &mut result, &rel, extras_require);
+    // Extras we cannot name dominate the ones we named but could not read.
+    if !lost.is_empty() && !extras_hidden {
+        result.extras = Some(ExtrasState::Partial(lost));
+    }
+
+    Ok(result)
+}
+
+/// Push each `extras_require` entry; returns the extras part of which could
+/// not be read.
+fn push_extras(
+    root: &Path,
+    result: &mut SetupPyExtraction,
+    rel: &str,
+    extras_require: &[(String, Value)],
+) -> BTreeSet<String> {
     let mut lost = BTreeSet::new();
     for (key, value) in extras_require {
         // `extra:marker` puts the marker on every requirement of the key, and
         // an empty extra makes them install requirements (#1410).
-        let (extra, marker) = key
-            .split_once(':')
-            .map_or((key.trim(), None), |(extra, marker)| {
+        let (extra, marker) = key.split_once(':').map_or_else(
+            || (key.trim(), None),
+            |(extra, marker)| {
                 (
                     extra.trim(),
                     Some(marker.trim()).filter(|marker| !marker.is_empty()),
                 )
-            });
+            },
+        );
         let context = if extra.is_empty() {
             DependencyContext::Runtime
         } else {
@@ -226,8 +244,8 @@ pub(super) fn extract_setup_py(
         let first = result.dependencies.len();
         let read = push_items(
             root,
-            &mut result,
-            &rel,
+            result,
+            rel,
             &dependency_items(value),
             &context,
             format!("extras_require.{key}"),
@@ -246,12 +264,7 @@ pub(super) fn extract_setup_py(
             lost.insert(extra.to_owned());
         }
     }
-    // Extras we cannot name dominate the ones we named but could not read.
-    if !lost.is_empty() && !extras_hidden {
-        result.extras = Some(ExtrasState::Partial(lost));
-    }
-
-    Ok(result)
+    lost
 }
 
 /// Nothing could be read: dependencies, extras, the name or the modules the
@@ -352,6 +365,10 @@ fn string_keyword(call: &SetupCall, name: &str) -> Option<String> {
 /// A requirement string repeated in one evaluated list is pushed once: lists
 /// built by concatenation (`extras["dev"] = extras["all"] + extras["testing"]`)
 /// repeat the same literal, and setup.py items carry no line to fix (#726).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the label differs from the context for `extras_require` keys without an extra"
+)]
 fn push_items(
     root: &Path,
     result: &mut SetupPyExtraction,

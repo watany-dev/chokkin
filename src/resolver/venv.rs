@@ -331,7 +331,7 @@ fn distribution_dir_name(file_name: &str) -> Option<&str> {
 }
 
 /// One importable file a distribution installed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct InstalledModule {
     /// Top-level import name: the first directory, or the module a file
     /// directly in site-packages defines.
@@ -345,7 +345,7 @@ struct InstalledModule {
 /// directory) lists. Paths outside site-packages (`../../bin/x`), metadata
 /// and files no import loads (`py.typed`, `.pth`, `.pyi`, a directory that is
 /// no identifier) name no module: no `import` statement can spell them.
-fn installed_modules(contents: &str, layout: Layout) -> Vec<InstalledModule> {
+fn installed_modules(contents: &str, layout: Layout) -> BTreeSet<InstalledModule> {
     let mut modules = BTreeSet::new();
     for line in contents.lines() {
         let path = match layout {
@@ -361,13 +361,10 @@ fn installed_modules(contents: &str, layout: Layout) -> Vec<InstalledModule> {
         if let Some(module) = installed_module(&path)
             && !module.root.starts_with('_')
         {
-            modules.insert((module.root, module.module));
+            modules.insert(module);
         }
     }
     modules
-        .into_iter()
-        .map(|(root, module)| InstalledModule { root, module })
-        .collect()
 }
 
 /// First field of a CSV row: `csv.writer` may quote any field, and must
@@ -426,12 +423,10 @@ fn installed_module(path: &str) -> Option<InstalledModule> {
 /// (`m.cpython-312-x86_64-linux-gnu.so`, `m.abi3.so`, `m.so`, `m.cp312-win_amd64.pyd`,
 /// `m.pyd`) up to its first `.` (#1401).
 fn module_of_file(file: &str) -> Option<&str> {
-    let name = if let Some(stem) = file.strip_suffix(".py") {
-        stem
-    } else if file.ends_with(".so") || file.ends_with(".pyd") {
-        file.split('.').next()?
-    } else {
-        return None;
+    let name = match file.rsplit_once('.')? {
+        (stem, "py") => stem,
+        (_, "so" | "pyd") => file.split('.').next()?,
+        _ => return None,
     };
     is_identifier(name).then_some(name)
 }
@@ -701,10 +696,10 @@ mod tests {
                 "../acme/__init__.py\nPKG-INFO\n../../../bin/acme\n",
                 Layout::EggInfo
             ),
-            [InstalledModule {
+            BTreeSet::from([InstalledModule {
                 root: "acme".to_owned(),
                 module: Some("acme".to_owned()),
-            }]
+            }])
         );
     }
 
