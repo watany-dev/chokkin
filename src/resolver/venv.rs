@@ -238,9 +238,9 @@ fn merge_distribution(dir: &Path, layout: Layout, index: &mut VenvIndex) -> Resu
     }
     let distribution = normalize_distribution_name(&name);
 
-    let top_level = (!lone_file)
-        .then(|| fs::read_to_string(dir.join("top_level.txt")).ok())
-        .flatten();
+    // A lone-file egg-info has no `top_level.txt` or file list beside it:
+    // reading under a file fails, so neither needs its own guard.
+    let top_level = fs::read_to_string(dir.join("top_level.txt")).ok();
     for line in top_level.iter().flat_map(|top_level| top_level.lines()) {
         let import = line.trim();
         if !import.is_empty() && !import.starts_with('_') {
@@ -264,7 +264,6 @@ fn merge_distribution(dir: &Path, layout: Layout, index: &mut VenvIndex) -> Resu
 
     let files = match layout {
         Layout::DistInfo => fs::read_to_string(dir.join("RECORD")).ok(),
-        Layout::EggInfo if lone_file => None,
         Layout::EggInfo => fs::read_to_string(dir.join("installed-files.txt")).ok(),
     };
     for entry in files
@@ -277,9 +276,7 @@ fn merge_distribution(dir: &Path, layout: Layout, index: &mut VenvIndex) -> Resu
         }
     }
 
-    if !lone_file {
-        merge_entry_points(&dir.join("entry_points.txt"), &distribution, index);
-    }
+    merge_entry_points(&dir.join("entry_points.txt"), &distribution, index);
     let unread = layout == Layout::EggInfo
         && files.is_none()
         && top_level.is_none()
