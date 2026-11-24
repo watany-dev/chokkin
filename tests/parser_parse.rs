@@ -194,6 +194,7 @@ fn parse_project_sources_fixture_suite() {
         root: root.clone(),
         layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files,
         warnings: Vec::new(),
     };
@@ -266,6 +267,7 @@ fn parse_project_sources_invalidates_cache_when_source_changes() {
         root: root.clone(),
         layout: LayoutInfo::new("src", vec!["app".to_owned()]),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "src/app.py".to_owned(),
             kind: chokkin::internals::FileKind::Python,
@@ -321,6 +323,7 @@ fn parse_cache_follows_pep723_block_edits() {
         root: root.clone(),
         layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "scripts/run.py".to_owned(),
             kind: chokkin::internals::FileKind::Python,
@@ -388,6 +391,7 @@ fn parse_project_sources_extracts_notebook_code_cells() {
         root: root.clone(),
         layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "analysis.ipynb".to_owned(),
             kind: chokkin::internals::FileKind::Notebook,
@@ -429,6 +433,7 @@ fn parse_project_sources_skips_invalid_notebook() {
         root: root.clone(),
         layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "broken.ipynb".to_owned(),
             kind: chokkin::internals::FileKind::Notebook,
@@ -467,6 +472,7 @@ fn parse_notebook(json: &str) -> chokkin::internals::ParsedModule {
         root: root.clone(),
         layout: LayoutInfo::default(),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files: vec![chokkin::internals::DiscoveredFile {
             path: "nb.ipynb".to_owned(),
             kind: chokkin::internals::FileKind::Notebook,
@@ -709,6 +715,7 @@ fn disk_parse_cache_writes_one_bundle_for_the_whole_project() {
         root: root.clone(),
         layout: LayoutInfo::new("src", Vec::new()),
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files,
         warnings: Vec::new(),
     };
@@ -781,6 +788,7 @@ fn disk_parse_cache_drops_entries_for_vanished_sources() {
         root: root.clone(),
         layout,
         effective_globs: Vec::new(),
+        within_component: Vec::new(),
         files: vec![discovered("src/kept.py"), discovered("src/gone.py")],
         warnings: Vec::new(),
     };

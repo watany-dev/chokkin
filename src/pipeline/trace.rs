@@ -5,14 +5,10 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::entry::{EntryOrigin, EntryPlan};
 use crate::graph::{FileId, GraphEdge, ProjectGraph};
+use crate::path_util::normalize_user_path;
 use crate::reachability::{ModuleIndex, ReachabilityReport, TracePath, TraceStep, trace_to_file};
 use crate::reporters::escape_control;
 use crate::sources::DiscoveredSources;
-
-/// Normalize a user-supplied path for graph lookup.
-pub(super) fn normalize_trace_path(path: &str) -> String {
-    path.replace('\\', "/").trim_start_matches("./").to_owned()
-}
 
 /// Why a `--trace` target named no discovered file.
 #[derive(Debug, PartialEq, Eq)]
@@ -36,7 +32,7 @@ pub(super) fn file_id_for_trace(
     cwd: Option<&Path>,
     target: &str,
 ) -> Result<FileId, TraceMiss> {
-    let normalized = normalize_trace_path(target);
+    let normalized = normalize_user_path(target);
     if let Some(id) = graph.file_id(&normalized) {
         return Ok(id);
     }
@@ -339,6 +335,7 @@ mod tests {
             },
             layout,
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: paths
                 .iter()
                 .map(|path| DiscoveredFile {
@@ -349,14 +346,6 @@ mod tests {
                 .collect(),
             warnings: Vec::new(),
         }
-    }
-
-    #[test]
-    fn normalize_strips_dot_slash_and_backslashes() {
-        assert_eq!(
-            normalize_trace_path(".\\src\\pkg\\mod.py"),
-            "src/pkg/mod.py"
-        );
     }
 
     #[test]

@@ -1,12 +1,13 @@
 //! `pdm.lock` graph extraction.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use toml::Value;
 
 use super::error::ManifestError;
-use super::lockfile::{array_tables, merge_package, read_lock_table};
+use super::lockfile::{
+    array_tables, merge_extra, merge_package, read_lock_table, requirement_extras,
+};
 use super::pep508_util::{
     extract_egg_name, is_strict_pep508_name, leading_name_token, normalize_distribution_name,
 };
@@ -14,28 +15,94 @@ use super::types::LockfileGraph;
 
 /// Parse `pdm.lock` (pdm 2.x) into a dependency name graph.
 ///
-/// `groups` / `extras` are dropped: declaration contexts come from the
-/// manifest, and the graph only answers "reachable from a declared dependency".
+/// `groups` are dropped: declaration contexts come from the manifest, and the
+/// graph only answers "reachable from a declared dependency". A package
+/// requested with extras is its own entry with `extras = [...]`, whose
+/// `dependencies` are the base package plus what the extras add; those are
+/// read as each extra's additions (#1376) and still merged into the base
+/// edges, as before extras were read.
 pub(super) fn extract_pdm_lock(path: &Path) -> Result<LockfileGraph, ManifestError> {
     let table = read_lock_table(path)?;
-    let mut edges = BTreeMap::new();
+    let mut graph = LockfileGraph::default();
+    let mut variants: Vec<ExtrasVariant> = Vec::new();
     for package in array_tables(&table, "package") {
         let Some(name) = package.get("name").and_then(Value::as_str) else {
             continue;
         };
-        let deps = package
+        let deps: Vec<(String, Vec<String>)> = package
             .get("dependencies")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
-            .filter_map(requirement_name);
-        merge_package(&mut edges, name, deps);
+            .filter_map(|spec| Some((requirement_name(spec)?, requirement_extras(spec))))
+            .collect();
+        let normalized = normalize_distribution_name(name);
+        graph.add_edge_extras(&normalized, "", &deps);
+        let extras: Vec<String> = package
+            .get("extras")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(normalize_distribution_name)
+            .collect();
+        if !extras.is_empty() {
+            let added = deps
+                .iter()
+                .filter(|(dep, _)| *dep != normalized)
+                .cloned()
+                .collect();
+            variants.push(ExtrasVariant {
+                package: normalized,
+                extras,
+                added,
+            });
+        }
+        merge_package(&mut graph.edges, name, deps.into_iter().map(|(dep, _)| dep));
     }
-    Ok(LockfileGraph {
-        edges,
-        ..LockfileGraph::default()
-    })
+    // `psycopg[binary,pool]` adds both extras' packages, so what `pool` adds
+    // comes from `psycopg[pool]` entries when there are some, and otherwise
+    // from what every entry naming `pool` adds.
+    let mut seen = Vec::new();
+    for variant in &variants {
+        for extra in &variant.extras {
+            if seen.contains(&(&variant.package, extra)) {
+                continue;
+            }
+            seen.push((&variant.package, extra));
+            let naming = || {
+                variants.iter().filter(|other| {
+                    other.package == variant.package && other.extras.contains(extra)
+                })
+            };
+            let single: Vec<&ExtrasVariant> =
+                naming().filter(|other| other.extras.len() == 1).collect();
+            let added: Vec<(String, Vec<String>)> = if single.is_empty() {
+                let shared: Vec<&ExtrasVariant> = naming().collect();
+                variant
+                    .added
+                    .iter()
+                    .filter(|dep| shared.iter().all(|other| other.added.contains(dep)))
+                    .cloned()
+                    .collect()
+            } else {
+                single
+                    .iter()
+                    .flat_map(|other| other.added.iter().cloned())
+                    .collect()
+            };
+            merge_extra(&mut graph, &variant.package, extra, &added);
+        }
+    }
+    Ok(graph)
+}
+
+/// A `pdm.lock` entry requested with extras: what it adds beyond the base.
+struct ExtrasVariant {
+    package: String,
+    extras: Vec<String>,
+    added: Vec<(String, Vec<String>)>,
 }
 
 /// Distribution name at the head of a PEP 508 string such as
@@ -136,6 +203,50 @@ dependencies = [
             Some(&vec!["colorama".to_owned(), "iniconfig".to_owned()])
         );
         assert_eq!(graph.edges.get("urllib3"), Some(&Vec::new()));
+    }
+
+    /// An extras entry's dependencies, less the package itself, are what its
+    /// extras add (#1376); entries naming several extras count only for an
+    /// extra without an entry of its own, and then only what they all add.
+    #[test]
+    fn extracts_extras_from_extras_entries() {
+        let graph = parse(concat!(
+            "[[package]]\nname = \"psycopg\"\nversion = \"3.2\"\ndependencies = [\"typing-extensions\"]\n\n",
+            "[[package]]\nname = \"psycopg\"\nversion = \"3.2\"\nextras = [\"pool\", \"Binary\"]\n",
+            "dependencies = [\"psycopg==3.2\", \"psycopg-pool\", \"psycopg-binary[x]==3.2\"]\n\n",
+            "[[package]]\nname = \"psycopg\"\nversion = \"3.2\"\nextras = [\"c\"]\ndependencies = [\"psycopg==3.2\", \"psycopg-c\"]\n\n",
+            "[[package]]\nname = \"psycopg\"\nversion = \"3.2\"\nextras = [\"c\", \"pool\"]\ndependencies = [\"psycopg==3.2\", \"psycopg-c\", \"psycopg-pool\"]\n",
+        ))
+        .expect("valid pdm.lock");
+        let added = vec!["psycopg-pool".to_owned(), "psycopg-binary".to_owned()];
+        assert_eq!(
+            graph.extras.get("psycopg"),
+            Some(&std::collections::BTreeMap::from([
+                ("binary".to_owned(), added),
+                // `psycopg[c]` decides; `[c,pool]` adds nothing to it.
+                ("c".to_owned(), vec!["psycopg-c".to_owned()]),
+                // Only what both entries naming it add.
+                ("pool".to_owned(), vec!["psycopg-pool".to_owned()]),
+            ]))
+        );
+        assert_eq!(
+            graph
+                .edge_extras
+                .get("psycopg")
+                .and_then(|by_extra| by_extra.get("binary"))
+                .and_then(|deps| deps.get("psycopg-binary")),
+            Some(&vec!["x".to_owned()])
+        );
+        assert_eq!(
+            graph.edges.get("psycopg"),
+            Some(&vec![
+                "typing-extensions".to_owned(),
+                "psycopg".to_owned(),
+                "psycopg-pool".to_owned(),
+                "psycopg-binary".to_owned(),
+                "psycopg-c".to_owned(),
+            ])
+        );
     }
 
     #[test]

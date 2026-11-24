@@ -231,6 +231,7 @@ mod tests {
             root: graph.root.clone(),
             layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -279,6 +280,7 @@ mod tests {
                 root: graph.root.clone(),
                 layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
                 effective_globs: Vec::new(),
+                within_component: Vec::new(),
                 files: Vec::new(),
                 warnings: Vec::new(),
             };
@@ -327,6 +329,7 @@ mod tests {
             root: graph.root.clone(),
             layout,
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: Vec::new(),
             warnings: Vec::new(),
         };
@@ -373,6 +376,7 @@ mod tests {
             root: graph.root.clone(),
             layout: LayoutInfo::new("src", vec!["acme".to_owned()]),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: files
                 .iter()
                 .map(|path| crate::sources::DiscoveredFile {

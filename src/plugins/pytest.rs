@@ -3,9 +3,9 @@
 use std::path::Path;
 
 use crate::config::PluginId;
+use crate::fnmatch::fnmatch;
 use crate::path_util::rel_to_root;
-use crate::sources::{FileContext, build_glob_set};
-use globset::GlobSet;
+use crate::sources::{DiscoveredFile, FileContext, expand_testpath};
 
 use super::config_text::ini_section_line;
 use super::context::PluginContext;
@@ -13,8 +13,8 @@ use super::types::{
     BinaryUsage, ModuleReference, PluginContribution, PluginEntry, ReferenceOrigin,
 };
 use super::util::{
-    IniSection, origin_for_file, pytest_options_from_pyproject, pytest_test_globs,
-    read_ini_section, read_pyproject_table, toml_origin,
+    IniSection, join_lexical, origin_for_file, pytest_options_from_pyproject, read_ini_section,
+    read_pyproject_table, toml_origin,
 };
 use super::warnings::PluginsWarning;
 
@@ -109,29 +109,16 @@ pub(super) fn extract(ctx: &PluginContext<'_>) -> (PluginContribution, Vec<Plugi
         label: "pytest defaults".to_owned(),
     });
 
-    let matches =
-        |globs: &Option<GlobSet>, path: &str| globs.as_ref().is_some_and(|set| set.is_match(path));
-    // pytest searches from the rootdir when no `testpaths` entry exists
-    // (airflow's root `tests`).
-    let under_testpaths = build_glob_set(&pytest_test_globs(&testpaths, &["*".to_owned()])).ok();
-    if !ctx
-        .sources
-        .files
-        .iter()
-        .any(|file| matches(&under_testpaths, &file.path))
-    {
-        testpaths.clear();
-    }
-    let root_globs = build_glob_set(&pytest_test_globs(&testpaths, &python_files)).ok();
-    // Members' suites are collected by passing their directory to pytest
-    // (airflow's `providers/*/tests`), so the root `testpaths` does not limit
-    // them while `python_files` still applies.
-    let member_globs = build_glob_set(&pytest_test_globs(&[], &python_files)).ok();
+    let collection = Collection::new(root, &testpaths, &python_files, &ctx.sources.files);
     let test_files = ctx.sources.files.iter().filter(|file| {
-        matches(&root_globs, &file.path)
+        collection.collects(&file.path)
+            // Members' suites are collected by passing their directory to
+            // pytest (airflow's `providers/*/tests`), so the root
+            // `testpaths` does not limit them while `python_files` still
+            // applies.
             || (file.context == FileContext::Test
                 && ctx.sources.layout.member_for(&file.path).is_some()
-                && matches(&member_globs, &file.path))
+                && collection.python_file(&file.path))
     });
     for file in test_files {
         contrib.entries.push(PluginEntry {
@@ -366,29 +353,212 @@ fn collect_pytest_plugins(value: &toml::Value) -> Vec<(String, String)> {
     }
 }
 
+/// What pytest collects from the rootdir with these options, over the
+/// discovered files. `testpaths` entries expand as `glob.iglob(entry,
+/// recursive=True)` does (#1428); an entry naming a file collects that file
+/// whatever `python_files` says (#1430); a file under an entry's directory
+/// is collected when `python_files` names it as `fnmatch_ex` does (#1419).
+/// When no entry names a discovered file, pytest searches the rootdir.
+struct Collection {
+    root: std::path::PathBuf,
+    /// Root-relative directories and files; `[""]` is the rootdir.
+    paths: Vec<String>,
+    python_files: Vec<String>,
+}
+
+impl Collection {
+    fn new(
+        root: &Path,
+        testpaths: &[String],
+        python_files: &[String],
+        files: &[DiscoveredFile],
+    ) -> Self {
+        let mut paths: Vec<String> = testpaths
+            .iter()
+            .filter_map(|entry| join_lexical("", entry))
+            .flat_map(|entry| {
+                if entry.contains(['*', '?', '[']) {
+                    expand_testpath(root, &entry)
+                } else {
+                    vec![entry]
+                }
+            })
+            .collect();
+        let names_a_file = |path: &String| {
+            files
+                .iter()
+                .any(|file| path.is_empty() || is_under(&file.path, path))
+        };
+        if !paths.iter().any(names_a_file) {
+            paths = vec![String::new()];
+        }
+        let python_files = if python_files.is_empty() {
+            vec!["test_*.py".to_owned(), "*_test.py".to_owned()]
+        } else {
+            python_files.to_vec()
+        };
+        Self {
+            root: root.to_path_buf(),
+            paths,
+            python_files,
+        }
+    }
+
+    fn collects(&self, path: &str) -> bool {
+        self.paths.iter().any(|entry| {
+            path == entry || ((entry.is_empty() || is_under(path, entry)) && self.python_file(path))
+        })
+    }
+
+    /// `_pytest.pathlib.fnmatch_ex`: a pattern without `/` matches the
+    /// basename; one with `/` matches the absolute path, `*/` prepended.
+    fn python_file(&self, path: &str) -> bool {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        self.python_files.iter().any(|pattern| {
+            if pattern.contains('/') {
+                let absolute = crate::path_util::normalize_rel_path(&self.root.join(path));
+                if pattern.starts_with('/') {
+                    fnmatch(pattern, &absolute)
+                } else {
+                    fnmatch(&format!("*/{pattern}"), &absolute)
+                }
+            } else {
+                fnmatch(pattern, name)
+            }
+        })
+    }
+}
+
+/// Whether root-relative `path` is `dir` or below it.
+fn is_under(path: &str, dir: &str) -> bool {
+    path == dir
+        || path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn collection(
+        root: &Path,
+        testpaths: &[&str],
+        python_files: &[&str],
+        files: &[&str],
+    ) -> Vec<String> {
+        let files: Vec<DiscoveredFile> = files
+            .iter()
+            .map(|path| DiscoveredFile {
+                path: (*path).to_owned(),
+                kind: crate::sources::FileKind::Python,
+                context: FileContext::Runtime,
+            })
+            .collect();
+        let strings = |items: &[&str]| {
+            items
+                .iter()
+                .map(|item| (*item).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let collection = Collection::new(root, &strings(testpaths), &strings(python_files), &files);
+        files
+            .iter()
+            .map(|file| file.path.clone())
+            .filter(|path| collection.collects(path))
+            .collect()
+    }
+
+    fn tree(paths: &[&str]) -> tempfile::TempDir {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        for path in paths {
+            let path = temp.path().join(path);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, "").expect("write");
+        }
+        temp
+    }
+
+    /// pytest's defaults: no `testpaths` is the rootdir, and `python_files`
+    /// is `test_*.py *_test.py`; `.` names the rootdir.
     #[test]
-    fn pytest_test_globs_use_defaults() {
-        let globs = pytest_test_globs(&[], &[]);
-        // pytest's defaults: `testpaths` unset → rootdir, `python_files` → `test_*.py *_test.py`.
+    fn collection_uses_defaults_and_dot_rootdir() {
+        let files = [
+            "a/test_x.py",
+            "b_test.py",
+            "a/check_y.py",
+            "test/check_z.py",
+        ];
+        let temp = tree(&files);
         assert_eq!(
-            globs,
-            vec!["**/test_*.py".to_owned(), "**/*_test.py".to_owned()]
+            collection(temp.path(), &[], &[], &files),
+            ["a/test_x.py", "b_test.py"]
+        );
+        assert_eq!(
+            collection(temp.path(), &[".", "./test/"], &["check_*.py"], &files),
+            ["a/check_y.py", "test/check_z.py"]
         );
     }
 
+    /// `python_files` is `fnmatch` on the basename: `*` never reaches a
+    /// directory name, braces are literal, `[^x]` is a class of `^` and `x`
+    /// (#1419).
     #[test]
-    fn pytest_test_globs_treat_dot_testpath_as_rootdir() {
-        let globs = pytest_test_globs(
-            &[".".to_owned(), "./test/".to_owned()],
-            &["check_*.py".to_owned()],
+    fn python_files_match_basenames_with_fnmatch() {
+        let files = [
+            "app/check_x/helper.py",
+            "app/check_a.py",
+            "app/check_{a,b}.py",
+            "app/check_^.py",
+        ];
+        let temp = tree(&files);
+        assert_eq!(
+            collection(temp.path(), &[], &["check_*.py"], &files),
+            ["app/check_a.py", "app/check_{a,b}.py", "app/check_^.py"]
         );
         assert_eq!(
-            globs,
-            vec!["**/check_*.py".to_owned(), "test/**/check_*.py".to_owned()]
+            collection(temp.path(), &[], &["check_{a,b}.py"], &files),
+            ["app/check_{a,b}.py"]
+        );
+        assert_eq!(
+            collection(temp.path(), &[], &["check_[^x].py"], &files),
+            ["app/check_^.py"]
+        );
+    }
+
+    /// `testpaths` expand as Python's `glob` does (#1428), and a file they
+    /// name is collected whatever `python_files` says while nothing else is
+    /// (#1430).
+    #[test]
+    fn testpaths_expand_like_python_glob_and_name_files() {
+        let files = ["t1/chk.py", "t{1,2}/chk.py", "a/chk.py", "b/chk.py"];
+        let temp = tree(&files);
+        assert_eq!(
+            collection(temp.path(), &["t{1,2}"], &["chk.py"], &files),
+            ["t{1,2}/chk.py"]
+        );
+        assert_eq!(
+            collection(temp.path(), &["[^a]"], &["chk.py"], &files),
+            ["a/chk.py"]
+        );
+
+        let files = ["t1/chk.py", "t1/other.py", "t2/chk.py"];
+        let temp = tree(&files);
+        for testpaths in [&["t1/*.py"][..], &["t1/chk.py", "t1/other.py"]] {
+            assert_eq!(
+                collection(temp.path(), testpaths, &["chk.py"], &files),
+                ["t1/chk.py", "t1/other.py"],
+                "testpaths {testpaths:?}"
+            );
+        }
+        assert_eq!(
+            collection(temp.path(), &["t1/chk.py"], &["chk.py"], &files),
+            ["t1/chk.py"]
+        );
+        // An entry naming nothing leaves the rootdir, as pytest does.
+        assert_eq!(
+            collection(temp.path(), &["missing"], &["chk.py"], &files),
+            ["t1/chk.py", "t2/chk.py"]
         );
     }
 

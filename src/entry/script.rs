@@ -68,6 +68,7 @@ mod tests {
             },
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: vec![
                 file("tools/run.py", FileContext::Runtime),
                 file("tests/gen.py", FileContext::Test),

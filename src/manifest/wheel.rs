@@ -103,12 +103,16 @@ fn targets(source: &str, paths: Vec<String>, find: Vec<PackageFind>) -> Option<W
         source: source.to_owned(),
         paths,
         find,
+        ..WheelTargets::default()
     })
 }
 
-/// `packages` / `include` / `only-include`; the wheel target overrides
-/// `[tool.hatch.build]`. `sources` only rewrites install paths, so it never
-/// changes which files ship. `bypass-selection` ships nothing (a metapackage).
+/// `packages` / `include` / `only-include` / `exclude`; the wheel target
+/// overrides `[tool.hatch.build]`. `packages` and `only-include` are paths;
+/// `include` and `exclude` are gitignore-style patterns, as hatchling matches
+/// them with `pathspec` (#1434, #1435): `x.py` names that file at any depth.
+/// `sources` only rewrites install paths, so it never changes which files
+/// ship. `bypass-selection` ships nothing (a metapackage).
 fn hatch_targets(tool: &toml::Table) -> Option<WheelTargets> {
     [
         (
@@ -127,10 +131,50 @@ fn hatch_targets(tool: &toml::Table) -> Option<WheelTargets> {
             });
         }
         let mut paths = string_array(section.get("packages"));
-        paths.extend(string_array(section.get("include")));
         paths.extend(string_array(section.get("only-include")));
-        targets(source, paths, Vec::new())
+        let patterns = |key| -> Vec<String> {
+            section
+                .get(key)
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter_map(hatch_pattern)
+                .collect()
+        };
+        let include = patterns("include");
+        if paths.is_empty() && include.is_empty() {
+            return None;
+        }
+        Some(WheelTargets {
+            source: source.to_owned(),
+            paths,
+            find: Vec::new(),
+            include,
+            exclude: patterns("exclude"),
+        })
     })
+}
+
+/// A hatch `include` / `exclude` pattern with `\\` read as `/`, as for every
+/// path in config (#1165), and a leading `./` as the root anchor `/`, which
+/// is what it means when written as a path; `None` when nothing is left.
+fn hatch_pattern(raw: &str) -> Option<String> {
+    let pattern = raw.trim().replace('\\', "/");
+    let (negation, body) = match pattern.strip_prefix('!') {
+        Some(body) => ("!", body),
+        None => ("", pattern.as_str()),
+    };
+    let mut rest = body;
+    while let Some(stripped) = rest.strip_prefix("./") {
+        rest = stripped.trim_start_matches('/');
+    }
+    let body = if rest.len() == body.len() {
+        body.to_owned()
+    } else {
+        format!("/{rest}")
+    };
+    (!matches!(body.trim_matches('/'), "" | ".")).then(|| format!("{negation}{body}"))
 }
 
 /// An in-tree backend's module under each `backend-path` directory: the
@@ -442,7 +486,30 @@ mod tests {
             Some("hatchling.build"),
         )
         .expect("targets");
-        assert_eq!(targets.paths, vec!["_meta/acme"]);
+        assert!(targets.paths.is_empty());
+        assert_eq!(targets.include, vec!["/_meta/acme"]);
+    }
+
+    /// `include` and `exclude` are kept as written: they are gitignore
+    /// patterns, not paths (#1434, #1435).
+    #[test]
+    fn hatch_include_and_exclude_are_patterns() {
+        let targets = parse(
+            "[tool.hatch.build.targets.wheel]\npackages = [\"acme\"]\n\
+             include = [\"x.py\", \"acme/*.py\"]\nexclude = [\"acme/sub\"]\n",
+            Some("hatchling.build"),
+        )
+        .expect("targets");
+        assert_eq!(targets.paths, vec!["acme"]);
+        assert_eq!(targets.include, vec!["x.py", "acme/*.py"]);
+        assert_eq!(targets.exclude, vec!["acme/sub"]);
+
+        let targets = parse(
+            "[tool.hatch.build.targets.wheel]\ninclude = [\"./acme\", \"src\\\\x\", \".\", \"\"]\n",
+            Some("hatchling.build"),
+        )
+        .expect("targets");
+        assert_eq!(targets.include, vec!["/acme", "src/x"]);
     }
 
     #[test]

@@ -445,7 +445,8 @@ mod source_bytes_props {
         }
 
         /// A latin-1 or cp1252 file parses like its UTF-8 twin: the same
-        /// text, re-encoded, under the same coding declaration.
+        /// text, re-encoded, under a UTF-8 declaration on the same line (the
+        /// declaration decides even for valid UTF-8 bytes, #1441).
         #[test]
         fn single_byte_source_parses_like_its_utf8_twin(
             cookie in prop::sample::select(vec![
@@ -487,7 +488,8 @@ mod source_bytes_props {
                 .collect();
             let decoded = parse_bytes(&single_byte);
             prop_assert!(!decoded.skipped);
-            prop_assert_eq!(extracted(&decoded), extracted(&parse_bytes(text.as_bytes())));
+            let twin = text.replacen(cookie, "# coding: utf-8", 1);
+            prop_assert_eq!(extracted(&decoded), extracted(&parse_bytes(twin.as_bytes())));
         }
 
         /// The last literal `__all__` assignment, annotated or not, is the
@@ -617,6 +619,7 @@ mod notebooks {
             root: root.clone(),
             layout: LayoutInfo::default(),
             effective_globs: Vec::new(),
+            within_component: Vec::new(),
             files: vec![DiscoveredFile {
                 path: "nb.ipynb".to_owned(),
                 kind: FileKind::Notebook,

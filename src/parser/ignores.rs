@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use ruff_text_size::TextSize;
+use ruff_python_ast::token::{TokenKind, Tokens};
+use ruff_text_size::{Ranged, TextSize};
 
 use super::lines::LineIndex;
 use super::types::{IgnoreDirective, ParseDiagnostic, ParseSeverity};
@@ -15,32 +16,38 @@ use crate::rules::RuleId;
     reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
 )]
 static IGNORE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"#\s*chokkin:\s*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
+    Regex::new(r"#[ \t]*chokkin:[ \t]*(file-)?ignore\[([A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*)\]")
         .expect("valid ignore regex")
 });
 
-/// Any comment that starts like a directive, read or not (#1132).
+/// Any comment that starts like a directive, read or not (#1132). Unlike
+/// [`IGNORE_RE`] it takes any white space, so a directive spelled with NBSP
+/// or U+3000 warns instead of vanishing (#1439).
 #[expect(
     clippy::expect_used,
     reason = "the pattern is a literal; `Regex::new` fails only on a typo, which every run hits"
 )]
 static DIRECTIVE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"#[ \t]*chokkin[ \t]*:").expect("valid directive regex"));
+    LazyLock::new(|| Regex::new(r"#\s*chokkin\s*:").expect("valid directive regex"));
 
 const UNRECOGNIZED: &str = "unrecognized `# chokkin:` directive suppresses nothing; the forms are `# chokkin: ignore[CHK001,CHK003]` and `# chokkin: file-ignore[CHK001]`";
 const UNKNOWN_CODE: &str = "`# chokkin:` directive names a rule code that is not CHK001-CHK010; that code suppresses nothing";
 const LATE_FILE_IGNORE: &str = "`# chokkin: file-ignore[…]` after the first statement suppresses nothing; move it above the code";
 const EARLY_IGNORE: &str = "`# chokkin: ignore[…]` before the first statement is on no code line and suppresses nothing; use `file-ignore[…]` for the whole file";
 
-/// Extract chokkin ignore directives from `source`, whose line index the
-/// parser already built, adding to `diagnostics` a warning for each
+/// Extract chokkin ignore directives from the comment tokens among the
+/// lexer's `tokens` for `source`, whose line index the parser already built,
+/// adding to `diagnostics` a warning for each
 /// `# chokkin:` comment that suppresses nothing, so a user who wrote one
 /// knows (ADR 0005, #1132). No other spelling is accepted: the syntax is
 /// frozen as a draft (spec §18), so lower case or a space before `[` stays
-/// unrecognized. The header scan runs only in a file that names chokkin,
-/// which most files never do.
+/// unrecognized. Only comment tokens are read: text in a string literal is
+/// not a comment (Language Reference §2.1.3, #1438), and a comment ends at
+/// its physical line, so a directive never spans lines (#1439). The header
+/// scan runs only in a file that names chokkin, which most files never do.
 pub(crate) fn extract_ignores_with(
     source: &str,
+    tokens: &Tokens,
     lines: &LineIndex,
     diagnostics: &mut Vec<ParseDiagnostic>,
 ) -> Vec<IgnoreDirective> {
@@ -59,12 +66,16 @@ pub(crate) fn extract_ignores_with(
         });
     };
     let mut read = BTreeSet::new();
+    let comment_texts = || comments(source, tokens);
 
-    for caps in IGNORE_RE.captures_iter(source) {
+    for (start, caps) in comment_texts()
+        .flat_map(|(start, text)| IGNORE_RE.captures_iter(text).map(move |caps| (start, caps)))
+    {
         let Some(full) = caps.get(0) else {
             continue;
         };
-        read.insert(full.start());
+        let offset = start.saturating_add(full.start());
+        read.insert(offset);
         let file_level = caps.get(1).is_some();
         let Some(codes_match) = caps.get(2) else {
             continue;
@@ -74,7 +85,7 @@ pub(crate) fn extract_ignores_with(
             .split(',')
             .any(|code| RuleId::parse_code(code).is_none())
         {
-            warn(full.start(), UNKNOWN_CODE);
+            warn(offset, UNKNOWN_CODE);
         }
         let codes: Vec<String> = codes_raw
             .split(',')
@@ -87,17 +98,17 @@ pub(crate) fn extract_ignores_with(
         }
 
         if file_level {
-            if full.start() >= first_stmt_offset {
-                warn(full.start(), LATE_FILE_IGNORE);
+            if offset >= first_stmt_offset {
+                warn(offset, LATE_FILE_IGNORE);
                 continue;
             }
-        } else if full.start() < first_stmt_offset {
+        } else if offset < first_stmt_offset {
             // Standalone comment lines before code are not inline ignores.
-            warn(full.start(), EARLY_IGNORE);
+            warn(offset, EARLY_IGNORE);
             continue;
         }
 
-        let line = if file_level { 0 } else { line_of(full.start()) };
+        let line = if file_level { 0 } else { line_of(offset) };
 
         directives.push(IgnoreDirective {
             file_level,
@@ -106,15 +117,31 @@ pub(crate) fn extract_ignores_with(
         });
     }
 
-    for comment in DIRECTIVE_RE.find_iter(source) {
-        if !read.contains(&comment.start()) {
-            warn(comment.start(), UNRECOGNIZED);
+    for (start, text) in comment_texts() {
+        for comment in DIRECTIVE_RE.find_iter(text) {
+            let offset = start.saturating_add(comment.start());
+            if !read.contains(&offset) {
+                warn(offset, UNRECOGNIZED);
+            }
         }
     }
     found.sort_by_key(|diagnostic| diagnostic.line);
     diagnostics.extend(found);
 
     directives
+}
+
+/// Each comment token's start offset and text.
+fn comments<'s>(source: &'s str, tokens: &'s Tokens) -> impl Iterator<Item = (usize, &'s str)> {
+    tokens
+        .iter()
+        .filter(|token| token.kind() == TokenKind::Comment)
+        .filter_map(|token| {
+            let start = usize::from(token.start());
+            source
+                .get(start..usize::from(token.end()))
+                .map(|text| (start, text))
+        })
 }
 
 fn is_valid_code(code: &str) -> bool {
@@ -143,7 +170,13 @@ mod tests {
 
     fn warnings(source: &str) -> (usize, Vec<(u32, String)>) {
         let mut diagnostics = Vec::new();
-        let directives = extract_ignores_with(source, &LineIndex::new(source), &mut diagnostics);
+        let parsed = ruff_python_parser::parse_module(source).expect("test source parses");
+        let directives = extract_ignores_with(
+            source,
+            parsed.tokens(),
+            &LineIndex::new(source),
+            &mut diagnostics,
+        );
         let warnings = diagnostics
             .into_iter()
             .map(|diagnostic| (diagnostic.line, diagnostic.message))
@@ -175,6 +208,48 @@ mod tests {
                 warnings,
                 [(2, expected.to_owned())],
                 "{comment} ({read} read)"
+            );
+        }
+    }
+
+    /// Issue #1438: a string literal is not a comment, so the directive
+    /// text in it neither suppresses nor warns.
+    #[test]
+    fn directive_text_in_a_string_literal_is_not_read() {
+        for source in [
+            "import yaml; s = \"# chokkin: ignore[CHK003]\"\n",
+            "import yaml; s = f\"{yaml}  # chokkin: ignore[CHK003]\"\n",
+            "import yaml; s = br'# chokkin: ignore[CHK003]'\n",
+            "import yaml; s = rf\"\\\\#chokkin:ignore[CHK003]\"\n",
+            "import yaml\ns = \"\"\"\n# chokkin: ignore[CHK003]\n\"\"\"\n",
+            "s = \"# chokkin: file-ignore[CHK001]\"\nimport os\n",
+        ] {
+            assert_eq!(warnings(source), (0, vec![]), "{source}");
+        }
+        assert_eq!(
+            warnings("s = '# chokkin: x'  # chokkin: ignore[CHK003]\n"),
+            (1, vec![])
+        );
+    }
+
+    /// Issue #1439: a directive ends at its physical line, and white space
+    /// other than space and tab is an unrecognized form, not a directive.
+    #[test]
+    fn directive_stays_on_its_line_and_takes_only_space_or_tab() {
+        let spill = "import yaml\nimport requests  #\nchokkin: ignore[CHK003]\n";
+        assert_eq!(warnings(spill), (0, vec![]));
+        for comment in [
+            "#\u{3000}chokkin: ignore[CHK003]",
+            "#\u{a0}chokkin: ignore[CHK003]",
+            "# chokkin:\u{a0}ignore[CHK003]",
+            "# chokkin: ignore\u{3000}[CHK003]",
+            "#\u{c}chokkin: ignore[CHK003]",
+        ] {
+            let source = format!("import os\nimport yaml  {comment}\n");
+            assert_eq!(
+                warnings(&source),
+                (0, vec![(2, UNRECOGNIZED.to_owned())]),
+                "{comment:?}"
             );
         }
     }
