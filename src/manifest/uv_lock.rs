@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use rustc_hash::FxHashSet;
-use serde::Deserialize;
 use serde::de::IgnoredAny;
+use serde::{Deserialize, Deserializer};
 
 use super::error::ManifestError;
 use super::lockfile::merge_extra;
@@ -36,11 +36,24 @@ enum UvDependency {
         name: String,
         /// `{ name = "requests", extra = ["socks"] }`: the extras of `name`
         /// this edge turns on (#1375).
-        #[serde(default)]
+        #[serde(default, deserialize_with = "lenient_extras")]
         extra: Vec<String>,
     },
     Name(String),
     Other(IgnoredAny),
+}
+
+/// The strings of an `extra` array. Any other value turns on no extra
+/// instead of failing the table, which would drop the edge's name with it.
+fn lenient_extras<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
+    let value = toml::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .map(str::to_owned)
+        .collect())
 }
 
 /// Parse `uv.lock` into a dependency name graph.
@@ -540,6 +553,19 @@ mod tests {
                 graph.edges.get("b"),
                 Some(&vec!["requests".to_owned(), "idna".to_owned()])
             );
+        }
+        // A value uv would not write keeps the edge, without extras.
+        for odd in ["\"socks\"", "[1]"] {
+            let lock = format!(
+                "[[package]]\nname = \"b\"\ndependencies = [{{ name = \"requests\", extra = {odd} }}]\n"
+            );
+            let graph = toml_graph(&lock);
+            assert_eq!(
+                graph.edges.get("b"),
+                Some(&vec!["requests".to_owned()]),
+                "{odd}"
+            );
+            assert!(graph.edge_extras.is_empty(), "{odd}");
         }
         // A list spelled another way leaves the file to `toml`.
         assert!(scan_array_item("{ name = \"r\", extra = [ \"socks\" ] }").is_none());

@@ -11987,7 +11987,7 @@ fn binary_subtree_requirements_declare_their_own_sources() {
     );
 }
 
-/// `(code, distribution or binary, confidence)` of each CHK00x finding.
+/// `(code, distribution or binary, confidence)` of each dependency finding.
 fn dependency_findings(root: &Path, extra: &[&str]) -> Vec<(String, String, String)> {
     let mut args = vec!["--no-cache"];
     args.extend_from_slice(extra);

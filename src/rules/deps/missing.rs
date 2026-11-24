@@ -434,7 +434,7 @@ impl<'c> Seeds<'c> {
     fn of<'d, 'a>(
         self,
         declared: &'d DeclaredIndex<'a>,
-    ) -> impl Iterator<Item = &'a DeclaredDependency> + Clone + use<'c, 'd, 'a> {
+    ) -> impl Iterator<Item = &'a DeclaredDependency> + use<'c, 'd, 'a> {
         declared
             .values()
             .flatten()
