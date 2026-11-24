@@ -6180,6 +6180,9 @@ fn binary_dot_slash_and_backslash_config_paths_match_discovered_files() {
     for (entry, exclude) in [
         ("./src/app.py", "./legacy/**"),
         (r"src\app.py", "legacy/**"),
+        // #1443: inner empty and `.` segments too.
+        ("src//app.py", "legacy/**"),
+        ("src/./app.py", "legacy/**"),
     ] {
         let pyproject = format!(
             "[project]\nname = \"acme\"\nversion = \"0\"\n\n[tool.chokkin]\nmode = \"app\"\nentry = ['{entry}']\nexclude = ['{exclude}']\n"

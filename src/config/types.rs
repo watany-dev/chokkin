@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::discovery::ProjectRoot;
+use crate::path_util::normalize_user_path;
 
 /// Project analysis mode (§5, §8). `Auto` is resolved in a later pipeline step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -286,9 +287,9 @@ impl EntrySpec {
     /// Parse an entry string such as `src/pkg/asgi.py:app`.
     ///
     /// At most one `:` is allowed, separating a relative path from a symbol.
-    /// The path is normalized like `--trace` targets and workspace paths: `\`
-    /// becomes `/` and a leading `./` is dropped, so it matches discovered
-    /// source paths (#1168).
+    /// The path is normalized like `--trace` targets: `\` becomes `/` and
+    /// empty and `.` segments are dropped (`./app//run.py` is `app/run.py`), so
+    /// it matches discovered source paths (#1168, #1443).
     pub fn parse(value: &str) -> Result<Self, &'static str> {
         if value.is_empty() {
             return Err("entry path must not be empty");
@@ -308,29 +309,19 @@ impl EntrySpec {
             },
             None => (value, None),
         };
-        let path = normalize_entry_path(path);
-        if path.is_empty() {
-            return Err("entry path must not be empty");
-        }
-        if path == "." || path == ".." {
+        let normal = normalize_user_path(path);
+        if path == "." || normal == ".." {
             return Err("entry path must not be . or ..");
+        }
+        if normal.is_empty() {
+            return Err("entry path must not be empty");
         }
 
         Ok(Self {
-            path,
+            path: normal,
             symbol: symbol.map(str::to_owned),
         })
     }
-}
-
-/// `\` to `/`, then strip every leading `./` (`././src/app.py` is `src/app.py`).
-fn normalize_entry_path(path: &str) -> String {
-    let path = path.replace('\\', "/");
-    let mut rest = path.as_str();
-    while let Some(stripped) = rest.strip_prefix("./") {
-        rest = stripped.trim_start_matches('/');
-    }
-    rest.to_owned()
 }
 
 impl TryFrom<String> for EntrySpec {
@@ -522,6 +513,11 @@ mod tests {
             (r".\src\app.py", "src/app.py"),
             ("./.hidden/app.py", ".hidden/app.py"),
             ("./../x.py", "../x.py"),
+            // #1443: inner empty and `.` segments name the same file.
+            ("app//run.py", "app/run.py"),
+            ("app/./run.py", "app/run.py"),
+            (r"app\\run.py", "app/run.py"),
+            ("/abs//x.py", "/abs/x.py"),
         ] {
             let spec = EntrySpec::parse(value).expect("parse entry");
             assert_eq!(spec.path, path, "{value}");
@@ -642,6 +638,13 @@ mod tests {
                     prop_assert!(!spec.path.contains(':'));
                     prop_assert!(!spec.path.starts_with("./"));
                     prop_assert!(!spec.path.contains('\\'));
+                    // #1443: no empty or `.` segment past the leading `/`s.
+                    prop_assert!(
+                        spec.path
+                            .trim_start_matches('/')
+                            .split('/')
+                            .all(|part| !matches!(part, "" | "."))
+                    );
                     if let Some(symbol) = &spec.symbol {
                         prop_assert!(!symbol.is_empty());
                     }
@@ -655,13 +658,19 @@ mod tests {
             ) {
                 prop_assume!(path != "." && path != "..");
 
+                // The path comes back in its normal form, which parses to itself.
+                let normal = normalize_user_path(&path);
+                prop_assume!(!normal.is_empty() && normal != "..");
+
                 let plain = EntrySpec::parse(&path).expect("plain path must parse");
-                prop_assert_eq!(&plain.path, &path);
+                prop_assert_eq!(&plain.path, &normal);
                 prop_assert_eq!(plain.symbol, None);
+                let again = EntrySpec::parse(&normal).expect("normal path must parse");
+                prop_assert_eq!(&again.path, &normal);
 
                 let with_symbol =
                     EntrySpec::parse(&format!("{path}:{symbol}")).expect("path:symbol must parse");
-                prop_assert_eq!(with_symbol.path, path);
+                prop_assert_eq!(with_symbol.path, normal);
                 prop_assert_eq!(with_symbol.symbol, Some(symbol));
             }
 
